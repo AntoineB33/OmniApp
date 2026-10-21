@@ -43,13 +43,18 @@ class TaskTreeTimelineTest {
 
     /**
      * The id of the task titled [title], looked up across the live tree **and** the stored trees — the
-     * whole point of the fixture below is that a task can live only in an inactive tree.
+     * whole point of the fixture below is that a task can live only in an inactive tree — as the timeline knows it:
+     * a created tree's tasks are new ids linked to the ones they copy (user rule 2026-10-20), and the blend reports a
+     * linked group under one id ([org.example.project.scheduler.domain.TaskLinks.representativeOf]).
      */
     private fun taskIdOf(state: SchedulerState, title: String): TaskId =
-        state.tasks.entries.firstOrNull { it.value.title == title }?.key
-            ?: state.taskTrees.firstNotNullOf { entry ->
-                entry.tree.tasks.entries.firstOrNull { it.value.title == title }?.key
-            }
+        org.example.project.scheduler.domain.TaskLinks.representativeOf(
+            state,
+            state.tasks.entries.firstOrNull { it.value.title == title }?.key
+                ?: state.taskTrees.firstNotNullOf { entry ->
+                    entry.tree.tasks.entries.firstOrNull { it.value.title == title }?.key
+                },
+        )
 
     /** The user-created task titles a stored tree holds (the root/MAIN scaffolding filtered out). */
     private fun titlesIn(state: SchedulerState, tree: String): Set<String> {
@@ -465,9 +470,12 @@ class TaskTreeTimelineTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Summer"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Autumn"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SelectTaskTree(treeIdOf(s, "Autumn")))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(a, 90))
+        // "Autumn"'s A is the copy of "Summer"'s, under its own id and linked to it (user rule 2026-10-20).
+        val autumnA = taskIdOf(s, "A")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(autumnA, 90))
         s = dated(s, "Summer", t0)
-        return dated(s, "Autumn", t0 + 10 * day) to a
+        s = dated(s, "Autumn", t0 + 10 * day)
+        return s to taskIdOf(s, "A")
     }
 
     @Test
@@ -491,15 +499,15 @@ class TaskTreeTimelineTest {
         // "On screen" is a resilience of 0 to PeriodKinds.NO_SCREEN, so a task that goes off screen between two
         // keyframes crosses over evenly rather than flipping on the date.
         var s = stateWithTasks("A")
-        val a = taskIdOf(s, "A")
         s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Summer"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("Autumn"))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SelectTaskTree(treeIdOf(s, "Autumn")))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(a, PeriodKinds.NO_SCREEN, 1.0))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(taskIdOf(s, "A"), PeriodKinds.NO_SCREEN, 1.0))
         s = dated(s, "Summer", t0)
         s = dated(s, "Autumn", t0 + 10 * day)
+        val linked = taskIdOf(s, "A")
         fun resilienceAt(now: Long) =
-            SchedulerDomain.blendedTaskAttributes(s, now)[a]!!.resilienceFor(PeriodKinds.NO_SCREEN)
+            SchedulerDomain.blendedTaskAttributes(s, now)[linked]!!.resilienceFor(PeriodKinds.NO_SCREEN)
         assertEquals(0.0, resilienceAt(t0), 1e-9)
         assertEquals(0.5, resilienceAt(t0 + 5 * day), 1e-9)
         assertEquals(1.0, resilienceAt(t0 + 10 * day), 1e-9)
@@ -512,7 +520,7 @@ class TaskTreeTimelineTest {
         // (`side-dev/scheduler.py` `RuleStates.at`).
         val s = twoKeyframes()
         val a = taskIdOf(s, "A") // only in "Summer"
-        val live = s.taskTrees.first { it.title == "Summer" }.tree.tasks[a]!!.minimumMinutes
+        val live = SchedulerDomain.datedTaskTrees(s).first { it.title == "Summer" }.tree.tasks[a]!!.minimumMinutes
         for (step in 0..10) {
             assertEquals(live, SchedulerDomain.blendedTaskAttributes(s, t0 + step * day)[a]!!.minimumMinutes)
         }

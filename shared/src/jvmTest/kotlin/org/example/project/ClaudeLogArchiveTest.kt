@@ -14,12 +14,12 @@ import org.example.project.claudelogs.ClaudeLogKind
 import org.example.project.claudelogs.ClaudeLogSession
 import org.example.project.quota.ClaudeLogFeed
 import org.example.project.quota.FakeSupabase
-import org.example.project.quota.QuotaScenario
 import org.example.project.scheduler.persistence.SqlDelightSchedulerStore
 import org.example.project.scheduler.persistence.SyncMeta
 import org.example.project.scheduler.persistence.db.SchedulerDatabase
-import org.example.project.scheduler.platform.DeviceKind
-import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.sync.RemoteSnapshotClient
+import org.example.project.scheduler.sync.SchedulerSyncEngine
+import org.example.project.scheduler.sync.SupabaseConfig
 
 /**
  * User rule 2026-10-19: *"when the program gets logs from the local folder, it stays in the account's memory. If the
@@ -108,31 +108,52 @@ class ClaudeLogArchiveTest {
         assertTrue(ClaudeLogArchive.toPush(records, sent.mapTo(HashSet()) { it.entryId }).isEmpty(), "what the server holds is not sent again")
     }
 
+    /**
+     * One device as the logs page drives it: its store, its sync engine on [server], its keeper. No `SchedulerEngine`:
+     * starting one installs seams on `SchedulerReducer` that outlive the test and change what the next test plans.
+     */
+    private inner class Device(id: String, server: FakeSupabase, dispatcher: kotlinx.coroutines.test.TestDispatcher) {
+        val store =
+            store("user-logs").also {
+                val token = server.tokenFor("user-logs")
+                it.saveSyncMeta(SyncMeta(deviceId = id, accessToken = token, refreshToken = token, userId = "user-logs"))
+            }
+        val sync =
+            SchedulerSyncEngine(
+                RemoteSnapshotClient(SupabaseConfig("https://logs.supabase.co", "anon"), io.ktor.client.HttpClient(server.engine(dispatcher))),
+                store,
+            ).also { it.restoreSession() }
+        val logs = ClaudeLogKeeper(store, Long.MAX_VALUE)
+
+        /** What the logs page does when shown: [read] kept, the newest of it sent, the other devices' pulled. */
+        suspend fun readLogs(read: List<ClaudeLogSession>?) {
+            val account = logs.activeAccount()
+            logs.absorb(account, read)
+            sync.syncClaudeLogs(logs.pushBatches(account), logs.cursor(account))?.let(logs::applySync)
+        }
+    }
+
     @Test
     fun a_phone_gets_the_logs_the_desktop_read_and_the_server_keeps_only_its_bound() = runTest {
-        val server = FakeSupabase({ 1_788_343_200_000L + testScheduler.currentTime }, claudeLogKeptBytes = ClaudeLogArchive.SERVER_LIMIT_BYTES)
-        val scenario = QuotaScenario(this, server, QuotaScenario.Millis(1_788_343_200_000L))
-        val desktop = scenario.Device("desktop", "user-logs", SchedulerState.empty(), DeviceKind.Desktop)
-        val phone = scenario.Device("phone", "user-logs", SchedulerState.empty(), DeviceKind.Phone)
-        scenario.pass(60_000L)
-        val feed = ClaudeLogFeed(1_000_000L)
-        desktop.readLogs(feed.sessions(ClaudeLogArchive.SERVER_LIMIT_BYTES * 2))
-        scenario.pass(60_000L)
+        val server = FakeSupabase({ testScheduler.currentTime }, claudeLogKeptBytes = ClaudeLogArchive.SERVER_LIMIT_BYTES)
+        val dispatcher = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler)
+        val desktop = Device("desktop", server, dispatcher)
+        val phone = Device("phone", server, dispatcher)
+        desktop.readLogs(ClaudeLogFeed(1_000_000L).sessions(ClaudeLogArchive.SERVER_LIMIT_BYTES * 2))
         phone.readLogs(null)
-        scenario.pass(60_000L)
 
         val kept = server.table("claude_log_entry").rows.values.sumOf { it["size_bytes"].toString().toLong() }
-        assertTrue(kept <= ClaudeLogArchive.SERVER_LIMIT_BYTES, "the server keeps its bound: $kept")
+        assertTrue(kept in 1..ClaudeLogArchive.SERVER_LIMIT_BYTES, "the server keeps its bound: $kept")
         val onPhone = phone.logs.sessions("user-logs").flatMap { it.entries }
         val onDesktop = desktop.logs.sessions("user-logs").flatMap { it.entries }
         assertTrue(onPhone.isNotEmpty() && onPhone.size < onDesktop.size, "the phone has the newest, the desktop all of them")
         assertEquals(onDesktop.maxOf { it.timeMillis!! }, onPhone.maxOf { it.timeMillis!! })
         assertNull(onPhone.firstOrNull { e -> onDesktop.none { it.text == e.text } }, "nothing the desktop did not read")
+        assertEquals(onPhone.size, ClaudeLogKeeper(phone.store, Long.MAX_VALUE).sessions("user-logs").sumOf { it.entries.size }, "kept on the phone's disk")
 
         // Read again with nothing new: nothing is sent again.
         val written = server.table("claude_log_entry").writes
         desktop.readLogs(null)
-        scenario.pass(60_000L)
         assertEquals(written, server.table("claude_log_entry").writes)
     }
 }

@@ -312,6 +312,9 @@ object SchedulerReducer {
             is SchedulerIntent.SelectTaskTree -> reduceSelectTaskTree(state, intent.id)
             is SchedulerIntent.CreateTaskTree -> reduceCreateTaskTree(state, intent.title)
             is SchedulerIntent.RenameTaskTree -> reduceRenameTaskTree(state, intent.id, intent.title)
+            is SchedulerIntent.LinkTask ->
+                if (org.example.project.scheduler.domain.TaskLinks.refusal(state, intent.taskId, intent.otherTreeId, intent.otherTaskId) != null) state
+                else state.copy(taskLinks = org.example.project.scheduler.domain.TaskLinks.linked(state, intent.taskId, intent.otherTaskId))
             is SchedulerIntent.SetTaskTreeDate -> reduceSetTaskTreeDate(state, intent.id, intent.dateMillis)
             is SchedulerIntent.DeleteTaskTree -> reduceDeleteTaskTree(state, intent.id)
             is SchedulerIntent.SetPriorityWeight ->
@@ -1162,6 +1165,16 @@ object SchedulerReducer {
     ): SchedulerState {
         if (state.editSession != null) return state
         val main = state.selection.main ?: return state
+        // From the root row (user rule 2026-10-19), down is the tree's first row and up is nothing; no range starts there.
+        if (main == SchedulerDomain.rootCellId(state)) {
+            if (direction != SelectionNavigate.Next) return state
+            val first = SchedulerDomain.selectableVisibleOccurrences(state).firstOrNull() ?: return state
+            return commitDelta(
+                state,
+                SetSelectionDelta(before = state.selection, after = SchedulerSelection(main = first.cellId, renderVia = first.renderVia)),
+                HistoryCategory.Selection,
+            )
+        }
         val delta = if (direction == SelectionNavigate.Next) 1 else -1
         // Resolve the neighbor by the selected *occurrence* (main + renderVia), so a mirrored
         // cell moves relative to the row actually displayed beneath it, not its first copy.
@@ -1252,6 +1265,8 @@ object SchedulerReducer {
     private fun reduceSelectFirstChild(state: SchedulerState): SchedulerState {
         if (state.editSession != null) return state
         val main = state.selection.main ?: return state
+        // The root row's first child is the tree's first row.
+        if (main == SchedulerDomain.rootCellId(state)) return reduceNavigateSelection(state, SelectionNavigate.Next, shift = false)
         if (!SchedulerDomain.isSelectableCell(state, main)) return state
         val cell = state.cells[main] ?: return state
         val taskId = cell.taskId
@@ -2032,7 +2047,19 @@ object SchedulerReducer {
     }
 
     private fun reduceClick(state: SchedulerState, intent: SchedulerIntent.ClickCell): SchedulerState {
+        // User rule 2026-10-19: *"clicking on the root cell should select it and scroll up to max like any other task
+        // cell"* — it holds the selection (and the tree reveals it, which is its top), but ALONE: never in a range or a
+        // Ctrl set, and still not "selectable" for anything the selection is acted on with (edit, delete, paste, move,
+        // drag-select all ask [SchedulerDomain.isSelectableCell], which stays false for it).
+        if (intent.cellId == SchedulerDomain.rootCellId(state)) {
+            if (intent.forceClearMulti && state.selection.main != intent.cellId) return state
+            return applySelectionChange(state, selectionFor(state, main = intent.cellId), intent.cellId)
+        }
         if (!SchedulerDomain.isSelectableCell(state, intent.cellId)) return state
+        // No range or Ctrl set grows out of the root row: a Shift- or Ctrl-click from it is a plain click.
+        if ((intent.shift || intent.ctrl) && state.selection.main != null && state.selection.main == SchedulerDomain.rootCellId(state)) {
+            return reduceClick(state, intent.copy(shift = false, ctrl = false))
+        }
 
         // The deferred single-click reset (forceClearMulti) fires after the double-tap timeout to
         // collapse a still-intact multi-selection down to the clicked cell. If the user has since
@@ -4270,22 +4297,48 @@ object SchedulerReducer {
 
     /**
      * Task-tree selector: create a tree named [title] holding a copy of what is on screen and select it. The
-     * live tree itself does not change (the copy IS it) — only the identity does, so nothing reschedules;
-     * the two trees diverge from the user's next edit onward. The tree being left is flushed first, so its
-     * stored copy is current before it stops being the live one.
+     * copy's tasks are NEW ids, each linked to the task it copies (user rule 2026-10-20, [org.example.project.scheduler.domain.TaskLinks]),
+     * so the two trees' tasks are distinct and diverge from the user's next edit onward, while the task-tree timeline
+     * still blends each with the task it was copied from. The tree being left is flushed first, so its stored copy is
+     * current before it stops being the live one.
      */
     private fun reduceCreateTaskTree(state: SchedulerState, title: String): SchedulerState {
         val name = title.trim()
         if (name.isEmpty()) return state
         val (id, allocated) = state.withActiveTaskTreeFlushed().allocateTaskTreeId()
+        // User rule 2026-10-20: the copy's tasks are NEW ids, each linked to the task it copies ([TaskLinks]) — unless
+        // the tree on screen is in no entry yet (an account from before the trees), which this names rather than copies:
+        // replacing its ids would leave the calendar's blocks naming tasks no tree holds any more.
+        val stored = state.activeTaskTreeId != null && state.taskTrees.any { it.id == state.activeTaskTreeId }
+        val copy =
+            if (stored) {
+                org.example.project.scheduler.domain.TaskLinks.copyWithFreshIds(
+                    state.captureTreeWithRecords(),
+                    org.example.project.scheduler.domain.TaskLinks.keys(state),
+                    state.nextTaskCounter,
+                )
+            } else {
+                null
+            }
         val entry =
             TaskTreeEntry(
                 id = id,
                 title = name,
-                tree = state.captureTreeWithRecords(),
+                tree = copy?.tree ?: state.captureTreeWithRecords(),
                 expanded = state.expanded,
             )
-        val after = allocated.copy(taskTrees = allocated.taskTrees + entry, activeTaskTreeId = id)
+        val after =
+            if (copy == null) {
+                allocated.copy(taskTrees = allocated.taskTrees + entry, activeTaskTreeId = id)
+            } else {
+                // The task relations and relative-priority pins stay with the tasks they were filed on: a pair naming a
+                // task the live tree does not hold is listed as broken, so a copy of each would be broken on the other tree.
+                allocated.copy(
+                    taskTrees = allocated.taskTrees + entry,
+                    taskLinks = allocated.taskLinks + copy.links,
+                    nextTaskCounter = maxOf(allocated.nextTaskCounter, copy.nextTaskCounter),
+                ).withTaskTreeLoaded(entry)
+            }
         return commitDelta(
             state,
             TaskTreeDelta(
@@ -4293,6 +4346,10 @@ object SchedulerReducer {
                 after = after.captureTaskTreeState(),
                 label = "New task tree \"$name\"",
             ),
+        ).copy(
+            // The links are not part of the tree's undo unit (like the task relations, they are no Undo/Redo unit): an
+            // undone creation leaves its links naming ids no tree holds, which nothing reads.
+            taskLinks = org.example.project.scheduler.domain.TaskLinks.pruned(after, after.taskLinks),
         )
     }
 

@@ -133,6 +133,13 @@ sealed interface SchedulerIntent {
     data class RenameTaskTree(val id: TaskTreeId, val title: String) : SchedulerIntent
 
     /**
+     * User rule 2026-10-20: link the live tree's task [taskId] to [otherTaskId] of the task tree [otherTreeId]
+     * ([org.example.project.scheduler.domain.TaskLinks]). Refused — nothing changes — where another task of the live tree
+     * is already linked to it (`TaskLinks.refusal`, which the window says before the user confirms).
+     */
+    data class LinkTask(val taskId: TaskId, val otherTreeId: TaskTreeId, val otherTaskId: TaskId) : SchedulerIntent
+
+    /**
      * "All task trees" window: put the task tree [id] on the timeline at [dateMillis] (or take it off with
      * `null`). A dated tree is a keyframe of the account's priorities — see [TaskTreeEntry.dateMillis].
      * Recorded as an undoable Main History Unit; a no-op when the date is already that.

@@ -1007,9 +1007,12 @@ object SchedulerDomain {
      * last selected. Ties on the same instant fall back to the id, so the order is total and stable.
      */
     fun datedTaskTrees(state: SchedulerState): List<TaskTreeEntry> =
-        state.withActiveTaskTreeFlushed().taskTrees
-            .filter { it.dateMillis != null }
-            .sortedWith(compareBy({ it.dateMillis }, { it.id.value }))
+        TaskLinks.inLinkSpace(
+            state,
+            state.withActiveTaskTreeFlushed().taskTrees
+                .filter { it.dateMillis != null }
+                .sortedWith(compareBy({ it.dateMillis }, { it.id.value })),
+        )
 
     /**
      * The blend in force at [nowMillis], or `null` when **no** tree is dated — in which case there is no
@@ -8106,7 +8109,7 @@ object SchedulerDomain {
         draftText: String,
         todayTitle: String,
     ): List<TaskTreeMenuEntry> {
-        val q = draftText.trim()
+        val q = taskTreeMenuQuery(state, draftText)
         val today = state.taskTrees.firstOrNull { it.title.equals(todayTitle, ignoreCase = true) }
         return buildList {
             add(TaskTreeMenuEntry(id = today?.id, label = todayTitle, kind = TaskTreeMenuEntry.Kind.Today))
@@ -8124,6 +8127,18 @@ object SchedulerDomain {
     }
 
     /**
+     * What the task-tree selector's two menus filter by: the typed text — except the open tree's own name, which is
+     * what the field holds on entering edit mode before anything is typed. Anomaly 2026-10-20 (*"I entered edit mode
+     * again, and the previous title wasn't showing anymore in the id suggestion list"*): filtering by it hid every
+     * other tree whose name does not contain it, so the field opened on a list of one.
+     */
+    fun taskTreeMenuQuery(state: SchedulerState, draftText: String): String {
+        val q = draftText.trim()
+        val open = state.activeTaskTree?.title?.trim()
+        return if (open != null && q.equals(open, ignoreCase = true)) "" else q
+    }
+
+    /**
      * Task-tree title suggestions (the selector's second menu), mirroring [titleSuggestions]: every tree
      * title containing [input], most similar first. An **empty** input lists them all, which is how the user
      * browses the existing trees.
@@ -8134,7 +8149,7 @@ object SchedulerDomain {
      * the highlighted row is also what Enter commits to, which is worth showing.
      */
     fun taskTreeTitleSuggestions(state: SchedulerState, input: String): List<String> {
-        val q = input.trim()
+        val q = taskTreeMenuQuery(state, input)
         return state.taskTrees
             .map { it.title }
             .filter { it.isNotBlank() }

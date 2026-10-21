@@ -606,6 +606,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val searchSplits = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.SearchSplits>() }
         var calendarConfigurationWidth by remember { mutableStateOf<Float?>(null) }
         var calendarSectionsHidden by remember { mutableStateOf<List<Boolean>?>(null) }
+        // The task tree window's sections (user rule 2026-10-20), kept as the calendar's are: the configuration's width,
+        // and which of the two (tree, configuration) are retracted.
+        var taskTreeConfigurationWidth by remember { mutableStateOf<Float?>(null) }
+        var taskTreeSectionsHidden by remember { mutableStateOf<List<Boolean>?>(null) }
         fun updatePlacementById(id: String, change: (WindowPlacement) -> WindowPlacement) {
             val previous = placements[id] ?: WindowPlacement(x = 0f, y = 0f, visible = false)
             val next = change(previous)
@@ -1144,6 +1148,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     if (id == FloatingWindow.Calendar.name) {
                         kept.splits.firstOrNull()?.let { calendarConfigurationWidth = it }
                         if (kept.hidden.isNotEmpty()) calendarSectionsHidden = kept.hidden
+                    } else if (id == FloatingWindow.TaskTree.name) {
+                        kept.splits.firstOrNull()?.let { taskTreeConfigurationWidth = it }
+                        if (kept.hidden.isNotEmpty()) taskTreeSectionsHidden = kept.hidden
                     } else if (placements[id]?.visible == true && kept.splits.size == 2) {
                         searchSplits[id] =
                             org.example.project.ui.SearchSplits(
@@ -1163,8 +1170,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 val calendar =
                     org.example.project.ui.WindowSections(listOfNotNull(calendarConfigurationWidth), calendarSectionsHidden.orEmpty())
                         .takeIf { it.splits.isNotEmpty() || it.hidden.isNotEmpty() }
+                val taskTree =
+                    org.example.project.ui.WindowSections(listOfNotNull(taskTreeConfigurationWidth), taskTreeSectionsHidden.orEmpty())
+                        .takeIf { it.splits.isNotEmpty() || it.hidden.isNotEmpty() }
                 it.copy(
-                    config = CustomMenuButtons.encodeWindowSections(search + listOfNotNull(calendar?.let { c -> FloatingWindow.Calendar.name to c })),
+                    config =
+                        CustomMenuButtons.encodeWindowSections(
+                            search +
+                                listOfNotNull(
+                                    calendar?.let { c -> FloatingWindow.Calendar.name to c },
+                                    taskTree?.let { t -> FloatingWindow.TaskTree.name to t },
+                                ),
+                        ),
                 )
             }
         // The per-object windows (`popups.md`): each is about ONE object, and each kind is the list of its open
@@ -1198,6 +1215,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // PRD §14 "constrained in": the picker of the reminder (by id) a Search window's reminder editor asked it for.
         val reminderConstraintWindows = remember { ObjectWindows<String>() }
+        // User rule 2026-10-20: "link to a task of another tree", one window per task of the live tree.
+        val taskLinkWindows = remember { ObjectWindows<TaskId>() }
         // User rule 2026-10-01: an element's own edit window is a Search window holding that element alone — its
         // actions are that window's. Set once `openNewWindow` exists (below); the ☆ buttons reach it through
         // [openObjectWindow], which is declared before it.
@@ -1775,6 +1794,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     FloatingWindow.Search ->
                         listOf(search.left, search.topRight) to listOf(search.searchHidden, search.actionsHidden, search.addedHidden)
                     FloatingWindow.Calendar -> listOfNotNull(calendarConfigurationWidth) to calendarSectionsHidden.orEmpty()
+                    FloatingWindow.TaskTree -> listOfNotNull(taskTreeConfigurationWidth) to taskTreeSectionsHidden.orEmpty()
                     else -> emptyList<Float>() to emptyList()
                 }
             return org.example.project.ui.WindowLayout(frame.offset.x, frame.offset.y, frame.size.width, frame.size.height, splits, hidden)
@@ -2283,6 +2303,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         FloatingWindow.Calendar -> {
                             saved.splits.firstOrNull()?.let { calendarConfigurationWidth = it }
                             if (saved.hidden.isNotEmpty()) calendarSectionsHidden = saved.hidden
+                        }
+                        FloatingWindow.TaskTree -> {
+                            saved.splits.firstOrNull()?.let { taskTreeConfigurationWidth = it }
+                            if (saved.hidden.isNotEmpty()) taskTreeSectionsHidden = saved.hidden
                         }
                         else -> Unit
                     }
@@ -3975,6 +3999,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 onSetEditTask = { it?.let { id -> openElementSearch(SearchDomain.Kind.Task, id.value) } },
                                 onSetEditCategory = { it?.let { id -> openElementSearch(SearchDomain.Kind.Category, id.value) } },
                                 onSetDeepCopyCell = { deepCopyWindows.setFrom(template = false, it) },
+                                onLinkTask = { taskLinkWindows.open(it) },
+                                configurationWidthDp = taskTreeConfigurationWidth,
+                                onConfigurationWidthChange = {
+                                    taskTreeConfigurationWidth = it
+                                    saveWindowSections()
+                                },
+                                sectionsHidden = taskTreeSectionsHidden,
+                                onSectionsHiddenChange = {
+                                    if (it != (taskTreeSectionsHidden ?: listOf(false, false))) {
+                                        taskTreeSectionsHidden = it
+                                        saveWindowSections()
+                                    }
+                                },
                             )
                             }
                     }
@@ -4662,6 +4699,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // "+ New reminder" moves it on), and closes itself once the row is gone — one rule, in one place.
                     // PRD §14 "constrained in": the picker a Search window's reminder editor opened, on one reminder. It writes
                     // that reminder's constraint into the account's list, the editor's own write.
+                    ObjectWindowsHost(taskLinkWindows) { w ->
+                        // A task the live tree no longer holds (deleted, or another tree selected) has nothing to link.
+                        if (schedulerState.cells.values.none { it.taskId == w.subject }) {
+                            w.close()
+                        } else {
+                            org.example.project.ui.TaskLinkWindow(
+                                state = schedulerState,
+                                taskId = w.subject,
+                                onLink = { treeId, otherTaskId ->
+                                    vm.dispatch(SchedulerIntent.LinkTask(w.subject, treeId, otherTaskId))
+                                    w.close()
+                                },
+                                onDismiss = w::close,
+                            )
+                        }
+                    }
                     ObjectWindowsHost(reminderConstraintWindows) { w ->
                         // One reminder's id, or several joined by a line break (the Search window's "Constrained in",
                         // over every added reminder at once): what is saved, all of them get.

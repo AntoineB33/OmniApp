@@ -1124,6 +1124,12 @@ data class SchedulerState(
      */
     val taskRelations: Map<TaskRelationKey, TaskRelationMark> = emptyMap(),
     /**
+     * The links between the task trees' tasks ([org.example.project.scheduler.model.TaskLink], user rule 2026-10-20) —
+     * a copied tree's tasks to the ones they copy, and the links set by hand. Authoritative, synced; a payload written
+     * before links existed holds none, and its trees' shared ids are linked by being the same.
+     */
+    val taskLinks: List<org.example.project.scheduler.model.TaskLink> = emptyList(),
+    /**
      * PRD §7 **"Switch task"**: the standing refusal the lateral-menu button (and its `Ctrl+Shift+Alt+Z`
      * chord) records — "the now-line is on this task; start something else here". See [ForcedTaskSwitch]
      * for why it is stated as the walk's `last` rather than as a ban, and for when it stops being live.

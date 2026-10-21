@@ -11,6 +11,53 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Task trees: own task ids, linked across trees; the selector lists every tree — 2026-10-20
+
+Anomaly: *"I entered edit mode in the Task Tree title field, selected tree-2026-10-20, but it didn't empty the task tree.
+Then … the previous title wasn't showing anymore in the id suggestion list."* The user's account held `tree-2026-08-20`
+and `tree-2026-10-20` (created then, as a copy). Two answers:
+- **The selector's menus filtered by the open tree's own name**, which the field holds on entering edit mode — every
+  other tree was hidden until the field was cleared. That name now filters nothing (`taskTreeMenuQuery`).
+- **A new tree stays a copy** (user's choice), but user rule: *"The task ids are not the same, but add a right-click
+  option to a task cell to associate it to a task id that is only used to link one task id per task tree … When creating
+  a new task tree, the task ids are already linked to the task ids they are the copy of."* `CreateTaskTree` now copies
+  under NEW ids linked to the originals (`TaskLinks`); the cell menu's **"link to a task of another tree…"** opens a
+  window (`TaskLinkWindow`): a tree, then one of its tasks, with an error where another task of this tree is already
+  linked to it. The task-tree timeline blends a link group as one task (`TaskLinks.inLinkSpace` in `datedTaskTrees`).
+  New authoritative field `SchedulerState.taskLinks` (persisted, synced one row per link, merged per task; a payload
+  without it decodes to none — trees that shared ids are linked by being the same id). An account whose tree on screen
+  is in no entry yet still names it rather than copying it.
+
+### The task tree window's line is dragged even beside a retracted section — 2026-10-20
+
+Anomaly: *"The separation line is still not draggable."* The user's window had the tree retracted (`WindowSections`:
+`"TaskTree":{"hidden":[true,false]}`), and beside a retracted section the line was a plain divider — the calendar's and
+the Search window's rule. In the task tree window the line is now always the dragged one: a drag out of a retracted
+section brings it back at the width the drag gives it, in the same gesture. `TaskTreeSectionsTest` drives it through the
+real window frame with mouse events (both directions; out of either retracted section).
+
+### The task tree window's sections retract and resize — 2026-10-20
+
+User rule: *"In the task tree window, do the same as in the Search window or the calendar window for the sections:
+retractable, resizable…"* The window's two sections — the tree and the configuration — each have a head ("Task tree",
+"Configuration") whose arrow or title retracts the section to its arrow, and the line between them is dragged
+(`SectionSeparator`) up to the edges; a squeezed section is cut, never wrapped (`keepsWidthAbove`). The configuration's
+width and which sections are retracted are kept as the calendar's are: on the `WindowSections` row under `TaskTree`
+(local-only view state), and in a lateral-menu button's layout of the window.
+
+### The root row is as wide as every other row — 2026-10-20
+
+User rule: *"I want the root cell to be as wide as all the others. This way, the user can easily scroll up by quickly
+clicking on the cell that appears on top."* The root strip (PRD §2) was content-wide — the arrow alone was a target —
+so a click right of its arrow missed it. It now fills the row like every cell; it still shows only the arrow.
+
+### A click on the root row selects it — 2026-10-19
+
+User rule: *"Clicking on the root cell in the task tree window should select it and scroll up to max like any other task
+cell."* The root row (PRD §2) took no click. It now becomes the main selection (alone: no range, no Ctrl set) and the
+tree's reveal scrolls it to the top. It stays unselectable for every action on the selection (`isSelectableCell`), so a
+selected root is never edited, emptied, cut, pasted onto, moved or drag-selected from; ↓/Tab go to the first row.
+
 ### The Claude Code logs stay in the account's memory — 2026-10-19
 
 User rule: *"when the program gets logs from the local folder, it stays in the account's memory. If the folder got

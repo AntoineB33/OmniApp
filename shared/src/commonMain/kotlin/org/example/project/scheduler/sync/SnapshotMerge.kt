@@ -88,6 +88,9 @@ object SnapshotMerge {
             mergeKeyedList(base.hiddenPanels, local.hiddenPanels, remote.hiddenPanels, { it.id }) { b, l, r -> pick(b, l, r) }
         val chores =
             mergeKeyedList(base.chores, local.chores, remote.chores, ChoreEntry::id) { b, l, r -> pick(b, l, r) }
+        // User rule 2026-10-20: the links between the trees' tasks, one per task — a link set on each device keeps both.
+        val taskLinks =
+            mergeKeyedList(base.taskLinks, local.taskLinks, remote.taskLinks, { it.taskId.value }) { b, l, r -> pick(b, l, r) }
         val alarms =
             mergeKeyedList(base.alarms, local.alarms, remote.alarms, AlarmEntry::id) { b, l, r -> pick(b, l, r) }
         // PRD §18 Timers: whole objects, like the alarms. A timer's settings and its run state are not
@@ -149,6 +152,7 @@ object SnapshotMerge {
                     pickNullable(base.activeTaskTreeId, local.activeTaskTreeId, remote.activeTaskTreeId),
                 panels = panels,
                 hiddenPanels = hiddenPanels,
+                taskLinks = taskLinks,
                 chores = chores,
                 alarms = alarms,
                 timers = timers.map(org.example.project.scheduler.domain.TimerDomain::healed),

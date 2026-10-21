@@ -51,27 +51,72 @@ class RootCellTest {
         assertTrue(order.size > 1, "and the tree under it")
     }
 
-    /** PRD §3: it cannot be selected, edited or reached with the keyboard. */
+    private fun click(s: SchedulerState, cell: CellId, ctrl: Boolean = false, shift: Boolean = false) =
+        SchedulerReducer.reduce(
+            s,
+            SchedulerIntent.ClickCell(cellId = cell, ctrl = ctrl, shift = shift, visibleOrder = SchedulerDomain.selectableVisibleOrder(s)),
+        )
+
+    /**
+     * User rule 2026-10-19: *"clicking on the root cell should select it and scroll up to max like any other task cell"*
+     * — a click makes it the main selection, ALONE; it is still no cell of a range, of Ctrl+A or of the keyboard order.
+     */
     @Test
-    fun the_root_row_is_never_selectable() {
+    fun a_click_selects_the_root_row_alone() {
         val (s, _) = tree()
-        assertFalse(SchedulerDomain.isSelectableCell(s, WellKnownIds.ROOT_CELL))
+        assertFalse(SchedulerDomain.isSelectableCell(s, WellKnownIds.ROOT_CELL), "still nothing to act on")
         assertFalse(WellKnownIds.ROOT_CELL in SchedulerDomain.selectableVisibleOrder(s))
 
-        // Neither a click nor Ctrl+A can put it in the selection.
-        val clicked =
-            SchedulerReducer.reduce(
-                s,
-                SchedulerIntent.ClickCell(
-                    cellId = WellKnownIds.ROOT_CELL,
-                    ctrl = false,
-                    shift = false,
-                    visibleOrder = SchedulerDomain.selectableVisibleOrder(s),
-                ),
-            )
-        assertNull(clicked.selection.main)
+        val clicked = click(s, WellKnownIds.ROOT_CELL)
+        assertEquals(WellKnownIds.ROOT_CELL, clicked.selection.main)
+        assertTrue(clicked.selection.selected.isEmpty(), "never part of a set")
+        assertEquals(WellKnownIds.ROOT_CELL, click(s, WellKnownIds.ROOT_CELL, ctrl = true).selection.main, "a Ctrl-click too")
+
+        // A Shift- or Ctrl-click from it is a plain click: no range grows out of the tree itself.
+        val notes = s.lists[s.rootListId]!!.cellIds[1]
+        val shifted = click(clicked, notes, shift = true)
+        assertEquals(notes, shifted.selection.main)
+        assertTrue(WellKnownIds.ROOT_CELL !in shifted.selection.selected)
+
         val all = SchedulerReducer.reduce(s, SchedulerIntent.SelectAllVisibleCells)
         assertFalse(WellKnownIds.ROOT_CELL in all.selection.selected)
+    }
+
+    /** With the root row selected, nothing the selection is acted on with touches the tree. */
+    @Test
+    fun the_selected_root_row_cannot_be_edited_emptied_cut_pasted_or_moved() {
+        val (s0, _) = tree()
+        val s = click(s0, WellKnownIds.ROOT_CELL)
+        val tree = s.captureTree()
+        val intents =
+            listOf(
+                SchedulerIntent.BeginEdit(WellKnownIds.ROOT_CELL),
+                SchedulerIntent.BeginEdit(WellKnownIds.ROOT_CELL, initialText = "x"),
+                SchedulerIntent.EmptySelectedCells,
+                SchedulerIntent.CutSelection,
+                SchedulerIntent.PasteTree("Pasted"),
+                SchedulerIntent.MoveSelectedCells(s.lists[s.rootListId]!!.cellIds[1], insertBefore = false),
+                SchedulerIntent.DragSelectCells(WellKnownIds.ROOT_CELL, s.lists[s.rootListId]!!.cellIds[1], SchedulerDomain.selectableVisibleOrder(s)),
+            )
+        for (intent in intents) {
+            val after = SchedulerReducer.reduce(s, intent)
+            assertEquals(tree, after.captureTree(), "$intent changed the tree")
+            assertNull(after.editSession, "$intent opened an edit")
+        }
+    }
+
+    /** ↓ and Tab from the root row go to the tree's first row; ↑ stays. */
+    @Test
+    fun the_keyboard_leaves_the_root_row_downwards() {
+        val (s0, _) = tree()
+        val s = click(s0, WellKnownIds.ROOT_CELL)
+        val first = SchedulerDomain.selectableVisibleOrder(s).first()
+        assertEquals(first, SchedulerReducer.reduce(s, SchedulerIntent.NavigateSelection(org.example.project.scheduler.state.SelectionNavigate.Next)).selection.main)
+        assertEquals(first, SchedulerReducer.reduce(s, SchedulerIntent.SelectFirstChild).selection.main)
+        assertEquals(
+            WellKnownIds.ROOT_CELL,
+            SchedulerReducer.reduce(s, SchedulerIntent.NavigateSelection(org.example.project.scheduler.state.SelectionNavigate.Previous)).selection.main,
+        )
     }
 
     /** Collapsing it collapses the tree — the row stays, everything under it goes. */

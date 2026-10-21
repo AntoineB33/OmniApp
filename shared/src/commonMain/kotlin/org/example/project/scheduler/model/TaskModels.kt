@@ -1184,6 +1184,16 @@ data class PriorityWeightPin(val cellId: CellId?, val column: Int)
 data class TaskRelationKey(val taskId: TaskId, val relativeTo: TaskId)
 
 /**
+ * User rule 2026-10-20: **a task linked to the tasks of the other task trees that stand for the same thing.** A copied tree
+ * gets NEW task ids (*"the task ids are not the same"*), each linked to the task it is the copy of; a task cell's
+ * right-click links it to a task of another tree by hand. [linkedTo] is the link's KEY — the id the group is known by —
+ * and a task with no link is its own key, which is how trees that shared ids before links existed stay linked. One task
+ * per tree per key (`SchedulerDomain.linkRefusal`). The task-tree timeline blends linked tasks as one
+ * (`SchedulerDomain.datedTaskTrees`). Authoritative: persisted and synced, one row per link; not an Undo/Redo unit.
+ */
+data class TaskLink(val taskId: TaskId, val linkedTo: TaskId)
+
+/**
  * PRD §5 the task-relations window: what the user has done with one [TaskRelationKey]. Three INDEPENDENT
  * facts, which is why this is not an enum — a pair can be filed by hand *and* have had its percentage
  * retargeted, and the window has to be able to say so.

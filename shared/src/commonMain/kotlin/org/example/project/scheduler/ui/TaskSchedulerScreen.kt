@@ -80,6 +80,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
+import org.example.project.ui.SECTION_SEPARATOR_THICKNESS
+import org.example.project.ui.SectionArrow
+import org.example.project.ui.SectionSeparator
+import org.example.project.ui.keepsWidthAbove
+import org.example.project.ui.togglesSection
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.Constraints
@@ -320,6 +325,18 @@ fun TaskSchedulerScreen(
     /** PRD §4: whether the default sub-tree's window is open, and its toggle — the button atop the configuration. */
     defaultSubtreeWindowOpen: Boolean = false,
     onToggleDefaultSubtree: () -> Unit = {},
+    /**
+     * User rule 2026-10-20 (*"do the same as in the Search window or the calendar window for the sections: retractable,
+     * resizable"*): the configuration section's width, in dp, where the window keeps one (null: [TASK_TREE_CONFIGURATION_WIDTH]),
+     * and each drag of the line told back.
+     */
+    configurationWidthDp: Float? = null,
+    onConfigurationWidthChange: (Float) -> Unit = {},
+    /** Which of the two sections — the tree, the configuration — are retracted to their arrow; each change told back. */
+    sectionsHidden: List<Boolean>? = null,
+    onSectionsHiddenChange: (List<Boolean>) -> Unit = {},
+    /** User rule 2026-10-20: opens the window linking a task to a task of another tree ([LocalTaskLinker]); null: not offered. */
+    onLinkTask: ((TaskId) -> Unit)? = null,
 ) {
     Perf.count("recompose.TaskSchedulerScreen")
     val state by vm.state.collectAsState()
@@ -366,12 +383,47 @@ fun TaskSchedulerScreen(
     // The window is two sections side by side: the task tree fills the whole left one, the configuration
     // (the default sub-tree's switch and button, then the task-tree name field) the whole right one — so the
     // configuration costs the tree none of its height, as the calendar's costs the week none of its own.
+    // User rule 2026-10-20: as the Search and calendar windows' sections — each retracted to its arrow and expanded
+    // again by it (or by its title), the line between them dragged, up to the edges. A way of looking at the window,
+    // kept by `App` with the window's other sections. The tree stays COMPOSED while retracted or squeezed (laid out at
+    // [TASK_TREE_MIN_WIDTH] at least and cut): its scroll, its selection and its edit session are its own.
+    var treeCollapsed by remember { mutableStateOf(sectionsHidden?.getOrNull(0) ?: false) }
+    var configurationCollapsed by remember { mutableStateOf(sectionsHidden?.getOrNull(1) ?: false) }
+    LaunchedEffect(sectionsHidden) {
+        sectionsHidden?.let {
+            treeCollapsed = it.getOrNull(0) ?: false
+            configurationCollapsed = it.getOrNull(1) ?: false
+        }
+    }
+    LaunchedEffect(treeCollapsed, configurationCollapsed) { onSectionsHiddenChange(listOf(treeCollapsed, configurationCollapsed)) }
+    var configurationWidth by remember { mutableStateOf(configurationWidthDp?.dp ?: TASK_TREE_CONFIGURATION_WIDTH) }
+    // Given from outside (a menu button putting its window back): taken; a drag tells it back.
+    LaunchedEffect(configurationWidthDp) { configurationWidthDp?.let { configurationWidth = it.dp } }
+    var sectionsWidthPx by remember { mutableStateOf(0) }
+    // The configuration's width as laid out — the whole room while the tree is retracted — which a drag starts from.
+    var configurationShownPx by remember { mutableStateOf(0) }
+    val sectionsDensity = LocalDensity.current
     Row(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface),
+            .background(MaterialTheme.colorScheme.surface)
+            .onSizeChanged { sectionsWidthPx = it.width },
     ) {
-        Box(Modifier.weight(1f).fillMaxHeight().padding(12.dp)) {
+        if (treeCollapsed) {
+            Column(Modifier.fillMaxHeight().padding(horizontal = 6.dp, vertical = 10.dp)) {
+                SectionArrow(collapsed = true, onToggle = { treeCollapsed = false })
+            }
+        }
+        Column(
+            Modifier
+                .then(if (treeCollapsed) Modifier.width(0.dp) else Modifier.weight(1f))
+                .fillMaxHeight()
+                .keepsWidthAbove(TASK_TREE_MIN_WIDTH)
+                .padding(12.dp),
+        ) {
+            TreeWindowSectionHead("Task tree", onCollapse = { treeCollapsed = true })
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+            androidx.compose.runtime.CompositionLocalProvider(LocalTaskLinker provides onLinkTask) {
             Perf.measure("compose.TaskTreeView") {
             TaskTreeView(
                 state = state,
@@ -413,16 +465,50 @@ fun TaskSchedulerScreen(
                 },
             )
             }
+            }
+            }
         }
-        VerticalDivider()
+        // Anomaly 2026-10-20 (*"the separation line is still not draggable"* — the tree was retracted, and the line beside
+        // a retracted section was a plain divider): the line is dragged whatever is retracted, and a drag out of a
+        // retracted section brings it back at the width the drag gives it. One call site in every case, so the gesture
+        // that expands a section goes on resizing it without a second press.
+        if (!(treeCollapsed && configurationCollapsed)) {
+            SectionSeparator(
+                vertical = true,
+                onDrag = { delta ->
+                    val room = (with(sectionsDensity) { sectionsWidthPx.toDp() } - SECTION_SEPARATOR_THICKNESS).coerceAtLeast(0.dp)
+                    // Where the line stands now: at the far left with the tree retracted, the far right with the configuration.
+                    val from =
+                        if (configurationCollapsed) 0.dp
+                        else if (treeCollapsed) with(sectionsDensity) { configurationShownPx.toDp() }
+                        else configurationWidth
+                    configurationWidth = (from - with(sectionsDensity) { delta.toDp() }).coerceIn(0.dp, room)
+                    treeCollapsed = false
+                    configurationCollapsed = false
+                    onConfigurationWidthChange(configurationWidth.value)
+                },
+            )
+        } else {
+            VerticalDivider()
+        }
+        if (configurationCollapsed) {
+            Column(Modifier.fillMaxHeight().padding(horizontal = 6.dp, vertical = 10.dp)) {
+                SectionArrow(collapsed = true, onToggle = { configurationCollapsed = false })
+            }
+        } else
         Column(
             modifier = Modifier
-                .width(TASK_TREE_CONFIGURATION_WIDTH)
+                // The whole window while the tree is retracted; else the width the line was dragged to. Narrowed, it
+                // is cut — laid out at its own width at least, never squeezed into wrapping.
+                .then(if (treeCollapsed) Modifier.weight(1f) else Modifier.width(configurationWidth))
                 .fillMaxHeight()
+                .onSizeChanged { configurationShownPx = it.width }
+                .keepsWidthAbove(TASK_TREE_CONFIGURATION_WIDTH)
                 .verticalScroll(rememberScrollState())
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            TreeWindowSectionHead("Configuration", onCollapse = { configurationCollapsed = true })
             // PRD §4: the top of the configuration section — the default sub-tree grafted under every new task,
             // its switch and its window (the lateral menu's button until 2026-09-25).
             org.example.project.ui.DefaultSubtreeControl(
@@ -477,6 +563,28 @@ fun TaskSchedulerScreen(
 
 /** How wide the task tree window's configuration section is — the task-tree name field and its menus. */
 private val TASK_TREE_CONFIGURATION_WIDTH = 320.dp
+
+/** The narrowest the tree is laid out at: squeezed further by the line, it is cut, never wrapped. */
+private val TASK_TREE_MIN_WIDTH = 240.dp
+
+/**
+ * A section's head in the task tree window, as the calendar's configuration has one: its arrow ([SectionArrow]) and its
+ * title, a press on either retracting the section (user rule 2026-10-13: the title is the arrow, [togglesSection]).
+ */
+@Composable
+private fun TreeWindowSectionHead(title: String, onCollapse: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SectionArrow(collapsed = false, onToggle = onCollapse)
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.togglesSection(onCollapse),
+        )
+    }
+}
 
 
 @Composable
@@ -606,7 +714,8 @@ internal fun CellListSection(
         val isRootRow = SchedulerDomain.isRootTask(cell.taskId)
         val showHighlight =
             SchedulerDomain.shouldShowSelectionHighlight(state.selection, cellId, renderVia, otherListVias)
-        val isMainSelection = selectable && showHighlight && state.selection.main == cellId
+        // The root row holds the selection when it was clicked (user rule 2026-10-19) — the main one, never in a range.
+        val isMainSelection = (selectable || isRootRow) && showHighlight && state.selection.main == cellId
         val isInSelectionRange = selectable && showHighlight
         val isEditing =
             !pinned && state.editSession?.let { it.cellId == cellId && it.renderVia == renderVia } ?: false
@@ -635,13 +744,14 @@ internal fun CellListSection(
         val menuTaskId = cellTaskId?.takeIf { selectable || isRootRow }
         val menuStartable = menuTaskId != null && SchedulerDomain.isLeafTask(state, menuTaskId)
         val menuHasTemplate = !state.defaultSubtreeIsEmpty
+        val taskLinker = LocalTaskLinker.current
         val cellMenu: TaskCellMenuActions? =
             if (menuTaskId == null || pinned) {
                 null
             } else {
                 remember(
                     menuTaskId, cellId, isRootRow, hasChildren, menuStartable, menuHasTemplate,
-                    onGoToTaskTree, onCopyTaskIdCell, onDeepCopyCell, onOpenTaskEdit, onIntent, onAddTasks,
+                    onGoToTaskTree, onCopyTaskIdCell, onDeepCopyCell, onOpenTaskEdit, onIntent, onAddTasks, taskLinker,
                 ) {
                     val taskId = menuTaskId
                     val addTargets = {
@@ -661,6 +771,7 @@ internal fun CellListSection(
                                 null
                             },
                         onEdit = if (isRootRow) null else ({ onOpenTaskEdit(taskId) }),
+                        onLink = taskLinker?.takeUnless { isRootRow }?.let { link -> { link(taskId) } },
                         calendarTaskId = taskId.takeUnless { isRootRow },
                         // PRD §7/§8: offered only where the surface is NOT the tree — the Search
                         // window's sub-trees today. Same entry, same name and the same RevealCell primitive the
@@ -707,6 +818,7 @@ internal fun CellListSection(
             isMainSelection = isMainSelection,
             isInSelectionRange = isInSelectionRange,
             selectable = selectable,
+            selectsOnClick = isRootRow,
             compact = isRootRow,
             isEditing = isEditing,
             hasChildren = hasChildren,
@@ -763,7 +875,7 @@ internal fun CellListSection(
                 onToggleMinTimeEdit(cellId)
             },
             onClick = { clicked, ctrl, shift, forceClearMulti ->
-                if (!selectable) return@TaskRow
+                if (!selectable && !isRootRow) return@TaskRow
                 onIntent(
                     SchedulerIntent.ClickCell(
                         cellId = clicked,
@@ -2693,14 +2805,20 @@ internal fun TaskRow(
     cellMenu: TaskCellMenuActions?,
     /**
      * PRD §2: draw this row as the **root strip** — the expand arrow and nothing else. No title column, no
-     * percentage, no minimum time, no categories, and the row does not stretch across the tree's width.
+     * percentage, no minimum time, no categories.
      *
      * It is the shape of the one row that names nothing the user wrote: the root stands for the whole tree,
      * so a title ("root") and a percentage (always 100 %) would be two labels stating what the row's
-     * POSITION already says, and a full-width band would read as a separator rather than as a cell. What is
-     * left is the arrow that collapses the tree and enough of a target to right-click.
+     * POSITION already says. It is as WIDE as every other row (user rule 2026-10-20: *"I want the root cell to be
+     * as wide as all the others. This way, the user can easily scroll up by quickly clicking on the cell that
+     * appears on top"*): the whole band is the target that selects it ([selectsOnClick]) and the right-click's.
      */
     compact: Boolean = false,
+    /**
+     * A row that is not [selectable] but still takes the selection on a click — the root row (user rule 2026-10-19).
+     * Only the click: no edit, no drag-select, no move start from it (the reducer refuses each for the root).
+     */
+    selectsOnClick: Boolean = false,
     /** PRD §5: clicking the percentage opens the sub-list's priority-weight window. */
     onTogglePriorityWeights: () -> Unit,
     /** PRD §5: the percentage's own right-click menu opens this cell's relative-priority window. */
@@ -2837,7 +2955,7 @@ internal fun TaskRow(
         when {
             // PRD §3: a cell being drag-moved gets a grey background (not mirrored elsewhere).
             isBeingMoved -> SheetColors.moveDragFill
-            !selectable -> SheetColors.nonSelectableFill
+            !selectable && !isMainSelection -> SheetColors.nonSelectableFill
             // PRD §3: the selection is said in the BACKGROUND — a grey for a cell of the selection, a darker
             // one for the main selection (user rule 2026-10-01). The task's own colour is not a background
             // here at all: it is the swatch under the expand arrow, so no fill ever hides it.
@@ -2875,7 +2993,7 @@ internal fun TaskRow(
 
     @OptIn(ExperimentalComposeUiApi::class)
     fun selectionPointerModifier(): Modifier {
-        if (!selectable || isEditing) return Modifier
+        if (!(selectable || selectsOnClick) || isEditing) return Modifier
         return Modifier
             .onGloballyPositioned { coords -> rowCoordinates.value = coords }
             // Keyed only by cellId so selection-driven flags (which change during the gesture's own
@@ -3020,8 +3138,9 @@ internal fun TaskRow(
         }
         Row(
             modifier = Modifier
-                // The root strip wraps its content instead: a full-width band would read as a separator.
-                .then(if (compact) Modifier else Modifier.fillMaxWidth())
+                // The root strip too (user rule 2026-10-20): as wide as every other row, so the row on top is a wide
+                // target — one quick click on it selects the root and scrolls the tree to its top.
+                .fillMaxWidth()
                 // PRD §2: guide-lines on the left illustrate the parent-child hierarchy.
                 .taskSheetGuideLines(depth)
                 .padding(start = (depth * INDENT_STEP_DP).dp)
@@ -3591,6 +3710,15 @@ internal fun TaskCellMenuItems(cellMenu: TaskCellMenuActions, close: () -> Unit)
             cellMenu.onDeepCopy?.invoke()
         },
     )
+    cellMenu.onLink?.let { link ->
+        DropdownMenuItem(
+            text = { Text("link to a task of another tree…") },
+            onClick = {
+                close()
+                link()
+            },
+        )
+    }
     cellMenu.onCollapseSubtrees?.let { collapseSubtrees ->
         DropdownMenuItem(
             text = { Text("collapse sub-trees") },
@@ -3650,7 +3778,16 @@ internal class TaskCellMenuActions(
     val onAdd: (() -> Unit)? = null,
     /** PRD §7 Search: [onAdd] with every element added before removed from the added elements; null elsewhere. */
     val onAddReplacing: (() -> Unit)? = null,
+    /** User rule 2026-10-20: "link to a task of another tree" — the account's tree window only ([LocalTaskLinker]); null elsewhere. */
+    val onLink: (() -> Unit)? = null,
 )
+
+/**
+ * The account's task tree window's answer to "link to a task of another tree" (user rule 2026-10-20): opens the link
+ * window on a task. Provided by [TaskSchedulerScreen] around its tree alone, so the Search window's sub-trees and the
+ * default sub-tree's window — whose rows are not the live tree's own tasks to link — do not offer it.
+ */
+internal val LocalTaskLinker = androidx.compose.runtime.compositionLocalOf<((TaskId) -> Unit)?> { null }
 
 /** The Search window's row-menu entry that adds while removing every other added element — one name in both menus. */
 const val ADD_REPLACING_LABEL: String = "add and remove the others"

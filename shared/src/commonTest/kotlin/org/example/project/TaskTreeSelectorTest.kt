@@ -264,6 +264,27 @@ class TaskTreeSelectorTest {
         assertEquals(treeIdOf(s, "Work"), rows[2].id)
     }
 
+    /**
+     * Anomaly 2026-10-20: entering edit mode puts the open tree's name in the field, and the menus filtered by it —
+     * the other trees ("tree-2026-08-20" beside an open "tree-2026-10-20") were gone from both until the field was
+     * cleared. The open tree's own name filters nothing; anything else typed does.
+     */
+    @Test
+    fun the_open_trees_own_name_in_the_field_lists_every_tree() {
+        var s = stateWithTask("Alpha")
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("tree-2026-08-20"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("tree-2026-10-20"))
+        assertEquals("tree-2026-10-20", s.activeTaskTree?.title)
+
+        assertEquals(
+            listOf(TODAY, "New task tree", "tree-2026-08-20", "tree-2026-10-20"),
+            SchedulerDomain.taskTreeMenuEntries(s, "tree-2026-10-20", TODAY).map { it.label },
+        )
+        assertEquals(listOf("tree-2026-08-20", "tree-2026-10-20"), SchedulerDomain.taskTreeTitleSuggestions(s, "tree-2026-10-20"))
+        // Typed: it filters as before.
+        assertEquals(listOf("tree-2026-08-20"), SchedulerDomain.taskTreeTitleSuggestions(s, "08"))
+    }
+
     @Test
     fun todays_tree_is_offered_once_and_as_itself_when_it_already_exists() {
         // "Always show tree-<today>" must not become a second row for a tree that is already there, nor an

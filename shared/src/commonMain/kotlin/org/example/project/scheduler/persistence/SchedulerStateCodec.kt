@@ -622,6 +622,8 @@ object SchedulerStateCodec {
                             hidden = mark.hidden,
                         )
                     },
+            // User rule 2026-10-20: one row per link (`id` is the task, so the row sync keys it), sorted for the fingerprint.
+            taskLinks = taskLinks.sortedBy { it.taskId.value }.map { PersistedTaskLink(id = it.taskId.value, linkedTo = it.linkedTo.value) },
             showScreenBreaks = showScreenBreaks,
             planCalculationLimitSeconds = planCalculationLimitSeconds,
             soundMuted = soundMuted,
@@ -1306,6 +1308,12 @@ object SchedulerStateCodec {
                             hidden = entry.hidden,
                         )
                 },
+            // A payload written before links existed holds none (its trees' shared ids are linked by being the same);
+            // a link to itself says nothing and is dropped, and a task linked twice keeps its last link.
+            taskLinks =
+                taskLinks.filter { it.id.isNotBlank() && it.linkedTo.isNotBlank() && it.id != it.linkedTo }
+                    .associateBy { it.id }.values
+                    .map { org.example.project.scheduler.model.TaskLink(TaskId(it.id), TaskId(it.linkedTo)) },
             showScreenBreaks = showScreenBreaks,
             // Healed into its bounds: an older payload has none (two minutes), a hand-edited one may hold anything.
             planCalculationLimitSeconds =
@@ -1753,6 +1761,8 @@ private data class PersistedState(
     // PRD §5: the task-relations window's pairs; a missing list decodes to none (payloads written before
     // the window existed).
     val taskRelations: List<PersistedTaskRelation> = emptyList(),
+    // User rule 2026-10-20: the links between the task trees' tasks; a missing list decodes to none.
+    val taskLinks: List<PersistedTaskLink> = emptyList(),
     // PRD §15: screen breaks are hidden by default, so payloads written before the display toggle existed
     // (and any that omit the field) decode with the switch off. Migration: DBs written under the old name
     // (the legacy "side tasks") stored this as `showSideTasks`; [JsonNames] lets those still decode into this
@@ -2010,6 +2020,10 @@ private data class PersistedPriorityWeightPin(
     val cellId: String = "",
     val column: Int = 0,
 )
+
+/** User rule 2026-10-20: one task's link ([org.example.project.scheduler.model.TaskLink]); [id] is the task, so it is one synced row. */
+@Serializable
+private data class PersistedTaskLink(val id: String = "", val linkedTo: String = "")
 
 /**
  * PRD §5 the task-relations window: one (task, relational target) pair and what the user has done with it.

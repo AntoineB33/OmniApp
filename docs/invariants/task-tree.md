@@ -8,8 +8,12 @@ Global rules that always apply: `CLAUDE.md`.
 ### The task-tree timeline
 
 - A dated tree is a **keyframe**; between two, the scheduler follows a linear blend, not the tree on screen.
-- Identity is the `TaskId`; a task absent from a keyframe is **0 %** there. The leaves are the **union** of
-  both keyframes.
+- Identity is the **link group** (`TaskLinks`, user rule 2026-10-20): each tree's tasks are its own ids, and a task is
+  linked to the tasks of the other trees that stand for the same thing — a created tree's copies to what they copy,
+  others by the cell's "link to a task of another tree…". `datedTaskTrees` hands every keyframe over with each group
+  under ONE id (`TaskLinks.inLinkSpace`: the live tree's, else the first keyframe's), so everything below still keys by
+  `TaskId`. A task with no link is its own key — trees that shared ids before links existed stay linked. A task absent
+  from a keyframe is **0 %** there. The leaves are the **union** of both keyframes.
 - **The whole RULE STATE blends, not just the percentages**: `side-dev/README.md` names *"priority percentages,
   minimum execution time and resilience values"*, and all three travel (`blendedTaskAttributes`). The other two
   used to be read off the LIVE tree at every instant, so a task sitting exactly ON a keyframe was scheduled with
@@ -48,13 +52,20 @@ Global rules that always apply: `CLAUDE.md`.
   task row, one thing decides the visible order, and the expansion set answers for it as for any other parent —
   collapsing it collapses the tree. Every drawing starts at `displayRootListId`, never at `rootListId`.
 - **It is drawn COMPACT** (`TaskRow`'s `compact`): the expand arrow and nothing else — no title column, no
-  percentage, no minimum time, no categories, and no `fillMaxWidth`. It names nothing the user wrote, so a
-  title and a percentage would restate what the row's position says, and a full-width band would read as a
-  separator. Do not give it a column back "for alignment": the tree's columns are shared by a **sub-list**,
-  and the root row is the only member of its own.
+  percentage, no minimum time, no categories. It names nothing the user wrote, so a title and a percentage would
+  restate what the row's position says. Do not give it a column back "for alignment": the tree's columns are
+  shared by a **sub-list**, and the root row is the only member of its own. **It is as wide as every other row**
+  (user rule 2026-10-20, reversing the content-wide strip): the whole band on top of the tree is the target a
+  quick click selects it by, which scrolls the tree to its top.
 - **It is the one cell that is not selectable and still has a contextual menu** (PRD §13), which is most of
   what the row is for. `TaskCellMenuActions.onEdit` is therefore **nullable** — the root has no task to edit
   — and the cell menu is gated on `selectable || isRootRow`, never on `selectable` alone.
+- **A click still SELECTS it** (user rule 2026-10-19: *"clicking on the root cell should select it and scroll up to
+  max like any other task cell"*): it becomes the main selection — alone, never in a range, a Ctrl set or Ctrl+A —
+  and the tree's reveal brings it to the top. `isSelectableCell` stays **false** for it: that is the guard every
+  action on the selection asks (edit, empty, cut, paste, move, drag-select), so a selected root acts on nothing.
+  `TaskRow.selectsOnClick` takes the click, anywhere on its full-width band; a Shift/Ctrl-click from it is a plain click; ↓ and Tab leave it for the
+  tree's first row (`RootCellTest`).
 - **`rootListId` did not move onto it.** That field names the list of the tree's *top-level tasks*, and it is
   what the priority walk, the colour ring, the category scopes and the path labels all mean by "the root".
   The root cell is reached the other way round — it is the root list's `parentCellId`, and a **null** there is
@@ -1446,6 +1457,11 @@ until it is applied to a real cell.
 ### Task trees are live alternatives, not backups
 
 - `SelectTaskTree` **flushes** the live tree into the entry being left before loading the target.
+- **`CreateTaskTree` copies the tree on screen under NEW task ids** (`TaskLinks.copyWithFreshIds`), each linked to the
+  task it copies, and loads the copy; a task no cell holds keeps its id. One task per tree per link group
+  (`TaskLinks.refusal`, said in the link window before the user confirms). Links are synced rows, not Undo/Redo units,
+  pruned of tasks no tree holds whenever links are written; the task relations and relative-priority pins stay with
+  the tasks they were filed on.
 - Stored snapshots **keep records** (`captureTreeWithRecords`); id counters take the **max** of both sides.
 - All three mutation intents commit one `TaskTreeDelta` into the **Main** history.
 - Identity-menu rows are told apart by `TaskTreeMenuEntry.Kind`, **never by `id == null`**.
