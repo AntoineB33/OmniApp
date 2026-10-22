@@ -83,6 +83,7 @@ import androidx.compose.ui.Alignment
 import org.example.project.ui.SECTION_SEPARATOR_THICKNESS
 import org.example.project.ui.SectionArrow
 import org.example.project.ui.SectionSeparator
+import org.example.project.ui.sectionWidth
 import org.example.project.ui.keepsWidthAbove
 import org.example.project.ui.togglesSection
 import androidx.compose.ui.Modifier
@@ -485,8 +486,8 @@ fun TaskSchedulerScreen(
                     configurationWidth = (from - with(sectionsDensity) { delta.toDp() }).coerceIn(0.dp, room)
                     treeCollapsed = false
                     configurationCollapsed = false
-                    onConfigurationWidthChange(configurationWidth.value)
                 },
+                onDragEnd = { onConfigurationWidthChange(configurationWidth.value) },
             )
         } else {
             VerticalDivider()
@@ -500,7 +501,7 @@ fun TaskSchedulerScreen(
             modifier = Modifier
                 // The whole window while the tree is retracted; else the width the line was dragged to. Narrowed, it
                 // is cut — laid out at its own width at least, never squeezed into wrapping.
-                .then(if (treeCollapsed) Modifier.weight(1f) else Modifier.width(configurationWidth))
+                .then(if (treeCollapsed) Modifier.weight(1f) else Modifier.sectionWidth { configurationWidth })
                 .fillMaxHeight()
                 .onSizeChanged { configurationShownPx = it.width }
                 .keepsWidthAbove(TASK_TREE_CONFIGURATION_WIDTH)

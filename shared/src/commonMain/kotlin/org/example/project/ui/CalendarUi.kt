@@ -4174,6 +4174,8 @@ fun CalendarFloatingWindow(
         // Given from outside (a menu button putting its window back): taken; a drag tells it back.
         LaunchedEffect(configurationWidthDp) { configurationWidthDp?.let { configurationWidth = it.dp } }
         var sectionsWidthPx by remember { mutableStateOf(0) }
+        // The configuration's width as laid out — the whole room while the grid is retracted — which a drag starts from.
+        var configurationShownPx by remember { mutableStateOf(0) }
         val sectionsDensity = LocalDensity.current
         Row(Modifier.weight(1f).fillMaxWidth().onSizeChanged { sectionsWidthPx = it.width }) {
             if (gridCollapsed) {
@@ -4225,15 +4227,25 @@ fun CalendarFloatingWindow(
                     }
                 }
             }
-            if (!gridCollapsed && !configurationCollapsed) {
+            // Anomaly 2026-10-21 (*"the line must be draggable even if its section got minimized"*): as the task tree
+            // window's — the line is dragged whatever is retracted, and a drag out of a retracted section brings it back
+            // at the width the drag gives it.
+            if (!(gridCollapsed && configurationCollapsed)) {
                 SectionSeparator(
                     vertical = true,
                     onDrag = { delta ->
                         val room = with(sectionsDensity) { sectionsWidthPx.toDp() } - SECTION_SEPARATOR_THICKNESS
+                        // Where the line stands now: at the far left with the grid retracted, the far right with the configuration.
+                        val from =
+                            if (configurationCollapsed) 0.dp
+                            else if (gridCollapsed) with(sectionsDensity) { configurationShownPx.toDp() }
+                            else configurationWidth
                         configurationWidth =
-                            (configurationWidth - with(sectionsDensity) { delta.toDp() }).coerceIn(0.dp, room.coerceAtLeast(0.dp))
-                        onConfigurationWidthChange(configurationWidth.value)
+                            (from - with(sectionsDensity) { delta.toDp() }).coerceIn(0.dp, room.coerceAtLeast(0.dp))
+                        gridCollapsed = false
+                        configurationCollapsed = false
                     },
+                    onDragEnd = { onConfigurationWidthChange(configurationWidth.value) },
                 )
             } else {
                 VerticalDivider()
@@ -4248,7 +4260,8 @@ fun CalendarFloatingWindow(
             } else
             CalendarConfigurationSection(
                 // The whole window while the grid is retracted; else the width the line was dragged to.
-                modifier = if (gridCollapsed) Modifier.weight(1f) else Modifier.width(configurationWidth),
+                modifier = (if (gridCollapsed) Modifier.weight(1f) else Modifier.sectionWidth { configurationWidth })
+                    .onSizeChanged { configurationShownPx = it.width },
                 onCollapse = { configurationCollapsed = true },
                 sleepSchedule = sleepSchedule,
                 onSleepScheduleChange = onSleepScheduleChange,

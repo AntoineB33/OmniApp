@@ -1152,8 +1152,12 @@ suggestions before it was ever entered.
   elements** above the **added elements**. **Both separators are dragged** to share the room (user rule 2026-10-01,
   `SectionSeparator` + `draggedSplit`) — **up to the edges of the window** (user rule 2026-10-07: no least width or
   height any more; they were 220 dp and 90 dp). A section squeezed to an edge is CUT (`clipToBounds` on each section:
-  unclipped, its text wrapped letter by letter and drew over its neighbour) and keeps a share above 0
-  (`LEAST_SECTION_SHARE`: Compose refuses a weight of 0). **Narrowed, a section is cut, never squeezed** — its title
+  unclipped, its text wrapped letter by letter and drew over its neighbour). **A split is applied at layout and told
+  at the end of the drag** (anomaly 2026-10-21, *"the lines move slower than the mouse"*): the left and top-right
+  sections are sized by `sectionShare` (the share read in the layout phase, the other section weighted to the rest),
+  and `onSplitsChange` is called from the separator's `onDragEnd` — a split read in composition, or told at every step,
+  recomposed the whole window per pixel (~100 ms a step on a real account) and the line trailed the pointer. The same
+  holds for the calendar's and the task tree window's line (`sectionWidth`). **Narrowed, a section is cut, never squeezed** — its title
   too (user, the same day: "the titles … are still getting squished"): the three titles are ONE line that does not
   wrap (`softWrap = false`), and the result list and the added elements list are laid out at
   `COMPACT_SECTION_MIN_WIDTH` at least and cut at the section's edge (`keepsWidthAbove`), as the header and the
@@ -1162,7 +1166,10 @@ suggestions before it was ever entered.
   starting at half, never persisted. **Each section is retracted to its head and expanded again by a little arrow in
   it** (`SectionArrow`, the tree's own expansion arrow; user rule 2026-10-04; Compose-only like the splits): the search
   retracts to a strip as wide as its arrow, the two right sections to their title line; a retracted section gives its
-  room to its neighbour, and the separator between them (and the joint) goes with it. The actions section has no "All
+  room to its neighbour, and the joint goes with it — but **the line beside a retracted section is still dragged**
+  (anomaly 2026-10-21, as the task tree's and the calendar's): a drag of it brings the section back at the size the
+  drag gives it, from where the line stands, in the same gesture. Only a line between two retracted sections is a
+  plain divider. `SearchSectionsTest`. The actions section has no "All
   configurations" button any more — every action is listed in it. Every result row has a check box (Compose-only, like the selection),
   and so does every task cell of an expanded row's sub-tree (`TaskTreeView`'s `rowLeading`): one box per TASK
   key (`SearchDomain.taskKey`), so a task's cell and its own row show the same box. **TWO ways to add, never one

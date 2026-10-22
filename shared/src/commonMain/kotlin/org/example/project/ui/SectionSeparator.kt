@@ -17,8 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 
 /** How thick a section separator's grab strip is; the drawn line is 1 dp at its centre. */
 val SECTION_SEPARATOR_THICKNESS: Dp = 9.dp
@@ -30,10 +32,15 @@ val SECTION_SEPARATOR_THICKNESS: Dp = 9.dp
  * [vertical] is a line running top to bottom (two sections side by side), dragged sideways; otherwise the line
  * runs left to right and is dragged up and down. [onDrag] receives the movement along the drag axis in pixels;
  * the caller turns it into its own split. The drag is consumed, so it never also scrolls what is under it.
+ * [onDragEnd] is called once the button is released (or the drag cancelled): the moment to tell the split to the
+ * rest of the app. Anomaly 2026-10-21 (*"the lines move slower than the mouse"*): telling it at every step
+ * recomposed the whole window per pixel (~100 ms a step on a real account) and the line trailed the pointer —
+ * a split is applied with [sectionWidth] / [sectionShare], at layout, and told at the end.
  */
 @Composable
-fun SectionSeparator(vertical: Boolean, onDrag: (Float) -> Unit, modifier: Modifier = Modifier) {
+fun SectionSeparator(vertical: Boolean, onDrag: (Float) -> Unit, modifier: Modifier = Modifier, onDragEnd: () -> Unit = {}) {
     val latestDrag by rememberUpdatedState(onDrag)
+    val latestEnd by rememberUpdatedState(onDragEnd)
     Box(
         modifier = modifier
             .then(
@@ -42,7 +49,7 @@ fun SectionSeparator(vertical: Boolean, onDrag: (Float) -> Unit, modifier: Modif
             )
             .pointerHoverIcon(if (vertical) horizontalResizePointerIcon() else verticalResizePointerIcon())
             .pointerInput(vertical) {
-                detectDragGestures { change, delta ->
+                detectDragGestures(onDragEnd = { latestEnd() }, onDragCancel = { latestEnd() }) { change, delta ->
                     change.consume()
                     latestDrag(if (vertical) delta.x else delta.y)
                 }
@@ -66,14 +73,15 @@ val SECTION_JOINT_SIZE: Dp = 17.dp
  * [onDrag] receives the movement on both axes in pixels, x for the vertical line and y for the horizontal one.
  */
 @Composable
-fun SectionJoint(onDrag: (Offset) -> Unit, modifier: Modifier = Modifier) {
+fun SectionJoint(onDrag: (Offset) -> Unit, modifier: Modifier = Modifier, onDragEnd: () -> Unit = {}) {
     val latestDrag by rememberUpdatedState(onDrag)
+    val latestEnd by rememberUpdatedState(onDragEnd)
     Box(
         modifier = modifier
             .size(SECTION_JOINT_SIZE)
             .pointerHoverIcon(jointResizePointerIcon())
             .pointerInput(Unit) {
-                detectDragGestures { change, delta ->
+                detectDragGestures(onDragEnd = { latestEnd() }, onDragCancel = { latestEnd() }) { change, delta ->
                     change.consume()
                     latestDrag(delta)
                 }
@@ -90,4 +98,30 @@ fun draggedSplit(fraction: Float, deltaPx: Float, totalPx: Float, minPx: Float):
     if (totalPx <= 2 * minPx) return fraction
     val lo = minPx / totalPx
     return (fraction + deltaPx / totalPx).coerceIn(lo, 1f - lo)
+}
+
+/**
+ * A section [width] wide, the width READ AT LAYOUT: a dragged line changes it without recomposing the window
+ * (see [SectionSeparator]). Kept within what the parent offers.
+ */
+fun Modifier.sectionWidth(width: () -> Dp): Modifier = layout { measurable, constraints ->
+    val w = width().roundToPx().coerceIn(constraints.minWidth, constraints.maxWidth)
+    val placeable = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+    layout(w, placeable.height) { placeable.place(0, 0) }
+}
+
+/**
+ * A section taking [share] of the room its parent offers on the drag axis — that room less [reserved], the
+ * separator's own thickness — the share READ AT LAYOUT, as [sectionWidth]. [horizontal] sizes the width (sections
+ * side by side), otherwise the height. The room is the parent's offer to this section, so it must come FIRST in its
+ * row or column, the other section weighted to take the rest.
+ */
+fun Modifier.sectionShare(horizontal: Boolean, reserved: Dp, share: () -> Float): Modifier = layout { measurable, constraints ->
+    val max = if (horizontal) constraints.maxWidth else constraints.maxHeight
+    val room = (max - reserved.roundToPx()).coerceAtLeast(0)
+    val size = (share() * room).roundToInt().coerceIn(0, room)
+    val placeable = measurable.measure(
+        if (horizontal) constraints.copy(minWidth = size, maxWidth = size) else constraints.copy(minHeight = size, maxHeight = size),
+    )
+    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
 }

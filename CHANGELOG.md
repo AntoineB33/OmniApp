@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Section lines follow the mouse, and are dragged beside a retracted section — 2026-10-21
+
+Anomaly: *"In the Search window, the calendar window and the task tree window, dragging the separation lines is weird
+because the lines move slower than the mouse. Also, the line must be draggable even if its section got minimized."*
+- **Slower than the mouse**: the gesture's deltas were exact (`SectionSeparatorDragTest`), but each step changed a split
+  read in COMPOSITION and was told to `App` at once, so the whole window recomposed per pixel — ~110 ms a step in the
+  task tree window on the quota-scenario account, measured headlessly — and the line trailed the pointer. The split
+  is now read at layout (`sectionWidth` / `sectionShare` in `SectionSeparator.kt`) and told once, on the separator's
+  new `onDragEnd`: ~25 ms a step, the remainder being the two sections' own re-layout. `LEAST_SECTION_SHARE` is gone
+  with the weights it existed for.
+- **Beside a retracted section**: the calendar's and the Search window's lines (both of them) were plain dividers there.
+  They are now dragged as the task tree window's (2026-10-20): the drag brings the section back at the size it gives
+  it. `CalendarSectionsTest`, `SearchSectionsTest`.
+
 ### Task trees: own task ids, linked across trees; the selector lists every tree — 2026-10-20
 
 Anomaly: *"I entered edit mode in the Task Tree title field, selected tree-2026-10-20, but it didn't empty the task tree.

@@ -123,7 +123,9 @@ means.
   2026-10-07; `CalendarFloatingWindow`): each is retracted to its arrow and expanded again by it (`SectionArrow`; the
   grid's is in its top left corner, the configuration's before its title; each TITLE — the month label, "Configuration" —
   retracts its section too, `togglesSection`), and the line between them is dragged
-  (`SectionSeparator`), up to the edges. Compose-only, like the Search window's splits. **The grid stays composed**
+  (`SectionSeparator`), up to the edges — **also beside a retracted section** (anomaly 2026-10-21): the drag brings the
+  section back at the width it gives it (`CalendarSectionsTest`). The width is read at layout (`sectionWidth`) and told
+  at the end of the drag, never per step (the line trailed the pointer). Compose-only, like the Search window's splits. **The grid stays composed**
   while it is retracted or squeezed — laid out at `CALENDAR_GRID_MIN_WIDTH` at least and cut (`keepsWidthAbove`): its
   scroll and its zoom are its own, and a week laid out in no width is a case nothing else asks of it. The
   configuration is cut the same way below its own width, and takes the whole window while the grid is retracted.

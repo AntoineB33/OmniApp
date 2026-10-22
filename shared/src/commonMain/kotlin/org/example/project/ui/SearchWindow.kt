@@ -113,12 +113,6 @@ private val RESULT_ROW_HEIGHT: Dp = 34.dp
 /** Every row's kind section is this one width, so the names line up whatever the kinds (fits "restrictive period"). */
 private val KIND_SECTION_WIDTH: Dp = 104.dp
 
-/**
- * User rule 2026-10-07: **each section can be resized up to the edges of the window** — a dragged separator stops at
- * the edge, not at a least width or height of the section it squeezes (they were 220 dp and 90 dp). A section given
- * no room at all is still a weighted child: Compose refuses a weight of 0, so this is the least share one keeps.
- */
-private const val LEAST_SECTION_SHARE: Float = 0.0001f
 
 /** The narrowest the path box may be squeezed to by a long title — room for its arrow and a sliver of text. */
 private val MIN_PATH_BOX_WIDTH: Dp = 34.dp
@@ -701,18 +695,32 @@ fun SearchWindow(
       }
       var rowWidthPx by remember { mutableStateOf(0f) }
       var rightHeightPx by remember { mutableStateOf(0f) }
+      // The left section's width and the top right one's height as laid out (a retracted one: its head's), which a
+      // drag out of a retracted section starts from.
+      var leftShownPx by remember { mutableStateOf(0f) }
+      var topRightShownPx by remember { mutableStateOf(0f) }
+      // User rule 2026-10-07: each section is resized up to the edges of the window — no least width or height.
+      // Anomaly 2026-10-21 (*"the line must be draggable even if its section got minimized"*): a drag of the line beside
+      // a retracted section brings the section back at the size the drag gives it, from where the line stands.
       val dragLeftShare = { delta: Float ->
-          leftShare = draggedSplit(
-              leftShare, delta, rowWidthPx - separatorPx, minPx = 0f,
-          )
-          onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed))
+          val room = rowWidthPx - separatorPx
+          if (searchCollapsed && room > 0f) {
+              leftShare = (leftShownPx / room).coerceIn(0f, 1f)
+              searchCollapsed = false
+          }
+          leftShare = draggedSplit(leftShare, delta, room, minPx = 0f)
       }
       val dragTopRightShare = { delta: Float ->
-          topRightShare = draggedSplit(
-              topRightShare, delta, rightHeightPx - separatorPx, minPx = 0f,
-          )
-          onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed))
+          val room = rightHeightPx - separatorPx
+          if ((actionsCollapsed || addedCollapsed) && room > 0f) {
+              // The line stands under the actions as laid out: their head, or all the room the added elements' head leaves.
+              topRightShare = (topRightShownPx / room).coerceIn(0f, 1f)
+              actionsCollapsed = false
+              addedCollapsed = false
+          }
+          topRightShare = draggedSplit(topRightShare, delta, room, minPx = 0f)
       }
+      val tellSplits = { onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed)) }
       // User rule 2026-10-13: a row's right-click menu opens at the pointer in this window ([LocalRowMenusAtPointer]).
       // User rule 2026-10-18: the right-click this window came from, for every time field of its actions ([RightClickTimeButton]).
       androidx.compose.runtime.CompositionLocalProvider(
@@ -723,13 +731,14 @@ fun SearchWindow(
       Row(Modifier.fillMaxSize().onSizeChanged { rowWidthPx = it.width.toFloat() }) {
         if (searchCollapsed) {
             // Retracted: a strip as wide as its arrow, the whole height.
-            Column(Modifier.fillMaxHeight().padding(horizontal = 6.dp, vertical = 10.dp)) {
+            Column(Modifier.fillMaxHeight().onSizeChanged { leftShownPx = it.width.toFloat() }.padding(horizontal = 6.dp, vertical = 10.dp)) {
                 SectionArrow(collapsed = true, onToggle = { searchCollapsed = false })
             }
         } else
         Column(
             modifier = Modifier
-                .weight(leftShare.coerceAtLeast(LEAST_SECTION_SHARE))
+                // The share is read at layout: a dragged line re-lays the window out, it does not recompose it.
+                .sectionShare(horizontal = true, reserved = SECTION_SEPARATOR_THICKNESS) { leftShare }
                 .fillMaxHeight()
                 // A section squeezed to an edge shows nothing: cut, never spilled over its neighbour.
                 .clipToBounds()
@@ -1040,10 +1049,10 @@ fun SearchWindow(
             }
         }
 
-        if (!searchCollapsed) SectionSeparator(vertical = true, onDrag = dragLeftShare)
+        SectionSeparator(vertical = true, onDrag = dragLeftShare, onDragEnd = tellSplits)
 
         Column(
-            Modifier.weight(if (searchCollapsed) 1f else (1f - leftShare).coerceAtLeast(LEAST_SECTION_SHARE)).fillMaxHeight().clipToBounds().onSizeChanged { rightHeightPx = it.height.toFloat() },
+            Modifier.weight(1f).fillMaxHeight().clipToBounds().onSizeChanged { rightHeightPx = it.height.toFloat() },
         ) {
             // A retracted section is as tall as its head; the other takes the room, or — both retracted — neither.
             val bothOpen = !actionsCollapsed && !addedCollapsed
@@ -1067,11 +1076,19 @@ fun SearchWindow(
                 reveal = actionReveal,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (actionsCollapsed) Modifier else Modifier.weight(if (bothOpen) topRightShare.coerceAtLeast(LEAST_SECTION_SHARE) else 1f))
+                    .then(
+                        when {
+                            actionsCollapsed -> Modifier
+                            bothOpen -> Modifier.sectionShare(horizontal = false, reserved = SECTION_SEPARATOR_THICKNESS) { topRightShare }
+                            else -> Modifier.weight(1f)
+                        },
+                    )
+                    .onSizeChanged { topRightShownPx = it.height.toFloat() }
                     .clipToBounds()
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
-            if (bothOpen) SectionSeparator(vertical = false, onDrag = dragTopRightShare) else HorizontalDivider()
+            if (!(actionsCollapsed && addedCollapsed)) SectionSeparator(vertical = false, onDrag = dragTopRightShare, onDragEnd = tellSplits)
+            else HorizontalDivider()
             // --- The added elements (bottom right) ---------------------------------------------------
             AddedElementsList(
                 rows = addedRows,
@@ -1106,7 +1123,7 @@ fun SearchWindow(
                 onToggleCollapsed = { addedCollapsed = !addedCollapsed },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (addedCollapsed) Modifier else Modifier.weight(if (bothOpen) (1f - topRightShare).coerceAtLeast(LEAST_SECTION_SHARE) else 1f))
+                    .then(if (addedCollapsed) Modifier else Modifier.weight(1f))
                     .clipToBounds()
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
@@ -1121,6 +1138,7 @@ fun SearchWindow(
                   dragLeftShare(delta.x)
                   dragTopRightShare(delta.y)
               },
+              onDragEnd = tellSplits,
               modifier = Modifier.offset {
                   IntOffset(
                       (leftShare * (rowWidthPx - separatorPx) + separatorPx / 2f - jointHalfPx).roundToInt(),
