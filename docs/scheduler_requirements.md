@@ -44,7 +44,7 @@ Each task has a defined minimum execution time. Another optimization goal is to 
     * After the end of a 20s break, no 20s break in the next **20 minutes**.
     * After a $\ge 5$-minute of "no screen", no 5min break in the next **1 hour**.
     * After a $\ge 15$-minute of "no screen", no 15min break in the next **2 hours**.
-    * Where the five rules above allow a continuous chain of breaks, then the interval of the whole chain only contains one screen break, which is the longest screen break of the chain brought to the start of the interval.
+    * Where the five rules above allow a continuous chain of 5min and 15min breaks, then the interval of the whole chain only contains one screen break, which is the longest screen break of the chain brought to the start of the interval.
     * In a "no screen" period, if $t_b$ is in a screen break, where $t_b$ is the start of a screen break, and that $now line$ < $t_b$, then this screen break must now start at max($now line$, $t_s$), where $t_s$ is the start of the continuous "no screen" period, even if it contradicts with the five first screen break rules.
     * A 20s break can only be crossed by the $now line$ in mode 3.
 
