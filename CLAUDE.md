@@ -196,6 +196,7 @@ where a change spans them (they cross-reference each other).
 | `docs/invariants/persistence.md` | history units, the store, the SQLite driver and its pragmas | `scheduler/persistence/` |
 | `docs/invariants/alarms-and-timers.md` | alarms, timers, the arming loop and the ring sweep | `scheduler/domain/AlarmDomain.kt`, `TimerDomain.kt`, `ui/AlarmWindow.kt` |
 | `docs/invariants/shortcuts.md` | the four system-wide chords, rebinding, the hover hints | `ui/ShortcutsWindow.kt`, `ui/ShortcutHint.kt`, platform hot-key actuals |
+| `docs/invariants/line.md` | the line engine ported from `line_manager` (edits, reversal, rule adaptation, drags), its golden file | `scheduler/line/` |
 
 ---
 

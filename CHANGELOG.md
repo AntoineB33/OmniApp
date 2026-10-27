@@ -11,6 +11,33 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The line engine folds its past — 2026-10-23
+
+ADR 0018 phase 2, still engine-only (nothing in the app uses it). `FoldedLine` keeps what lies before the fold point
+(`foldPointMillis`: midnight UTC, 30 days back) as a plain record, held as `LineSystem.pin` — the newest level of every
+solve, so live edits adapt around it and one that would change the past is refused. An edit is cut at the point (flat
+before, live after); a fold rebuilds the replay with what is live (`LineSystem.restore`) and is not made if the line
+would differ. A replay now validates each edit with the record as its base, as it was made. `LineFoldTest` (11): 360
+random folds made, none changing the line. Measured on the way: ~100 ms per edit with ~60 live edits — the full
+re-solve per edit must become incremental before phase 3 (ADR 0018 § *Open*). No deploy needed.
+
+### The line engine: line_manager's reverse logic, ported — 2026-10-22
+
+User decision: *"I want the logic to be copied"* — `C:\code\line_manager\reverse_logic` (edits, their reversal, rule
+adaptation where the newest edit wins, drags; proofs in its `SEMANTICS.md`) ported as `scheduler/line/`: `Rational`
+(exact, `Long`, ±∞, throws on overflow), `Region` (with periodic tails and the canonical form), `LineRules`,
+`LineChoice` (ordered disjunctions, finite and infinite lattices), `LineEngine` (`LineSystem`, `Drag`). **Phase 1 of
+ADR 0018: nothing in the app uses it yet.** Decided for the later phases (ADR 0018): folding by timeline position at
+now − 30 days, edits before it applied flat, the merge ordered by creation date, a moved block on top (reverses the
+2026-10-17 `tm_level` rule once wired), a cross-device-dependent undo refused.
+- `LineReverseLogicTest`: `test_reverse_logic.py` test for test (39) + 2; the two infinite-agreement tests run 5 cases
+  by default (30 with `REVLOGIC_SEEDS=60`): the reference's infinite search is ~90 s for all 30 on the JVM.
+- `LineGoldenTest`: every step of the Python reference's own runs (`scripts/line-reverse-logic-golden.py` →
+  `resources/line/reverse-logic-golden.json`), outcome and line, region for region: 174 cases (the requirements'
+  examples, 160 random histories, 9 unbounded), 1128 steps, all reproduced. One unbounded case the reference itself
+  does not finish in 60 s is left out (listed in the file).
+- `docs/invariants/line.md`, `scheduler/line/CLAUDE.md`. No deploy needed: nothing reaches the app.
+
 ### Section lines follow the mouse, and are dragged beside a retracted section — 2026-10-21
 
 Anomaly: *"In the Search window, the calendar window and the task tree window, dragging the separation lines is weird

@@ -250,3 +250,13 @@ an install it doesn't manage (scoop/choco).
 Which installer you use is **machine-local** — the project only needs *some* `supabase` on PATH, already `login` +
 `link`ed. But what it forces is not: `deploy-supabase.bat` must keep `call supabase ...` everywhere, and the
 `db query` leading-`--` misparse stays.
+
+## `line-reverse-logic-golden.py [reference dir] [histories] [timeout s] [unbounded cases]`
+
+`python scripts/line-reverse-logic-golden.py` — rewrites `shared/src/jvmTest/resources/line/reverse-logic-golden.json`
+from the Python reference (`C:\code\line_manager\reverse_logic` by default; 160 histories, 60 s, 10 unbounded):
+random histories and unbounded cases run through it, every step's outcome and line recorded, for `LineGoldenTest`
+(`docs/invariants/line.md`). Each unbounded case runs alone in its own process, killed at the timeout — the
+reference's infinite search can take minutes and gigabytes (a parallel run of 40 was stopped for low memory) — and
+is then left out and listed in the file's `left_out`. ~1.5 min. Run it after a change to the reference, never to
+make the Kotlin test pass.
