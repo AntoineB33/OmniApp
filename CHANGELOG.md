@@ -11,6 +11,27 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search: a creation row has two types; a configuration's default sorting — 2026-10-30
+
+User rule: a creation row is of the creation kind AND of the kind it makes, so "New alarm" is listed whenever the alarms
+are checked (`SearchDomain.withCreatedKindRows`; not by a kind one of whose filters is on) and counts as an alarm in the
+configuration groups (`checkedKindOf`). A configuration may have a DEFAULT sorting (`defaultSortsOf`): one makeable kind
+and nothing else (no text, no filter) puts its creation row first (`SortKey.CreationFirst`). The sorting list's head (and the whole list's Sort by) has
+a "Default" button (grey where there is none); from the window's opening or that click until the user changes the
+sorting (`Config.sortFollowsDefault`, local-only, absent = following), each new configuration takes its default
+(`withDefaultSortFollowed`, in `App.setSearchConfig`; an undo puts back what was). `SearchDefaultSortTest`. Client
+rebuild only.
+
+Same day: the Claude Code logs' date is ONE sorting method about every row (`SortKey.Date`, offered on the logs' page),
+not one per kind — the three stacked methods each kept its kind in its own places, so the list was never one timeline.
+Logs-only configurations default to it, newest first (`CLAUDE_SORTS`); a stored `PromptDate`/`AnswerDate`/
+`ReasoningDate` decodes as it.
+
+2026-10-31: **the Search window is the same on both pages**; only the logs page's menu button differs, by what it checks
+(`pageDefaultConfig`). `pageKinds` is gone: both pages offer every kind, in the windows and their configurations
+windows, and Reset checks them all. `Config.page` only says where a window is drawn. A Search window checking a log
+kind makes the logs read on any page.
+
 ### The line engine folds its past — 2026-10-23
 
 ADR 0018 phase 2, still engine-only (nothing in the app uses it). `FoldedLine` keeps what lies before the fold point

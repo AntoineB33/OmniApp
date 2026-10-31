@@ -112,6 +112,7 @@ class TaskPathsAndCreationTest {
         val kinds = setOf(SearchDomain.Kind.Window)
         fun names(filters: SearchDomain.Filters) =
             SearchDomain.results(SchedulerState.empty(), kinds, "", filters = filters, windows = windows)
+                .filterNot { it.kind == SearchDomain.Kind.Creation }
                 .map { (it as SearchDomain.ItemResult).let { row -> row.name to row.detail } }
                 .toSet()
         // Every window: the two timers each, the closed Search; never a placeholder type.

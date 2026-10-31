@@ -175,7 +175,7 @@ class QuotaTest {
     @Test
     fun a_quota_is_a_search_result_with_its_own_actions() {
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetQuotas(listOf(weekly())))
-        val row = SearchDomain.results(s, setOf(SearchDomain.Kind.Quota), "").filterIsInstance<SearchDomain.ItemResult>().single()
+        val row = SearchDomain.results(s, setOf(SearchDomain.Kind.Quota), "").filterNot { it.kind == SearchDomain.Kind.Creation }.filterIsInstance<SearchDomain.ItemResult>().single()
         assertEquals("Read", row.name)
         assertTrue("40 pages" in row.detail && "repeats" in row.detail, row.detail)
         val actions = SearchDomain.addedActions("", setOf(SearchDomain.Kind.Quota)).single { it.first == SearchDomain.Kind.Quota }.second
@@ -260,7 +260,7 @@ class QuotaTest {
     fun the_title_action_edits_the_default_configurations_title() {
         val creation = SearchDomain.ItemResult(SearchDomain.Kind.Creation, SearchDomain.Kind.Quota.name, "New quota", "")
         var s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetQuotas(listOf(weekly())))
-        val quotaRow = SearchDomain.results(s, setOf(SearchDomain.Kind.Quota), "").single()
+        val quotaRow = SearchDomain.results(s, setOf(SearchDomain.Kind.Quota), "").filterNot { it.kind == SearchDomain.Kind.Creation }.single()
 
         val titles = SearchDomain.addedTitles(s, listOf(creation), SearchDomain.Kind.Quota)
         assertEquals(mapOf(SearchDomain.DEFAULT_CONFIGURATION_ID to "Quota"), titles, "the default's title is there to edit")
@@ -545,7 +545,7 @@ class QuotaTest {
         assertTrue(SearchDomain.AddedAction.QuotaAmount in quota.getValue(SearchDomain.Kind.Quota))
         // An element that exists is no creation row: no such group for it.
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetQuotas(listOf(weekly())))
-        val quotaRow = SearchDomain.results(s, setOf(SearchDomain.Kind.Quota), "").single()
+        val quotaRow = SearchDomain.results(s, setOf(SearchDomain.Kind.Quota), "").filterNot { it.kind == SearchDomain.Kind.Creation }.single()
         assertTrue(SearchDomain.Kind.Creation !in sections(listOf(quotaRow)))
 
         // One button per kind among the added rows, in the drop-down's order, each once.
@@ -556,7 +556,8 @@ class QuotaTest {
         // What it opens: that kind alone, nothing filtered, nothing added — so every quota is listed.
         val config = SearchDomain.kindSearchConfig(SearchDomain.Kind.Quota)
         assertEquals(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Quota)), config)
-        assertEquals(listOf("quota-0"), SearchDomain.results(s, config.kinds, config.query).map { (it as SearchDomain.ItemResult).id })
+        // …and its creation row, which is of the kind too (user rule 2026-10-30).
+        assertEquals(listOf("quota-0", SearchDomain.Kind.Quota.name), SearchDomain.results(s, config.kinds, config.query).map { (it as SearchDomain.ItemResult).id })
     }
 
     /** Anomaly 2026-10-04: an added "New quota" creation row showed Delete and Duplicate — actions of a quota that exists. */
@@ -564,7 +565,7 @@ class QuotaTest {
     fun a_creation_row_alone_shows_only_the_actions_that_edit_the_default_configuration() {
         val creation = SearchDomain.ItemResult(SearchDomain.Kind.Creation, SearchDomain.Kind.Quota.name, "New quota", "")
         val s = SchedulerReducer.reduce(SchedulerState.empty(), SchedulerIntent.SetQuotas(listOf(weekly())))
-        val quotaRow = SearchDomain.results(s, setOf(SearchDomain.Kind.Quota), "").single()
+        val quotaRow = SearchDomain.results(s, setOf(SearchDomain.Kind.Quota), "").filterNot { it.kind == SearchDomain.Kind.Creation }.single()
         fun quotaActions(added: List<SearchDomain.Result>) =
             SearchDomain.actionsFor(
                 SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added)),

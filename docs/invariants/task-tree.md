@@ -688,6 +688,19 @@ suggestions before it was ever entered.
   comparator that returns "tie" across kinds, which is not transitive and breaks the sort's contract. A row
   with no value for a key goes last in either direction. The keys that read more than one row (priorities,
   counts) are computed once per `results` and **only when a method asks for them** — never under the default.
+- **A creation row has two types** (user rule 2026-10-30): the creation kind and the kind it makes. It is listed when
+  either is checked, once (`withCreatedKindRows`), but not by a kind one of whose filters is on; listed by its made
+  kind, it counts as that kind in the configuration groups (`checkedKindOf`).
+- **A configuration's default sorting is read off the configuration, never off its sorting** (`defaultSortsOf`): one
+  makeable kind and nothing else — no text, no filter on — is creation row first (`CREATION_FIRST_SORTS`); every other
+  configuration has none, and the "Default" button — at the head of the sorting list, and on the General Sort by — is grey. `Config.sortFollowsDefault` is true from
+  the window's opening and each "Default" click until the user changes the sorting; while it is, every edit takes the
+  new configuration's default — through `withDefaultSortFollowed` in `App.setSearchConfig`, the one funnel, an undo
+  excepted. A configuration with no default keeps its sorting. The logs' kinds and nothing else default to **the date, newest first — ONE method about every row** (`SortKey.Date`): a date common to a
+  prompt, an answer and a reasoning chain is never three per-kind methods, which order each kind only in its own places.
+- **The Search window is the same on every page** (user rule 2026-10-31): same kinds, configurations and sorting
+  methods. A page differs only by what its menu button opens with (`pageDefaultConfig`); `Config.page` says where the
+  window is drawn and decides nothing else. A window checking a log kind has the logs read, wherever it stands.
 - **A history unit, a task tree, a task relation, a keyboard shortcut** are kinds too (`itemResults`): the
   unit's label (its id is its stack and its place in it, `historyUnitOf`), the tree's name, the Task relations
   window's OWN rows (`TaskRelationsDomain.rows` — never a second reading of the marks), the shortcut's action and

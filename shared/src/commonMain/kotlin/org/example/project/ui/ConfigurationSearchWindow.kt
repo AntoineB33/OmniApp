@@ -120,9 +120,7 @@ fun ConfigurationSearchWindow(
             calendarLayerKindsAt, schedulerRuns,
             claudeLogs,
         ) { SearchDomain.kindCountsInResults(state, config, windows, nowMillis(), calendarLayerKindsAt, schedulerRuns, claudeLogs) }
-    // Only the kinds of the Search window's page have sections ([SearchDomain.pageKinds]).
-    val pageKinds = SearchDomain.pageKinds(config.page)
-    val groups = SearchDomain.configurationGroups(own.query, own.kinds.filterTo(HashSet()) { it in pageKinds }, counts, own.onlyResultKinds, own.frozenKinds)
+    val groups = SearchDomain.configurationGroups(own.query, own.kinds, counts, own.onlyResultKinds, own.frozenKinds)
 
     // The calendar right-click the Search window came from, for the time fields drawn here ([RightClickTimeButton]).
     androidx.compose.runtime.CompositionLocalProvider(LocalCalendarClickMillis provides config.calendarClickMillis) {
@@ -161,7 +159,7 @@ fun ConfigurationSearchWindow(
                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
                         .revertsOnEscape(own.query) { onOwnChange(own.copy(query = it)) },
                 )
-                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) }, options = SearchDomain.pageKinds(config.page))
+                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
                 // This window's OWN search field and types; the Search window's configuration it lists is
                 // untouched (that window has its own Reset).
                 ResetButton(enabled = own.query.isNotEmpty() || own.kinds.isNotEmpty()) {
@@ -192,7 +190,9 @@ fun ConfigurationSearchWindow(
             HorizontalDivider()
 
             // --- The result section: the sorting methods in force, then the configurations -------------
-            SortMethodList(config.sorts) { onConfigChange(config.copy(sorts = it)) }
+            SortMethodList(config.sorts, SearchDomain.defaultSortApplied(config)?.let { applied -> { onConfigChange(applied) } }) {
+                onConfigChange(config.copy(sorts = it))
+            }
             // User rule 2026-10-14: typing in the bar brings the list back to its top.
             val resultScroll = rememberScrollState()
             ScrollsToTopWhenTyped(own.query, resultScroll)
@@ -361,7 +361,7 @@ private fun SettingEditor(
             )
         // The Search window's own type selector — a field with a drop-down — not a second drawing of it.
         SearchDomain.Setting.Types ->
-            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = SearchDomain.pageKinds(config.page))
+            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) })
         // The Search window's Reset, the same button with the same rule; this window's own Reset (top section)
         // clears this window's search instead.
         SearchDomain.Setting.ResetSearch -> {
@@ -535,7 +535,14 @@ private fun SettingEditor(
             }
         SearchDomain.Setting.WindowStatusSetting ->
             EnumPicker(SearchDomain.WindowStatus.entries, f.windowStatus, { it.label }) { filters(f.copy(windowStatus = it)) }
-        SearchDomain.Setting.SortResults,
+        // User rule 2026-10-30: the whole list's Sort by has the configuration's default sorting a click away —
+        // grey where the configuration has none (`SearchDomain.defaultSortsOf`).
+        SearchDomain.Setting.SortResults ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                SortMethodPicker(null, config.sorts) { onChange(config.copy(sorts = it)) }
+                val applied = SearchDomain.defaultSortApplied(config)
+                OutlinedTextButton("Default", enabled = applied != null) { applied?.let(onChange) }
+            }
         SearchDomain.Setting.TaskSort, SearchDomain.Setting.CategorySort, SearchDomain.Setting.PeriodSort,
         SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ChronoSort, SearchDomain.Setting.QuotaSort,
         SearchDomain.Setting.ReminderSort, SearchDomain.Setting.BlockSort,
@@ -608,10 +615,15 @@ private fun SortMethodPicker(
 /**
  * The sorting methods in force, dominant first: each row can be dragged to another place, its direction
  * flipped, and removed with its ✕. The dragged row follows the pointer and lands where it is released, the rows
- * it passed over each moving one place (`SearchDomain.movedSortMethod`).
+ * it passed over each moving one place (`SearchDomain.movedSortMethod`). Its heading has the configuration's
+ * "Default" button (user rule 2026-10-30) — [onDefault], null and grey where the configuration has no default.
  */
 @Composable
-private fun SortMethodList(sorts: List<SearchDomain.SortMethod>, onChange: (List<SearchDomain.SortMethod>) -> Unit) {
+private fun SortMethodList(
+    sorts: List<SearchDomain.SortMethod>,
+    onDefault: (() -> Unit)?,
+    onChange: (List<SearchDomain.SortMethod>) -> Unit,
+) {
     val current by rememberUpdatedState(sorts)
     val change by rememberUpdatedState(onChange)
     var dragged by remember { mutableStateOf<Int?>(null) }
@@ -621,7 +633,10 @@ private fun SortMethodList(sorts: List<SearchDomain.SortMethod>, onChange: (List
     val gap = COMPACT_ROW_GAP
     val gapPx = with(LocalDensity.current) { gap.toPx() }
     Column(verticalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth()) {
-        SectionTitle("Sort by — most dominant first")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            SectionTitle("Sort by — most dominant first")
+            OutlinedTextButton("Default", enabled = onDefault != null) { onDefault?.invoke() }
+        }
         if (sorts.isEmpty()) NoteText("No sorting method: the results keep their default order. Check one in a Sort by below.")
         sorts.forEachIndexed { index, method ->
             val isDragged = dragged == index

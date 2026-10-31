@@ -200,7 +200,7 @@ class SearchAddedElementsTest {
         val apple = taskWithTitle(s, "Apple")
         fun rows(filters: SearchDomain.Filters) =
             SearchDomain.results(s, setOf(SearchDomain.Kind.RestrictivePeriod), "", filters = filters, timeZone = TimeZone.UTC)
-                .map { (it as SearchDomain.ItemResult).id }
+                .filterNot { it.kind == SearchDomain.Kind.Creation }.map { (it as SearchDomain.ItemResult).id }
         val all = rows(SearchDomain.Filters())
         assertTrue(all.containsAll(listOf(PeriodKinds.NO_SCREEN, PeriodKinds.INACTIVITY, PeriodKinds.NO_COMPUTER_UNLOCKED)))
 
@@ -495,14 +495,15 @@ class SearchAddedElementsTest {
         val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task, SearchDomain.Kind.Alarm))
         val counts = SearchDomain.kindCountsInResults(s, config)
         val tasks = counts.getValue(SearchDomain.Kind.Task)
-        assertEquals(3, counts[SearchDomain.Kind.Alarm])
-        assertTrue(tasks > 0 && SearchDomain.Kind.Timer !in counts)
+        // The three alarms and "New alarm", a creation row listed — and counted — as an alarm (user rule 2026-10-30).
+        assertEquals(4, counts[SearchDomain.Kind.Alarm])
+        assertTrue(tasks > 0 && SearchDomain.Kind.Timer !in counts && SearchDomain.Kind.Creation !in counts)
 
         // Every element first (the configurations about the whole search), then the kinds by their rows.
         val all = SearchDomain.configurationGroups("", every, counts)
         assertEquals(null, all.first().kind)
-        assertEquals(tasks + 3, all.first().reach)
-        assertEquals("Every element  ·  ${tasks + 3}", all.first().title)
+        assertEquals(tasks + 4, all.first().reach)
+        assertEquals("Every element  ·  ${tasks + 4}", all.first().title)
         val byReach = all.drop(1).map { it.reach }
         assertEquals(byReach.sortedDescending(), byReach, "n decreasing")
         assertTrue(all.indexOfFirst { it.kind == SearchDomain.Kind.Task } < all.indexOfFirst { it.kind == SearchDomain.Kind.Timer })

@@ -21,6 +21,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
 import androidx.compose.runtime.CompositionLocalProvider
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -1325,14 +1326,25 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The configuration each Search window OPENED with — what its Reset goes back to, after cancelling it all
         // (`SearchDomain.resetConfig`). Compose-only: a window still open at a restart opened with what it held then.
         val searchOpenedConfigs = remember { mutableStateMapOf<String, SearchDomain.Config>() }
+        // The logs are read once they are wanted: on their page, or by a Search window that checks one of their kinds, on
+        // any page (user rule 2026-10-31: the window is the same on both). Off the composition, which a keystroke must not redo.
+        LaunchedEffect(Unit) {
+            androidx.compose.runtime.snapshotFlow { searchConfigs.values.any { config -> SearchDomain.CLAUDE_KINDS.any { it in config.kinds } } }
+                .first { it }
+            claudeLogsWanted = true
+        }
         fun searchConfigOf(id: String): SearchDomain.Config =
-            searchConfigs[id] ?: (SearchDomain.Config.decode(placements[id]?.config) ?: SearchDomain.Config())
+            // A window opened takes its configuration's default sorting while it follows it (user rule 2026-10-30).
+            searchConfigs[id] ?: SearchDomain.withDefaultSort(SearchDomain.Config.decode(placements[id]?.config) ?: SearchDomain.Config())
                 .also {
                     searchConfigs[id] = it
                     searchOpenedConfigs[id] = it
                 }
-        fun setSearchConfig(id: String, config: SearchDomain.Config) {
+        // [follow]: the default sorting is followed (`SearchDomain.withDefaultSortFollowed`) — by every edit, never by an
+        // undo, which puts back what was.
+        fun setSearchConfig(id: String, edited: SearchDomain.Config, follow: Boolean = true) {
             val before = searchConfigOf(id)
+            val config = if (follow) SearchDomain.withDefaultSortFollowed(before, edited) else edited
             if (config == before) return
             searchConfigs[id] = config
             updatePlacementById(id) { it.copy(config = config.encode()) }
@@ -1565,7 +1577,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         restore.key.startsWith(SEARCH_KEY) -> {
                             val id = restore.key.removePrefix(SEARCH_KEY)
                             if (searchConfigOf(id).encode() == restore.from) {
-                                setSearchConfig(id, SearchDomain.Config.decode(restore.to) ?: SearchDomain.Config())
+                                setSearchConfig(id, SearchDomain.Config.decode(restore.to) ?: SearchDomain.Config(), follow = false)
                             }
                         }
                         restore.key.startsWith(WINDOW_KEY) -> {

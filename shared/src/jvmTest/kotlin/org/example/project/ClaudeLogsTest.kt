@@ -136,12 +136,10 @@ class ClaudeLogsTest {
     }
 
     @Test
-    fun eachPageOffersItsOwnKinds() {
-        val scheduler = SearchDomain.pageKinds("")
-        assertTrue(SearchDomain.CLAUDE_KINDS.none { it in scheduler })
-        assertTrue(SearchDomain.Kind.Task in scheduler)
-        assertEquals(SearchDomain.CLAUDE_KINDS + SearchDomain.Kind.AppSetting, SearchDomain.pageKinds(SearchDomain.CLAUDE_LOGS_PAGE))
-        // The logs' directory is an app setting, so the page can set it.
+    fun thePagesDifferOnlyByWhatTheirSearchButtonChecks() {
+        assertEquals(setOf(SearchDomain.Kind.Task), SearchDomain.pageDefaultConfig("").kinds)
+        assertEquals(SearchDomain.CLAUDE_KINDS.toSet(), SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).kinds)
+        // The logs' directory is an app setting.
         val settings = SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.AppSetting), "Claude", claudeLogs = catalog)
         assertEquals(listOf("C:\\logs"), settings.map { (it as SearchDomain.ItemResult).detail })
     }
@@ -168,8 +166,8 @@ class ClaudeLogsTest {
         // A logs window reset to nothing is still the logs page's: a window never changes page.
         val reset = SearchDomain.resetConfig(config, opened = null)
         assertEquals(SearchDomain.CLAUDE_LOGS_PAGE, reset.page)
-        assertEquals(SearchDomain.pageKinds(SearchDomain.CLAUDE_LOGS_PAGE).toSet(), reset.kinds)
-        // …and named after its page's kinds: all of them is "everything", as on the scheduler's page.
+        // …and every kind is checked, as on the scheduler's page: it is the same window.
+        assertEquals(SearchDomain.Kind.entries.toSet(), reset.kinds)
         assertEquals("everything", SearchDomain.windowTitle(reset))
         assertEquals("all prompts, answers and reasoning chains", SearchDomain.windowTitle(SearchDomain.claudeLogsConfig()))
         assertEquals("everything", SearchDomain.windowTitle(SearchDomain.CLEARED_CONFIG))

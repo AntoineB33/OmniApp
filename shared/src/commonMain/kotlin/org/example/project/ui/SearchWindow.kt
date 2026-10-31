@@ -797,7 +797,6 @@ fun SearchWindow(
                 KindsDropDown(
                     kinds = kinds,
                     onKindsChange = { onConfigChange(config.copy(kinds = it)) },
-                    options = SearchDomain.pageKinds(config.page),
                     deploy = deployKinds,
                     onDeployed = onKindsDeployed,
                 )
@@ -1523,10 +1522,14 @@ private fun rememberKindSectionWidth(rows: List<SearchDomain.Result>): Dp {
  * while there is nothing to reset.
  */
 @Composable
-internal fun ResetButton(enabled: Boolean, onReset: () -> Unit) {
+internal fun ResetButton(enabled: Boolean, onReset: () -> Unit) = OutlinedTextButton("Reset", enabled, onReset)
+
+/** A word in a thin outline — [ResetButton]'s face, grey and inert while not [enabled]. */
+@Composable
+internal fun OutlinedTextButton(text: String, enabled: Boolean, onClick: () -> Unit) {
     val color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Text(
-        text = "Reset",
+        text = text,
         style = MaterialTheme.typography.labelLarge,
         color = color,
         maxLines = 1,
@@ -1534,7 +1537,7 @@ internal fun ResetButton(enabled: Boolean, onReset: () -> Unit) {
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
             .border(1.dp, color, RoundedCornerShape(6.dp))
-            .then(if (enabled) Modifier.clickable(onClick = onReset) else Modifier)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
     )
 }
@@ -1547,17 +1550,15 @@ internal fun ResetButton(enabled: Boolean, onReset: () -> Unit) {
 internal fun KindsDropDown(
     kinds: Set<SearchDomain.Kind>,
     onKindsChange: (Set<SearchDomain.Kind>) -> Unit,
-    /** The kinds offered: the window's page's ([SearchDomain.pageKinds]). */
-    options: List<SearchDomain.Kind> = SearchDomain.pageKinds(""),
     modifier: Modifier = Modifier.width(170.dp),
     /** Open the list now, once — see [CheckBoxDropDown]'s `deploy`. */
     deploy: Boolean = false,
     onDeployed: () -> Unit = {},
 ) {
     CheckBoxDropDown(
-        options = options,
+        options = SearchDomain.Kind.entries,
         checked = kinds,
-        face = kindsLabel(kinds, options),
+        face = kindsLabel(kinds, SearchDomain.Kind.entries),
         label = { it.label },
         onChange = onKindsChange,
         modifier = modifier,

@@ -106,10 +106,8 @@ fun AddedElementsConfigurationWindow(
 ) {
     val frame = rememberWindowFrameState(ADDED_CONFIGURATION_FRAME_ID, initialOffset, initialSize)
     val addedKinds = SearchDomain.actionKindsOf(added)
-    // Only the kinds of the Search window's page have sections ([SearchDomain.pageKinds]).
-    val pageKinds = SearchDomain.pageKinds(config.page)
     val sections =
-        SearchDomain.addedActions(config.actionQuery, own.kinds.filterTo(HashSet()) { it in pageKinds }, addedKinds.takeIf { own.onlyResultKinds })
+        SearchDomain.addedActions(config.actionQuery, own.kinds, addedKinds.takeIf { own.onlyResultKinds })
 
     // The calendar right-click the Search window came from, for the time fields drawn here ([RightClickTimeButton]).
     androidx.compose.runtime.CompositionLocalProvider(LocalCalendarClickMillis provides config.calendarClickMillis) {
@@ -148,7 +146,7 @@ fun AddedElementsConfigurationWindow(
                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
                         .revertsOnEscape(config.actionQuery) { onConfigChange(config.copy(actionQuery = it)) },
                 )
-                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) }, options = SearchDomain.pageKinds(config.page))
+                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
                 ResetButton(enabled = config.actionQuery.isNotEmpty() || own.kinds.isNotEmpty()) {
                     onConfigChange(config.copy(actionQuery = ""))
                     onOwnChange(own.copy(kinds = emptySet()))

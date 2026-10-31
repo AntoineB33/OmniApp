@@ -504,7 +504,7 @@ class SearchWindowTest {
     fun task_trees_are_listed_with_the_open_one_and_filtered() {
         val s = withStoredCopy(tree())
         val trees = setOf(SearchDomain.Kind.TaskTree)
-        val rows = SearchDomain.results(s, trees, "").map { it as SearchDomain.ItemResult }
+        val rows = SearchDomain.results(s, trees, "").filterNot { it.kind == SearchDomain.Kind.Creation }.map { it as SearchDomain.ItemResult }
         assertEquals(listOf("Studies"), rows.map { it.name })
         assertTrue(rows.single().detail.startsWith("no date"), "a stored tree, not on the timeline")
         assertTrue(SearchDomain.results(s, trees, "", filters = SearchDomain.Filters(taskTreeOpen = SearchDomain.Tri.Yes)).isEmpty())
@@ -517,7 +517,7 @@ class SearchWindowTest {
         val other = shortcut.defaultBinding.copy(alt = !shortcut.defaultBinding.alt)
         val s = SchedulerState.empty().copy(shortcutBindings = mapOf(shortcut to other))
         val kinds = setOf(SearchDomain.Kind.Shortcut)
-        val rows = SearchDomain.results(s, kinds, "").map { it as SearchDomain.ItemResult }
+        val rows = SearchDomain.results(s, kinds, "").filterNot { it.kind == SearchDomain.Kind.Creation }.map { it as SearchDomain.ItemResult }
         assertEquals(org.example.project.scheduler.platform.GlobalShortcut.entries.size, rows.size)
         val row = rows.single { it.id == shortcut.name }
         assertEquals(other.chord + " · rebound", row.detail)
@@ -665,7 +665,7 @@ class SearchWindowTest {
     @Test
     fun every_window_is_a_row_each_instance_its_own_and_its_detail_says_where_it_stands() {
         val kinds = setOf(SearchDomain.Kind.Window)
-        val rows = SearchDomain.results(SchedulerState.empty(), kinds, "", windows = windows).map { it as SearchDomain.ItemResult }
+        val rows = SearchDomain.results(SchedulerState.empty(), kinds, "", windows = windows).filterNot { it.kind == SearchDomain.Kind.Creation }.map { it as SearchDomain.ItemResult }
         assertEquals(windows.map { it.id }.toSet(), rows.map { it.id }.toSet())
         assertTrue(rows.all { it.kind == SearchDomain.Kind.Window })
         // Two instances of one window are two rows, each saying where it stands.
@@ -673,14 +673,14 @@ class SearchWindowTest {
         assertEquals(listOf("Search" to "open", "Search (2)" to "minimized"), search.map { it.name to it.detail })
         assertEquals("not open", rows.single { it.id == "History" }.detail)
         // Not checked: no window row, whatever the app hands in.
-        assertTrue(SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.Task), "", windows = windows).isEmpty())
+        assertTrue(SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.Task), "", windows = windows).none { it.kind == SearchDomain.Kind.Window })
     }
 
     @Test
     fun the_window_filter_and_sort_read_where_the_window_stands() {
         val kinds = setOf(SearchDomain.Kind.Window)
         fun ids(filters: SearchDomain.Filters = SearchDomain.Filters(), sorts: List<SearchDomain.SortMethod> = SearchDomain.DEFAULT_SORTS) =
-            SearchDomain.results(SchedulerState.empty(), kinds, "", filters = filters, sorts = sorts, windows = windows).map { (it as SearchDomain.ItemResult).id }
+            SearchDomain.results(SchedulerState.empty(), kinds, "", filters = filters, sorts = sorts, windows = windows).filterNot { it.kind == SearchDomain.Kind.Creation }.map { (it as SearchDomain.ItemResult).id }
         assertEquals(listOf("Search#2"), ids(SearchDomain.Filters(windowStatus = SearchDomain.WindowStatus.Minimized)))
         assertEquals(listOf("History"), ids(SearchDomain.Filters(windowStatus = SearchDomain.WindowStatus.NotOpen)))
         assertEquals(1, SearchDomain.Filters(windowStatus = SearchDomain.WindowStatus.Open).activeCount)
@@ -714,7 +714,7 @@ class SearchWindowTest {
             )
         val all = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Reminder)
         fun names(filters: SearchDomain.Filters) =
-            SearchDomain.results(s, all, "", { emptyMap() }, filters).map { it.name }.toSet()
+            SearchDomain.results(s, all, "", { emptyMap() }, filters).filterNot { it.kind == SearchDomain.Kind.Creation }.map { it.name }.toSet()
 
         assertEquals(setOf("Weekday", "Off", "Idle", "Running", "Once", "Weekly"), names(SearchDomain.Filters()))
         // An alarm filter removes alarms only — the timers and reminders are untouched.
@@ -762,8 +762,8 @@ class SearchWindowTest {
         val changed =
             opened.copy(query = "x", added = emptyList(), filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
         val cleared = SearchDomain.CLEARED_CONFIG
-        // No filter at all: every kind of the page checked, every element shown (user rule 2026-10-15).
-        assertEquals(SearchDomain.pageKinds("").toSet(), cleared.kinds)
+        // No filter at all: every kind checked, every element shown (user rule 2026-10-15).
+        assertEquals(SearchDomain.Kind.entries.toSet(), cleared.kinds)
         assertTrue(cleared.query.isEmpty() && cleared.added.isEmpty())
         assertEquals(SearchDomain.Filters(), cleared.filters)
         // Changed since it opened: the whole opening configuration comes back, added elements and filters included.
@@ -860,9 +860,11 @@ class SearchWindowTest {
     fun the_kinds_in_the_results_are_the_kinds_with_a_row() {
         val s = SchedulerState.empty().copy(alarms = listOf(AlarmEntry(id = "a1", label = "Wake", timeOfDayMinutes = 60)))
         val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer))
-        assertEquals(setOf(SearchDomain.Kind.Alarm), SearchDomain.kindsInResults(s, config))
+        // "New timer" is a row of the timers (user rule 2026-10-30: a creation row is of the kind it makes too).
+        assertEquals(setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer), SearchDomain.kindsInResults(s, config))
+        // An alarm filter that is on takes "New alarm" out with the alarms; "New timer" stays.
         val filtered = config.copy(filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
-        assertEquals(emptySet(), SearchDomain.kindsInResults(s, filtered))
+        assertEquals(setOf(SearchDomain.Kind.Timer), SearchDomain.kindsInResults(s, filtered))
     }
 
     @Test
@@ -923,13 +925,13 @@ class SearchWindowTest {
             )
         val kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer)
         fun names(vararg sorts: SearchDomain.SortMethod) =
-            SearchDomain.results(s, kinds, "", sorts = sorts.toList()).map { it.name }
+            SearchDomain.results(s, kinds, "", sorts = sorts.toList()).filterNot { it.kind == SearchDomain.Kind.Creation }.map { it.name }
         val alarmTime = method(SearchDomain.Kind.Alarm, SearchDomain.SortKey.AlarmTime)
         val name = method(null, SearchDomain.SortKey.Name)
 
         // The default list (relevance) is the order before sorting; so is an empty list.
         val base = listOf("Alarm", "Bake", "Cook", "Long", "Short")
-        assertEquals(base, SearchDomain.results(s, kinds, "").map { it.name })
+        assertEquals(base, SearchDomain.results(s, kinds, "").filterNot { it.kind == SearchDomain.Kind.Creation }.map { it.name })
         assertEquals(base, names())
         // One kind's methods reorder its rows in the places they held: the timers never move for the alarms.
         assertEquals(
@@ -985,7 +987,7 @@ class SearchWindowTest {
         assertFalse(pie in live)
         for (descending in listOf(false, true)) {
             val sorts = listOf(method(SearchDomain.Kind.Task, SearchDomain.SortKey.TaskPriority, descending))
-            val rows = SearchDomain.results(s, tasks, "", sorts = sorts).map { it as SearchDomain.TaskResult }
+            val rows = SearchDomain.results(s, tasks, "", sorts = sorts).filterIsInstance<SearchDomain.TaskResult>()
             val withValue = rows.takeWhile { it.taskId in live }
             assertEquals(listOf(pie), rows.drop(withValue.size).map { it.taskId }, "the row without a priority closes the list")
             val values = withValue.map { live.getValue(it.taskId) }
@@ -1051,7 +1053,7 @@ class SearchWindowTest {
                     TimerEntry(id = "t2", label = "", durationSeconds = 60),
                 ),
             )
-        val rows = SearchDomain.results(s, setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer), "")
+        val rows = SearchDomain.results(s, setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer), "").filterNot { it.kind == SearchDomain.Kind.Creation }
         assertEquals(
             setOf("Alarm/a1", "Alarm/a2", "Alarm/a3", "Timer/t1", "Timer/t2"),
             rows.map { it as SearchDomain.ItemResult }.map { it.kind.name + "/" + it.id }.toSet(),

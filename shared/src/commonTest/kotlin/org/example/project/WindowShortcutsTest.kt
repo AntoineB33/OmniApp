@@ -120,12 +120,12 @@ class WindowShortcutsTest {
                 ),
                 SearchDomain.WindowEntry("ws-1", "ws-1", SearchDomain.WindowStatus.NotOpen, mapping = SearchDomain.WindowEntry.WindowChord(null, null)),
             )
-        val shortcuts = SearchDomain.results(state, setOf(SearchDomain.Kind.Shortcut), "", windows = handed).map { it as SearchDomain.ItemResult }
+        val shortcuts = SearchDomain.results(state, setOf(SearchDomain.Kind.Shortcut), "", windows = handed).filterNot { it.kind == SearchDomain.Kind.Creation }.map { it as SearchDomain.ItemResult }
         assertEquals(GlobalShortcut.entries.size + 2, shortcuts.size)
         val mapped = shortcuts.filter { it.id.startsWith(WindowShortcuts.SEARCH_PREFIX) }
         assertEquals(listOf("window:ws-0" to "Ctrl+Alt+K", "window:ws-1" to "no chord yet"), mapped.map { it.id to it.detail }.sortedBy { it.first })
         assertTrue(mapped.any { it.name == "Window: Calendar" } && mapped.any { it.name == "Window: none chosen yet" })
-        assertEquals(listOf("Calendar"), SearchDomain.results(state, setOf(SearchDomain.Kind.Window), "", windows = handed).map { it.name })
+        assertEquals(listOf("Calendar"), SearchDomain.results(state, setOf(SearchDomain.Kind.Window), "", windows = handed).filterNot { it.kind == SearchDomain.Kind.Creation }.map { it.name })
         // A Search window on shortcuts asks `App` for them.
         assertTrue(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Shortcut)).readsWindows)
         assertTrue(SearchDomain.elementSearchConfig(SearchDomain.Kind.Shortcut, "window:ws-0").readsWindows)

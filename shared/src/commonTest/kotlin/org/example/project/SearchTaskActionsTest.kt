@@ -78,6 +78,7 @@ class SearchTaskActionsTest {
         val s = tree()
         fun titles(value: SearchDomain.Tri) =
             SearchDomain.results(s, setOf(SearchDomain.Kind.Task), "", filters = SearchDomain.Filters(taskSchedulable = value))
+                .filterIsInstance<SearchDomain.TaskResult>()
                 .map { s.tasks[(it as SearchDomain.TaskResult).taskId]!!.title }
                 .sorted()
         assertEquals(listOf("Banana", "Basket", "Pie"), titles(SearchDomain.Tri.Yes))

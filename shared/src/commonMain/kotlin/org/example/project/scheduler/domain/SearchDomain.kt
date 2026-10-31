@@ -187,27 +187,20 @@ object SearchDomain {
     val CLAUDE_KINDS: List<Kind> = listOf(Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning)
 
     /**
-     * **The kinds a Search window of [page] offers** in its type selector (and its configurations windows in theirs):
-     * the Claude Code logs page's are the logs' kinds and the app's settings (where the logs' directory is set); the
-     * Task Scheduler's are every other kind.
+     * What a Search window opens with on [page] when nothing says otherwise — the global Search button's, user rule
+     * 2026-10-18. **The one difference between the pages' Search windows** (user rule 2026-10-31): what this button
+     * checks. The window itself is the same on both — every kind, every configuration, every sorting method.
      */
-    fun pageKinds(page: String): List<Kind> =
-        if (page == CLAUDE_LOGS_PAGE) CLAUDE_KINDS + Kind.AppSetting else Kind.entries.filter { it !in CLAUDE_KINDS }
-
-    /** What a Search window opens with on [page] when nothing says otherwise — the global Search button's, user rule 2026-10-18. */
     fun pageDefaultConfig(page: String): Config = if (page == CLAUDE_LOGS_PAGE) claudeLogsConfig() else Config()
 
     /** The configuration a Search window of the Claude Code logs page opens with: every kind of the logs, newest first. */
     fun claudeLogsConfig(): Config = Config(kinds = CLAUDE_KINDS.toSet(), page = CLAUDE_LOGS_PAGE, sorts = CLAUDE_SORTS)
 
-    /** The logs' entries newest first, whatever their kind: a log is read back from its end. */
-    val CLAUDE_SORTS: List<SortMethod> by lazy {
-        listOf(
-            SortMethod(Kind.ClaudePrompt, SortKey.PromptDate, descending = true),
-            SortMethod(Kind.ClaudeAnswer, SortKey.AnswerDate, descending = true),
-            SortMethod(Kind.ClaudeReasoning, SortKey.ReasoningDate, descending = true),
-        )
-    }
+    /**
+     * The logs' entries newest first, whatever their kind: a log is read back from its end. ONE method (user rule
+     * 2026-10-30): the date is common to a prompt, an answer and a reasoning chain, so it orders them together.
+     */
+    val CLAUDE_SORTS: List<SortMethod> by lazy { listOf(SortMethod(null, SortKey.Date, descending = true)) }
 
     /** The log entry kind a Claude kind lists. */
     fun claudeLogKindOf(kind: Kind): ClaudeLogKind? =
@@ -391,8 +384,7 @@ object SearchDomain {
      */
     fun windowTitle(config: Config): String {
         if (isNotificationsWindow(config)) return NOTIFICATIONS_WINDOW_TITLE
-        // "Everything" is every kind of the window's page ([pageKinds]).
-        val offered = pageKinds(config.page)
+        val offered = Kind.entries
         val kinds = offered.filter { it in config.kinds }
         val left = offered.filter { it !in config.kinds }
         fun list(names: List<String>): String =
@@ -448,8 +440,8 @@ object SearchDomain {
     val CLEARED_CONFIG: Config
         get() = clearedConfig("")
 
-    /** [CLEARED_CONFIG] of the page [page]: every kind it offers checked ([pageKinds]), and nothing else. */
-    fun clearedConfig(page: String): Config = Config(kinds = pageKinds(page).toSet(), page = page)
+    /** [CLEARED_CONFIG] of a window on the page [page]: every kind checked, and nothing else. */
+    fun clearedConfig(page: String): Config = Config(kinds = Kind.entries.toSet(), page = page)
 
     /**
      * What the Search window's **Reset** puts in the place of [current]: the configuration the window [opened] with
@@ -541,6 +533,12 @@ object SearchDomain {
         /** Dominant first ([SortMethod]). */
         val sorts: List<SortMethod> = DEFAULT_SORTS,
         /**
+         * User rule 2026-10-30: whether [sorts] follow the configuration's DEFAULT sorting ([defaultSortsOf]) — true
+         * from the window's opening and from each click on the Sort by's "Default" button, until the user changes the
+         * sorting. While true, each new search configuration gets its default ([withDefaultSortFollowed]).
+         */
+        val sortFollowsDefault: Boolean = true,
+        /**
          * The **added elements** — the Search window's right half — as result keys ([keyOf]), in the order they
          * were added, each once. Kept with the rest of the configuration: local-only, never synced. A key whose
          * element is gone is kept but lists nothing ([resolve]).
@@ -600,7 +598,7 @@ object SearchDomain {
         val placement: Placement = Placement(),
         /**
          * The feature page the window belongs to (user rule 2026-10-18): blank for the Task Scheduler, [CLAUDE_LOGS_PAGE]
-         * for the Claude Code logs. A window is drawn on its page alone, and offers that page's kinds ([pageKinds]).
+         * for the Claude Code logs. A window is drawn on its page alone; that is all this says of it.
          */
         val page: String = "",
         /**
@@ -649,6 +647,7 @@ object SearchDomain {
                     windowStatus = filters.windowStatus?.name,
                     windowDuplicates = filters.windowDuplicates.name,
                     sortMethods = sorts.map { StoredSortMethod(it.kind?.name, it.key.name, it.descending) },
+                    sortFollowsDefault = sortFollowsDefault,
                     taskOnCalendar = filters.taskOnCalendar.name,
                     taskBoxesFromMillis = filters.taskBoxesFrom,
                     taskBoxesUntilMillis = filters.taskBoxesUntil,
@@ -754,6 +753,7 @@ object SearchDomain {
                         claudeUntil = stored.claudeUntilMillis,
                     ),
                     sorts = sortMethodsNamed(stored.sortMethods ?: legacySortMethods(stored)),
+                    sortFollowsDefault = stored.sortFollowsDefault,
                     // Heals the index-shaped history-unit keys of builds before 2026-10-03 ([historyUnitId]): an
                     // index named whichever unit had shifted into it, so the key no longer means what was added.
                     added = stored.added.distinct().filterNot(::isLegacyHistoryUnitKey),
@@ -800,11 +800,15 @@ object SearchDomain {
 
             private fun sortMethodsNamed(stored: List<StoredSortMethod>): List<SortMethod> =
                 stored.mapNotNull { method ->
+                    // Before 2026-10-30 the logs' date was one method per kind: each is the one date about every row.
+                    if (method.key in LEGACY_LOG_DATE_KEYS) return@mapNotNull SortMethod(null, SortKey.Date, method.descending)
                     val kind =
                         if (method.kind == null) null else Kind.entries.firstOrNull { it.name == method.kind } ?: return@mapNotNull null
                     val key = sortKeysOf(kind).firstOrNull { it.name == method.key } ?: return@mapNotNull null
                     SortMethod(kind, key, method.descending)
                 }.distinctBy { it.kind to it.key }
+
+            private val LEGACY_LOG_DATE_KEYS = setOf("PromptDate", "AnswerDate", "ReasoningDate")
 
             private fun kindsNamed(names: List<String>): Set<Kind> =
                 names.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet()
@@ -1145,6 +1149,8 @@ object SearchDomain {
          * whole list only, and what the calendar's "edit…" opens sorted by ([calendarAtConfig]).
          */
         CalendarBubble(null, "calendar bubble order"),
+        /** The creation rows above every other row (user rule 2026-10-30) — a one-kind search's default ([defaultSortsOf]). */
+        CreationFirst(null, "creation elements first"),
         TaskPriority(Kind.Task, "priority"),
         TaskPathLength(Kind.Task, "path length"),
         TaskPathCount(Kind.Task, "number of paths"),
@@ -1166,19 +1172,21 @@ object SearchDomain {
         ShortcutChord(Kind.Shortcut, "chord"),
         /** [WindowStatus]'s order: open, minimized, not open. */
         WindowState(Kind.Window, "state"),
-        /** When the entry was written ([ClaudeLogCatalog.timeOf], read off its id). */
-        PromptDate(Kind.ClaudePrompt, "date"),
-        AnswerDate(Kind.ClaudeAnswer, "date"),
-        ReasoningDate(Kind.ClaudeReasoning, "date"),
+        /**
+         * When a Claude Code log entry was written ([ClaudeLogCatalog.timeOf], read off its id) — common to a prompt, an
+         * answer and a reasoning chain, so one key about every row (user rule 2026-10-30). The rows of the other kinds have
+         * no value for it. The builds before had one per kind (`PromptDate`, `AnswerDate`, `ReasoningDate`), read as this.
+         */
+        Date(null, "date"),
     }
 
     /**
-     * The keys offered for the whole list ([kind] null: relevance, name, type, the calendar bubble's order) or
-     * for one kind's rows (relevance, name, and that kind's own keys).
+     * The keys offered for the whole list ([kind] null: relevance, name, type, the calendar bubble's order, the log
+     * entries' date) or for one kind's rows (relevance, name, and that kind's own keys).
      */
     fun sortKeysOf(kind: Kind?): List<SortKey> =
         if (kind == null) {
-            listOf(SortKey.Relevance, SortKey.Name, SortKey.Type, SortKey.CalendarBubble)
+            listOf(SortKey.Relevance, SortKey.Name, SortKey.Type, SortKey.CalendarBubble, SortKey.CreationFirst, SortKey.Date)
         } else {
             listOf(SortKey.Relevance, SortKey.Name) + SortKey.entries.filter { it.kind == kind }
         }
@@ -1201,6 +1209,52 @@ object SearchDomain {
 
     /** Relevance over the whole list — the order the window had before it could be sorted. */
     val DEFAULT_SORTS: List<SortMethod> = listOf(SortMethod(null, SortKey.Relevance))
+
+    /** The creation rows first, then relevance — what a one-kind search sorts by unless the user says otherwise. */
+    val CREATION_FIRST_SORTS: List<SortMethod> = listOf(SortMethod(null, SortKey.CreationFirst), SortMethod(null, SortKey.Relevance))
+
+    /**
+     * User rule 2026-10-30: **the default sorting of a search configuration**, read off the configuration alone — never
+     * off its sorting — or null where it has none (the Sort by's "Default" button is then grey). The one default: ONE
+     * kind checked that the user can make ([CREATABLE]) and nothing else — no text, no filter on — sorts its creation row
+     * ([withCreatedKindRows]) to the top. What is added, the actions' bars and the rest of the window's own state are not
+     * the search, and say nothing here. The logs' kinds and nothing else — the logs page's button's configuration,
+     * [claudeLogsConfig], or some of its kinds — sort by their date, newest first ([CLAUDE_SORTS]), on any page.
+     */
+    fun defaultSortsOf(config: Config): List<SortMethod>? {
+        if (config.query.isNotBlank() || config.filters.activeCount > 0) return null
+        if (config.kinds.isNotEmpty() && config.kinds.all { it in CLAUDE_KINDS }) return CLAUDE_SORTS
+        val kind = config.kinds.singleOrNull() ?: return null
+        return CREATION_FIRST_SORTS.takeIf { kind in CREATABLE }
+    }
+
+    /**
+     * User rule 2026-10-30: [after] — the edit of a Search window's configuration [before] — with the default sorting
+     * followed. A change of the sorting is the user's, and stops the following; while it follows ([Config.sortFollowsDefault],
+     * from the window's opening or the last click on "Default"), a new search configuration takes its default
+     * ([defaultSortsOf]) — one with none keeps the sorting it has. Every edit of a configuration goes through it
+     * (`App.setSearchConfig`), but an undo, which puts a configuration back as it was.
+     */
+    fun withDefaultSortFollowed(before: Config, after: Config): Config {
+        if (after.sorts != before.sorts && after.sortFollowsDefault == before.sortFollowsDefault) {
+            return after.copy(sortFollowsDefault = false)
+        }
+        if (!after.sortFollowsDefault) return after
+        val sameSearch = after.query == before.query && after.kinds == before.kinds && after.filters == before.filters
+        if (sameSearch && after.sortFollowsDefault == before.sortFollowsDefault) return after
+        return withDefaultSort(after)
+    }
+
+    /** [config] with its default sorting ([defaultSortsOf]) while it follows it; as it is otherwise. A window opened is read through it. */
+    fun withDefaultSort(config: Config): Config {
+        if (!config.sortFollowsDefault) return config
+        val sorts = defaultSortsOf(config) ?: return config
+        return if (sorts == config.sorts) config else config.copy(sorts = sorts)
+    }
+
+    /** What the Sort by's "Default" button sets: the default sorting, followed from now on. Null where there is none. */
+    fun defaultSortApplied(config: Config): Config? =
+        defaultSortsOf(config)?.let { config.copy(sorts = it, sortFollowsDefault = true) }
 
     /** [sorts] with [method] at the bottom (checked in a drop-down), or without it (unchecked, or its ✕). */
     fun withSortMethod(sorts: List<SortMethod>, method: SortMethod, on: Boolean): List<SortMethod> {
@@ -1474,7 +1528,18 @@ object SearchDomain {
                 null
             },
             claudeLogs = claudeLogs,
-        ).groupingBy { it.kind }.eachCount()
+        ).groupingBy { checkedKindOf(it, config.kinds) }.eachCount()
+
+    /**
+     * The checked kind [row] is listed for: its own — but a creation row listed for the kind it makes, the creation kind
+     * unchecked ([withCreatedKindRows]), is one of that kind's rows (user rule 2026-10-30: it has both types).
+     */
+    private fun checkedKindOf(row: Result, kinds: Set<Kind>): Kind =
+        if (row.kind == Kind.Creation && Kind.Creation !in kinds && row is ItemResult) {
+            CREATABLE.firstOrNull { it.name == row.id } ?: row.kind
+        } else {
+            row.kind
+        }
 
     /** The kinds that have at least one row in the Search window's results for [config]. */
     fun kindsInResults(
@@ -1485,7 +1550,7 @@ object SearchDomain {
     ): Set<Kind> =
         // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
         results(state, config.kinds, config.query, { emptyMap() }, config.filters, windows = windows, claudeLogs = claudeLogs)
-            .mapTo(HashSet()) { it.kind }
+            .mapTo(HashSet()) { checkedKindOf(it, config.kinds) }
 
     /** The stored form of a [Config] — strings, so an unknown value decodes to its default. */
     @Serializable
@@ -1529,6 +1594,8 @@ object SearchDomain {
         val windowDuplicates: String? = null,
         /** Null = never stored (a configuration written before sorting): the default list. */
         val sortMethods: List<StoredSortMethod>? = null,
+        /** New 2026-10-30: absent from an older build's = following the default, as a window just opened does. */
+        val sortFollowsDefault: Boolean = true,
         /** The first sorting shape's fields — read only, when [sortMethods] is absent ([Config.decode]). */
         val sort: String? = null,
         val sortDescending: Boolean = false,
@@ -2274,6 +2341,7 @@ object SearchDomain {
                         )
                     }
                 }
+                .let { rows -> rows + withCreatedKindRows(state, kinds, query, filters) }
                 .filter { passes(state, it, filters, calendar) }
                 .let { rows ->
                     // The blocks of the given elements: each block's element read once, not once per row.
@@ -2320,6 +2388,20 @@ object SearchDomain {
             rows = rows.toMutableList().also { list -> places.forEachIndexed { i, place -> list[place] = sorted[i] } }
         }
         return rows
+    }
+
+    /**
+     * User rule 2026-10-30: **a creation row has two types** — the creation kind, and the kind of the element it makes.
+     * So a search of the kinds [kinds] lists the creation rows of the checked kinds even with the creation kind itself
+     * unchecked (with it checked, [itemResults] lists every one already, and none twice). Each is the very row the
+     * creation kind lists, matched against [query] like it — and not listed by a kind one of whose filters is on: the
+     * element it would make is none of those the filter keeps.
+     */
+    private fun withCreatedKindRows(state: SchedulerState, kinds: Set<Kind>, query: String, filters: Filters): List<Result> {
+        if (Kind.Creation in kinds) return emptyList()
+        val made = CREATABLE.filter { kind -> kind in kinds && Setting.entries.none { it.section == kind && filters.isOn(it) } }
+        if (made.isEmpty()) return emptyList()
+        return itemResults(state, Kind.Creation, query).filter { row -> made.any { it.name == row.id } }
     }
 
     /**
@@ -2381,6 +2463,7 @@ object SearchDomain {
                 SortKey.Name -> row.name.lowercase()
                 SortKey.Type -> row.kind.ordinal
                 SortKey.CalendarBubble -> CalendarBubbleRank.of(row.kind, (row as? ItemResult)?.id)
+                SortKey.CreationFirst -> if (row.kind == Kind.Creation) 0 else 1
                 SortKey.TaskPriority -> (row as? TaskResult)?.let { priorities[it.taskId] }
                 SortKey.TaskPathLength -> (row as? TaskResult)?.takeIf { it.paths.isNotEmpty() }?.shownPath?.size
                 SortKey.TaskPathCount -> (row as? TaskResult)?.paths?.size
@@ -2408,7 +2491,7 @@ object SearchDomain {
                 SortKey.RelationSection -> sectionRank[row.detail.substringBefore(" · ")]
                 SortKey.ShortcutChord -> row.detail.substringBefore(" · ").lowercase()
                 SortKey.WindowState -> windowStatusOf(row)?.ordinal
-                SortKey.PromptDate, SortKey.AnswerDate, SortKey.ReasoningDate -> ClaudeLogCatalog.timeOf(row.id)
+                SortKey.Date -> (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.id?.let(ClaudeLogCatalog::timeOf)
                 else -> null
             }
     }

@@ -89,7 +89,7 @@ class ChronoTest {
             ),
         )
         val kinds = setOf(SearchDomain.Kind.Chrono)
-        val rows = SearchDomain.results(s, kinds, "").map { it as SearchDomain.ItemResult }
+        val rows = SearchDomain.results(s, kinds, "").filterNot { it.kind == SearchDomain.Kind.Creation }.map { it as SearchDomain.ItemResult }
         assertEquals(setOf("Run" to "running", "Rest" to "paused", "Chrono" to "idle"), rows.map { it.name to it.detail }.toSet())
         val running = SearchDomain.results(s, kinds, "", filters = SearchDomain.Filters(chronoState = SearchDomain.TimerState.Running))
         assertEquals(listOf("Run"), running.map { it.name })
