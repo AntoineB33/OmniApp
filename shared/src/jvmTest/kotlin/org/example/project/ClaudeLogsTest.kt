@@ -191,6 +191,48 @@ class ClaudeLogsTest {
     }
 
     @Test
+    fun theProjectIsAConfigurationOfEveryLogRowAndKeepsThatProjectsRowsAlone() {
+        fun session(name: String, project: String) =
+            ClaudeLogSession(
+                "$name.jsonl", name, "f", project, null,
+                listOf(entry(ClaudeLogKind.Prompt, "in $name", 0), entry(ClaudeLogKind.Answer, "from $name", 1)),
+            )
+        val logs = ClaudeLogCatalog("dir", listOf(session("a", "C:/code/OmniApp"), session("b", "C:/code/Other")))
+        assertEquals(listOf("C:/code/OmniApp", "C:/code/Other"), logs.projects)
+        assertEquals("OmniApp", SearchDomain.projectName(logs.projects.first()))
+
+        val config = SearchDomain.claudeLogsConfig()
+        val state = SchedulerState.empty()
+        val counts = SearchDomain.kindCountsInResults(state, config, claudeLogs = logs)
+        val everyElement = SearchDomain.configurationGroups("", SearchDomain.Kind.entries.toSet(), counts).first()
+        assertTrue(SearchDomain.Setting.PromptProject in everyElement.shared.flatten(), "listed for every element")
+
+        val filtered = config.filters.copy(claudeProject = "C:/code/Other")
+        val rows = SearchDomain.results(state, config.kinds, "", filters = filtered, claudeLogs = logs)
+        assertEquals(setOf("in b", "from b"), rows.map { it.name }.toSet())
+    }
+
+    /** Anomaly 2026-10-31: the rows of the release DB as they stood, the configurations window listing no "Project". */
+    @Test
+    fun aConfigurationsWindowSavedBeforeTheLogsKindsListsTheProjectOfALogsSearch() {
+        val own = SearchDomain.ConfigurationSearch.decode(
+            """{"kinds":["Task","Category","RestrictivePeriod","Alarm","Timer","Chrono","Quota","Reminder","CalendarBlock",""" +
+                """"HistoryUnit","Notification","TaskTree","TaskRelation","Shortcut","AppSetting","Window","Creation"],"target":"Search#3"}""",
+        )!!
+        assertTrue(SearchDomain.CLAUDE_KINDS.all { it in own.kinds })
+        val search = SearchDomain.Config.decode(
+            """{"kinds":["ClaudePrompt","ClaudeAnswer","ClaudeReasoning"],"sortMethods":[{"key":"Date","descending":true}],"page":"ClaudeLogs"}""",
+        )!!
+        val counts = SearchDomain.kindCountsInResults(SchedulerState.empty(), search, claudeLogs = catalog)
+        val groups = SearchDomain.configurationGroups(own.query, own.kinds, counts, own.onlyResultKinds, own.frozenKinds)
+        assertTrue(SearchDomain.Setting.PromptProject in groups.first().shared.flatten(), "in \"Every element\"")
+
+        // Unchecked by hand since, they stay unchecked.
+        val unchecked = own.copy(kinds = own.kinds - SearchDomain.CLAUDE_KINDS.toSet())
+        assertEquals(unchecked, SearchDomain.ConfigurationSearch.decode(unchecked.encode()))
+    }
+
+    @Test
     fun eachKindOfLogEntryHasItsOwnColour() {
         val fills = SearchDomain.CLAUDE_KINDS.map { org.example.project.ui.logEntryColor(it) }
         assertTrue(fills.none { it == null })

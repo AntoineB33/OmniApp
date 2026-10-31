@@ -320,6 +320,7 @@ private val VIEW_ROWS: Set<String> =
         CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, org.example.project.ui.WindowShortcuts.PLACEMENT_ID, "AppWindow",
         CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID,
         org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID, CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID,
+        org.example.project.ui.AppViewState.PLACEMENT_ID,
     )
 
 private const val MENU_KEY: String = org.example.project.scheduler.state.ExternalKeys.MENU
@@ -529,10 +530,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // — a display resample is ~1/s at the default zoom, so anything materially above that is a state read
         // in THIS scope being written by something that is not the clock (ADR 0009).
         Perf.count("recompose.App")
-        var page by remember { mutableStateOf(OmniPage.TaskScheduler) }
-        // Lateral-menu collapse: when true the whole menu (the page-nav dropdown and all) is not rendered — it
-        // has slid fully off to the left; only the bookmark toggle remains, at the far-left edge, to pull it back.
-        var menuCollapsed by remember { mutableStateOf(false) }
 
         // PRD §5 cross-device sync: when the local store can also hold sync bookkeeping (the SQLite store
         // implements SyncMetaStore), build the Supabase-backed engine. Web's localStorage store does not yet,
@@ -575,6 +572,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Search window's configuration) keeps the others: the store's upsert replaces the whole row. The one
         // funnel every placement write goes through. Plain, not Compose state — nothing is drawn from it.
         val placements = remember(placementStore) { initialPlacements.toMutableMap() }
+        // User rule 2026-10-31: what the app was showing when it closed ([org.example.project.ui.AppViewState]).
+        val leftView = remember(placementStore) { org.example.project.ui.AppViewState.decode(placements[org.example.project.ui.AppViewState.PLACEMENT_ID]?.config) }
+        var page by remember { mutableStateOf(OmniPage.entries.firstOrNull { it.name == leftView.page } ?: OmniPage.TaskScheduler) }
+        // Lateral-menu collapse: when true the whole menu (the page-nav dropdown and all) is not rendered — it
+        // has slid fully off to the left; only the bookmark toggle remains, at the far-left edge, to pull it back.
+        var menuCollapsed by remember { mutableStateOf(leftView.menuCollapsed) }
         // User rule 2026-10-18: **the windows set global** — drawn on every feature page, their tabs in the window bar of
         // every page — by frame id, in the order they were set so. Local-only, on a row of its own; one that came back
         // closed after a restart is none. A global window stays composed across a change of page, so its tab keeps its
@@ -597,7 +600,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Every framed WINDOW registers here, which is what draws the bar of reduced windows along the
         // bottom of the app and what answers "does the tree still own the keyboard?" (see `WindowFrame.kt`).
         // Until the start-up has put the windows back, none of them claims the focus by opening (below).
-        val windowFrames = remember { WindowFrameHost().also { it.claimOnOpen = false } }
+        val windowFrames =
+            remember {
+                WindowFrameHost().also {
+                    it.claimOnOpen = false
+                    it.restoreOrder(leftView.windowOrder)
+                }
+            }
         // Keyed by the window's FRAME id: the lateral-menu window's name, or a copy's (`Search#2`).
         // User rule 2026-10-07, a menu button's "Update": the window each button (by id) last opened or brought back
         // (by frame id), the layout that window had then — the reference for a button that kept none — and the lines
@@ -605,6 +614,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val menuButtonWindows = remember { androidx.compose.runtime.mutableStateMapOf<String, String>() }
         val menuButtonOpenedLayouts = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowLayout>() }
         val searchSplits = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.SearchSplits>() }
+        // A calendar copy's sections, by frame id: the original's are [calendarConfigurationWidth], [calendarSectionsHidden].
+        val calendarCopySections = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowSections>() }
         var calendarConfigurationWidth by remember { mutableStateOf<Float?>(null) }
         var calendarSectionsHidden by remember { mutableStateOf<List<Boolean>?>(null) }
         // The task tree window's sections (user rule 2026-10-20), kept as the calendar's are: the configuration's width,
@@ -628,6 +639,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
                 // …and its lines are not the next window's under that id.
                 searchSplits.remove(id)
+                calendarCopySections.remove(id)
             }
             if (id !in VIEW_ROWS) viewHistory.onLayout(id, previous, next)
             // A closed window is global no more: its frame id may be another window's tomorrow.
@@ -652,6 +664,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     minimized = it.minimized && visible,
                 )
             }
+        // Written as it changes, so a close of any kind finds it there. Only a window that closed leaves the order.
+        LaunchedEffect(Unit) {
+            androidx.compose.runtime.snapshotFlow {
+                org.example.project.ui.AppViewState(page.name, menuCollapsed, windowFrames.rememberedOrder.toList())
+            }.collect { view ->
+                val order =
+                    view.windowOrder.filter { placements[it]?.visible != false }.takeLast(org.example.project.ui.AppViewState.MAX_WINDOW_ORDER)
+                updatePlacementById(org.example.project.ui.AppViewState.PLACEMENT_ID) { it.copy(config = view.copy(windowOrder = order).encode()) }
+            }
+        }
         // The Claude Code logs' directory: local-only view state on a row of its own, never a History Unit (VIEW_ROWS).
         var claudeLogsSettings by remember(placementStore) {
             mutableStateOf(
@@ -1152,11 +1174,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     } else if (id == FloatingWindow.TaskTree.name) {
                         kept.splits.firstOrNull()?.let { taskTreeConfigurationWidth = it }
                         if (kept.hidden.isNotEmpty()) taskTreeSectionsHidden = kept.hidden
-                    } else if (placements[id]?.visible == true && kept.splits.size == 2) {
+                    } else if (placements[id]?.visible != true) {
+                        // Closed since: nothing of it is the next window's under that id.
+                    } else if (id.startsWith(FloatingWindow.Calendar.name + "#")) {
+                        calendarCopySections[id] = kept
+                    } else if (kept.splits.size == 2) {
                         searchSplits[id] =
                             org.example.project.ui.SearchSplits(
                                 kept.splits[0], kept.splits[1],
                                 kept.hidden.getOrNull(0) ?: false, kept.hidden.getOrNull(1) ?: false, kept.hidden.getOrNull(2) ?: false,
+                                expandedResults = kept.expanded.toSet(), expandedAdded = kept.expandedAdded.toSet(),
                             )
                     }
                 }
@@ -1166,7 +1193,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             updatePlacementById(CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID) {
                 val search =
                     searchSplits.mapValues { (_, s) ->
-                        org.example.project.ui.WindowSections(listOf(s.left, s.topRight), listOf(s.searchHidden, s.actionsHidden, s.addedHidden))
+                        org.example.project.ui.WindowSections(
+                            listOf(s.left, s.topRight), listOf(s.searchHidden, s.actionsHidden, s.addedHidden),
+                            s.expandedResults.sorted(), s.expandedAdded.sorted(),
+                        )
                     }
                 val calendar =
                     org.example.project.ui.WindowSections(listOfNotNull(calendarConfigurationWidth), calendarSectionsHidden.orEmpty())
@@ -1177,7 +1207,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 it.copy(
                     config =
                         CustomMenuButtons.encodeWindowSections(
-                            search +
+                            search + calendarCopySections +
                                 listOfNotNull(
                                     calendar?.let { c -> FloatingWindow.Calendar.name to c },
                                     taskTree?.let { t -> FloatingWindow.TaskTree.name to t },
@@ -4246,9 +4276,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // picks the day already selected (the scroll has since carried the grid elsewhere), so it is
                         // counted, not read.
                         var calendarJumpNonce by remember { mutableStateOf(0) }
-                        // A copy's sections are its own for the session; the original's are kept ([saveWindowSections]).
-                        var copyConfigurationWidth by remember { mutableStateOf(calendarConfigurationWidth) }
-                        var copySectionsHidden by remember { mutableStateOf(calendarSectionsHidden) }
+                        // A copy's sections are its own, kept by its frame id; a new one starts from the original's.
+                        val copyKept = remember { calendarCopySections[calendarId] }
+                        var copyConfigurationWidth by remember { mutableStateOf(copyKept?.splits?.firstOrNull() ?: calendarConfigurationWidth) }
+                        var copySectionsHidden by remember { mutableStateOf(copyKept?.hidden?.takeIf { it.isNotEmpty() } ?: calendarSectionsHidden) }
+                        fun saveCopySections() {
+                            calendarCopySections[calendarId] =
+                                org.example.project.ui.WindowSections(listOfNotNull(copyConfigurationWidth), copySectionsHidden.orEmpty())
+                            saveWindowSections()
+                        }
                         DisposableEffect(calendarId) {
                             onDispose {
                                 calendarSpans.remove(calendarId)
@@ -4448,6 +4484,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onConfigurationWidthChange = {
                                 if (isCopy) {
                                     copyConfigurationWidth = it
+                                    saveCopySections()
                                 } else {
                                     calendarConfigurationWidth = it
                                     saveWindowSections()
@@ -4457,6 +4494,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onSectionsHiddenChange = {
                                 if (isCopy) {
                                     copySectionsHidden = it
+                                    saveCopySections()
                                 } else {
                                     calendarSectionsHidden = it
                                     saveWindowSections()
@@ -4769,8 +4807,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                     // PRD §5/§6 History Manager: floating window listing every category's history units.
                     LateralWindow(FloatingWindow.History, historyManagerOpen) {
+                        val historyId = windowInstanceId(FloatingWindow.History.name)
                         HistoryManagerWindow(
                             histories = schedulerState.histories,
+                            savedFilter = placements[historyId]?.config,
+                            onFilterChange = { kept -> updatePlacementById(historyId) { it.copy(config = kept) } },
                             notificationLog = schedulerState.notificationLog,
                             supabaseUsageLog = schedulerState.supabaseUsageLog,
                             schedulerRuns = schedulerRuns,

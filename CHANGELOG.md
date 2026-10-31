@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The logs' filters listed in a configurations window saved before them — 2026-10-31
+
+Anomaly: "Project" was not in the Search configurations window. Its own type list, stored as every kind before the logs'
+kinds existed, lacked them, and that hid their section. `ConfigurationSearch.decode` heals such a row
+(`logKindsKnown`, absent = written before). Found on the release DB's row, which `ClaudeLogsTest` now reads as it stood.
+Client rebuild only.
+
+### What the app was showing survives a close — 2026-10-31
+
+User rule: the current page was in memory only. Now kept, local-only and never a History Unit: the page, whether the
+lateral menu is collapsed and which window stands over which (`AppViewState`, the `AppView` row), the History window's
+filter (`HistoryFilterStore`, its row's `config`), a calendar copy's sections, and a Search window's expanded rows
+(`WindowSections.expanded`, absent from an older row = none). Not kept, by rule: the calendar's zoom, scroll and locks,
+the find bar, selections and check boxes. Client rebuild only.
+
 ### Claude Code logs: one answer per prompt — 2026-10-31
 
 User rule: a log holds a text per step between tool calls, each listed as an answer. Between two prompts the last text

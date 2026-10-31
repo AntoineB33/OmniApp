@@ -673,6 +673,34 @@ class WindowFrameHost {
         if (stack.lastOrNull() == id) return
         stack.remove(id)
         stack += id
+        rememberedOrder.remove(id)
+        rememberedOrder += id
+    }
+
+    /**
+     * User rule 2026-10-31: **which window stood over which, bottom first, kept across a close** (anomaly 2026-10-14: a
+     * restart rebuilt the stack in the order the windows came back). Unlike [stack] it holds the windows of the other
+     * pages, and a window that left the screen: `App` keeps it on [AppViewState] and drops the ones closed.
+     */
+    val rememberedOrder = mutableStateListOf<String>()
+
+    /** What [rememberedOrder] held when the app closed. */
+    fun restoreOrder(order: List<String>) {
+        rememberedOrder.clear()
+        rememberedOrder.addAll(order)
+    }
+
+    /** [id] put back in the stack where [rememberedOrder] has it: under the windows remembered over it. */
+    private fun placeByMemory(id: String) {
+        val rank = rememberedOrder.indexOf(id)
+        stack.remove(id)
+        val above = stack.indexOfFirst { other -> rememberedOrder.indexOf(other).let { it < 0 || it > rank } }
+        if (above < 0) stack += id else stack.add(above, id)
+    }
+
+    private fun rememberAtBack(id: String) {
+        rememberedOrder.remove(id)
+        rememberedOrder.add(0, id)
     }
 
     /**
@@ -699,6 +727,7 @@ class WindowFrameHost {
     /** [id], about to open, opens at the back ([openingAtBack]). */
     fun openAtBack(id: String) {
         openingAtBack += id
+        rememberAtBack(id)
     }
 
     /**
@@ -710,6 +739,7 @@ class WindowFrameHost {
         entry.state.restore()
         stack.remove(id)
         stack.add(0, id)
+        rememberAtBack(id)
         recent.remove(id)
         recent += id
     }
@@ -735,7 +765,8 @@ class WindowFrameHost {
             recent += registration.id
             return true
         }
-        raise(registration.id)
+        // Put back by the app (a launch, a change of page), not asked for: it goes where it stood.
+        if (!claimOnOpen && registration.id in rememberedOrder) placeByMemory(registration.id) else raise(registration.id)
         return false
     }
 

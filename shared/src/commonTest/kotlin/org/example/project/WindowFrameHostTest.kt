@@ -27,6 +27,38 @@ class WindowFrameHostTest {
     }
 
     @Test
+    fun `windows put back by the app stand where they stood, whatever order they come back in`() {
+        val host = WindowFrameHost()
+        host.claimOnOpen = false
+        host.restoreOrder(listOf("Search", "Calendar", "History"))
+        register(host, "History")
+        register(host, "Search")
+        register(host, "Calendar")
+        assertEquals(listOf("Search", "Calendar", "History"), host.stackOrder)
+        // The app is back: what opens now was asked for, and goes on top.
+        host.claimOnOpen = true
+        register(host, "Calendar#2")
+        assertEquals("Calendar#2", host.frontId)
+        assertEquals(listOf("Search", "Calendar", "History", "Calendar#2"), host.rememberedOrder)
+        // A press is remembered, and a window that leaves the screen (another page) keeps its place in the memory.
+        host.raise("Search")
+        host.unregister("Calendar")
+        assertEquals(listOf("Calendar", "History", "Calendar#2", "Search"), host.rememberedOrder)
+        host.claimOnOpen = false
+        register(host, "Calendar")
+        assertEquals(listOf("Calendar", "History", "Calendar#2", "Search"), host.stackOrder)
+    }
+
+    @Test
+    fun `a window opened at the back is remembered at the back`() {
+        val host = WindowFrameHost()
+        register(host, "Search")
+        host.openAtBack("Notifications")
+        register(host, "Notifications")
+        assertEquals(listOf("Notifications", "Search"), host.rememberedOrder)
+    }
+
+    @Test
     fun `a tab named by the button that created its window reads that name until the window closes`() {
         // User rule 2026-10-01: a window a lateral-menu button made has the button's name on its tab.
         val host = WindowFrameHost()

@@ -282,7 +282,8 @@ private fun ClaudeFilterEditor(
                 ChoiceDropDown(
                     options = claudeLogs.projects,
                     selected = f.claudeProject,
-                    label = { it },
+                    // By the last folder, as a row names it: whole paths all read the same in the field's width.
+                    label = SearchDomain::projectName,
                     onSelect = { filters(f.copy(claudeProject = it)) },
                     placeholder = "any project",
                 )

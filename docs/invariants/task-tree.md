@@ -1080,7 +1080,9 @@ suggestions before it was ever entered.
   stored selections and their history units are untouched.
 - **A task element of the ADDED list expands as a result row does** (user rule 2026-10-07): its expansion arrow
   (`TaskSheetExpandArrow`) and, expanded, the same `SearchSubtree` — the tree's own view over the task's sub-list.
-  The expansion is the list's own, Compose-only; the sub-tree's selection and edit session are the Search
+  Which rows are expanded is kept with the window's sections (`SearchSplits.expandedResults`, `expandedAdded`, the
+  `WindowSections` row, 2026-10-31): not in the configuration, so opening a row is no History Unit and no menu button
+  loses its window. The sub-tree's selection and edit session are the Search
   sub-trees' shared ones (`projectSearchSubtree`).
 - **The task tree's pinned parent row applies in the result list and in the added list** (user rule 2026-10-07; § *The
   pinned parent row*). Two halves of ONE rule, the direct parent of what shows under the top band:

@@ -483,7 +483,7 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   The now-line is resampled at the finest resolution any of them reports. What is about THE calendar stays the
   original's: "go to calendar"'s task lock, the menu button and a notification's click (`openNewWindow` with no
   configuration brings the original back; one given a configuration opens a copy, or brings back the calendar
-  already showing exactly that). A copy's sections are its own for the session.
+  already showing exactly that). A copy's sections are its own, kept across a restart by its frame id (`calendarCopySections`, 2026-10-31).
 - **Not duplicable**: the **task tree** (above). **Notices** (`MessagePopup`) — a message has no second view. The
   debug time-sim panel wears no frame.
 - **Known sharing**: the Search window's sub-tree expansion, selection and edit session, and the default
@@ -644,6 +644,9 @@ It lives in the host because the host already sees the only two events that deci
   `TransientPopupLayer` (which takes the frame id for exactly this) and the `Box` a window pairs itself
   with a companion window in. A wrapper with no z is an invisible lid: whatever the frame inside it says
   about the order is confined to that wrapper.
+- **The stack survives a restart** (user rule 2026-10-31): `WindowFrameHost.rememberedOrder` is it with the windows of
+  the other pages and those off screen, kept on the `AppView` row. A window the APP puts back (`claimOnOpen` off: a launch,
+  a change of page) goes where it stood (`placeByMemory`), in whatever order they come back; one asked for goes on top.
 - **The stack is not the reduce bar's order.** `WindowFrameHost.entries` stays in the order windows were
   *opened* in, which is what the bar lists — a chip must not jump along the bar because its window was
   raised. Two orders, two questions, deliberately not one list.

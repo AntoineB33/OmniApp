@@ -165,6 +165,13 @@ data class SearchSplits(
     val searchHidden: Boolean = false,
     val actionsHidden: Boolean = false,
     val addedHidden: Boolean = false,
+    /**
+     * User rule 2026-10-31: the task rows whose sub-tree is open, of the result list and of the added elements, by task
+     * id. Here and not in the configuration: opening a row is no History Unit, and no other window than the one the
+     * menu button that made it finds.
+     */
+    val expandedResults: Set<String> = emptySet(),
+    val expandedAdded: Set<String> = emptySet(),
 )
 
 /**
@@ -352,9 +359,10 @@ fun SearchWindow(
     // A task row in its rename-only Edit Mode (the tree's own field, TaskRow's): the task, and what is typed.
     var editingTaskId by remember { mutableStateOf<TaskId?>(null) }
     var editDraft by remember { mutableStateOf("") }
-    // The rows whose sub-tree is open, and the one whose sub-tree holds the keyboard. Compose-only: which rows
-    // are open is a way of looking at the list, like the query itself.
-    var expandedTasks by remember { mutableStateOf(emptySet<TaskId>()) }
+    // The rows whose sub-tree is open, kept with the window's sections ([SearchSplits]), and the one whose sub-tree
+    // holds the keyboard, Compose-only.
+    var expandedTasks by remember { mutableStateOf(splits?.expandedResults.orEmpty().map { TaskId(it) }.toSet()) }
+    var expandedAdded by remember { mutableStateOf(splits?.expandedAdded.orEmpty().map { TaskId(it) }.toSet()) }
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
     // Anomaly 2026-10-07 ("I click on a task cell in the sub-tree, then on the root task cell: both are selected"):
     // **ONE surface of the window shows a selection of cells at a time.** A sub-tree's selection is the state's
@@ -689,10 +697,13 @@ fun SearchWindow(
               addedCollapsed = it.addedHidden
           }
       }
-      // A section retracted or brought back is told as a dragged line is.
-      LaunchedEffect(searchCollapsed, actionsCollapsed, addedCollapsed) {
-          onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed))
-      }
+      fun splitsNow() =
+          SearchSplits(
+              leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed,
+              expandedTasks.mapTo(HashSet()) { it.value }, expandedAdded.mapTo(HashSet()) { it.value },
+          )
+      // A section retracted or brought back, a row opened or closed, is told as a dragged line is.
+      LaunchedEffect(searchCollapsed, actionsCollapsed, addedCollapsed, expandedTasks, expandedAdded) { onSplitsChange(splitsNow()) }
       var rowWidthPx by remember { mutableStateOf(0f) }
       var rightHeightPx by remember { mutableStateOf(0f) }
       // The left section's width and the top right one's height as laid out (a retracted one: its head's), which a
@@ -720,7 +731,7 @@ fun SearchWindow(
           }
           topRightShare = draggedSplit(topRightShare, delta, room, minPx = 0f)
       }
-      val tellSplits = { onSplitsChange(SearchSplits(leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed)) }
+      val tellSplits = { onSplitsChange(splitsNow()) }
       // User rule 2026-10-13: a row's right-click menu opens at the pointer in this window ([LocalRowMenusAtPointer]).
       // User rule 2026-10-18: the right-click this window came from, for every time field of its actions ([RightClickTimeButton]).
       androidx.compose.runtime.CompositionLocalProvider(
@@ -1090,6 +1101,8 @@ fun SearchWindow(
             else HorizontalDivider()
             // --- The added elements (bottom right) ---------------------------------------------------
             AddedElementsList(
+                expandedTasks = expandedAdded,
+                onExpandedTasksChange = { expandedAdded = it },
                 rows = addedRows,
                 state = state,
                 priorities = priorities,
@@ -1216,6 +1229,9 @@ private fun AddedElementsList(
     onRemoveAll: (Set<String>) -> Unit,
     /** The row menu's "show only its actions": the actions section shows the row's own group alone ([SHOW_ONLY_ACTIONS_LABEL]). */
     onShowOnlyActions: (SearchDomain.Result) -> Unit,
+    /** The task elements whose sub-tree is open ([SearchSplits.expandedAdded]). */
+    expandedTasks: Set<TaskId>,
+    onExpandedTasksChange: (Set<TaskId>) -> Unit,
     /** Whether the section is retracted to its head, and its arrow's press ([SectionArrow], user rule 2026-10-04). */
     collapsed: Boolean = false,
     onToggleCollapsed: () -> Unit = {},
@@ -1235,9 +1251,7 @@ private fun AddedElementsList(
     val selected = selection.filterTo(LinkedHashSet()) { it in order }
     val currentSelected by rememberUpdatedState(selected)
     // User rule 2026-10-07: a task element has its expansion arrow here too, and shows its sub-tree as a result row
-    // does ([SearchSubtree]) — with the list's pinned parent row ([pinnedItemIndex]). Compose-only, like the result
-    // list's own expansion.
-    var expandedTasks by remember { mutableStateOf(emptySet<TaskId>()) }
+    // does ([SearchSubtree]) — with the list's pinned parent row ([pinnedItemIndex]).
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
     var listTop by remember { mutableStateOf<Float?>(null) }
     var nestedPin by remember { mutableStateOf<TaskId?>(null) }
@@ -1331,7 +1345,7 @@ private fun AddedElementsList(
                                 hasChildren = childListOf(row) != null,
                                 expanded = taskId in expandedTasks,
                                 onToggle = {
-                                    expandedTasks = if (taskId in expandedTasks) expandedTasks - taskId else expandedTasks + taskId
+                                    onExpandedTasksChange(if (taskId in expandedTasks) expandedTasks - taskId else expandedTasks + taskId)
                                 },
                                 color = taskColor?.let(TaskPalette::foreground) ?: MaterialTheme.colorScheme.onSurfaceVariant,
                                 background = taskColor,

@@ -299,10 +299,16 @@ data class WindowLayout(
 
 /**
  * One window's sections as it is looked at, in [WindowLayout]'s own terms: [splits] (the Search window's two shares,
- * the calendar's configuration width) and [hidden] (which sections are retracted).
+ * the calendar's configuration width) and [hidden] (which sections are retracted). A Search window's rows that are
+ * open too ([SearchSplits.expandedResults]), absent from what an older build wrote.
  */
 @Serializable
-data class WindowSections(val splits: List<Float> = emptyList(), val hidden: List<Boolean> = emptyList())
+data class WindowSections(
+    val splits: List<Float> = emptyList(),
+    val hidden: List<Boolean> = emptyList(),
+    val expanded: List<String> = emptyList(),
+    val expandedAdded: List<String> = emptyList(),
+)
 
 /** The list of [CustomMenuButton]s, in menu order, and the few things done to it. Pure. */
 object CustomMenuButtons {

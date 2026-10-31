@@ -2591,6 +2591,9 @@ fun HistoryManagerWindow(
     onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
     /** Raise this window to the top of the layers — fired on a press anywhere inside it. */
     onRaise: () -> Unit = {},
+    /** The filter as this window last kept it ([HistoryFilterStore]), and what keeps it. */
+    savedFilter: String? = null,
+    onFilterChange: (String?) -> Unit = {},
 ) {
     val frame = rememberWindowFrameState("History", initialOffset, initialSize)
     // PRD §6: the row whose information window is open — ANY row, not only a History Unit: a scheduler run
@@ -2608,7 +2611,8 @@ fun HistoryManagerWindow(
         // to bring it back — out of the reduce bar, to the top, into the focus ([WindowFrameHost.present]).
         windowFrames?.present(infoWindowId)
     }
-    var filter by remember { mutableStateOf(HistoryFilterConfig()) }
+    var filter by remember { mutableStateOf(HistoryFilterStore.decode(savedFilter)) }
+    LaunchedEffect(filter) { onFilterChange(HistoryFilterStore.encode(filter)) }
     val rows = filteredHistoryUnits(histories, filter, notificationLog, supabaseUsageLog, schedulerRuns)
 
     // The pair — this window and the row-info window beside it — is what stands among the app's other

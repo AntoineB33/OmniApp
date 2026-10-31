@@ -859,6 +859,7 @@ object SearchDomain {
                     query, Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds, target,
                     frozenKinds = frozenKinds?.map { it.name },
                     collapsedGroups = collapsedGroups.sorted(),
+                    logKindsKnown = true,
                 ),
             )
 
@@ -868,9 +869,12 @@ object SearchDomain {
                 val stored =
                     runCatching { configJson.decodeFromString(StoredConfigurationSearch.serializer(), text) }.getOrNull()
                         ?: return null
+                val kinds = stored.kinds.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet()
                 return ConfigurationSearch(
                     stored.query,
-                    stored.kinds.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet(),
+                    // Anomaly 2026-10-31 (*"I don't see the project selector"*): "every kind" written before the logs' kinds
+                    // existed lacks them, which hid their section for good. A kind cannot have been unchecked before it was.
+                    if (stored.logKindsKnown || kinds.isEmpty()) kinds else kinds + CLAUDE_KINDS,
                     stored.onlyResultKinds,
                     stored.target,
                     stored.frozenKinds?.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } },
@@ -1682,6 +1686,8 @@ object SearchDomain {
         val frozenKinds: List<String>? = null,
         /** New 2026-10-11: absent = every group open. */
         val collapsedGroups: List<String> = emptyList(),
+        /** New 2026-10-31: absent = written before the logs' kinds could be checked here, so [kinds] says nothing of them. */
+        val logKindsKnown: Boolean = false,
     )
 
     private val configJson = Json { ignoreUnknownKeys = true }
