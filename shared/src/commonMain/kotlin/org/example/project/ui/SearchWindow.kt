@@ -1340,6 +1340,7 @@ private fun AddedElementsList(
                         Text(
                             text = row.name,
                             style = MaterialTheme.typography.bodyMedium,
+                            color = logEntryColor(row.kind) ?: Color.Unspecified,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
@@ -1351,7 +1352,7 @@ private fun AddedElementsList(
                                 is SearchDomain.ItemResult -> row.detail
                             },
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = logEntryColor(row.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
@@ -1492,7 +1493,7 @@ private fun KindSection(kind: SearchDomain.Kind, width: Dp = KIND_SECTION_WIDTH)
     Text(
         text = kind.label,
         style = MaterialTheme.typography.labelSmall,
-        color = onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
+        color = logEntryColor(kind) ?: onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.width(width),
@@ -1831,33 +1832,26 @@ private fun Modifier.resultRowGestures(
         .then(contextMenuModifier(enabled = true, key = key, onSelect = onSecondarySelect, onOpen = onOpenMenu))
 
 /**
- * A Claude Code log entry's row at rest, by what it is (user rule 2026-10-31): a prompt, an answer and a reasoning chain
- * each have their colour, so a timeline of the three reads at a glance. Null for every other kind: the sheet's.
+ * The colour of ALL the text of a Claude Code log entry's row, the results' and the added elements' (user rule
+ * 2026-10-31): a prompt, an answer and a reasoning chain each have theirs, so a timeline of the three reads at a glance.
+ * Dark enough to read on the sheet and on the selection's greys. Null for every other kind: the text's own colours.
  */
-internal fun logEntryFill(kind: SearchDomain.Kind): Color? =
+internal fun logEntryColor(kind: SearchDomain.Kind): Color? =
     when (kind) {
-        SearchDomain.Kind.ClaudePrompt -> Color(0xFFE1EEFD)
-        SearchDomain.Kind.ClaudeAnswer -> Color(0xFFE4F4E2)
-        SearchDomain.Kind.ClaudeReasoning -> Color(0xFFFDF1D6)
+        SearchDomain.Kind.ClaudePrompt -> Color(0xFF1A5FD0)
+        SearchDomain.Kind.ClaudeAnswer -> Color(0xFF1E7E34)
+        SearchDomain.Kind.ClaudeReasoning -> Color(0xFFB26A00)
         else -> null
     }
 
 @Composable
-private fun resultRowModifier(
-    selected: Boolean,
-    inSelection: Boolean = false,
-    /** The row's own background at rest ([logEntryFill]); the selection's greys always win over it. */
-    restFill: Color? = null,
-): Modifier =
+private fun resultRowModifier(selected: Boolean, inSelection: Boolean = false): Modifier =
     Modifier
         .fillMaxWidth()
         .height(RESULT_ROW_HEIGHT)
         // The TASK TREE's selection, not a look of its own: the selection said by the cell's grey background,
         // darker for the main selection ([taskCellOutline], the tree's one rule).
-        .background(
-            restFill.takeIf { !selected && !inSelection }
-                ?: taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).fill,
-        )
+        .background(taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).fill)
         .border(
             taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderWidth,
             taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderColor,
@@ -2464,7 +2458,7 @@ private fun ItemResultRow(
     val currentOnSecondarySelect by rememberUpdatedState(onSecondarySelect)
     val currentOnDoubleClick by rememberUpdatedState(onDoubleClick)
     Box(
-        modifier = resultRowModifier(selected, inSelection, restFill = logEntryFill(item.kind))
+        modifier = resultRowModifier(selected, inSelection)
             .resultRowGestures(
                 key = item.kind.name + "/" + item.id,
                 onSelect = { currentOnSelect() },
@@ -2486,6 +2480,7 @@ private fun ItemResultRow(
             Text(
                 text = item.name,
                 style = MaterialTheme.typography.bodyMedium,
+                color = logEntryColor(item.kind) ?: Color.Unspecified,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
@@ -2493,7 +2488,7 @@ private fun ItemResultRow(
             Text(
                 text = item.detail,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

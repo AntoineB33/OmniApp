@@ -8,6 +8,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
+import org.example.project.claudelogs.ClaudeLogArchive
 import org.example.project.claudelogs.ClaudeLogCatalog
 import org.example.project.claudelogs.ClaudeLogEntry
 import org.example.project.claudelogs.ClaudeLogFile
@@ -18,6 +19,7 @@ import org.example.project.claudelogs.ClaudeLogSearch
 import org.example.project.claudelogs.ClaudeLogSession
 import org.example.project.claudelogs.ClaudeLogsSettings
 import org.example.project.claudelogs.defaultClaudeLogsDirectory
+import org.example.project.claudelogs.foldedTurns
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.ui.CustomMenuButtons
@@ -135,12 +137,65 @@ class ClaudeLogsTest {
         assertEquals(listOf("Now fix it", "Find the bug in the parser"), rows.filter { it.kind == SearchDomain.Kind.ClaudePrompt }.map { it.name })
     }
 
+    private fun entry(kind: ClaudeLogKind, text: String, ordinal: Int) =
+        ClaudeLogEntry(kind, text, 1_000L + ordinal, null, ordinal)
+
     @Test
-    fun eachKindOfLogEntryHasItsOwnBackground() {
-        val fills = SearchDomain.CLAUDE_KINDS.map { org.example.project.ui.logEntryFill(it) }
+    fun betweenTwoPromptsTheLastTextIsTheAnswerAndTheRestOneReasoningChain() {
+        val folded = foldedTurns(
+            listOf(
+                entry(ClaudeLogKind.Answer, "from before any prompt", 0),
+                entry(ClaudeLogKind.Prompt, "one", 1),
+                entry(ClaudeLogKind.Answer, "looking", 2),
+                entry(ClaudeLogKind.Reasoning, "thinking", 3),
+                entry(ClaudeLogKind.Answer, "still looking", 4),
+                entry(ClaudeLogKind.Answer, "done", 5),
+                entry(ClaudeLogKind.Prompt, "two", 6),
+                entry(ClaudeLogKind.Answer, "alone", 7),
+                entry(ClaudeLogKind.Prompt, "three", 8),
+                entry(ClaudeLogKind.Reasoning, "interrupted", 9),
+            ),
+        )
+        assertEquals(
+            listOf(
+                ClaudeLogKind.Answer to "from before any prompt",
+                ClaudeLogKind.Prompt to "one",
+                ClaudeLogKind.Reasoning to "looking\n\nthinking\n\nstill looking",
+                ClaudeLogKind.Answer to "done",
+                ClaudeLogKind.Prompt to "two",
+                ClaudeLogKind.Answer to "alone",
+                ClaudeLogKind.Prompt to "three",
+                ClaudeLogKind.Reasoning to "interrupted",
+            ),
+            folded.map { it.kind to it.text },
+        )
+        // The chain stands where its first piece stood: its id does not move as the turn goes on.
+        assertEquals(2, folded[2].ordinal)
+        assertEquals(1_002L, folded[2].timeMillis)
+        // The whole of it is searched.
+        assertTrue("still looking" in folded[2].searchText)
+    }
+
+    @Test
+    fun theLogsKeptReadFoldedAndTheRecordsStayAsTheLogHasThem() {
+        val session = ClaudeLogSession(
+            "s.jsonl", "s", "f", null, null,
+            listOf(entry(ClaudeLogKind.Prompt, "q", 0), entry(ClaudeLogKind.Answer, "step", 1), entry(ClaudeLogKind.Answer, "end", 2)),
+        )
+        val records = ClaudeLogArchive.records(listOf(session))
+        assertEquals(3, records.size)
+        val catalog = ClaudeLogCatalog("dir", ClaudeLogArchive.sessions(records))
+        assertEquals(listOf("q", "step", "end"), catalog.entries.map { it.second.text })
+        val rows = SearchDomain.results(SchedulerState.empty(), SearchDomain.CLAUDE_KINDS.toSet(), "", sorts = SearchDomain.CLAUDE_SORTS, claudeLogs = catalog)
+        assertEquals(listOf(SearchDomain.Kind.ClaudeAnswer, SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.ClaudePrompt), rows.map { it.kind })
+    }
+
+    @Test
+    fun eachKindOfLogEntryHasItsOwnColour() {
+        val fills = SearchDomain.CLAUDE_KINDS.map { org.example.project.ui.logEntryColor(it) }
         assertTrue(fills.none { it == null })
         assertEquals(3, fills.toSet().size)
-        assertNull(org.example.project.ui.logEntryFill(SearchDomain.Kind.Task))
+        assertNull(org.example.project.ui.logEntryColor(SearchDomain.Kind.Task))
     }
 
     @Test

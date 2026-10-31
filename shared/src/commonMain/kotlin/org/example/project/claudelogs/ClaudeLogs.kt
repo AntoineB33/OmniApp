@@ -55,6 +55,45 @@ class ClaudeLogSession(
     fun inProject(project: String): ClaudeLogSession = ClaudeLogSession(path, sessionId, folder, cwd, title, entries, project)
 }
 
+/**
+ * **What the user reads of a session** (user rule 2026-10-31): each prompt followed by at most ONE reasoning chain and
+ * ONE answer. A log holds a text for every step between two tool calls and a thinking block apart: of all that follows
+ * a prompt, up to the next one, the LAST text is the answer, and everything else is one reasoning chain — its pieces in
+ * order, standing where the first of them stood, so its id does not move while the turn goes on.
+ *
+ * For the reading only ([ClaudeLogCatalog]): the archive and the server keep the entries as the log has them, so the
+ * logs kept before this rule read the same.
+ */
+fun foldedTurns(entries: List<ClaudeLogEntry>): List<ClaudeLogEntry> {
+    val out = ArrayList<ClaudeLogEntry>(entries.size)
+    val turn = ArrayList<ClaudeLogEntry>()
+    fun closeTurn() {
+        val answer = turn.lastOrNull { it.kind == ClaudeLogKind.Answer }
+        val chain = turn.filter { it !== answer }
+        chain.firstOrNull()?.let { first ->
+            out +=
+                if (chain.size == 1 && first.kind == ClaudeLogKind.Reasoning) {
+                    first
+                } else {
+                    val text = chain.joinToString("\n\n") { it.text }
+                    ClaudeLogEntry(ClaudeLogKind.Reasoning, text, first.timeMillis, first.replyTo, first.ordinal).also { it.searchText }
+                }
+        }
+        if (answer != null) out += answer
+        turn.clear()
+    }
+    for (entry in entries) {
+        if (entry.kind == ClaudeLogKind.Prompt) {
+            closeTurn()
+            out += entry
+        } else {
+            turn += entry
+        }
+    }
+    closeTurn()
+    return out
+}
+
 /** A session log file as the platform lists it ([listClaudeLogFiles]). */
 data class ClaudeLogFile(val path: String, val folder: String, val sizeBytes: Long, val modifiedMillis: Long)
 
@@ -252,7 +291,7 @@ class ClaudeLogCatalog(
 ) {
     /** Every entry with its session, in the order the logs hold them. */
     val entries: List<Pair<ClaudeLogSession, ClaudeLogEntry>> by lazy {
-        sessions.orEmpty().flatMap { session -> session.entries.map { session to it } }
+        sessions.orEmpty().flatMap { session -> foldedTurns(session.entries).map { session to it } }
     }
 
     private val byId: Map<String, Pair<ClaudeLogSession, ClaudeLogEntry>> by lazy {

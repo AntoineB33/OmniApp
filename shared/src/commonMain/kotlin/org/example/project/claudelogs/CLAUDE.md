@@ -16,6 +16,9 @@ for it: a new need is a kind, a filter, a sort or an action of `SearchDomain`, l
   never by a reconcile, never on a timer, and nothing is published to Realtime.
 - **One reading of a log** (`ClaudeLogParser`) and **one text match** (`ClaudeLogSearch`); the rows are
   `SearchDomain.claudeResults`'s, handed the logs as `App`'s windows are handed in (`ClaudeLogCatalog`).
+- **Between two prompts, one reasoning chain and one answer** (user rule 2026-10-31, `foldedTurns`, read by
+  `ClaudeLogCatalog.entries` alone): the last text is the answer, all the rest one chain. A reading, not a rewrite: the
+  parser, the archive and the server keep the log's own entries, so old logs read the same and nothing is re-pushed.
 - **Read when asked, never on a timer** (the page first shown, the directory set, Load/Refresh); `ClaudeLogIndex`
   re-reads only the files whose size or date changed. Reads, and the first build of each kind's rows, run off the UI
   thread; a keystroke only filters (`ClaudeLogCatalog.memo`, `ClaudeLogEntry.searchText`).

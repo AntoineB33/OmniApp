@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Claude Code logs: one answer per prompt — 2026-10-31
+
+User rule: a log holds a text per step between tool calls, each listed as an answer. Between two prompts the last text
+is now the only answer and everything else is one reasoning chain (`foldedTurns`, read by `ClaudeLogCatalog`). The
+archive and the server keep the entries as before: no migration, no re-push. An element added under an id that is no
+longer a row lists nothing. Client rebuild only.
+
 ### Search: a creation row has two types; a configuration's default sorting — 2026-10-30
 
 User rule: a creation row is of the creation kind AND of the kind it makes, so "New alarm" is listed whenever the alarms
@@ -30,8 +37,8 @@ Logs-only configurations default to it, newest first (`CLAUDE_SORTS`); a stored 
 2026-10-31: **the Search window is the same on both pages**; only the logs page's menu button differs, by what it checks
 (`pageDefaultConfig`). `pageKinds` is gone: both pages offer every kind, in the windows and their configurations
 windows, and Reset checks them all. `Config.page` only says where a window is drawn. A Search window checking a log
-kind makes the logs read on any page. A prompt's, an answer's and a reasoning chain's rows each have their background
-at rest (`logEntryFill`); a selected row keeps the selection's greys.
+kind makes the logs read on any page. All the text of a prompt's, an answer's and a reasoning chain's row has its kind's
+colour (`logEntryColor`).
 
 ### The line engine folds its past — 2026-10-23
 
