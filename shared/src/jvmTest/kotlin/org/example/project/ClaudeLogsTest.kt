@@ -136,6 +136,14 @@ class ClaudeLogsTest {
     }
 
     @Test
+    fun eachKindOfLogEntryHasItsOwnBackground() {
+        val fills = SearchDomain.CLAUDE_KINDS.map { org.example.project.ui.logEntryFill(it) }
+        assertTrue(fills.none { it == null })
+        assertEquals(3, fills.toSet().size)
+        assertNull(org.example.project.ui.logEntryFill(SearchDomain.Kind.Task))
+    }
+
+    @Test
     fun thePagesDifferOnlyByWhatTheirSearchButtonChecks() {
         assertEquals(setOf(SearchDomain.Kind.Task), SearchDomain.pageDefaultConfig("").kinds)
         assertEquals(SearchDomain.CLAUDE_KINDS.toSet(), SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).kinds)

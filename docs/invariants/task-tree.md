@@ -701,6 +701,8 @@ suggestions before it was ever entered.
 - **The Search window is the same on every page** (user rule 2026-10-31): same kinds, configurations and sorting
   methods. A page differs only by what its menu button opens with (`pageDefaultConfig`); `Config.page` says where the
   window is drawn and decides nothing else. A window checking a log kind has the logs read, wherever it stands.
+- **A log entry's row has its kind's background at rest** (`logEntryFill`: prompt, answer, reasoning chain); selected,
+  it takes the tree's selection greys like every row.
 - **A history unit, a task tree, a task relation, a keyboard shortcut** are kinds too (`itemResults`): the
   unit's label (its id is its stack and its place in it, `historyUnitOf`), the tree's name, the Task relations
   window's OWN rows (`TaskRelationsDomain.rows` — never a second reading of the marks), the shortcut's action and

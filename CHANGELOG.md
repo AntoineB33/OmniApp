@@ -30,7 +30,8 @@ Logs-only configurations default to it, newest first (`CLAUDE_SORTS`); a stored 
 2026-10-31: **the Search window is the same on both pages**; only the logs page's menu button differs, by what it checks
 (`pageDefaultConfig`). `pageKinds` is gone: both pages offer every kind, in the windows and their configurations
 windows, and Reset checks them all. `Config.page` only says where a window is drawn. A Search window checking a log
-kind makes the logs read on any page.
+kind makes the logs read on any page. A prompt's, an answer's and a reasoning chain's rows each have their background
+at rest (`logEntryFill`); a selected row keeps the selection's greys.
 
 ### The line engine folds its past — 2026-10-23
 

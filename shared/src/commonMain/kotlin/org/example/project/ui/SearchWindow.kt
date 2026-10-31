@@ -1830,14 +1830,34 @@ private fun Modifier.resultRowGestures(
         // Innermost, so it sees the press first and consumes a right-click before the tap detector does.
         .then(contextMenuModifier(enabled = true, key = key, onSelect = onSecondarySelect, onOpen = onOpenMenu))
 
+/**
+ * A Claude Code log entry's row at rest, by what it is (user rule 2026-10-31): a prompt, an answer and a reasoning chain
+ * each have their colour, so a timeline of the three reads at a glance. Null for every other kind: the sheet's.
+ */
+internal fun logEntryFill(kind: SearchDomain.Kind): Color? =
+    when (kind) {
+        SearchDomain.Kind.ClaudePrompt -> Color(0xFFE1EEFD)
+        SearchDomain.Kind.ClaudeAnswer -> Color(0xFFE4F4E2)
+        SearchDomain.Kind.ClaudeReasoning -> Color(0xFFFDF1D6)
+        else -> null
+    }
+
 @Composable
-private fun resultRowModifier(selected: Boolean, inSelection: Boolean = false): Modifier =
+private fun resultRowModifier(
+    selected: Boolean,
+    inSelection: Boolean = false,
+    /** The row's own background at rest ([logEntryFill]); the selection's greys always win over it. */
+    restFill: Color? = null,
+): Modifier =
     Modifier
         .fillMaxWidth()
         .height(RESULT_ROW_HEIGHT)
         // The TASK TREE's selection, not a look of its own: the selection said by the cell's grey background,
         // darker for the main selection ([taskCellOutline], the tree's one rule).
-        .background(taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).fill)
+        .background(
+            restFill.takeIf { !selected && !inSelection }
+                ?: taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).fill,
+        )
         .border(
             taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderWidth,
             taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderColor,
@@ -2444,7 +2464,7 @@ private fun ItemResultRow(
     val currentOnSecondarySelect by rememberUpdatedState(onSecondarySelect)
     val currentOnDoubleClick by rememberUpdatedState(onDoubleClick)
     Box(
-        modifier = resultRowModifier(selected, inSelection)
+        modifier = resultRowModifier(selected, inSelection, restFill = logEntryFill(item.kind))
             .resultRowGestures(
                 key = item.kind.name + "/" + item.id,
                 onSelect = { currentOnSelect() },
