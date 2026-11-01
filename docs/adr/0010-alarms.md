@@ -1,6 +1,6 @@
 # ADR 0010 — Alarms and timers (PRD §18): no server involvement, by design
 
-**Status:** active. **Invariant summary:** see `CLAUDE.md` → *Alarms*.
+**Status:** active. **Invariant summary:** see `docs/invariants/alarms-and-timers.md`.
 
 The left-menu **Alarms** window edits `SchedulerState.alarms` (`AlarmEntry`: time of day, label, how long the
 sound lasts, vibrate, the days it is triggered on, repeat/one-off, on/off) — authoritative state, so it rides the

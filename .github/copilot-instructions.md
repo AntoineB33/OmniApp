@@ -21,5 +21,5 @@
 ## Agent workflow
 
 - If the user has a deployed app running, do not use that app's state for experiments.
-- Prefer `:shared:check` and `:shared:jvmTest` for code verification before anything GUI-related.
+- Prefer `checkChange` and `:shared:jvmTest` for code verification before anything GUI-related.
 - If UI validation is needed, run the desktop app in a separate state dir, not the live release state.

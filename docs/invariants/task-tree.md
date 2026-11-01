@@ -627,6 +627,8 @@ suggestions before it was ever entered.
 → PRD §7 *Search*. `scheduler/domain/SearchDomain.kt` decides what is found and keeps the last path;
 `ui/SearchWindow.kt` draws it.
 
+#### What counts as in a tree, and the last path
+
 - **"In a task tree" means ANY task tree** — the live one and every stored `TaskTreeEntry` — with the live
   tree's own membership predicate (a title-bearing cell reachable from the root, `shortestTaskTreePaths`'s
   walk). The **active** entry's snapshot is never read: it is stale by design and the live fields are that
@@ -662,6 +664,9 @@ suggestions before it was ever entered.
   reaching it (that is what a mirrored parent's paths are), capped per task and by a visit budget, level by
   level so a cut drops the longest paths first. It is display-only; the stamp and the "not in any tree" logo
   read the exact walk. The window holds it on the tree fields, never per keystroke or per tick.
+
+#### The rows
+
 - **The rows are not cells.** Every row has one fixed height and the list's full width, so a row answers a
   cell's gestures in the form that fits — select, walk, open (`Enter`), `Ctrl+C`, the §13 menu's
   task entries — and never grows into an Edit Mode. Every action goes through the handler the rest of the app
@@ -670,6 +675,9 @@ suggestions before it was ever entered.
 - **The title prevails over the path** (`TaskResultRowLayout`): the title is measured first against
   everything but the logo and the thinnest path box, and the path box gets the rest. A `Row` cannot express
   this — it measures unweighted children first, which is the opposite priority.
+
+#### The configuration and its sorting
+
 - **The query, the checked kinds and the filters are local-only view state** (`SearchDomain.Config`, kept by
   `App` on the window's placement row — `popups.md`): an open window comes back with them after a restart,
   and they never sync. A window opened from the lateral menu starts from the default configuration, or from
@@ -701,6 +709,9 @@ suggestions before it was ever entered.
 - **The Search window is the same on every page** (user rule 2026-10-31): same kinds, configurations and sorting
   methods. A page differs only by what its menu button opens with (`pageDefaultConfig`); `Config.page` says where the
   window is drawn and decides nothing else. A window checking a log kind has the logs read, wherever it stands.
+
+#### The kinds of result
+
 - **All the text of a log entry's row has its kind's colour** (`logEntryColor`: prompt, answer, reasoning chain), in the
   results and the added elements. A Search row has no background colour of its own and no square: only the selection's greys.
 - **A history unit, a task tree, a task relation, a keyboard shortcut** are kinds too (`itemResults`): the
@@ -744,6 +755,9 @@ suggestions before it was ever entered.
   results", `SearchDomain.kindsInResults`, and "show the filters that are on", which keeps a filter that is on listed
   where that cut would drop its type), local-only like the rest. The General section is never cut by kind. "On" is
   `Filters.isOn`, the one statement the Search window's filter count reads too.
+
+#### A row is a tree cell: selection, menu, opening
+
 - **A task row IS the tree's cell code** (`SearchTaskRow` → `TaskRow`, with two slots the tree leaves empty:
   `rowLeading` for the kind, `afterTitle` for the path box). **The title prevails over the path box**
   (`TitleThenSection`): the title takes what it needs, the path box the rest down to `afterTitleMinWidth` — a
@@ -803,6 +817,9 @@ suggestions before it was ever entered.
   (`ChoresManagerWindow(embeddedSubjects)`), never a second editor; each re-seeds from the list whenever it is not the
   one it last pushed (the Alarms window's rule), which lets several stand side by side. No "+ New" inside the editor;
   the section's own "New" action makes one (below); the default configurations stay one link away.
+
+#### Actions of every kind, and the instants
+
 - **"New" and "Duplicate" are actions of every kind a user makes** (user rule 2026-10-01; task, category, period,
   alarm, timer, chrono, quota, reminder): "New" makes one through `App.createElement` (the "creation" row's path)
   and **opens it in a NEW Search window as its only added element** — every kind, never joining the asking window's
@@ -835,6 +852,9 @@ suggestions before it was ever entered.
     block is grabbed and no menu opens — and the focus comes back. A right-click on the calendar gives the pick up.
   - **Persisted shape** (local view state): `taskBoxesFromMillis` … `periodBoxesUntilMillis`; the day strings an older
     build stored are still read — "from" as that day's first instant, "until" as its last, on this device's clock.
+
+#### The grouped configurations
+
 - **THE SEARCH CONFIGURATIONS ARE GROUPED BY HOW MANY ROWS OF THE RESULTS THEY APPLY TO** (user rule 2026-10-11:
   *"with the same logic as in the action section of the Search window, the first group gather all the configurations
   that can be applied to every element in a set of n element, where n is as big as possible, followed by other groups
@@ -873,6 +893,9 @@ suggestions before it was ever entered.
     second button's job. The switch says nothing while the button is off, and setting the button resets it.
   - The Added elements configurations window keeps its own "Only the types in the added elements" (the same stored
     field); `showFiltersOn` is still read past in a stored configuration and no longer used.
+
+#### The grouped actions
+
 - **THE ACTIONS ARE GROUPED FROM EVERY ELEMENT DOWN TO EACH ONE** (user rule 2026-10-10: *"there should be the action
   groups that include all the actions that can be applied to all the elements, then a group for less elements and so
   on… when there are only two quota elements, there must be three groups: the one for both quota (remove them from the
@@ -1032,6 +1055,9 @@ suggestions before it was ever entered.
   (`addedTitles` → `sharedTitle`, the STORED title); typing writes it to all of them at each keystroke through the
   list's own intent (`AddedCommand.Titles`, one `editKey` per typing session, so one History Unit); **Escape gives
   each back the title it had when the typing began**, and ends the session, as does the field losing the focus.
+
+#### One field for all of a kind
+
 - **NO KIND'S GROUP HAS AN EDITOR PER ELEMENT WHERE ONE FIELD CAN SAY IT FOR ALL** (user rule 2026-10-02, *"don't do
   that just for alarms"*). The timers', chronos' and reminders' "Edit" (the Alarms window's rows / the reminder editor,
   embedded once per added element) are gone like the alarms': **timers** — Duration, Rings for, Below zero, Alert
@@ -1064,6 +1090,9 @@ suggestions before it was ever entered.
   parent cell — the result row's own, an ordinary selectable cell, where the tree's is the root cell and so no via —
   and the selection and the edit session then pointed at an occurrence nothing draws: a first-level cell of an
   expanded row took the press, showed no selection and never entered Edit Mode, while every deeper cell worked.
+
+#### Rows and the added list
+
 - **A result row gives its room to the PATH** (user rule 2026-10-07: "there is so much space, but the paths section is
   shrinked because it lacks space"): the kind section is as wide as the widest kind the list HOLDS
   (`rememberKindSectionWidth`, never above the old fixed 104 dp — a list of tasks alone left a hundred pixels blank
@@ -1113,6 +1142,9 @@ suggestions before it was ever entered.
   selects its row alone unless it is already selected. The menu: **"remove"** (`SearchDomain.removing`) and **"remove
   the others"** (`keepingOnly`) — off the list, never off the account; the second is not offered once the selection is
   all the list holds. The row's ✕ and double-click are unchanged.
+
+#### Other kinds, and the configuration windows
+
 - **"app setting" is a kind too** (`Kind.AppSetting`, user spec 2026-10-02): one row per `SearchDomain.AppSettingEntry`
   — "Sound setting" is the first — added and opened like any element (its row opens the Search window holding it
   alone), and its controls are ACTIONS on the added elements: "Global volume" (`AddedAction.SoundVolume`) is a slider
@@ -1165,6 +1197,9 @@ suggestions before it was ever entered.
   bar, the kinds' drop-down and Reset on one row; "All configurations", "Select all" and "Add" on the next (the
   divider under them is gone); the section's padding is the actions section's. The result list under it is not: its
   rows are the tree's.
+
+#### The three sections
+
 - **Three sections** (user spec 2026-09-27): the search on the left half; on the right, the **actions on the added
   elements** above the **added elements**. **Both separators are dragged** to share the room (user rule 2026-10-01,
   `SectionSeparator` + `draggedSplit`) — **up to the edges of the window** (user rule 2026-10-07: no least width or
@@ -1211,6 +1246,9 @@ suggestions before it was ever entered.
   element's own row opens it. The Added elements configurations window, which lists every action there is, keeps it.
 - **Opening a row is `SearchRowOpeners.open`**, for the result list and for the added elements' "Open each" in both
   windows that offer it — the one mapping from a row to its window, never a second copy.
+
+#### What the actions do
+
 - **The actions act through the app's own intents** (`SearchDomain.addedIntents`): a tree edit over several tasks
   is ONE intent and one Undo/Redo unit (`SetTasksCategory`, `SetTasksMinimumTime`); the alarms' switch rides
   `SetAlarms`; a timer's or a chrono's run is its row's own run-state intent per element (a unit each since
@@ -1255,6 +1293,9 @@ suggestions before it was ever entered.
   past naming the kind, re-added if deleted; a rule of the user's naming only default kinds dropped; one that also
   names a kind of the account's own kept — it is that kind's configuration too). The tasks' resiliences are the
   tasks' and stay. One History Unit (since 2026-10-01, every account setting is one). The button is greyed while `modifiedDefaultPeriods` is empty.
+
+#### The filters
+
 - **The tasks' "Schedulable" filter** (yes / no / any, user rule 2026-10-01; `Filters.taskSchedulable`): PRD §9's
   schedulable, read through `SchedulerDomain.isPlaceableTask` — a leaf that still lives in the tree, the predicate
   "start this task now" asks — so a parent, a task only a stored tree holds and a cut one are "no".

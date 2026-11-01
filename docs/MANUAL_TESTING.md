@@ -72,9 +72,7 @@ forces the timing, so wherever a step says "press Sync" you are collapsing a wai
 
 ## 1. Automated gate (must be green first)
 
-- [ ] `./gradlew :shared:check` — compile/syntax across targets.
-      (Known: JS can be red on missing platform actuals; if so confirm via `:shared:jvmTest` +
-      `compileCommonMainKotlinMetadata` for iOS portability — see the `shared-check-jvmtest-gate` note.)
+- [ ] `./gradlew checkChange` — tests, every target this machine can build, start-up on a copy of the release DB.
 - [ ] `./gradlew :shared:jvmTest` — full state-engine suite passes.
 - [ ] No persisted-DB migration regressions: if this release touched `SchedulerState` / any `Persisted*`
       type, confirm a decode test loads a **previous-shape** payload and heals/renders it (CLAUDE.md →

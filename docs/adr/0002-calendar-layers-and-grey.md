@@ -1,6 +1,6 @@
 # ADR 0002 — The calendar's two layers, and what GREY means
 
-**Status:** active (spec settled 2026-08-20). **Invariant summary:** see `CLAUDE.md` → *Calendar*.
+**Status:** active (spec settled 2026-08-20). **Invariant summary:** see `docs/invariants/calendar.md`.
 
 The old "Inactivity" + "No screen" BAND pair is gone, replaced by two orthogonal things, and keeping
 them orthogonal is the whole point — one says **who was at a screen** (the layers), the other says

@@ -71,6 +71,8 @@ Nothing else may follow it out of the app: every other surface, per-object windo
 read five ways. A second copy of that arithmetic is how two windows come to disagree about what "maximized"
 means.
 
+### The head, maximize and the drag
+
 - **A head**, which is the handle the window is dragged by, carrying — in this order — **add to the menu, duplicate,
   fill width, fill height, reduce, maximize, close**. The order is fixed here and not per window, so every window's
   ✕ is under the same pixel. Duplicate (⧉) shows only where the window can be duplicated (below). Add to the menu
@@ -129,6 +131,9 @@ means.
   while it is retracted or squeezed — laid out at `CALENDAR_GRID_MIN_WIDTH` at least and cut (`keepsWidthAbove`): its
   scroll and its zoom are its own, and a week laid out in no width is a case nothing else asks of it. The
   configuration is cut the same way below its own width, and takes the whole window while the grid is retracted.
+
+### The lateral menu
+
 - **The whole lateral menu is the user's, except the page button** (user rule 2026-10-08; `ui/CustomMenuButtons.kt`,
   `LateralMenu`, `CustomMenuButtonsTest`). Under the page button there is ONE list of items (`CustomMenuButton`), and
   an item is a **window's button** (☆, as before) or a **control of the app** (`CustomMenuButton.control`, a
@@ -180,6 +185,9 @@ means.
   the fields, for the action, for the Sleep window — which the calendar's "edit… → sleep schedule" on a Sleep band
   still opens — and for the lateral menu's item (the action added to the menu IS `MenuControl.SleepSchedule`). A
   field re-reads a value written from another place, never under the hand typing it.
+
+### Maximized, resized, filled
+
 - **Dragging a MAXIMIZED window's head un-maximizes it under the pointer** (user rule 2026-10-01;
   `WindowFrameState.unmaximizeUnder`): the window takes back its normal size — its default one if it never had
   one — with the pointer at the same fraction along the head and the head under it, and the drag carries it on.
@@ -206,6 +214,9 @@ means.
 - **Every window has an explicit default width AND height**, and its content sits in a `weight(1f)` slot.
   Never `heightIn(max = …)` + wrap: a window whose height is its content's cannot be given a different one
   by dragging its bottom edge, which is the whole point of the edge.
+
+### Menus on the frame
+
 - **EVERY MENU GOES THROUGH `AppDropdownMenu`, AND ON THE DESKTOP IT IS AN OS WINDOW OF ITS OWN, ALWAYS ON TOP**
   (user rule 2026-10-13: *"Any right-click menus must appear above all, even above Firefox's picture-in-picture
   window"*, *"like when I right-click in the menu of Chrome: the pip is still there but behind the right-click
@@ -295,6 +306,9 @@ means.
   `CheckBoxDropDown`, `DropDownScrollbar`). The list scrolls in a column of its own, 360 dp at most, with the bar at
   its right edge — gone while everything fits; dragging along the bar scrolls the list. It is its own drawing and not
   `ColumnScrollbar`: a menu measures its entries' intrinsic width, which a `BoxWithConstraints` cannot answer.
+
+### Search bars
+
 - **Every search bar has a ✕ at its right end, which empties it** (user rule 2026-10-11; `SearchBarCross`, the
   field's `trailingIcon`): the Search window's bar, "Search a configuration" in both configuration windows, the
   actions section's "Search an action", the notification list's "Filter" and the task picker's "Find a task". Always
@@ -310,6 +324,9 @@ means.
   for a plain list also the list found away from where this put it), and then it goes to the top like any change. A
   plain list's restore waits up to three frames for the longer list to be laid out, a scroll being clamped to the
   height laid out. A new search bar's list calls it too. `ScrollsToTopWhenTypedTest`.
+
+### The window bar
+
 - **The window bar along the bottom of the app — its system tray** (`WindowBar`) appears whenever a window is
   open and has a **tab for every open window, the reduced ones included** (set back in italics), in the order
   they were opened. **A tab's fill is its window's colour** (§ *Window colours*), so no state is said by a fill:
@@ -402,6 +419,9 @@ means.
   `TASK_TREE_DEFAULT_CHROME`, so the tree reopens as on a first run — maximized, and un-maximizing gives the
   default size, centred. The chrome is WRITTEN as the default, not cleared: `WindowChromeMemory.saved` answers
   for any existing row, so a cleared row would reopen un-maximized.
+
+### Focus on closing and on coming back
+
 - **A closing window hands the focus on in ONE place** (`ViewHistoryRecorder.focusAfterClose` →
   `WindowFrameHost.focusHeirOf`): a window closing WITHOUT the focus leaves it where it is; one closing with it hands
   it to the window that had the focus most recently (`WindowFrameHost.recent`), not reduced and not closing,
@@ -415,6 +435,9 @@ means.
   opening only): it named the tree even when the tree was closed too, and the focus walk's effect (which opens the
   window the state's focus names) then reopened it — "close selection" over every tab left a window open
   (anomaly 2026-10-01). Anything that moves the state's focus to a window must be sure that window is open.
+
+### What is drawn and what is hit
+
 - **A reduced window is still composed, merely not placed** (`Modifier.unplaced`). Not composing it throws
   away everything half-typed in it, which is not what pressing *reduce* asks for.
 - **A WINDOW'S HIT REGION IS ITS DRAWN RECTANGLE, so nothing may hang off it outside the frame's

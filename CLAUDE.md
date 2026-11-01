@@ -1,166 +1,103 @@
 Kotlin Multiplatform (KMP) project targeting Windows Desktop first.
 
-This file is the **always-loaded** layer: the commands, the safety rules, and the invariants that can bite
-anywhere in the codebase. The per-subsystem invariants live in `docs/invariants/` and are indexed below —
-**read the relevant one before changing that subsystem**, and note that each source directory carries a
-`CLAUDE.md` pointing at the same files. The reasoning, the rejected approaches and the post-mortems behind
-every rule are in `docs/adr/` (start at `docs/adr/README.md`); the dated log of what changed when, including
-every Supabase and SQLite migration, is in `CHANGELOG.md`.
+This file holds only what can bite anywhere. Per-subsystem invariants are in `docs/invariants/` (indexed below), the
+reasoning and post-mortems in `docs/adr/` (start at `docs/adr/README.md`), the dated log of what changed, every Supabase
+and SQLite migration included, in `CHANGELOG.md`.
 
 ## Commands
 
-- `./gradlew checkChange` — the contributor's one gate (README § *Test your change*): `:shared:jvmTest`, every target
-  and app shell this machine can build, and `startupCheck` where a release DB exists. `tryDesktop` (throwaway
-  `~/.omniapp-try`, offline unless `-Ponline`), `tryAndroid` (installs debug, never uninstalls) and `tryWeb` are its
-  try-it half. Keep them cross-platform and away from the release state; a new check belongs in `checkChange`.
-- `./gradlew :shared:check` — verify syntax/compile errors after editing the `shared` module.
-- `./gradlew :shared:jvmTest` — the real logic gate (see *Verification* below).
+- `./gradlew checkChange` — the one gate (README § *Test your change*): `:shared:jvmTest`, every target and app shell
+  this machine can build, and `startupCheck` where a release DB exists. A new check belongs in it.
+- `tryDesktop` (throwaway `~/.omniapp-try`, offline unless `-Ponline`), `tryAndroid` (installs debug, never uninstalls),
+  `tryWeb` — its try-it half. Keep them cross-platform and away from the release state.
+- `./gradlew :shared:jvmTest --tests "..."` — the tests a change affects, while working.
 - `./gradlew :desktopApp:run` — run the desktop app to verify UI/desktop changes.
-- `./gradlew :shared:longTest` — the LONG scheduler simulations (hundreds of tasks lived through for weeks; minutes to
-  hours, `-PlongScale=0.25` to shrink them). Not in `checkChange`: run it before reporting done a change to what the
-  scheduler ANSWERS (the score, the search, the fill, the advance — `docs/invariants/scheduler.md` § *Simulations*),
-  and read what it prints even when it passes.
-- `./gradlew :shared:startupCheck` — headless start-up on a copy of the release DB (never takes the screen); run it
-  before reporting a client change done — a green `jvmTest` once shipped a release that drew no window for 90 s.
+- `./gradlew :shared:longTest` — the LONG scheduler simulations (minutes to hours, `-PlongScale=0.25` to shrink them).
+  Not in `checkChange`: run it before reporting done a change to what the scheduler ANSWERS (the score, the search, the
+  fill, the advance — `docs/invariants/scheduler.md` § *Simulations*), and read what it prints even when it passes.
+- `./gradlew :shared:startupCheck` — headless start-up on a copy of the release DB (never takes the screen).
   `docs/PERFORMANCE.md` § *Start-up on a real account*.
 
 ## Agent safety: do not touch the live release app
 
-- The deployed Windows release app is the user's live runtime and uses `%USERPROFILE%\.omniapp-release`.
-- Never run a dev/test desktop build against that same state dir. Doing so can write over the live local DB and trigger crashes or state corruption.
-- If the user already has the release app running, prefer a separate throwaway state dir such as `%USERPROFILE%\.omniapp-dev` or `%USERPROFILE%\.omniapp-guest` for agent-driven runs.
-- When testing a local build, use `-Pomniapp.stateDir=...` or a dedicated account script, never the release app's DB.
-- Do not kill `org.example.project.exe` or rerun `scripts\account3-deploy-windows.bat` unless the user explicitly asks for a redeploy.
-- Treat the deployed app as production-like state: keep it isolated from experiments and from agent-run builds.
+- The deployed Windows release app is the user's live runtime and uses `%USERPROFILE%\.omniapp-release`. Never run a
+  dev/test build against that state dir: it can write over the live DB and trigger crashes or state corruption.
+- Agent-run builds use `-Pomniapp.stateDir=...` with a throwaway dir (`%USERPROFILE%\.omniapp-dev`, `.omniapp-guest`) or
+  a dedicated account script.
+- Do not kill `org.example.project.exe` or rerun `scripts\account3-deploy-windows.bat` unless the user explicitly asks
+  for a redeploy.
 
 ## Agent safety: the screen belongs to the user
 
-Anything that opens a window (`:desktopApp:run`, the `account{1,2,3}-*.bat` scripts) or drives the mouse and
-keyboard steals focus from whatever the user is doing. The user's global `~/.claude/hooks/screen_guard.py`
-forces a permission prompt on those commands (this project's are listed in `.claude/screen-commands.txt`) and,
-each time such a command finishes, a voice tells the user they can come back. The protocol around that prompt:
+Besides the global rules, each time a screen-taking command finishes a voice tells the user they can come back.
 
-- **Before** asking for it, say in one line what will open and roughly how long the screen will be taken, so
-  the user can approve and then step away.
-- Batch the screen-taking work: do every compile, test and file edit first, then take the screen once.
-- Every screen-taking command is its own step-away / come-back cycle: the user returns at each "come back", so a
-  second screen-taking command is a second prompt they must be there to approve.
-- Launch the app in the foreground: a background launch has no "finished" event, so its "come back" is only
-  said at the end of the turn.
+- Batch the screen-taking work: do every compile, test and file edit first, then take the screen once. Each such
+  command is its own step-away / come-back cycle, with a prompt the user must be there to approve.
+- Launch the app in the foreground: a background launch has no "finished" event, so its "come back" is only said at the
+  end of the turn. `perf-profile.bat`, `account1-empty-and-open.bat` and `account2-open*.bat` hand off through `start`
+  and return at once, so they are background launches.
 
 ## Verification
 
-- After any change to shared Kotlin logic, run `:shared:check` before reporting it as done.
-- Do not assume `expect`/`actual` declarations work until `:shared:check` passes.
-- `:shared:check` is red on JS (missing platform actuals) and on
-  `verifyCommonMainSchedulerDatabaseMigration` (sqlite-jdbc native lib — machine-level). So `.sqm` files are
-  **not** machine-verified: write the migration `jvmTest`. Verify logic with `:shared:jvmTest` and iOS
-  portability with `compileCommonMainKotlinMetadata`.
-- Do not use Android-specific CLI tools to render previews.
-- Diagnose calendar anomalies with `collect-diagnostics.bat`, not by asking the user to describe them.
-- Diagnose *slowness* by measuring it, not by reading for it: `perf-profile.bat` for the in-app overlay and
-  `:shared:jvmTest --tests "*PerfBenchmarkTest*" -i` for the headless derivation timings. `docs/PERFORMANCE.md`.
-  Profile a large, realistic account with time-sim OFF — the sim clock's ~20 Hz now-line inflates every
-  display-path cost by more than an order of magnitude over what a user pays.
+- Before reporting a client change done, run `:shared:startupCheck`: a green `jvmTest` once shipped a release that drew
+  no window for 90 s.
+- After a change to shared code, run `checkChange`. Do not assume `expect`/`actual` declarations work until it passes.
+- `:shared:check` is not a gate: it stays red on `verifyCommonMainSchedulerDatabaseMigration` (sqlite-jdbc native lib,
+  machine-level). So `.sqm` files are **not** machine-verified: write the migration `jvmTest`.
+- Diagnose calendar anomalies with `scripts\collect-diagnostics.bat`, not by asking the user to describe them.
+- Diagnose *slowness* by measuring it, not by reading for it: `scripts\perf-profile.bat` for the in-app overlay,
+  `:shared:jvmTest --tests "*PerfBenchmarkTest*" -i` for the headless timings, on a large account with time-sim OFF. A
+  cost is not a bottleneck until it is multiplied by a rate and put on a thread that owes a frame. `docs/PERFORMANCE.md`.
 
 ## Deployment surfaces
 
-**Always state what must be redeployed for a change to take effect, and which script.** Two independent
-surfaces:
+**When reporting a change as done, name what must be redeployed for it to take effect and which script, or say "no
+deploy needed".** Two independent surfaces:
 
 1. **Supabase** (`supabase/migrations/`, Edge Functions, `pause-cue-setup.sql`'s pg_cron) →
-   `deploy-supabase.bat`.
-2. **The client apps** (any `shared`/desktop/Android Kotlin) → an app rebuild via
-   `account{1,2,3}-*deploy*.bat`. The running binary is stale until then.
+   `scripts\deploy-supabase.bat`.
+2. **The client apps** (any `shared`/desktop/Android Kotlin) → an app rebuild via `scripts\account{1,2,3}-*deploy*.bat`.
 
-When reporting a change as done, name the surface(s) it needs — or say "no deploy needed" (e.g. a test-only
-change).
+A green gate means the code compiles and its logic is correct, **not** that the change is live on a device: the running
+binary is stale until rebuilt, and a migration is ignored if only the app was.
 
-A `:shared:check` / `:shared:jvmTest` pass means the code compiles and its logic is correct. It does **not**
-mean the change is live on device. Never conflate the two. The common failure: a client-only fix silently
-"doesn't work" because the old binary is still running, or a migration change is ignored because only the app
-was rebuilt.
-
----
+Scripts: `docs/SCRIPTS.md`. Read its gotchas before editing `deploy-supabase.bat` or `pause-cue-setup.sql`.
 
 ## Rules that fire anywhere
 
-These bite in code that does not look like it belongs to the subsystem that owns them. They are the short
-form; the file named after each one carries the whole rule and the reasons.
+The short form; the file named after each carries the whole rule and the reasons.
 
 - **What the server stores and serves is budgeted: a tenth of every Supabase free-tier quota, gated by
-  `ServerQuotaTest`.** The project went down on 2026-09-14 with its 500 MB database full of versions of one
-  document rewritten per edit. Never write a large row to change a small part of it, never keep rows that grow with
-  editing without a purge the test can read, and never publish a row table to Realtime. `server-quota.md`.
-- **Never add a timer-driven request, poll or heartbeat.** Everything is event-driven or boundary-driven: the
-  server traffic budget (`pause-cue.md`), the unlock edge that clears "I'm away", the display resample
-  (`display-hot-path.md`). A `while(true) { delay() }` that re-asks a question is almost always the wrong
-  shape here.
-- **The runtime never scans the timeline** (`docs/scheduler_requirements.md` § *Rule Structure*). As the line moves,
-  the one interpreter (`SchedulerEngine.interpretTo`) compares it with the next ARMED TRIGGER — the rule cursor's
-  (`RuleProgram`), the break machine's (`BreakMachine`) — and does nothing before it; a mode edge and a history
-  rewrite are triggers of their own. A per-tick filter, sort or search of `state.panels`, of the pause history or of
-  the environment is the exact shape the requirements forbid; compile what the line needs when the rules change.
-  `docs/invariants/scheduler.md` § *The rules are read by a forward cursor*.
-- **Time passing must never re-plan.** Anything that wants to trigger a re-plan belongs in
-  `SchedulerDomain.schedulingSignature` (or `requestReschedule`), never in a fresh dispatch site or a tick. A re-plan
-  of unchanged rules rewrites a schedule the progressive calculation already made definitive — the hourly
-  "staleness bound" did exactly that and was removed (2026-09-17). There is no exception any more: the task-tree
-  timeline's re-plan at every run start went on 2026-10-04, when the fill started placing every stretch under the
-  rule state in force THERE (`scheduler.md` § *Rule state input evolution*).
-- **The scheduler's answer need not be the same on two devices; the score decides.** Budgets may be wall time, a
-  platform may bring its own solver (the desktop's OR-Tools MIP), and plans made apart compete on the score under the
-  rules in force now. Never refuse a solver or a budget "because every device must reach the same rules".
-  `scheduler.md` § *The best score*, § *One device plans*.
-- **Anything recomputed on every `nowMillis` tick must be bounded by the visible window, never O(total
-  history)** — and what the calendar *composes* is bounded too. `display-hot-path.md`.
-- **One rule, one funnel.** Nearly every regression recorded in `docs/adr/` is a second copy of a rule that
-  drifted from the first: a second placement derivation, a second notification gate, a second clipboard
-  parser, a second row implementation, a second reading of the lock history. Before adding a code path that
-  answers a question the app already answers, find the existing one and route through it. A funnel with an
-  exception list is not a funnel.
-- **`SchedulerState` is reduced by more than one thread, so `dispatch` publishes by compare-and-set.** The
-  engine reduces its two expensive re-plans off the frame loop (`display-hot-path.md`); a new call site that
-  assigns `_state.value` directly, or a second off-thread reducer that does not re-derive on a lost race, puts
-  back the bug where a 60 ms plan silently reverts the keystroke typed inside it.
-- **A cost is not a bottleneck until it is multiplied by a rate and put on a thread that owes a frame.**
-  `PerfBenchmarkTest` ranks per-call costs; only the overlay's ms/s ranking (or the thread the call sits on)
-  turns one into a diagnosis. `docs/PERFORMANCE.md` § *What the table is and is not*.
-- **Derived state is stripped from the wire and never triggers a sync push** — see the table below, which is
-  the whole of the classification.
-- **Test against a large, realistic DB**, not an emptied one. An empty account hides every cost and several
-  whole classes of bug.
-- **Prefer expressing a thing in the model that already exists** over adding a mechanism beside it. Task
-  resilience, the recurrence bars, and the restrictive-period kinds each replaced a hard-coded special case;
-  re-adding one is the specific mistake those models exist to prevent.
-- **Platform differences are decided per input event or per injected seam, never by asking which build this is.**
-  A finger is `PointerType.Touch` on the event (so a phone's browser behaves like the phone app); an OS capability
-  is a seam the entry point injected (`SchedulerEngine.hasOsAlarmClock`), not `DeviceKind`. The whole list of
-  necessary differences, and the touch gaps still open, is `docs/PLATFORMS.md` — add to it before branching.
+  `ServerQuotaTest`.** Never write a large row to change a small part of it, never keep rows that grow with editing
+  without a purge the test can read, never publish a row table to Realtime. `server-quota.md`.
+- **Never add a timer-driven request, poll or heartbeat.** Everything is event-driven or boundary-driven. A
+  `while(true) { delay() }` that re-asks a question is almost always the wrong shape here. `pause-cue.md`,
+  `display-hot-path.md`.
+- **The runtime never scans the timeline.** The one interpreter (`SchedulerEngine.interpretTo`) compares the line with
+  the next armed trigger and does nothing before it; never a per-tick filter, sort or search of `state.panels`, the
+  pause history or the environment. `scheduler.md` § *The rules are read by a forward cursor*.
+- **Time passing must never re-plan.** Whatever wants a re-plan belongs in `SchedulerDomain.schedulingSignature` (or
+  `requestReschedule`), never in a fresh dispatch site or a tick. `scheduler.md` § *Rule state input evolution*.
+- **The scheduler's answer need not be the same on two devices; the score decides.** Never refuse a solver or a budget
+  "because every device must reach the same rules". `scheduler.md` § *The best score*, § *One device plans*.
+- **Anything recomputed on every `nowMillis` tick must be bounded by the visible window, never O(total history)** — and
+  what the calendar *composes* is bounded too. `display-hot-path.md`.
+- **One rule, one funnel.** Nearly every regression in `docs/adr/` is a second copy of a rule that drifted from the
+  first. Before adding a code path that answers a question the app already answers, find the existing one and route
+  through it. A funnel with an exception list is not a funnel.
+- **`dispatch` publishes `SchedulerState` by compare-and-set**, because more than one thread reduces it. Never assign
+  `_state.value` directly; an off-thread reducer re-derives on a lost race. `display-hot-path.md`.
+- **Test against a large, realistic DB**, not an emptied one: it hides every cost and whole classes of bug.
+- **Prefer expressing a thing in the model that already exists** over adding a mechanism beside it.
+- **Platform differences are decided per input event or per injected seam, never by asking which build this is.** Add
+  to `docs/PLATFORMS.md` before branching.
 
 ## State: authoritative vs. derived
 
-→ ADR 0007.
-
-**Persist and sync only state that cannot be recomputed from other persisted data.** Before persisting or
-syncing a field, ask whether it can be re-derived; if so, recompute it. Never let an engine tick that *only*
-re-derives something mark the state dirty or trigger a sync push.
-
-| Class | Contents | Rule |
-| --- | --- | --- |
-| **Authoritative** | task tree (task **resilience** included, a task's **set of tasks** and the tasks with no path it keeps, and a task's **last path** once no task tree holds it), the account's **period kinds**, named task trees, the default sub-tree + its switch, user-authored/pinned panels (their **repeat pattern** and its **exceptions**, the **occurrence a block was edited out of**, the **timeline level** each stands on, and **where the hole rule filled
-after it left**, included), the **hidden timeline levels** (what a placed block covers of another, `hiddenPanels`) and the periods the app conducted, chores/reminders, sleep schedule (**the nights whose window or hour before bed was dragged away**, **the length of its "no screen before bed" period** and **the day its goal is reached on** included), alarms, timers (**whether one is running**, **the current run's length** and **the instant a rung one reached zero** included), chronos (**whether one is running** included), **quotas** (their amount, loop, resilience, particular loops and the other times they are looked at), settings, the system-wide chord bindings, the **task relations** the user kept or struck off, the account's **categories** (their **kind** included) and their **rules**, the task cell categories each **cell** carries, the **pins** of both priority windows, the **default configuration** of a new alarm, timer, reminder and quota (**when a new alarm or reminder is set**, `newAlarmTimes`/`newReminderTimes`, included), Undo/Redo history units, manual record edits, **the links between the task trees' tasks** (`taskLinks`, one row each), **the Claude Code logs the account keeps** (`ClaudeLogKeeper`: their own table both sides, `claude_log_entry`, bounded per device and on the server — not on the entity wire) | persist + sync |
-| **Derived** | auto/screen-break/sleep panels, a repeating panel's later occurrences, task colours, a running timer's remaining time, a quota's target progression, the dynamic periods' placement (the recurrence bars read their anchors out of the timeline), records the advance banks, the rules' repeating part (`scheduleCycle` — in memory only, not even persisted), the plan for the other `t_p` mode class (`otherModePlan` — in memory only), the request for a run after the user rewrote the records (`recordRewrites` — in memory only), the rules the plan was made for (`planBasis` — not carried across a pull), the elected device's rules on the peers' broadcast channel (never stored, adopted as derived panels) | persisted locally, **stripped from the wire**, never trigger a push on their own |
-| **Local-only view state** | focused window, tree selection, the feature page the app was left on, whether the lateral menu is collapsed and the windows' stacking order (`AppViewState`, `AppView` row), the History window's filter (its row's `config`), the Search window's sub-trees' own expansion/selection/edit session, the Search and Task trees windows' selections (`windowSelections`, in memory only), the lateral menu's items — windows' buttons and controls, all the user's (`CustomMenuButtons`) and the names they gave windows — a menu button's or the head's "Rename", on the tab and the head (`TabTitles` row), each open window's colour (`WindowColors` row) and the lines between its sections with which are retracted (`WindowSections` row), `showScreenBreaks`/`showReminders`/`calendarDayMode` (the calendar's Day/Week display), WindowNav/Selection history, window placement (its filled axes and reduced state included, which per-object windows are open, on what, and the desktop app's own window), the notifications each calendar window shows as chips (its placement row's `config`), the chords the user mapped to a window (`WindowShortcuts` row) and the Search window's query, checked kinds, filters, added elements and "Add to the calendar" start and end (and the Configuration Search and Added elements configurations windows' own configurations), OS-sleep scan checkpoint, the seconds an action was done on the computer (`input-activity/` beside the DB, 90 days), the screen breaks the line has banked (the frozen past of the three dynamic periods, pruned at 90 days) and the break machine at their front (`FrozenScreenBreaks.machine`, the breaks a hand placed — behind the line and ahead of it — included), what a mode-1 line crossed of the user's "no screen" periods (`periodCrossings`), the device's work-offline choice, the scheduler engine's time limit after a change on this device (`planCalculationLimitSeconds`), every sound of the app off on this device (`soundMuted`), the refused-edit notice (`categoryRuleError`, not even persisted), the Claude Code logs' directory (`ClaudeLogs` row) and the logs page's own lateral menu (`LateralMenu/ClaudeLogs` row; an item's **global** flag, which puts it in every page's menu, included), the windows set **global** — on every page (`GlobalWindows` row) | persist locally, **never sync** |
-
-- Local view state is stripped from the fingerprint by `withLocalViewStateNeutralized()` and carried across a
-  pull by `withLocalViewStateFrom`.
-- Calendar zoom is Compose-only state — never persisted at all.
-- The one deliberate exception: the state is replayable from history units, but history is bounded
-  (`MAX_HISTORY_UNITS`), so the entity rows stay authoritative.
-- Authoritative state syncs as **one row per entity** and each History Unit as **one row**; the units are shared by
-  every device, but Undo/Redo act only on this device's own (`sync-and-accounts.md` § *Sync by rows*,
-  `persistence.md`).
+**Persist and sync only state that cannot be recomputed from other persisted data.** Before persisting or syncing a
+field, ask whether it can be re-derived; if so, recompute it. Derived state is stripped from the wire, and an engine
+tick that *only* re-derives something never marks the state dirty or triggers a sync push. Local-only view state is
+persisted locally and never synced. Every field's class: `persistence.md` § *State: authoritative, derived, local-only*.
 
 ### Persisted-DB compatibility
 
@@ -173,53 +110,26 @@ after it left**, included), the **hidden timeline levels** (what a placed block 
 - Same for the SQLite schema (`Scheduler.sq` + a new `N.sqm`): reproduce the previous on-disk shape in a test
   and assert the upgrade keeps the data.
 
-
----
-
 ## Subsystem invariants — READ BEFORE EDITING
 
-Each file is active invariants only. Open the one covering what you are about to change; open more than one
-where a change spans them (they cross-reference each other).
+Each file is long: read the parts covering your change, found by searching for what you are touching. They
+cross-reference each other. Source directories carry a `CLAUDE.md` pointing at the same files.
 
-| Read | Before touching | Mostly lives in |
-| --- | --- | --- |
-| `docs/invariants/scheduler.md` | the plan, the score and its search, resilience, restrictive periods, what reaches the scheduler, progressive calculation, when the plan is recomputed, the runtime's forward cursor over the rules | `scheduler/domain/ScheduleScore.kt`, `ScheduleOptimizer.kt`, `ScheduleImprover.kt`, `ScheduleSearch.kt`, `ScheduleFill.kt`, `SchedulerDomain.kt`, `RuleProgram.kt`, `PeriodKinds.kt`, `jvmMain/.../MipScheduleSolver.kt` |
-| `docs/invariants/screen-breaks.md` | the three dynamic periods (the break machine), the `t_p` mode, the now-line sweep, every notification / voice cue, the Notifications switch | `scheduler/domain/BreakMachine.kt`, `DynamicPeriods.kt`, `scheduler/engine/` |
-| `docs/invariants/calendar.md` | the grid, layers, grey periods, hover bubbles, the now-line, panel menus, what may be banked as a record | `ui/CalendarUi.kt` |
-| `docs/invariants/display-hot-path.md` | anything on a per-tick or per-frame path, the resample delay, the schedule horizon | `ui/CalendarUi.kt`, `App.kt`, `scheduler/engine/SchedulerEngine.kt` |
-| `docs/invariants/popups.md` | any pop-up window, transient or otherwise | `ui/PopupWindows.kt` |
-| `docs/invariants/priorities.md` | relative priority, the weight table, the task-relations list, categories and category rules | `scheduler/domain/RelativePriority.kt`, `CategoryRules.kt`, `TaskRelations.kt` |
-| `docs/invariants/task-tree.md` | the tree and its three drawings, sub-list ownership, the clipboard, find & replace, task colours, which tasks the tree holds, the Search window and a task's last path, the default sub-tree, task trees, the timeline blend | `scheduler/ui/TaskTreeView.kt`, `scheduler/state/`, `scheduler/domain/TaskColorSpace.kt` |
-| `docs/invariants/sync-and-accounts.md` | accounts, partitions, the reconcile, sync by rows, the three-way merge | `scheduler/sync/` |
-| `docs/invariants/server-quota.md` | anything that sends, stores or publishes on Supabase: a table, a column, a request, a Realtime stream, a cron job | `supabase/`, `scheduler/sync/`, `jvmTest/.../quota/` |
-| `docs/invariants/pause-cue.md` | presence, the Edge Functions, the cron, the traffic budget | `supabase/`, `scheduler/sync/` |
-| `docs/invariants/persistence.md` | history units, the store, the SQLite driver and its pragmas | `scheduler/persistence/` |
-| `docs/invariants/alarms-and-timers.md` | alarms, timers, the arming loop and the ring sweep | `scheduler/domain/AlarmDomain.kt`, `TimerDomain.kt`, `ui/AlarmWindow.kt` |
-| `docs/invariants/shortcuts.md` | the four system-wide chords, rebinding, the hover hints | `ui/ShortcutsWindow.kt`, `ui/ShortcutHint.kt`, platform hot-key actuals |
-| `docs/invariants/line.md` | the line engine ported from `line_manager` (edits, reversal, rule adaptation, drags), its golden file | `scheduler/line/` |
-
----
-
-## Scripts
-
-→ `docs/SCRIPTS.md` for the full reference (state dirs, fast-break variants, deploy gotchas, one-time setup).
-
-| Script | Does |
+| `docs/invariants/` | Before touching |
 | --- | --- |
-| `account1-empty-and-open.bat` | remote-logout, empty (local + remote), launch as account 1 |
-| `account2-open.bat` / `account2-empty.bat` | launch as account 2 (data kept) / empty it |
-| `account3-deploy-windows.bat` | build + install the auto-start release, sign in as account 3 |
-| `account3-deploy-windows-offline.bat` | the same, but every launch starts working completely offline |
-| `account{1,2,3}-deploy-android.bat` | build/install the APK and launch signed in |
-| `*-fast-break*.bat` | the same, with screen breaks retimed for cue testing |
-| `deploy-supabase.bat` | migrations + both Edge Functions + `pause-cue-setup.sql` |
-| `collect-diagnostics.bat` | merged cross-device diagnostics timeline |
-| `perf-profile.bat` | launch with the performance overlay (time-sim off, never the release state dir) |
-| `update-supabase-cli.bat` | update the CLI tool (not the DB) |
+| `scheduler.md` | the plan, the score and its search (`MipScheduleSolver` included), resilience, restrictive periods, what reaches the scheduler, progressive calculation, when the plan is recomputed, the runtime's forward cursor over the rules |
+| `screen-breaks.md` | the three dynamic periods (the break machine), the `t_p` mode, the now-line sweep, every notification / voice cue, the Notifications switch |
+| `calendar.md` | the grid, layers, grey periods, hover bubbles, the now-line, panel menus, what may be banked as a record |
+| `display-hot-path.md` | anything on a per-tick or per-frame path (`App.kt` included), the resample delay, the schedule horizon |
+| `popups.md` | any pop-up window, transient or otherwise |
+| `priorities.md` | relative priority, the weight table, the task-relations list, categories and category rules |
+| `task-tree.md` | the tree and its three drawings, sub-list ownership, the clipboard, find & replace, task colours, which tasks the tree holds, the Search window and a task's last path, the default sub-tree, task trees, the timeline blend |
+| `sync-and-accounts.md` | accounts, partitions, the reconcile, sync by rows, the three-way merge |
+| `server-quota.md` | anything that sends, stores or publishes on Supabase: a table, a column, a request, a Realtime stream, a cron job |
+| `pause-cue.md` | presence, the Edge Functions, the cron, the traffic budget |
+| `persistence.md` | what is persisted and synced (the state classification), history units, the store, the SQLite driver and its pragmas |
+| `alarms-and-timers.md` | alarms, timers, the arming loop and the ring sweep |
+| `shortcuts.md` | the four system-wide chords, rebinding, the hover hints, the platform hot-key actuals |
+| `line.md` | the line engine ported from `line_manager` (edits, reversal, rule adaptation, drags), its golden file |
 
-Two rules that bite:
-
-- `deploy-supabase.bat` must keep `call supabase ...` everywhere — a bare invocation transfers control to the
-  npm `.cmd` shim and silently skips steps 2–3.
-- `pause-cue-setup.sql` must contain **no double-quote character at all**, comments included — the CLI
-  otherwise receives a truncated query and still exits 0.
+The Claude Code logs page keeps its invariants in `claudelogs/CLAUDE.md`.

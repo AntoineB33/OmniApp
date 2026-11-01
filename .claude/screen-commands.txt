@@ -3,3 +3,4 @@
 account[123]-[A-Za-z0-9_-]*\.bat
 tryDesktop
 tryWeb
+perf-profile

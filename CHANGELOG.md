@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### `CLAUDE.md` cut to what can bite anywhere — 2026-11-01
+
+The state classification table moved to `docs/invariants/persistence.md`; the script index is `docs/SCRIPTS.md` alone; `checkChange` is the one gate, `:shared:check` no longer is; the subsystem files are read by the part that covers a change, not whole; `perf-profile` joined `.claude/screen-commands.txt`. `calendar.md`, the Search window of `task-tree.md` and the frame of `popups.md` got headings, no text moved; the ADRs' invariant links point at `docs/invariants/`. Documentation only.
+
 ### A log edited by hand changes nothing kept — 2026-11-01
 
 User rule: an entry read again replaced the kept one, so an edit of a past line rewrote the local archive, and a line cut

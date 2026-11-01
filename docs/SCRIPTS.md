@@ -1,6 +1,6 @@
 # Scripts reference (`scripts/`)
 
-Operational reference for the `.bat` entry points. `CLAUDE.md` carries only the one-line index.
+Operational reference for the `.bat` entry points. `CLAUDE.md` only points here.
 
 ## State dirs
 

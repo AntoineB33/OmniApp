@@ -9,6 +9,8 @@ Global rules that always apply: `CLAUDE.md`.
 
 → ADR 0002.
 
+### The layers and what they read
+
 - **Two orthogonal things, and keeping them orthogonal is the point.** The **layers** say who was at a
   screen; the **restrictive periods** say what may be placed. Both are markings drawn over the timeline
   without occupying it, and the marking is what names the statement: each kind's own drawing (by default `/`
@@ -197,6 +199,9 @@ Global rules that always apply: `CLAUDE.md`.
     the **asserted** slot (so the sub-minute seam filter can never drop one) and still merges with the
     evidence beside it into one region — the dots split the region's DRAWING, which is why the `∞` marker is
     asked of the merged list. `CalendarLayerTest` pins both halves.
+
+### The hover bubble
+
 - Layers are non-interactive overlays: they displace nothing and register no pointer input. A layer is
   *named* by the hover bubble anyway — its section rides whatever the cursor is over, or the bottom-most
   hover pickup where that is nothing. (An **alarm/timer ring** is inert in the other sense — it registers no
@@ -238,6 +243,9 @@ Global rules that always apply: `CLAUDE.md`.
   `alarmOverlays`; a second copy is how the bubble starts naming a ring where the calendar does not draw it.
 - **Hover is TILED, never nested**: two reporters at one position race (the parent's Move wins). Cut the
   element at every covering section's boundary (`bubbleHoverZones`) and give each tile one reporter.
+
+### Cursor shapes and resize edges
+
 - **A CURSOR SHAPE rides the hover tile; it is never a lid over it.** A Box carrying only
   `pointerHoverIcon` is still a pointer-input node, so it wins the hit test against the tile underneath and
   that tile stops receiving Enter/Move — the bubble blinks out on exactly the edge the user is aiming at.
@@ -278,6 +286,9 @@ Global rules that always apply: `CLAUDE.md`.
 - **The drag/resize gesture and the right-click menu are unaffected by all of this**, and that is structural,
   not luck: both live on **ancestors** of the tiles (the block's slice, the day column), and an ancestor stays
   on the hit path of whatever descendant is hit. `calendarTitleHover` never consumes.
+
+### The two zero-duration markers
+
 - **THE TWO ZERO-DURATION MARKERS ARE THE TOP-MOST THINGS THE DAY COLUMN DRAWS** — a §18 alarm/timer ring,
   and a §14 reminder tag over it — and that is the same rule as the one above read from the other side. Each
   is a thing the user must reach at an INSTANT: a tag is the one marker on the calendar that has to be
@@ -323,6 +334,9 @@ Global rules that always apply: `CLAUDE.md`.
   the app cannot say a reminder is due at a moment the calendar does not draw it at. A **checked** tag is a
   completion and is never announced. `docs/invariants/alarms-and-timers.md` § *A reminder is announced by the
   SWEEP, never armed*.
+
+### What a period says on the grid
+
 - **"NOTHING IS PLACED HERE" IS A STATEMENT ABOUT THE SCHEDULER, AND IT HAS NO PAINT** — it covers an
   inactivity period, a sleep window, the §17 **"Before bed" hour** (`before bed`, whose default resilience is
   `0` like theirs — and which by default carries a `no screen` companion, as **a sleep window does too**, so
@@ -369,6 +383,9 @@ Global rules that always apply: `CLAUDE.md`.
     statement twice. The layer bands read their drawing from the config as well (`LocalPeriodKindConfig`).
   - The §17 windows and the screen breaks assert a layer on the calendar **only if their kind carries it**
     (App.kt's per-layer `layerAssertedAll`). By default neither does.
+
+### Texts, chips and the zoom
+
 - **A band spans its TRUE duration and is NEVER stretched to hold its own name.** A break drawn taller than it
   lasts covers the task panel it abuts, which reads on the calendar as a task running through the break. So the
   band's floor is a hairline (`SCREEN_BREAK_MIN_HEIGHT`) and the NAME is what gives way: it is drawn only where
@@ -443,6 +460,9 @@ Global rules that always apply: `CLAUDE.md`.
   height a row is the WHOLE day exactly as before (`DaySlice.WholeDay`), so nothing up to the old ceiling changed.
   **Never size or place anything in a day row from midnight**: from `midnightMillis`, or from a record's hours.
   `CalendarSecondsRenderTest` renders a 6-second view.
+
+### The now-line and what it drags
+
 - **Everything the grid places carries the FULL INSTANT, the NOW-LINE included** (`LocalTime.hourOfDayExact`,
   read by `recordsForDay`). The zoom ceiling is what makes it load-bearing: where a minute is hundreds of
   pixels, reading a time to the minute does not round it, it MOVES it by up to 59 s. The indicator was drawn
@@ -476,6 +496,9 @@ Global rules that always apply: `CLAUDE.md`.
   Every edge the reading of the rules marks as following the line (`withLineMotion`) is placed by
   `timelineSpan` from the same frame clock as the line, and every block, band, period box and label goes
   through that one placement.
+
+### Outlines
+
 - **AN OUTLINE SAYS WHICH SURFACE THE USER SAID IT ON, AND ITS COLOUR IS THE WHOLE OF THE ANSWER.** The
   user's words: *"things placed by rules defined in windows accessible via the left side menu of the app
   (Sleep schedule, Alarm) are outlined in ORANGE; the ones that are placed or moved through a right-click
@@ -537,6 +560,9 @@ Global rules that always apply: `CLAUDE.md`.
   the box then wears the blue outline like anything else a hand placed. That is the one moment the user has
   actually said something about the stretch, which is why it is the only moment anything is stored — ADR
   0002, and the reason `materializePastInactivity` is not coming back.
+
+### Pins and the hand
+
 - **NOTHING ON THE CALENDAR WEARS A CHECK BOX.** The pin box is gone (with `SetPanelPinned`, its only intent):
   on a period it could only ever state a fact, and on a task panel it was a second control on a surface whose
   marks are otherwise all read-only. `pins.existence` is unchanged and has two ways in — the edit window and
@@ -558,6 +584,9 @@ Global rules that always apply: `CLAUDE.md`.
   unpinned**, which is precisely the shape the fill deletes — so the re-plan the edit itself triggers undid
   the drag, silently. The other three pins are untouched: a drag is a statement about existence, not about
   position, span or distance.
+
+### Drags: the preview and the face of a block
+
 - **WHILE ANYTHING IS DRAGGED, THE COLUMN IS DRAWN THE WAY A RELEASE WOULD LEAVE IT — AND ONLY THE RELEASE
   SAVES IT** (2026-10-02). A moved block keeps its length whatever it is carried over
   (`draggedBlockBounds`; the no-overlap snap `placeDraggedEntry` is gone) and the preview answers with the
@@ -622,6 +651,9 @@ Global rules that always apply: `CLAUDE.md`.
 - **A hand-drawn period carries `pins.existence` but never `pinned`** (`derivePinned`'s period-aware
   overload), or `isSchedulerFixed` would enter it in the walk's **pre-placed blocks** — a list of blocks owned
   by a task — on top of the period it already is.
+
+### How restrictive periods are drawn
+
 - **A RESTRICTIVE PERIOD OF ANY KIND HAS NO FILL AT ALL** — a marking, an outline, a label, nothing else
   (`PeriodSegmentMarking`; `CalendarBlockBody` draws task panels and only task panels now, so it has no
   `period` flag left and `isPeriodBlock` is gone). A period does not occupy the timeline the way a task panel
@@ -659,6 +691,9 @@ Global rules that always apply: `CLAUDE.md`.
   for panels genuinely competing for the same hours, which periods never are. Each box is labelled with its
   period's title at the top left (`calendarLabelSlots` keeps two labels apart). The box is a DRAWING: each period
   stays its own object with its own bounds, kind, editor and bin, which is what the "edit…" chooser reaches.
+
+### Held blocks and boxes
+
 - **A HELD BLOCK REMEMBERS ITS LENGTH** (user rule 2026-10-08: *"when held the block always remembers its length
   while avoiding appearing where it would break the requirements"*; `HeldBlockKeepsLengthTest`). Two cases, one rule:
   - **On the line, where the line cannot be on it** (a task panel under a mode-3 line, a "no screen" period under a
@@ -684,6 +719,9 @@ Global rules that always apply: `CLAUDE.md`.
   them — a full-width interactive box drawn on top would be a lid over every task panel inside the period
   (the "a cursor shape is never a lid over the tile" rule, read for a press), while a marking drawn
   underneath would be hidden by the very task the period admits.
+
+### The timeline levels (`tm_levels`)
+
 - **THE TIMELINE IS THE OVERLAP OF THE `tm_levels`; PLACING A BLOCK DESTROYS NOTHING** (`docs/scheduler_input_requirements.md`, since removed;
   2026-10-10; `TimelineLevels`, `SchedulerReducer.settleLevels`, `TimelineLevelsTest`). *"When a blue/orange outlined
   block is positioned at t_r, then what was there before is added at t_r to the lowest tm_level where nothing is at
@@ -818,6 +856,9 @@ Global rules that always apply: `CLAUDE.md`.
   - **Open**: where a block includes a block of ANOTHER kind, the included block still wears its whole outline; the
     hole rule's wider "incompatible" (*"but also of task share"*) is not checked against `vacatedPastFill`; a part of
     a block cannot be selected and dragged on its own (the document's second example).
+
+### Dragging periods, blocks and chips
+
 - **EVERY PERIOD IS DRAWN AS A BOX BUT THE SLEEP BAND** (`isDrawnPeriodRecord`), which draws itself (§17's
   own orange box, its own label, its own carving) and would otherwise be one statement drawn twice. The
   `no screen` kind was the second exception until 2026-09-12 — it then asserted both layers, so the two slopes
@@ -946,6 +987,9 @@ Global rules that always apply: `CLAUDE.md`.
   that one pixel is two different hours at two zooms. **Guarding is not optional for a new read in one of
   those closures** — and re-keying the modifier instead is not the fix: it cancels the gesture in flight,
   leaving `dragPreview` set and the scroll lock held.
+
+### The right-click menu
+
 - **THE MENU NAMES THINGS, NOT EDITORS** (`calendarEditChoices`, fed by the column's `menuHitsAt`). A point
   on the timeline carries as many truths as are drawn there — a task panel inside a restrictive period under
   a layer, with a reminder tag on it — and each has an editor, so a menu whose "Edit" silently took the
@@ -1048,6 +1092,9 @@ Global rules that always apply: `CLAUDE.md`.
   `calendarAlarmDraft`), like every other thing the action lays — never by a button of its own: "New alarm here" stood
   there whatever was added, beside a lone task too (anomaly 2026-10-07). ONE such window: a later "add…" moves it to the
   new right-click, keeping what it holds.
+
+### Task panels
+
 - **The blue and the orange outlines are above every other outline** (user rule 2026-10-05; `outlineOnTop`, the day
   column's **outline pass**). The column's LAST drawing before the labels and the two markers is every `User` and
   `Pattern` outline again — a sleep window's, a period box's (`PeriodSegmentMarking(outlineOnly)`, a held box
@@ -1067,6 +1114,9 @@ Global rules that always apply: `CLAUDE.md`.
   break. A block with no task colour (a period-only no-screen / inactivity block, an orphan panel) keeps the wash, the
   markings showing through. Not redrawn: the day boundaries and the now-line / alarm / reminder markers, which stay
   above everything.
+
+### The add and edit windows
+
 - **"edit…" (and "edit [element]") OPEN THE SEARCH WINDOW OF WHAT IS AT THE RIGHT-CLICK** (user rule 2026-10-01;
   `App.openCalendarSearch(add = false)`, `SearchDomain.calendarAtConfig`): the GLOBAL filter "Is on the calendar at"
   (`Setting.CalendarAt` — a switch, a position, "Set to the right-click") keeps the keys `SearchDomain.calendarElementsAt`
@@ -1167,6 +1217,9 @@ Global rules that always apply: `CLAUDE.md`.
   recognised by. The same rule on the other side: the derived §17 wind-down bands are split off **by panel
   id** (`BEFORE_BED_PANEL_ID_PREFIX`), never by kind, or a `before bed` period the user drew would lose its
   row and its bin along with the fill's own.
+
+### The definitive front and what overrides a panel
+
 - **Derived inactivity periods run to the DEFINITIVE-SCHEDULE FRONT, not to the now-line**:
   `[displayFloor, max(now, nearHorizonEnd)]` minus everything already drawn, except the periods that assert a
   layer and the screen breaks. The user's rule is that the timeline is fully accounted for — every stretch is
@@ -1198,6 +1251,9 @@ Global rules that always apply: `CLAUDE.md`.
   happened there, it keeps its length, and the derived band gives way instead — at rest exactly as the drag's
   preview draws it (`inactivityBandsAfterMove`). Cutting it was the anomaly "a past panel dragged there is cut on
   release": the preview drew the release the reducer makes, and this display clip then cut what was saved.
+
+### Screen breaks on the calendar
+
 - **A SCREEN BREAK'S BUBBLE NAMES THE "NO SCREEN" IT IS ACCOMPANIED BY** (2026-10-02, `contextOverlays`): over
   each break band's own span, its kind's companions (`companionBubbleSections(breakKind)`) and always "No screen"
   — the requirements' *"always accompanied by the 'no screen' period"*, the 20 s look-away included, whose kind
@@ -1227,6 +1283,9 @@ Global rules that always apply: `CLAUDE.md`.
   unlocked, which is a past 20 s break crossed in mode 3. DISPLAY ONLY: the scheduler's periods and
   `isUserStated` are unchanged, and a materialized break is still never an input to its own placement. The hatch
   of a break the line drags is laid at the display's quantized instant.
+
+### What the layers lead to
+
 - **WHAT THE RULES DERIVE FROM THE LAYERS IS NAMED IN THE BUBBLE, AND THE LAYERS GIVE WAY TO A PLACED PANEL IT
   REFUSES** (2026-10-02). Where "no computer unlocked" and "no phone unlocked" both fall, the account's rules
   say "no screen" (`SchedulerDomain.kindsDerivedFromLayers`, i.e. `PeriodKindConfig.closeRegions` over the
@@ -1268,6 +1327,9 @@ Global rules that always apply: `CLAUDE.md`.
 - **Known inconsistency:** layers **and the §9 record bank** read the OS lock history; the engine's pause
   derivation still reads `device_active_session`. Decide this before adding anything else that reads one and
   not the other.
+
+### Time fields
+
 - **Every time field of the calendar's editors has the right-click menu of steps** (`TimeNudgeMenu`: ±1 h, ±10 min,
   ±1 min; user rule 2026-10-14: *"The end field must have a right-click menu with the +/- values. Find in the calendar
   other fields that should have this right-click menu"*). ONE menu (`NudgeMenu`), wherever the field is drawn:

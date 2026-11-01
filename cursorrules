@@ -1,6 +1,5 @@
 You are working on a Kotlin Multiplatform (KMP) project targeting Windows Desktop first. 
-Do not attempt to use Android-specific CLI tools to render previews.
 
-- After writing or modifying Kotlin logic in the `shared` module, run: `./gradlew :shared:check` to verify syntax and compile errors.
+- After writing or modifying Kotlin logic in the `shared` module, run: `./gradlew checkChange` to verify syntax, compile errors and tests.
 - To verify UI changes or desktop implementations, run the desktop app locally using: `./gradlew :desktopApp:run` (or your specific JVM run task).
-- Do not assume your KMP `expect/actual` declarations work until the Gradle check returns successfully.
+- Do not assume your KMP `expect/actual` declarations work until `checkChange` returns successfully.

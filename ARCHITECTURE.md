@@ -256,7 +256,7 @@ Cross-device sync is **offline-first**: the local SQLite database (§4) stays th
 | `platform/PauseCueLocal.kt` | Receiving the server's data push and arming the local cue on the phone (§8). |
 | `debug/TimeLink.kt`, `time/AppClock.kt` | The injectable clock — real, or the simulated one the debug panel drives (§7). **All engine durations are read through it**, so time simulation exercises the production paths rather than bypassing them. |
 
-**Human-facing entry points.** `./gradlew :desktopApp:run` (primary), `:shared:check` / `:shared:jvmTest` (the verification gates), and the `scripts/` batch files for per-account launches, Android deploys, Supabase deploys and diagnostics — all listed in `README.md`. There are two independent deployment surfaces and a change to one does **not** take effect in the other: **Supabase** (`deploy-supabase.bat`) and **the client apps** (a rebuild). A green test run means the code is correct, never that it is live on a device.
+**Human-facing entry points.** `./gradlew :desktopApp:run` (primary), `checkChange` (the verification gate) / `:shared:jvmTest`, and the `scripts/` batch files for per-account launches, Android deploys, Supabase deploys and diagnostics — all listed in `README.md`. There are two independent deployment surfaces and a change to one does **not** take effect in the other: **Supabase** (`deploy-supabase.bat`) and **the client apps** (a rebuild). A green test run means the code is correct, never that it is live on a device.
 
 ## 11. Design rationale index — where the "why" is written down
 

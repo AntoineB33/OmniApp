@@ -1,6 +1,6 @@
 # ADR 0011 — System-wide keyboard shortcuts: the chord must be swallowed, not merely observed
 
-**Status:** active. **Invariant summary:** see `CLAUDE.md` → *System-wide keyboard shortcuts*.
+**Status:** active. **Invariant summary:** see `docs/invariants/shortcuts.md`.
 
 Five of the app's actions are wanted at a moment when OmniApp is, by definition, **not** the focused window:
 

@@ -1,6 +1,6 @@
 # ADR 0005 — Snapshot sync and the three-way merge
 
-**Status:** active. **Invariant summary:** see `CLAUDE.md` → *Sync*.
+**Status:** active. **Invariant summary:** see `docs/invariants/sync-and-accounts.md`.
 
 The `scheduler_snapshot` document syncs **automatically in both directions** (whole-document, versioned
 by `revision`). A conflict is **merged**, falling back to last-write-wins only when it cannot be. The

@@ -215,7 +215,7 @@ The shared business logic — state holders, MVI intents, the scheduler, the und
 ./gradlew :shared:wasmJsTest               # Wasm
 ./gradlew :shared:jsTest                   # JS
 ./gradlew :shared:iosSimulatorArm64Test    # iOS (Native), macOS only
-./gradlew :shared:check                    # Compile + verify every target
+./gradlew checkChange                     # The one gate: tests + every target this machine can build
 ```
 
 ### Project structure

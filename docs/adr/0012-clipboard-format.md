@@ -1,6 +1,6 @@
 # ADR 0012 — The clipboard text is readable, carries the task id, and is deep by default
 
-**Status:** active. **Invariant summary:** see `CLAUDE.md` → *Copying a cell*.
+**Status:** active. **Invariant summary:** see `docs/invariants/task-tree.md` § *Copying a cell*.
 
 One format serves every copy of a **task** — the tree's `Ctrl+X` (PRD §4) and the cell contextual menu's **deep
 copy** (PRD §13). `SchedulerDomain.renderCopiedNodes` writes it, `SchedulerDomain.parseTreeText` reads it, and
@@ -76,7 +76,7 @@ Consequences that are load-bearing:
 
 `- resilience to <kind>: <n> %`, one line per kind whose value differs from `Task.DEFAULT_RESILIENCE` — what a
 task the user has just created carries, which is `0 %` to `no on-screen task` and nothing else. Two defaults meet
-here and they are different questions (`CLAUDE.md` → *Resilience is the whole of "where may this task run"*):
+here and they are different questions (`docs/invariants/scheduler.md` § *Resilience is the whole of "where may this task run"*):
 `PeriodKinds.defaultResilience` is a default for a **kind** (`1`, except `no task allowed`), and
 `Task.DEFAULT_RESILIENCE` is a default for a **task**. The copy writes the difference between the two, which is
 why an ordinary on-screen task's copy says nothing about a screen — exactly as its edit window reads — while the

@@ -1,6 +1,6 @@
 # ADR 0009 — Display hot path, schedule horizon, and the rolling calendar
 
-**Status:** active. **Invariant summary:** see `CLAUDE.md` → *Display hot path*.
+**Status:** active. **Invariant summary:** see `docs/invariants/display-hot-path.md`.
 
 ## Hot-path display derivations must scale with the SCREEN
 

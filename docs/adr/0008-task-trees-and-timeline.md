@@ -1,6 +1,6 @@
 # ADR 0008 — Task trees: live alternatives and the timeline blend
 
-**Status:** active. **Invariant summary:** see `CLAUDE.md` → *Task trees*.
+**Status:** active. **Invariant summary:** see `docs/invariants/task-tree.md`.
 
 ## The trees are LIVE alternatives, not frozen backups
 

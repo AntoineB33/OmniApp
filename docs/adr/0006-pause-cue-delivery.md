@@ -1,7 +1,7 @@
 # ADR 0006 — Pause-cue delivery: presence, the `t_a`/`t_b` model, two Edge Functions
 
 **Status:** active; live path partly unverified. **Runbook:** `docs/PAUSE_CUE_DELIVERY.md`.
-**Invariant summary:** see `CLAUDE.md` → *Pause cue*.
+**Invariant summary:** see `docs/invariants/pause-cue.md`.
 
 The pause cue is delivered by a pg_cron tick over a `device_heartbeat` table. The external
 Realtime-presence listener (Fly.io `/listener`) was **removed 2026-07-23** — the user's reasoning was that

@@ -1,6 +1,6 @@
 # ADR 0004 — Relative priority (PRD §5)
 
-**Status:** active (2026-08-20). **Invariant summary:** see `CLAUDE.md` → *Priorities*.
+**Status:** active (2026-08-20). **Invariant summary:** see `docs/invariants/priorities.md`.
 
 "Relative priority" is a generalization of the absolute percentage the tree already shows.
 

@@ -1,6 +1,6 @@
 # ADR 0007 — Accounts, persistence, and what is authoritative vs. derived
 
-**Status:** active. **Invariant summary:** see `CLAUDE.md` → *Accounts* and *State*.
+**Status:** active. **Invariant summary:** see `docs/invariants/sync-and-accounts.md` and `docs/invariants/persistence.md`.
 
 ## The app is ALWAYS connected to an account
 
