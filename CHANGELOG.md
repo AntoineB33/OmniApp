@@ -13,7 +13,7 @@ Check here before assuming the code matches the docs.
 
 ### Two right-click menus open at the pointer — 2026-11-01
 
-The menu beside the left-side menu's items and the "add in the left-side menu" of a control or a Search action while customizing hung from the top of what they are declared in. Both now open where the click was, and `menuSpot` keeps them whole on the screen, tested at every edge and corner. No migration. Client rebuild only.
+The menu beside the left-side menu's items and the "add in the left-side menu" of a control or a Search action while customizing hung from the top of what they are declared in. Both now open where the click was, and `menuSpot` keeps them whole on the screen, tested at every edge and corner. The first of them no longer moves the buttons under it as it opens, by the column's gap (`LateralMenuShiftTest`). No migration. Client rebuild only.
 
 ### Folders in the left-side menu — 2026-11-01
 

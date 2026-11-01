@@ -1777,20 +1777,24 @@ fun LateralMenu(
         // First element: page navigation (persistent across all feature pages), styled like the buttons below.
         // The collapse toggle is NOT here — it's a bookmark on this menu's right border (in App), so it stays
         // visible after the whole menu (this button included) slides off-screen.
-        PageNavButton(page = page, onPageSelected = onPageSelected)
-        transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
-        // At the pointer (anomaly 2026-11-01): declared here, it hung from the top of the menu, wherever the click was.
-        AppDropdownMenu(
-            expanded = backgroundMenu,
-            onDismissRequest = { backgroundMenu = false },
-            properties = PopupProperties(focusable = false),
-            atPointer = true,
-        ) {
-            DropdownMenuItem(
-                text = { Text(if (customizing) "Stop customizing" else "Customize") },
-                onClick = { backgroundMenu = false; onCustomize(!customizing) },
-            )
-            DropdownMenuItem(text = { Text("Reset") }, onClick = { backgroundMenu = false; onReset() })
+        // In a box with the selector, never a child of this column of its own: open, a menu is a node of the layout, and
+        // the column's gap, given to it, moved every button under it (anomaly 2026-11-01, `LateralMenuShiftTest`).
+        Box(Modifier.fillMaxWidth()) {
+            PageNavButton(page = page, onPageSelected = onPageSelected)
+            transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
+            // At the pointer (anomaly 2026-11-01): declared here, it hung from the top of the menu, wherever the click was.
+            AppDropdownMenu(
+                expanded = backgroundMenu,
+                onDismissRequest = { backgroundMenu = false },
+                properties = PopupProperties(focusable = false),
+                atPointer = true,
+            ) {
+                DropdownMenuItem(
+                    text = { Text(if (customizing) "Stop customizing" else "Customize") },
+                    onClick = { backgroundMenu = false; onCustomize(!customizing) },
+                )
+                DropdownMenuItem(text = { Text("Reset") }, onClick = { backgroundMenu = false; onReset() })
+            }
         }
         items()
     }
