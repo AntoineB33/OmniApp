@@ -183,15 +183,47 @@ object SearchDomain {
      */
     const val CLAUDE_LOGS_PAGE: String = "ClaudeLogs"
 
+    /** The feature page of the app's settings (user rule 2026-11-01). */
+    const val SETTINGS_PAGE: String = "AppSettings"
+
     /** The kinds of the Claude Code logs, in the drop-down's order. */
     val CLAUDE_KINDS: List<Kind> = listOf(Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning)
+
+    /** The kinds of the settings page: the app's settings, whose actions are their controls ([AppSettingEntry]). */
+    val SETTINGS_KINDS: List<Kind> = listOf(Kind.AppSetting)
+
+    /**
+     * **The feature pages, the one statement of them**: [id] is what a Search window's configuration and the lateral
+     * menu's rows say ([Config.page]), [label] what the page selector and every other list of them read, [kinds] the
+     * elements that belong to it. The Task Scheduler's are all but the logs': a setting is also found there.
+     */
+    data class FeaturePage(val id: String, val label: String, val kinds: List<Kind>)
+
+    val FEATURE_PAGES: List<FeaturePage> by lazy {
+        listOf(
+            FeaturePage("", "Task Scheduler", Kind.entries - CLAUDE_KINDS.toSet()),
+            FeaturePage(CLAUDE_LOGS_PAGE, "Claude Code logs", CLAUDE_KINDS),
+            FeaturePage(SETTINGS_PAGE, "Settings", SETTINGS_KINDS),
+        )
+    }
+
+    /** The kinds of the pages [pages], in the drop-down's order. */
+    fun kindsOfPages(pages: Set<String>): List<Kind> {
+        val kinds = FEATURE_PAGES.filter { it.id in pages }.flatMapTo(HashSet()) { it.kinds }
+        return Kind.entries.filter { it in kinds }
+    }
 
     /**
      * What a Search window opens with on [page] when nothing says otherwise — the global Search button's, user rule
      * 2026-10-18. **The one difference between the pages' Search windows** (user rule 2026-10-31): what this button
      * checks. The window itself is the same on both — every kind, every configuration, every sorting method.
      */
-    fun pageDefaultConfig(page: String): Config = if (page == CLAUDE_LOGS_PAGE) claudeLogsConfig() else Config()
+    fun pageDefaultConfig(page: String): Config =
+        when (page) {
+            CLAUDE_LOGS_PAGE -> claudeLogsConfig()
+            SETTINGS_PAGE -> Config(kinds = SETTINGS_KINDS.toSet(), page = SETTINGS_PAGE)
+            else -> Config()
+        }
 
     /** The configuration a Search window of the Claude Code logs page opens with: every kind of the logs, newest first. */
     fun claudeLogsConfig(): Config = Config(kinds = CLAUDE_KINDS.toSet(), page = CLAUDE_LOGS_PAGE, sorts = CLAUDE_SORTS)
@@ -851,7 +883,17 @@ object SearchDomain {
         val frozenKinds: List<Kind>? = null,
         /** The groups retracted to their heading, by [SettingGroup.id] — each has its expansion arrow (2026-10-11). */
         val collapsedGroups: Set<String> = emptySet(),
+        /**
+         * User rule 2026-11-01: the feature pages whose kinds the window offers ([FeaturePage.id]). Only the logs page's
+         * checked, the type selector holds its three kinds and the other kinds' sections go. [kinds] keeps what it holds
+         * of a page left unchecked: checked again, it comes back as it was.
+         */
+        val pages: Set<String> = FEATURE_PAGES.mapTo(HashSet()) { it.id },
     ) {
+        /** The kinds the window offers, and of them those it shows. */
+        val offeredKinds: List<Kind> get() = kindsOfPages(pages)
+        val shownKinds: Set<Kind> get() = offeredKinds.filterTo(HashSet()) { it in kinds }
+
         fun encode(): String =
             configJson.encodeToString(
                 StoredConfigurationSearch.serializer(),
@@ -860,6 +902,8 @@ object SearchDomain {
                     frozenKinds = frozenKinds?.map { it.name },
                     collapsedGroups = collapsedGroups.sorted(),
                     logKindsKnown = true,
+                    // Every page is nothing to say: a page added later is then offered like the others.
+                    pages = pages.sorted().takeIf { it.size < FEATURE_PAGES.size },
                 ),
             )
 
@@ -879,6 +923,7 @@ object SearchDomain {
                     stored.target,
                     stored.frozenKinds?.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } },
                     stored.collapsedGroups.toSet(),
+                    stored.pages?.filterTo(HashSet()) { id -> FEATURE_PAGES.any { it.id == id } } ?: FEATURE_PAGES.mapTo(HashSet()) { it.id },
                 )
             }
         }
@@ -1688,6 +1733,8 @@ object SearchDomain {
         val collapsedGroups: List<String> = emptyList(),
         /** New 2026-10-31: absent = written before the logs' kinds could be checked here, so [kinds] says nothing of them. */
         val logKindsKnown: Boolean = false,
+        /** New 2026-11-01: absent = every feature page. */
+        val pages: List<String>? = null,
     )
 
     private val configJson = Json { ignoreUnknownKeys = true }

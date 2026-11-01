@@ -3623,7 +3623,8 @@ private fun PageNavButton(page: OmniPage, onPageSelected: (OmniPage) -> Unit) {
         AppDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             OmniPage.entries.forEach { entry ->
                 DropdownMenuItem(
-                    text = { Text(entry.label) },
+                    // User rule 2026-11-01: the page the app is on stands out of the list.
+                    text = { Text(entry.label, fontWeight = if (entry == page) androidx.compose.ui.text.font.FontWeight.Bold else null) },
                     onClick = {
                         onPageSelected(entry)
                         expanded = false

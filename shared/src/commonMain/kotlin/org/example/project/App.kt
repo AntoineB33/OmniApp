@@ -225,21 +225,27 @@ import org.example.project.ui.TransientMenuHost
 import org.example.project.ui.WindowFrameHost
 import org.example.project.ui.transientMenuDismissRoot
 
-enum class OmniPage(val label: String) {
-    TaskScheduler("Task Scheduler"),
+enum class OmniPage(val searchPage: String) {
+    TaskScheduler(""),
     /**
      * Search in Claude Code's history logs (user rule 2026-10-18): the Task Scheduler page's frame — its lateral menu, its
      * window bar, its Search window — over the logs' kinds ([SearchDomain.CLAUDE_KINDS]).
      */
-    ClaudeLogs("Claude Code logs"),
+    ClaudeLogs(SearchDomain.CLAUDE_LOGS_PAGE),
+
+    /**
+     * The app's settings (user rule 2026-11-01): the same page again — its own lateral menu, window bar and Search window
+     * — over the settings' kind ([SearchDomain.SETTINGS_KINDS]), each listed setting edited by its actions.
+     */
+    Settings(SearchDomain.SETTINGS_PAGE),
+    ;
+
+    /** The name every list of the pages reads ([SearchDomain.FEATURE_PAGES]). */
+    val label: String get() = SearchDomain.FEATURE_PAGES.first { it.id == searchPage }.label
 }
 
-/** The page's name as a Search window's configuration and the lateral menu's rows say it ([SearchDomain.Config.page]). */
-private val OmniPage.searchPage: String
-    get() = if (this == OmniPage.ClaudeLogs) SearchDomain.CLAUDE_LOGS_PAGE else ""
-
 /** The page a Search window's configuration names. */
-private fun pageOfSearch(name: String): OmniPage = if (name == SearchDomain.CLAUDE_LOGS_PAGE) OmniPage.ClaudeLogs else OmniPage.TaskScheduler
+private fun pageOfSearch(name: String): OmniPage = OmniPage.entries.firstOrNull { it.searchPage == name } ?: OmniPage.TaskScheduler
 
 /**
  * The lateral-menu windows. Where each sits in the app's one stacking order is
@@ -321,6 +327,7 @@ private val VIEW_ROWS: Set<String> =
         CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, org.example.project.ui.WindowShortcuts.PLACEMENT_ID, "AppWindow",
         CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID,
         org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID, CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID,
+        CustomMenuButtons.SETTINGS_PLACEMENT_ID,
         org.example.project.ui.AppViewState.PLACEMENT_ID,
     )
 
@@ -5705,11 +5712,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // open and maximized. The task tree's placement goes back to a first run's too (centred, default
                 // size, maximized), for when it is next opened.
                 onReset = reset@{
-                    // The Claude Code logs page's default layout: its windows closed, then one Search window on the logs.
-                    if (page == OmniPage.ClaudeLogs) {
+                    // Another page's default layout: its windows closed, then one Search window on what it holds.
+                    if (page != OmniPage.TaskScheduler) {
                         engineScope.launch {
                             repeat(2) { withFrameNanos { } }
-                            openNewWindow(FloatingWindow.Search, SearchDomain.claudeLogsConfig().encode())
+                            openNewWindow(FloatingWindow.Search, SearchDomain.pageDefaultConfig(page.searchPage).encode())
                         }
                         return@reset
                     }

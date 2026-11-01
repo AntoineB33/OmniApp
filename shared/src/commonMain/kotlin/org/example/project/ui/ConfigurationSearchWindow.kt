@@ -120,7 +120,7 @@ fun ConfigurationSearchWindow(
             calendarLayerKindsAt, schedulerRuns,
             claudeLogs,
         ) { SearchDomain.kindCountsInResults(state, config, windows, nowMillis(), calendarLayerKindsAt, schedulerRuns, claudeLogs) }
-    val groups = SearchDomain.configurationGroups(own.query, own.kinds, counts, own.onlyResultKinds, own.frozenKinds)
+    val groups = SearchDomain.configurationGroups(own.query, own.shownKinds, counts, own.onlyResultKinds, own.frozenKinds)
 
     // The calendar right-click the Search window came from, for the time fields drawn here ([RightClickTimeButton]).
     androidx.compose.runtime.CompositionLocalProvider(LocalCalendarClickMillis provides config.calendarClickMillis) {
@@ -159,12 +159,40 @@ fun ConfigurationSearchWindow(
                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
                         .revertsOnEscape(own.query) { onOwnChange(own.copy(query = it)) },
                 )
-                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
-                // This window's OWN search field and types; the Search window's configuration it lists is
+                // This window's OWN search field, pages and types; the Search window's configuration it lists is
                 // untouched (that window has its own Reset).
-                ResetButton(enabled = own.query.isNotEmpty() || own.kinds.isNotEmpty()) {
-                    onOwnChange(own.copy(query = "", kinds = emptySet()))
+                val everyPage = SearchDomain.FEATURE_PAGES.mapTo(HashSet()) { it.id }
+                ResetButton(enabled = own.query.isNotEmpty() || own.kinds.isNotEmpty() || own.pages != everyPage) {
+                    onOwnChange(own.copy(query = "", kinds = emptySet(), pages = everyPage))
                 }
+            }
+            // User rule 2026-11-01: which feature pages' elements the type selector beside it offers.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val pages = SearchDomain.FEATURE_PAGES
+                val picked = pages.filter { it.id in own.pages }
+                CheckBoxDropDown(
+                    options = pages,
+                    checked = picked.toSet(),
+                    face =
+                        when (picked.size) {
+                            pages.size -> "every page"
+                            0 -> "no page"
+                            else -> picked.joinToString(", ") { it.label }
+                        },
+                    label = { it.label },
+                    onChange = { checked -> onOwnChange(own.copy(pages = checked.mapTo(HashSet()) { it.id })) },
+                    modifier = Modifier.weight(1f),
+                )
+                KindsDropDown(
+                    kinds = own.kinds,
+                    onKindsChange = { onOwnChange(own.copy(kinds = it)) },
+                    modifier = Modifier.weight(1f),
+                    options = own.offeredKinds,
+                )
             }
             // User rule 2026-10-11: one button — only the configurations that apply to at least one row of the
             // result list — and its switch, which stops the list from following the results: a filter that empties
@@ -180,7 +208,7 @@ fun ConfigurationSearchWindow(
                     enabled = own.onlyResultKinds,
                     onCheckedChange = { keep ->
                         onOwnChange(
-                            own.copy(frozenKinds = if (keep) SearchDomain.applicableKinds(own.kinds, counts, onlyApplicable = true) else null),
+                            own.copy(frozenKinds = if (keep) SearchDomain.applicableKinds(own.shownKinds, counts, onlyApplicable = true) else null),
                         )
                     },
                 )

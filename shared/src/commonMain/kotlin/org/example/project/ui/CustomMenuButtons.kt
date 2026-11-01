@@ -374,8 +374,17 @@ object CustomMenuButtons {
         )
     }
 
+    /** User rule 2026-11-01: the settings page's menu holds the Search button, the mute and the settings it opens on. */
+    const val SETTINGS_PLACEMENT_ID: String = "LateralMenu/" + SearchDomain.SETTINGS_PAGE
+
+    val SETTINGS_DEFAULTS: List<CustomMenuButton> by lazy {
+        listOf(GLOBAL_SEARCH, GLOBAL_MUTE) +
+            listOf(MenuControl.Voice, MenuControl.Notifications, MenuControl.SoundVolume)
+                .map { CustomMenuButton("d-" + it.name, "", "", control = it.name) }
+    }
+
     /** The feature pages that have a menu, by the name a Search configuration gives them (blank: the Task Scheduler). */
-    val PAGES: List<String> by lazy { listOf("", SearchDomain.CLAUDE_LOGS_PAGE) }
+    val PAGES: List<String> by lazy { SearchDomain.FEATURE_PAGES.map { it.id } }
 
     @Serializable
     private data class StoredPages(val pages: Map<String, String> = emptyMap())
@@ -390,10 +399,20 @@ object CustomMenuButtons {
             ?.mapValues { (page, list) -> decode(list, defaultsOf(page)) }
 
     /** The row the menu of the page [page] (a Search configuration's page name, blank for the scheduler) is kept on. */
-    fun placementIdOf(page: String): String = if (page == SearchDomain.CLAUDE_LOGS_PAGE) CLAUDE_LOGS_PLACEMENT_ID else PLACEMENT_ID
+    fun placementIdOf(page: String): String =
+        when (page) {
+            SearchDomain.CLAUDE_LOGS_PAGE -> CLAUDE_LOGS_PLACEMENT_ID
+            SearchDomain.SETTINGS_PAGE -> SETTINGS_PLACEMENT_ID
+            else -> PLACEMENT_ID
+        }
 
     /** What the menu of the page [page] holds until the user changes it. */
-    fun defaultsOf(page: String): List<CustomMenuButton> = if (page == SearchDomain.CLAUDE_LOGS_PAGE) CLAUDE_LOGS_DEFAULTS else DEFAULTS
+    fun defaultsOf(page: String): List<CustomMenuButton> =
+        when (page) {
+            SearchDomain.CLAUDE_LOGS_PAGE -> CLAUDE_LOGS_DEFAULTS
+            SearchDomain.SETTINGS_PAGE -> SETTINGS_DEFAULTS
+            else -> DEFAULTS
+        }
 
     private val json = Json { ignoreUnknownKeys = true }
 

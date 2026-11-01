@@ -51,7 +51,6 @@ class DropDownRightClickTest {
                             onChange = { probe.checked = it },
                             deploy = !probe.deployed,
                             onDeployed = { probe.deployed = true },
-                            soloOnRightClick = true,
                         )
                         // The result list under it: a row whose right-click opens its menu.
                         Box(Modifier.fillMaxSize().then(contextMenuModifier(enabled = true) { probe.rowMenus++ }))

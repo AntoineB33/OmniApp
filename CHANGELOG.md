@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A Settings page, and the pages in the Search configurations window — 2026-11-01
+
+User rule: a feature page of the app's settings (`OmniPage.Settings`): its own menu (Search, mute, Voice, Notifications, Global volume, `SETTINGS_DEFAULTS`, on the `LateralMenu/AppSettings` row) and a Search window on the app settings. The Search configurations window has a check-box drop-down of the pages, which narrows its type selector and its sections (`ConfigurationSearch.pages`, absent from what was stored before = every page). The page selector shows the current page in bold. A right-click on an option of any check-box drop-down now checks it alone (it was the Search type selector's only), and a type selector narrowed to a page names its kinds instead of reading "every kind". The pages are stated once, `SearchDomain.FEATURE_PAGES`. No migration. Client rebuild only.
+
 ### The logs' lists move as the logs are written; a test run is silent — 2026-11-01
 
 User rule: a Search window on the Claude Code logs moved only at a Refresh, because a write reached the archive 5 s later and never the catalog the windows read. The archive and the lists now move at the system's event, off the UI thread; only the send waits its window. Separately, a test run spoke through the desktop's real voice and posted to its real notifier: one `checkChange` asked for 46 lines and 71 notifications, every engine a test built without replacing them. Every `Test` task now sets `omniapp.silentAudio` (`TestAudio`), and what a run would have played is in `shared/build/silenced-audio.log`. No migration. Client rebuild for the lists; the gate needs none.

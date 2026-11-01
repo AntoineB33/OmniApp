@@ -750,6 +750,10 @@ suggestions before it was ever entered.
   window, else opens one — the original where it is not open, else a copy (`App.openConfigurationsOf`, through
   `openNewWindow`). Never re-point an open one at another Search window: that took the first window's own away. A
   window whose Search copy was closed falls back on the original (`configTargetOf`).
+- **Its feature-page drop-down** (user rule 2026-11-01; `ConfigurationSearch.pages`, `SearchDomain.FEATURE_PAGES`,
+  `FeaturePagesTest`) says which pages' kinds its type selector offers and whose sections show: the logs page alone, its
+  three kinds. A page's kinds are `FeaturePage.kinds`; the Task Scheduler's are all but the logs', so a setting is found
+  there too. The checks of a page left unchecked are kept. The "Types" row below stays the Search window's own, every kind.
 - **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
   over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
   results", `SearchDomain.kindsInResults`, and "show the filters that are on", which keeps a filter that is on listed

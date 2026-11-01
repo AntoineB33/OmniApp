@@ -1569,24 +1569,26 @@ internal fun KindsDropDown(
     /** Open the list now, once — see [CheckBoxDropDown]'s `deploy`. */
     deploy: Boolean = false,
     onDeployed: () -> Unit = {},
+    /** The kinds listed; the checks of the others stay as they are. */
+    options: List<SearchDomain.Kind> = SearchDomain.Kind.entries,
 ) {
     CheckBoxDropDown(
-        options = SearchDomain.Kind.entries,
-        checked = kinds,
-        face = kindsLabel(kinds, SearchDomain.Kind.entries),
+        options = options,
+        checked = options.filterTo(HashSet()) { it in kinds },
+        face = kindsLabel(kinds, options),
         label = { it.label },
-        onChange = onKindsChange,
+        onChange = { picked -> onKindsChange((kinds - options.toSet()) + picked) },
         modifier = modifier,
         deploy = deploy,
         onDeployed = onDeployed,
-        soloOnRightClick = true,
     )
 }
 
 /**
  * **The check-box drop-down**: a field whose face is [face] and which opens a list of [options], each with a check box
  * (headed by [SelectAllMenuItem]); ticking one leaves the menu open, so several can be ticked in turn, and Shift ticks a
- * range. The one drop-down of its kind — the search kinds and the period edit window's period selector fields.
+ * range; a right-click on an option checks it alone and closes the list. The one drop-down of its kind — the search
+ * kinds and the period edit window's period selector fields.
  */
 @Composable
 internal fun <T> CheckBoxDropDown(
@@ -1602,8 +1604,6 @@ internal fun <T> CheckBoxDropDown(
      */
     deploy: Boolean = false,
     onDeployed: () -> Unit = {},
-    /** A right-click on an option checks it alone and closes the list (the Search type selector). */
-    soloOnRightClick: Boolean = false,
     /**
      * User rule 2026-10-11, for a list with no end (the occurrences of a pattern that repeats for ever): called as the
      * list is scrolled to its bottom, so the caller lists more — *"they must not all show in the drop-down list, but
@@ -1669,8 +1669,7 @@ internal fun <T> CheckBoxDropDown(
                     // A right-click picks this option ALONE and closes the list — the one-choice shortcut of
                     // a list that otherwise stays open to be ticked in turn.
                     modifier =
-                        if (!soloOnRightClick) Modifier
-                        else Modifier.pointerInput(option) {
+                        Modifier.pointerInput(option) {
                             // On the RELEASE, the whole click consumed here (anomaly 2026-10-15: *"I right-clicked on
                             // the element type drop-down menu in the Search window, and it opened a menu as if I
                             // right-clicked on the element in the result list"*). On the desktop the list is a window
@@ -1818,11 +1817,14 @@ internal fun SelectAllMenuItem(allChecked: Boolean, onSelectAll: () -> Unit, onD
     )
 }
 
-/** The drop-down's face:the checked kinds by name, or "every kind" / "no kind". */
-private fun kindsLabel(kinds: Set<SearchDomain.Kind>, options: List<SearchDomain.Kind>): String =
+/**
+ * The drop-down's face: the checked kinds by name, or "every kind" / "no kind". "Every kind" only of the whole list: of
+ * a list narrowed to a feature page's kinds it would read as it did before the page was picked (anomaly 2026-11-01).
+ */
+internal fun kindsLabel(kinds: Set<SearchDomain.Kind>, options: List<SearchDomain.Kind>): String =
     when {
         kinds.none { it in options } -> "no kind"
-        options.all { it in kinds } -> "every kind"
+        options.size == SearchDomain.Kind.entries.size && options.all { it in kinds } -> "every kind"
         else -> options.filter { it in kinds }.joinToString(", ") { it.label }
     }
 
