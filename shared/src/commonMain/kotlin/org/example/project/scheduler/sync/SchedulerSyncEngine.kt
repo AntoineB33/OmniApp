@@ -801,7 +801,7 @@ open class SchedulerSyncEngine(
      * reconcile and never on a timer, so the logs cost nothing while nobody looks at them. Off [mutex] like the side
      * channels above. Null while signed out or offline; a failure keeps what was done before it.
      */
-    open suspend fun syncClaudeLogs(batches: List<List<ClaudeLogRow>>, cursor: Long): ClaudeLogSync? {
+    open suspend fun syncClaudeLogs(batches: List<List<ClaudeLogRow>>, cursor: Long, pull: Boolean = true): ClaudeLogSync? {
         val current = onlineSession() ?: return null
         val me = deviceId
         val pushed = HashSet<String>()
@@ -812,7 +812,7 @@ open class SchedulerSyncEngine(
                 withAuth(current) { client.insertClaudeLogs(it, me, batch) }
                 batch.mapTo(pushed) { it.entryId }
             }
-            while (true) {
+            while (pull) {
                 val page = withAuth(current) { client.fetchClaudeLogs(it, me, at) }
                 pulled += page
                 if (page.isEmpty()) break

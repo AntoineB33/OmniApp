@@ -13,6 +13,8 @@ Two different questions, answered in two different places:
   gets touch gestures for its finger and mouse behaviour for its mouse, and the browser on a phone behaves like the
   phone app while the browser on a computer behaves like the desktop app. Keyboard behaviour needs no test of its
   own: without a keyboard, no key event ever arrives.
+- **Whether anything tells the app a Claude Code log was written** (`watchClaudeLogs`): the desktop's `WatchService`;
+  null elsewhere, where no Claude Code runs and the logs go up only when read.
 - **What the operating system offers** — an OS alarm clock, push, session lock events, global hot keys, a native
   solver — is decided by the platform's `actual`s (`scheduler/platform/`, `ui/PlatformCursor`,
   `ui/TaskPickerOverlay`) and by what the platform's entry point injects into `SchedulerEngine`.

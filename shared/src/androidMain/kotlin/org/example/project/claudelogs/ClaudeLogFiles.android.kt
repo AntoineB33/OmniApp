@@ -21,9 +21,27 @@ actual fun listClaudeLogFiles(directory: String): List<ClaudeLogFile>? {
 // A phone holds no Claude Code logs of its own: the directory is the user's to give (a folder copied there).
 actual fun defaultClaudeLogsDirectory(): String? = null
 
-actual fun forEachClaudeLogLine(path: String, onLine: (String) -> Unit) {
-    runCatching { File(path).bufferedReader(Charsets.UTF_8).useLines { lines -> lines.forEach(onLine) } }
+actual fun forEachClaudeLogLine(path: String, fromByte: Long, onLine: (String) -> Unit): Long =
+    runCatching { readLogLines(File(path), fromByte, onLine) }.getOrDefault(fromByte)
+
+private fun readLogLines(file: File, fromByte: Long, onLine: (String) -> Unit): Long {
+    val tail = file.inputStream().use { input ->
+        var left = fromByte
+        while (left > 0) {
+            val skipped = input.skip(left)
+            if (skipped <= 0) return fromByte
+            left -= skipped
+        }
+        input.readBytes()
+    }
+    val end = tail.lastIndexOf('\n'.code.toByte())
+    if (end < 0) return fromByte
+    String(tail, 0, end + 1, Charsets.UTF_8).lineSequence().filter { it.isNotEmpty() }.forEach(onLine)
+    return fromByte + end + 1
 }
+
+// No Claude Code runs on a phone: its logs are written elsewhere.
+actual fun watchClaudeLogs(directory: String, onChange: () -> Unit): AutoCloseable? = null
 
 // A phone's storage is shared with everything else on it: about half a year of logs.
 actual val claudeLogArchiveLimitBytes: Long = 20L * 1024 * 1024

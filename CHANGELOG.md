@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A log edited by hand changes nothing kept — 2026-11-01
+
+User rule: an entry read again replaced the kept one, so an edit of a past line rewrote the local archive, and a line cut
+from a log moved the ids of the entries after it, which then stood twice, on the server too. `ClaudeLogArchive.merge` now
+keeps what was first read, telling an entry by its session, instant and kind where its id moved. No migration. Client
+rebuild only.
+
+### Claude Code logs go up as they are written — 2026-11-01
+
+User rule: while the app is open, a write of Claude Code's reaches the server within seconds, on any page. `watchClaudeLogs`
+(the desktop's `WatchService`, checked on the live log), a 5 s throttle from the first write (`PUSH_WINDOW_MILLIS`), the
+log read from where it stopped (`ClaudeLogTails`, `ClaudeLogIndex.changed`), one insert and no pull. The server's bound goes
+from 400 to 300 KB (`SERVER_LIMIT_BYTES`, migration 20261101000000) to keep the heavy month under the 10 %: at 400 KB it
+came to 50.14 MB. `ClaudeLogLiveTest`. Needs `deploy-supabase.bat` AND a client rebuild.
+
 ### The logs' filters listed in a configurations window saved before them — 2026-10-31
 
 Anomaly: "Project" was not in the Search configurations window. Its own type list, stored as every kind before the logs'

@@ -5,7 +5,9 @@ actual val claudeLogFilesSupported: Boolean = false
 
 actual fun listClaudeLogFiles(directory: String): List<ClaudeLogFile>? = null
 
-actual fun forEachClaudeLogLine(path: String, onLine: (String) -> Unit) {}
+actual fun forEachClaudeLogLine(path: String, fromByte: Long, onLine: (String) -> Unit): Long = fromByte
+
+actual fun watchClaudeLogs(directory: String, onChange: () -> Unit): AutoCloseable? = null
 
 actual fun defaultClaudeLogsDirectory(): String? = null
 

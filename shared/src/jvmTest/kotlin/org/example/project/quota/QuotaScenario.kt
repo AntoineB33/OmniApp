@@ -113,6 +113,16 @@ class QuotaScenario(private val test: TestScope, val server: FakeSupabase, val t
             }
         }
 
+        /** What the app does when Claude Code writes while it is open: [written] added, the newest sent, nothing pulled. */
+        fun pushLogs(written: List<org.example.project.claudelogs.ClaudeLogSession>) {
+            test.launch {
+                val account = logs.activeAccount()
+                logs.absorbChanged(account, written)
+                val batches = logs.pushBatches(account)
+                if (batches.isNotEmpty()) vm.syncClaudeLogs(batches, logs.cursor(account), pull = false)?.let(logs::applySync)
+            }
+        }
+
         fun dispatch(intent: SchedulerIntent) = vm.dispatch(intent)
         val state: SchedulerState get() = vm.state.value
     }

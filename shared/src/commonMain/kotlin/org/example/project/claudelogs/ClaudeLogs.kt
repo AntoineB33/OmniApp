@@ -125,7 +125,8 @@ class ClaudeLogParser(private val file: ClaudeLogFile) {
             folder = file.folder,
             cwd = cwd,
             title = title ?: summary,
-            entries = entries,
+            // A copy: this parser goes on reading the log ([ClaudeLogTails]) while the session is read elsewhere.
+            entries = entries.toList(),
         )
 
     private fun acceptUser(o: JsonObject) {
@@ -197,11 +198,22 @@ class ClaudeLogParser(private val file: ClaudeLogFile) {
     }
 }
 
-/** Reads one session log through the platform seam. */
-fun readClaudeLogSession(file: ClaudeLogFile): ClaudeLogSession {
-    val parser = ClaudeLogParser(file)
-    forEachClaudeLogLine(file.path, parser::accept)
-    return parser.build()
+/**
+ * Reads session logs through the platform seam, **each from where it was last read**: a log is written by appending and
+ * reaches megabytes, and a live one changes every few seconds ([ClaudeLogIndex.changed]). Its parser stays, so a prompt
+ * read long ago is still what the next answer replied to and the entries keep their places. A log that grew shorter was
+ * written anew, and is read from its start.
+ */
+class ClaudeLogTails {
+    private class Tail(val parser: ClaudeLogParser, var nextByte: Long)
+
+    private val tails = HashMap<String, Tail>()
+
+    fun read(file: ClaudeLogFile): ClaudeLogSession {
+        val tail = tails[file.path]?.takeIf { file.sizeBytes >= it.nextByte } ?: Tail(ClaudeLogParser(file), 0L).also { tails[file.path] = it }
+        tail.nextByte = forEachClaudeLogLine(file.path, tail.nextByte, tail.parser::accept)
+        return tail.parser.build()
+    }
 }
 
 /**
@@ -211,7 +223,7 @@ fun readClaudeLogSession(file: ClaudeLogFile): ClaudeLogSession {
  */
 class ClaudeLogIndex(
     private val list: (String) -> List<ClaudeLogFile>? = ::listClaudeLogFiles,
-    private val read: (ClaudeLogFile) -> ClaudeLogSession = ::readClaudeLogSession,
+    private val read: (ClaudeLogFile) -> ClaudeLogSession = ClaudeLogTails()::read,
 ) {
     private var directory: String? = null
     private val cache = HashMap<String, Pair<ClaudeLogFile, ClaudeLogSession>>()
@@ -221,7 +233,14 @@ class ClaudeLogIndex(
      * ran (one with no prompt) is filed under the working directory its folder's other logs name, so one project is
      * not listed twice.
      */
-    fun refresh(dir: String): List<ClaudeLogSession>? {
+    fun refresh(dir: String): List<ClaudeLogSession>? = scan(dir)?.first
+
+    /** The sessions of the logs written since [dir] was last read; null when it is not a readable directory. */
+    fun changed(dir: String): List<ClaudeLogSession>? =
+        scan(dir)?.let { (sessions, changed) -> sessions.filter { it.path in changed } }
+
+    /** Every session under [dir], and the paths of those read this time. */
+    private fun scan(dir: String): Pair<List<ClaudeLogSession>, Set<String>>? {
         if (dir != directory) {
             cache.clear()
             directory = dir
@@ -229,16 +248,21 @@ class ClaudeLogIndex(
         val files = list(dir) ?: return null
         val seen = files.mapTo(HashSet()) { it.path }
         cache.keys.retainAll(seen)
+        val changed = HashSet<String>()
         val sessions =
             files.map { file ->
                 val known = cache[file.path]
-                if (known != null && known.first == file) known.second
-                // Lowercased here, off the UI thread, rather than at the first keystroke that searches it.
-                else read(file).also { session -> session.entries.forEach { it.searchText }; cache[file.path] = file to session }
+                if (known != null && known.first == file) {
+                    known.second
+                } else {
+                    // Lowercased here, off the UI thread, rather than at the first keystroke that searches it.
+                    changed += file.path
+                    read(file).also { session -> session.entries.forEach { it.searchText }; cache[file.path] = file to session }
+                }
             }
         val folderCwd = HashMap<String, String>()
         for (s in sessions) if (s.cwd != null) folderCwd.getOrPut(s.folder) { s.cwd }
-        return sessions.map { s -> if (s.cwd == null) folderCwd[s.folder]?.let(s::inProject) ?: s else s }
+        return sessions.map { s -> if (s.cwd == null) folderCwd[s.folder]?.let(s::inProject) ?: s else s } to changed
     }
 }
 

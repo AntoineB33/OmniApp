@@ -93,7 +93,8 @@ rewritten on every edit is what filled the database.
 ### The Claude Code logs ride their own call
 
 The logs the account keeps (`claudelogs/CLAUDE.md`) are not entities and never ride a reconcile: the logs page asks
-`SchedulerSyncEngine.syncClaudeLogs` when it reads them (shown, Refresh, the account switched) — push the newest this
+`SchedulerSyncEngine.syncClaudeLogs` when it reads them (shown, Refresh, the account switched), and a write of Claude
+Code's sends what it wrote with no pull (`claudelogs/CLAUDE.md`, user rule 2026-11-01) — push the newest this
 device holds that the server does not, then pull the other devices' rows by revision (`claude_log_sync` holds the cursor
 per account). Off the reconcile mutex, refused while offline like every request, and a result about another account than
 the one now active is dropped.

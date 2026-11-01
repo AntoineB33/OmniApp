@@ -753,6 +753,37 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
             if (updated != null) claudeLogs = updated
         }
+        // User rule 2026-11-01: while the app is open, what Claude Code writes on this device goes up as it is written — on
+        // the system's event, whatever page is shown and at most once per window ([ClaudeLogArchive.PUSH_WINDOW_MILLIS]), in
+        // one request and with no pull. Offline, nothing is lost: it is what the next send finds not on the server.
+        LaunchedEffect(claudeLogDirectory, claudeLogsAccount) {
+            if (claudeLogDirectory.isEmpty()) return@LaunchedEffect
+            val written = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+            val watch =
+                withContext(Dispatchers.Default) { org.example.project.claudelogs.watchClaudeLogs(claudeLogDirectory) { written.trySend(Unit) } }
+                    ?: return@LaunchedEffect
+            try {
+                for (first in written) {
+                    delay(org.example.project.claudelogs.ClaudeLogArchive.PUSH_WINDOW_MILLIS)
+                    written.tryReceive()
+                    var kept = ""
+                    val batches =
+                        withContext(Dispatchers.Default) {
+                            claudeLogLock.withLock {
+                                kept = claudeLogKeeper.activeAccount()
+                                claudeLogKeeper.absorbChanged(kept, claudeLogIndex.changed(claudeLogDirectory).orEmpty())
+                                claudeLogKeeper.pushBatches(kept)
+                            }
+                        }
+                    if (batches.isEmpty()) continue
+                    val cursor = withContext(Dispatchers.Default) { claudeLogLock.withLock { claudeLogKeeper.cursor(kept) } }
+                    val synced = vm.syncClaudeLogs(batches, cursor, pull = false) ?: continue
+                    withContext(Dispatchers.Default) { claudeLogLock.withLock { claudeLogKeeper.applySync(synced) } }
+                }
+            } finally {
+                watch.close()
+            }
+        }
         fun setClaudeLogsDirectory(directory: String) = setClaudeLogsSettings(claudeLogsSettings.copy(directory = directory))
         fun refreshClaudeLogs() { claudeLogRefreshes++ }
         // The lateral-menu windows come back filled and reduced as they were left, across a close and a

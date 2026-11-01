@@ -12,8 +12,19 @@ expect val claudeLogFilesSupported: Boolean
  */
 expect fun listClaudeLogFiles(directory: String): List<ClaudeLogFile>?
 
-/** Every line of [path], in order; nothing when it cannot be read. */
-expect fun forEachClaudeLogLine(path: String, onLine: (String) -> Unit)
+/**
+ * Every whole line of [path] from the byte [fromByte] on, in order; nothing when it cannot be read. Answers where the next
+ * read starts: a last line the log is still writing has no end yet, and is left for that read.
+ */
+expect fun forEachClaudeLogLine(path: String, fromByte: Long, onLine: (String) -> Unit): Long
+
+/**
+ * Calls [onChange], from a thread of its own, each time a session log under [directory] is written — the operating
+ * system's event, never a poll — until the answer is closed. Null where the platform tells nothing, or [directory] is no
+ * folder. A capability of the build's own source set, like [claudeLogFilesSupported]: only a device Claude Code runs on
+ * has logs being written.
+ */
+expect fun watchClaudeLogs(directory: String, onChange: () -> Unit): AutoCloseable?
 
 /**
  * Where Claude Code keeps its logs on this device — `<home>/.claude/projects` — when that folder exists; null where it

@@ -47,10 +47,12 @@ block every 20, a minimum-time change every 10. The account is the release accou
   (`TimelineLevels.purged`: 90 days behind the line, 500 pieces; `calendar.md` § *tm_levels*). A piece is one small
   row, written when a block is placed over another and deleted when it is given back.
 - **The Claude Code logs are bounded on the server, not by the client's good will**: `trim_claude_log_entries`
-  (migration 20261019000000) keeps an account's newest 400 KB, counted by the server's own `size_bytes`, and
+  (migration 20261101000000) keeps an account's newest 300 KB, counted by the server's own `size_bytes`, and
   `ServerQuotaTest` reads that bound off the migration and fails when it disagrees with `ClaudeLogArchive.SERVER_LIMIT_BYTES`.
   Each device keeps the rest itself. Rows are inserted once and never updated; the table is not published. Raising the
-  bound needs room in the budget first (2026-10-19: 49.87 of 50 MB with it at 400 KB).
+  bound needs room in the budget first (2026-11-01: lowered from 400 KB when the logs began to go up as they are written;
+  every trim then leaves dead rows until autovacuum, and the heavy month came to 50.14 MB). A write of Claude Code's is
+  event-driven and throttled (`PUSH_WINDOW_MILLIS`), with no pull: `ServerQuotaTest` runs twice the user's busiest hour.
 - **Never rewrite a large row to change a small part of it.** That is the outage. A value that changes with editing
   goes in its own row, sized by what changed (`sync-and-accounts.md` § *Sync by rows*).
 - **A History Unit is a diff of what changed**, never a copy of the tree (`persistence.md` § *A History Unit is what
@@ -65,4 +67,5 @@ block every 20, a minimum-time change every 10. The account is the release accou
   most ONCE per election and only when that plan was made alone — never as a reply to every set of rules.
 - **An unchanged value is not re-sent**: the active-session push is skipped when this device's own rows are those it
   last pushed.
-- **No timer-driven request** (`CLAUDE.md`). The presence tick (`t_a`) is the pause cue's own, bounded, exception.
+- **No timer-driven request** (`CLAUDE.md`). The presence tick (`t_a`) is the pause cue's own, bounded, exception. The
+  wait after a Claude Code write is a throttle on an event, not a timer: no write, no wait.

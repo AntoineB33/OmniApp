@@ -33,13 +33,22 @@ class ClaudeLogKeeper(
 
     /**
      * The archive of [account] with the sessions a folder read gave ([read]; null = no folder, or not readable — the
-     * archive is kept as it is), bounded and saved. A record read again replaces the kept one (a title it gained); one
-     * no longer in the folder stays.
+     * archive is kept as it is), bounded and saved. A record read again changes nothing kept but its title and where it
+     * was read ([ClaudeLogArchive.merge]); one no longer in the folder stays.
      */
     fun absorb(account: String, read: List<ClaudeLogSession>?): List<ClaudeLogSession> {
         load(account)
         if (read != null) replace(ClaudeLogArchive.merge(records, ClaudeLogArchive.records(read)))
         return ClaudeLogArchive.sessions(records)
+    }
+
+    /**
+     * [changed] (the sessions of the logs just written) added to the archive of [account], as [absorb] does, without
+     * making the whole archive back into sessions: this runs at every burst of a live session.
+     */
+    fun absorbChanged(account: String, changed: List<ClaudeLogSession>) {
+        load(account)
+        if (changed.isNotEmpty()) replace(ClaudeLogArchive.merge(records, ClaudeLogArchive.records(changed)))
     }
 
     /** What to send for [account]: the newest records that fit the server's bound and it does not hold, in requests. */

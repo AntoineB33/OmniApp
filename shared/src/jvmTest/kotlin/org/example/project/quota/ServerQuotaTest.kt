@@ -81,14 +81,16 @@ class ServerQuotaTest {
             phone.active = minute in 15..30
             if (desktop.active) desktopUser.actOneMinute(now)
             if (phone.active && minute % 3 == 0) phoneUser.actOneMinute(now)
-            // Measured 2026-10-19 on the user's desktop: 2.9 MB of prompts, answers and reasoning over the 30 days
-            // Claude Code keeps — 10 KB an active hour. Heavy is three times that pace, read every 10 minutes, and the
-            // phone's logs page shown each time it is used.
-            if (minute % 10 == 0) {
-                if (desktop.active) desktop.readLogs(logs.sessions(5 * 1024))
-                if (phone.active) phone.readLogs(null)
+            // User rule 2026-11-01: sent as it is written. Measured 2026-11-01 on the user's desktop, 340 active hours of
+            // logs, 5 476 entries, 3.25 MB: 10 KB an active hour, as on 2026-10-19, and a 5 s window making 16 requests an
+            // hour on average, 12 (median), 43 (p95), 93 at the busiest hour ever; a window with nothing new makes none.
+            // Heavy is three times the text (30 KB) cut into twice that busiest hour, EVERY active hour of the month:
+            // 180 requests, eleven times the average. The phone's logs page is shown every 10 minutes it is used.
+            if (minute % 10 == 0 && phone.active) phone.readLogs(null)
+            repeat(3) {
+                if (desktop.active) desktop.pushLogs(logs.entry(30 * 1024 / 180))
+                scenario.pass(20_000L)
             }
-            scenario.pass(60_000L)
         }
         val after = Meters.of(server)
 
@@ -213,6 +215,15 @@ class ServerQuotaTest {
 class ClaudeLogFeed(private val t0: Long) {
     private var sessionCount = 0
     private var minute = 0L
+
+    /** One more entry of a session that goes on, as a live log gives it: each call a later one, of [bytes] of text. */
+    fun entry(bytes: Int): List<ClaudeLogSession> {
+        val id = "11111111-0000-4000-8000-000000000000"
+        val at = minute++
+        val text = "Session $id entry $at ".padEnd(bytes, 'x')
+        val entry = ClaudeLogEntry(ClaudeLogKind.Answer, text, t0 + 60_000L * at, null, at.toInt())
+        return listOf(ClaudeLogSession("C:/Users/u/.claude/projects/C--OmniApp/$id.jsonl", id, "C--OmniApp", "C:/OmniApp", "Session $id", listOf(entry)))
+    }
 
     fun sessions(bytes: Long): List<ClaudeLogSession> {
         val out = ArrayList<ClaudeLogSession>()

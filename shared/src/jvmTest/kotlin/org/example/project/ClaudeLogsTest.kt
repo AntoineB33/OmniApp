@@ -25,7 +25,7 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.ui.CustomMenuButtons
 import org.example.project.ui.MenuControl
 import org.example.project.claudelogs.listClaudeLogFiles
-import org.example.project.claudelogs.readClaudeLogSession
+import org.example.project.claudelogs.ClaudeLogTails
 
 /** The Claude Code logs page: what a session log yields, the Search window over it and what the page keeps. */
 class ClaudeLogsTest {
@@ -350,7 +350,7 @@ class ClaudeLogsTest {
             val files = listClaudeLogFiles(root.path)!!
             assertEquals(setOf("s1.jsonl", "top.jsonl"), files.map { File(it.path).name }.toSet())
             assertEquals("a", files.single { it.path.endsWith("s1.jsonl") }.folder)
-            assertEquals(4, readClaudeLogSession(files.single { it.path.endsWith("s1.jsonl") }).entries.size)
+            assertEquals(4, ClaudeLogTails().read(files.single { it.path.endsWith("s1.jsonl") }).entries.size)
             assertNull(listClaudeLogFiles(File(root, "missing").path))
             assertNull(listClaudeLogFiles(""))
         } finally {

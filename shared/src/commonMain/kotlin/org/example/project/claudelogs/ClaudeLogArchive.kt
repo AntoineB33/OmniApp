@@ -35,11 +35,19 @@ data class ClaudeLogRecord(
 object ClaudeLogArchive {
     /**
      * What the server keeps of an account's logs: its newest records up to this many bytes, counted as [sizeOf] counts
-     * them. The trigger `trim_claude_log_entries` (migration 20261019000000) does it; this is the same figure, so a
+     * them. The trigger `trim_claude_log_entries` (migration 20261101000000) does it; this is the same figure, so a
      * device never sends what the server would drop at once. `server-quota.md`: three accounts at this bound, and the
-     * room a trim's deleted rows take until autovacuum, fit in what the 10 % database budget had left (2026-10-19).
+     * room a trim's deleted rows take until autovacuum, fit in what the 10 % database budget had left (2026-11-01).
      */
-    const val SERVER_LIMIT_BYTES: Long = 400L * 1024
+    const val SERVER_LIMIT_BYTES: Long = 300L * 1024
+
+    /**
+     * User rule 2026-11-01: while the app is open, what Claude Code writes goes up as it is written, **at most once per
+     * this long**: the first write of a burst starts the wait, and what the burst wrote by then goes in one request.
+     * Timed from the first write, so a session that never pauses is still sent; a burst that wrote no entry (a tool's
+     * lines) sends nothing. `ServerQuotaTest` runs twice the busiest hour of the user's logs, every hour.
+     */
+    const val PUSH_WINDOW_MILLIS: Long = 5_000L
 
     /** At most this much is sent in one request, so a trim never has more than this to delete at once. */
     const val PUSH_BATCH_BYTES: Long = 32L * 1024
@@ -77,18 +85,48 @@ object ClaudeLogArchive {
         session.path.substringAfterLast('/').substringAfterLast('\\').removeSuffix(".jsonl")
 
     /**
-     * [kept] with [incoming] added: one record per id, the incoming one where both hold it (a log read again may have
-     * gained its title, or a path on this device). A record [kept] holds and [incoming] does not stays — that is what
-     * keeps a log whose folder was deleted.
+     * **What an entry is, whatever becomes of its log file** (user rule 2026-11-01): its id says its place, and a line
+     * removed by hand moves every entry after it. Its session, instant and kind do not move; [occurrence] tells apart
+     * the blocks of one log line, which share them. Null for an entry the log gave no instant: its id is all there is.
+     */
+    private data class Identity(val session: String, val timeMillis: Long, val kind: ClaudeLogKind, val occurrence: Int)
+
+    private fun identified(records: List<ClaudeLogRecord>): List<Pair<Identity?, ClaudeLogRecord>> {
+        val seen = HashMap<Identity, Int>()
+        return records.sortedBy { it.ordinal }.map { r ->
+            val first = r.timeMillis?.let { Identity(r.session, it, r.kind, 0) }
+            val identity = first?.let { it.copy(occurrence = seen.getOrElse(it) { 0 }) }
+            if (first != null) seen[first] = (identity?.occurrence ?: 0) + 1
+            identity to r
+        }
+    }
+
+    /**
+     * [kept] with [incoming] added. **What the account keeps of an entry is what was first read of it** (user rule
+     * 2026-11-01): a log edited or cut by hand afterwards changes nothing kept and adds no second copy — one read again
+     * only brings its session's title, its project, or a path on this device. A record [kept] holds and [incoming] does
+     * not stays — that is what keeps a log whose folder was deleted.
      */
     fun merge(kept: List<ClaudeLogRecord>, incoming: List<ClaudeLogRecord>): List<ClaudeLogRecord> {
         if (incoming.isEmpty()) return kept
         val byId = LinkedHashMap<String, ClaudeLogRecord>(kept.size + incoming.size)
         for (r in kept) byId[r.entryId] = r
-        for (r in incoming) {
-            val before = byId[r.entryId]
-            // A pulled record has no path here: the one this device read the log at is kept.
-            byId[r.entryId] = if (before != null && r.path.isEmpty()) r.copy(path = before.path) else r
+        val idOf = HashMap<Identity, String>(kept.size)
+        for ((identity, r) in identified(kept)) if (identity != null) idOf[identity] = r.entryId
+        for ((identity, r) in identified(incoming)) {
+            val before = byId[r.entryId] ?: identity?.let(idOf::get)?.let(byId::get)
+            if (before == null) {
+                byId[r.entryId] = r
+                if (identity != null) idOf[identity] = r.entryId
+            } else {
+                byId[before.entryId] =
+                    before.copy(
+                        sessionTitle = r.sessionTitle ?: before.sessionTitle,
+                        project = r.project,
+                        // A pulled record has no path here: the one this device read the log at is kept.
+                        path = r.path.ifEmpty { before.path },
+                    )
+            }
         }
         return byId.values.toList()
     }
@@ -134,12 +172,13 @@ object ClaudeLogArchive {
     }
 
     /**
-     * [records] grouped back into sessions, each in its log's order, an answer or a reasoning chain given the prompt
-     * before it as what it replied to. Sessions come in the order their first record does.
+     * [records] grouped back into sessions, each in the order it was written, an answer or a reasoning chain given the
+     * prompt before it as what it replied to. By instant, then place: an entry read after lines were cut from its log
+     * has a lower place than the ones kept from before. Sessions come in the order their first record does.
      */
     fun sessions(records: List<ClaudeLogRecord>): List<ClaudeLogSession> =
         records.groupBy { it.session }.map { (name, list) ->
-            val ordered = list.sortedBy { it.ordinal }
+            val ordered = list.sortedWith(compareBy({ it.timeMillis ?: Long.MIN_VALUE }, { it.ordinal }))
             var lastPrompt: String? = null
             val entries =
                 ordered.map { r ->
