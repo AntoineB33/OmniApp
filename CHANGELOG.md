@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Two right-click menus open at the pointer — 2026-11-01
+
+The menu beside the left-side menu's items and the "add in the left-side menu" of a control or a Search action while customizing hung from the top of what they are declared in. Both now open where the click was, and `menuSpot` keeps them whole on the screen, tested at every edge and corner. No migration. Client rebuild only.
+
+### Folders in the left-side menu — 2026-11-01
+
+User rule: while customizing, a button dropped on another makes a folder of the two, its title in edit; a folder has an arrow, a thin line per level shows the tree, and a press on it opens all the windows of the buttons in it at any depth. Customizing no longer adds anything at the top of the menu: the right-click menu ends it. Between two rows of different depths the drag's line shows the depth of the closer one, shorter at the deeper, and the item lands there. `folder`, `parent` and `collapsed` default on what was stored before. No migration. Client rebuild only.
+
 ### An answer is what a turn ends on — 2026-11-01
 
 User rule: while Claude Code is working, or has stopped only to wait for a background command, the turn's last text was listed as an answer. It now stays in the reasoning chain until the turn ends (`ClaudeLogSession.working`, read off the log's `turn_duration`, `backgroundTaskId` and task notifications). A reading: nothing kept changes and nothing is re-sent. No migration. Client rebuild only.

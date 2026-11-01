@@ -427,6 +427,9 @@ private class ViewHistoryRecorder {
 /** The calendar's chrome after the window bar's Reset: maximized, not reduced (user rule 2026-10-01). */
 private val CALENDAR_RESET_CHROME: WindowChrome = WindowChrome(WindowFill.Both, minimized = false)
 
+/** How many frames a folder's click leaves between two of its buttons: what a window takes to register. */
+private const val FOLDER_CLICK_FRAMES: Int = 3
+
 /** How many frames a ☆ button's click waits for the window it creates to register, to give its tab the button's name. */
 private const val TAB_TITLE_FRAMES: Int = 10
 
@@ -937,7 +940,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val menuActionContext =
             remember { mutableStateOf<Pair<AddedActionHandlers, (SearchDomain.Result) -> Unit>?>(null) }
         fun menuButtonShown(button: CustomMenuButton): Boolean =
-            if (button.action != null) SearchDomain.AddedAction.entries.any { it.name == button.action }
+            if (button.folder) true
+            else if (button.action != null) SearchDomain.AddedAction.entries.any { it.name == button.action }
             else if (button.control != null) org.example.project.ui.MenuControl.of(button.control) != null
             else ObjectWindowKey.decode(button.windowId)?.exists(schedulerState) ?: (lateralWindowOf(button.windowId) != null)
         // User rule 2026-10-08, the menu's "Customize": while on, a right-click on a control of the app that can stand
@@ -2429,7 +2433,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     val gone = menuButtonsOf(frameId)
                     if (gone.isNotEmpty()) {
                         val ids = gone.mapTo(HashSet()) { it.id }
-                        setMenuButtons(menuButtons.filterNot { it.id in ids })
+                        setMenuButtons(ids.fold(menuButtons, CustomMenuButtons::removed))
                         ids.forEach { menuButtonWindows.remove(it); menuButtonOpenedLayouts.remove(it) }
                         // The window was named after its button: without it, it is called what it says again.
                         if (gone.any { it.title == windowFrames.tabTitles[frameId] }) {
@@ -4093,7 +4097,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         CustomMenuSection(
                             buttons = menuButtons.filter(::menuButtonShown),
                             // PRD §7: every window button of the menu opens a NEW window ([openNewWindow]).
-                            onClick = { onMenuButtonClicked(it) },
+                            onClick = { pressed ->
+                                if (!pressed.folder) onMenuButtonClicked(pressed)
+                                else {
+                                    val inside = CustomMenuButtons.windowButtonsIn(menuButtons, pressed.id).filter(::menuButtonShown)
+                                    // One at a time: a click names the windows that appeared since it was made, so two in
+                                    // one frame would each take the other's for its own.
+                                    engineScope.launch {
+                                        for (button in inside) {
+                                            onMenuButtonClicked(button)
+                                            repeat(FOLDER_CLICK_FRAMES) { withFrameNanos { } }
+                                        }
+                                    }
+                                }
+                            },
                             editingId = editingMenuButton,
                             onStartRename = { editingMenuButton = it },
                             onRename = { id, title -> setMenuButtons(CustomMenuButtons.renamed(menuButtons, id, title)) },
@@ -4120,7 +4137,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onCustomize = { menuCustomizer.active = it },
                             onReset = { resetMenuButtons() },
                             controlContent = { control, title -> org.example.project.ui.MenuControlItem(control, title, menuControlHost) },
-                            onMove = { id, beforeId -> setMenuButtons(CustomMenuButtons.moved(menuButtons, id, beforeId)) },
+                            onMove = { id, beforeId, parent -> setMenuButtons(CustomMenuButtons.placed(menuButtons, id, beforeId, parent)) },
+                            onGroup = { id, targetId ->
+                                val used = menuListsNow().values.flatten().mapTo(HashSet()) { it.id }
+                                val (list, folder) = CustomMenuButtons.grouped(menuButtons, id, targetId, used)
+                                setMenuButtons(list)
+                                // A new folder's title is in edit at once, as a new button's is.
+                                if (folder != null) editingMenuButton = folder
+                            },
+                            onToggleFolder = { setMenuButtons(CustomMenuButtons.toggled(menuButtons, it)) },
                             actionContent = { button ->
                                 menuActionContext.value?.let { (handlers, open) ->
                                     org.example.project.ui.MenuActionItem(

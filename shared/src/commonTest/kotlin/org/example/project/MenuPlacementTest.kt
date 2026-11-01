@@ -32,4 +32,21 @@ class MenuPlacementTest {
         // A right-click is a point: below and right of it.
         assertEquals(IntOffset(400, 300), menuSpot(IntRect(400, 300, 400, 300), menu, screen))
     }
+
+    /** User rule 2026-11-01: *"the menu must always adapt its position for the available space"*. */
+    @Test
+    fun a_menu_at_the_pointer_stays_whole_on_the_screen_at_every_edge_and_corner() {
+        fun at(x: Int, y: Int) = menuSpot(IntRect(x, y, x, y), menu, screen)
+        assertEquals(IntOffset(850, 300), at(990, 300), "the right edge: moved left")
+        assertEquals(IntOffset(400, 490), at(400, 790), "the bottom edge: above")
+        assertEquals(IntOffset(850, 490), at(990, 790), "the bottom right corner")
+        assertEquals(IntOffset(0, 0), at(0, 0), "the top left corner")
+        for (x in listOf(0, 1, 500, 849, 850, 999, 1000)) {
+            for (y in listOf(0, 1, 400, 499, 500, 799, 800)) {
+                val spot = at(x, y)
+                val inside = spot.x >= 0 && spot.y >= 0 && spot.x + menu.width <= 1000 && spot.y + menu.height <= 800
+                assertEquals(true, inside, "a click at ($x, $y) put the menu at $spot")
+            }
+        }
+    }
 }

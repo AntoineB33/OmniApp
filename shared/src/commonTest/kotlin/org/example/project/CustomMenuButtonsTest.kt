@@ -59,11 +59,11 @@ class CustomMenuButtonsTest {
         // Said by the item it lands before: an item the menu does not draw (its window is gone) keeps its place.
         assertEquals("bacd", ids(CustomMenuButtons.moved(list, "a", "c")))
         // Where a dragged row lands, by the middles of the other rows: 10, 50, 90.
-        val others = listOf("b" to 10f, "c" to 50f, "d" to 90f)
-        assertEquals("b", CustomMenuButtons.dropBefore(others, 0f))
-        assertEquals("c", CustomMenuButtons.dropBefore(others, 30f))
-        assertEquals("d", CustomMenuButtons.dropBefore(others, 60f))
-        assertEquals(null, CustomMenuButtons.dropBefore(others, 120f))
+        val others = listOf("b", "c", "d").mapIndexed { i, id -> CustomMenuButtons.DropRow(id, null, 0, i * 40f, 20f) }
+        assertEquals("b", CustomMenuButtons.dropPlace(others, 0f).beforeId)
+        assertEquals("c", CustomMenuButtons.dropPlace(others, 30f).beforeId)
+        assertEquals("d", CustomMenuButtons.dropPlace(others, 60f).beforeId)
+        assertEquals(null, CustomMenuButtons.dropPlace(others, 120f).beforeId)
     }
 
     /** "…the right-click menu will have one option: add in the left-side menu." */

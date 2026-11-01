@@ -1779,7 +1779,13 @@ fun LateralMenu(
         // visible after the whole menu (this button included) slides off-screen.
         PageNavButton(page = page, onPageSelected = onPageSelected)
         transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
-        AppDropdownMenu(expanded = backgroundMenu, onDismissRequest = { backgroundMenu = false }, properties = PopupProperties(focusable = false)) {
+        // At the pointer (anomaly 2026-11-01): declared here, it hung from the top of the menu, wherever the click was.
+        AppDropdownMenu(
+            expanded = backgroundMenu,
+            onDismissRequest = { backgroundMenu = false },
+            properties = PopupProperties(focusable = false),
+            atPointer = true,
+        ) {
             DropdownMenuItem(
                 text = { Text(if (customizing) "Stop customizing" else "Customize") },
                 onClick = { backgroundMenu = false; onCustomize(!customizing) },

@@ -146,22 +146,35 @@ means.
     ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
   - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename, Global,
     Remove, Customize, Reset. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of
-    its own); a right-click beside the items offers Customize and Reset too, so an empty menu can be filled.
+    its own); a right-click beside the items offers Customize and Reset too, at the pointer, so an empty menu can be filled.
   - **"Reset" puts the menu of the page it is pressed on back to that page's defaults**
     (`CustomMenuButtons.withPageReset`, `GlobalItemsTest`), one History Unit, so one `Ctrl+Z` from ANY window brings it
     all back (`persistence.md` § *One history, per-device undo*, as for all the menu does). The other
     pages lose nothing of their own: a global item the defaults do not hold goes back to the page it was made global
     from, as that page's own, or goes altogether when that is this page. The defaults' global items are the same item
     on every page, so one renamed or removed is restored on all of them.
-  - **"Customize"** (`MenuCustomizer`, `LocalMenuCustomizer`, Compose-only — off at every start): while on, a line at
-    the top of the menu says so and ends it, every control that can stand in the menu is OUTLINED where it lives, and
-    a right-click on one offers exactly "add in the left-side menu" (`MenuAddable`). **The menu's own items do nothing at
+  - **"Customize"** (`MenuCustomizer`, `LocalMenuCustomizer`, Compose-only — off at every start): while on, every
+    control that can stand in the menu is OUTLINED where it lives, nothing is added to the menu to end it (user rule
+    2026-11-01: the right-click menu alone does, as Stop customizing), and
+    a right-click on one offers exactly "add in the left-side menu", at the pointer (`MenuAddable`). **The menu's own items do nothing at
     a press meanwhile** (anomaly 2026-10-08: a switch was still flipped): a press HOLDS the item, and moved, DRAGS it
     to another place of the menu (user rule 2026-10-08; `heldDrag`, `CustomMenuButtons.moved` / `dropBefore`) — the
     item follows the hand, a line says where a release would put it, and it lands before the item under it. The page
     button is not an item and does not move. Only their right-click menu answers otherwise; the controls outlined
     elsewhere in the app still work. It lands at the bottom; a control
     stands in the menu once (`addedControl`).
+  - **An item dropped on another makes a folder of the two** (user rule 2026-11-01; `CustomMenuButton.folder` / `parent`,
+    `CustomMenuButtons.grouped`, `CustomMenuFoldersTest`). Over the middle half of a row a release groups, and the row is
+    outlined; at its edges it moves, and the line shows where. A folder's title goes in edit at once. Dropped on a folder
+    it joins it. **Between two rows of different depths the item takes the depth of the one it is closer to, and the line
+    starts at that depth** (`CustomMenuButtons.dropPlace`): shorter at the deeper one. So the gap under a folder is its
+    first item or, closer to the folder, the next thing after what is in it, and the gap under a folder's last item is
+    the end of the folder or out of it. **The list stays flat, in tree order**, so every operation on it holds. A folder emptied goes, and
+    removing one removes what is in it. Its arrow answers while customizing. **A press on it presses every window button
+    in it at any depth** (`windowButtonsIn`), one every `FOLDER_CLICK_FRAMES`, or each click would take the other's new
+    window for its own and name its tab. A folder is not Global: its items are, each, and seen from another page such an
+    item stands at the top. A thin line per level shows the tree, for the `MAX_MENU_LEVELS` deepest levels of a row: there
+    is no limit to the depth, and the levels above are hidden to the left.
   - **An action of the Search window is an item too** (user rule 2026-10-08; `CustomMenuButton.action`,
     `AddableAction`, `MenuActionItem`): every row of "Actions on the added elements" is addable, WITH that window's
     configuration as it stands — its added elements included — so the item acts on those elements. It is drawn in the

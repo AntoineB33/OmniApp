@@ -42,6 +42,7 @@ import kotlinx.serialization.json.Json
 import org.example.project.scheduler.ui.contextMenuModifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -98,6 +99,19 @@ data class CustomMenuButton(
      * ([CustomMenuButtons.withGlobalsPropagated]). Its id is unique across the pages ([CustomMenuButtons.withGlobal]).
      */
     val global: Boolean = false,
+    /**
+     * User rule 2026-11-01: this item is **a folder** of the items that name it as their [parent]: one made by dropping
+     * one button on another ([CustomMenuButtons.grouped]). It has an expansion arrow; a press on it presses every window
+     * button in it, at any depth ([CustomMenuButtons.windowButtonsIn]). [windowId] is then empty.
+     */
+    val folder: Boolean = false,
+    /**
+     * The folder this item stands in, by id; null at the top of the menu, as is an item whose folder is not on this page
+     * (a global one, seen from another). **The list stays flat, in tree order**: a folder is followed by its own items.
+     */
+    val parent: String? = null,
+    /** A folder retracted by its arrow: its items are not drawn. */
+    val collapsed: Boolean = false,
     /**
      * The page a global item was made global FROM ([CustomMenuButtons.withGlobal]): where it goes back to, alone, when it
      * is made its page's own again — from whichever page that is asked (anomaly 2026-10-18: made global on the logs page,
@@ -185,7 +199,7 @@ fun MenuAddableBox(key: Any?, onAdd: (MenuCustomizer) -> Unit, modifier: Modifie
         content()
         if (active) {
             transientMenuDismissal(menuOpen) { menuOpen = false }
-            AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, properties = PopupProperties(focusable = false)) {
+            AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, properties = PopupProperties(focusable = false), atPointer = true) {
                 DropdownMenuItem(
                     text = { Text("add in the left-side menu") },
                     onClick = {
@@ -600,27 +614,157 @@ object CustomMenuButtons {
      * at the very end when that is null or names no item. Said by the item it lands before, never by an index: the
      * menu draws only the items it can ([shown]), and an index among those is not one in the list.
      */
-    fun moved(buttons: List<CustomMenuButton>, id: String, beforeId: String?): List<CustomMenuButton> {
-        val item = buttons.firstOrNull { it.id == id } ?: return buttons
-        if (beforeId == id) return buttons
-        val rest = buttons.filterNot { it.id == id }
+    fun moved(buttons: List<CustomMenuButton>, id: String, beforeId: String?): List<CustomMenuButton> =
+        // It lands in the folder of the item it lands before; at the very end, at the top of the menu.
+        placed(buttons, id, beforeId, buttons.firstOrNull { it.id == beforeId }?.parent)
+
+    /** [moved], in the folder [parent]: the depth a release chose between two rows ([dropPlace]). */
+    fun placed(buttons: List<CustomMenuButton>, id: String, beforeId: String?, parent: String?): List<CustomMenuButton> {
+        if (buttons.none { it.id == id }) return buttons
+        val block = descendantIds(buttons, id) + id
+        if (beforeId in block || parent in block) return buttons
+        val rest = buttons.filterNot { it.id in block }
         val at = rest.indexOfFirst { it.id == beforeId }.takeIf { it >= 0 } ?: rest.size
-        return rest.subList(0, at) + item + rest.subList(at, rest.size)
+        val carried = buttons.filter { it.id in block }.map { if (it.id == id) it.copy(parent = parent) else it }
+        return withoutEmptyFolders(rest.subList(0, at) + carried + rest.subList(at, rest.size))
+    }
+
+    /** One line of the menu as drawn: an item, and how many folders it stands in. */
+    data class MenuRow(val button: CustomMenuButton, val depth: Int)
+
+    /** What a new folder is called until its title, in edit at once, is typed. */
+    const val FOLDER_TITLE: String = "Folder"
+
+    /** The folders [button] stands in, nearest first; one not in [byId] ends the chain, and a loop is cut. */
+    private fun ancestorsOf(button: CustomMenuButton, byId: Map<String, CustomMenuButton>): List<CustomMenuButton> {
+        val out = ArrayList<CustomMenuButton>()
+        val seen = hashSetOf(button.id)
+        var next = button.parent?.let(byId::get)
+        while (next != null && seen.add(next.id)) {
+            out += next
+            next = next.parent?.let(byId::get)
+        }
+        return out
+    }
+
+    /** [buttons] as drawn: the items of a retracted folder are left out, each with its depth. */
+    fun visibleRows(buttons: List<CustomMenuButton>): List<MenuRow> {
+        val byId = buttons.associateBy { it.id }
+        return buttons.mapNotNull { button ->
+            val ancestors = ancestorsOf(button, byId)
+            if (ancestors.any { it.collapsed }) null else MenuRow(button, ancestors.size)
+        }
+    }
+
+    /** The ids of everything inside the folder [id], at any depth. */
+    fun descendantIds(buttons: List<CustomMenuButton>, id: String): Set<String> {
+        val byId = buttons.associateBy { it.id }
+        return buttons.filterTo(ArrayList()) { button -> ancestorsOf(button, byId).any { it.id == id } }.mapTo(LinkedHashSet()) { it.id }
+    }
+
+    /** The buttons a press on the folder [id] presses: those that open a window, at any depth, in the menu's order. */
+    fun windowButtonsIn(buttons: List<CustomMenuButton>, id: String): List<CustomMenuButton> {
+        val inside = descendantIds(buttons, id)
+        return buttons.filter { it.id in inside && !it.folder && it.control == null && it.action == null }
+    }
+
+    /** [buttons] with the arrow of the folder [id] pressed. */
+    fun toggled(buttons: List<CustomMenuButton>, id: String): List<CustomMenuButton> =
+        buttons.map { if (it.id == id) it.copy(collapsed = !it.collapsed) else it }
+
+    /** [buttons] without the folders nothing stands in any more: a folder is its items. */
+    private fun withoutEmptyFolders(buttons: List<CustomMenuButton>): List<CustomMenuButton> {
+        var list = buttons
+        while (true) {
+            val holding = list.mapNotNullTo(HashSet()) { it.parent }
+            val kept = list.filter { !it.folder || it.id in holding }
+            if (kept.size == list.size) return list
+            list = kept
+        }
     }
 
     /**
-     * Where an item dragged among the menu's drawn items lands: before the first of the [others] (each an id and the
-     * middle of its row, top to bottom, the dragged one left out) whose middle lies below [draggedMiddle]; null = after
-     * them all.
+     * User rule 2026-11-01: the item [id] dropped ON the item [targetId]. On a folder it joins it, at its end, and the
+     * folder opens. On anything else the two go into a new folder, standing where the target stood — its id, unique
+     * among [usedIds], is the second of the pair: its title goes in edit at once. The item takes what is inside it along.
      */
-    fun dropBefore(others: List<Pair<String, Float>>, draggedMiddle: Float): String? =
-        others.firstOrNull { it.second > draggedMiddle }?.first
+    fun grouped(
+        buttons: List<CustomMenuButton>,
+        id: String,
+        targetId: String,
+        usedIds: Set<String>,
+    ): Pair<List<CustomMenuButton>, String?> {
+        val block = descendantIds(buttons, id) + id
+        val target = buttons.firstOrNull { it.id == targetId }
+        if (target == null || id !in buttons.map { it.id } || targetId in block) return buttons to null
+        val carried = buttons.filter { it.id in block }.map { if (it.id == id) it.copy(parent = target.takeIf { t -> t.folder }?.id) else it }
+        val rest = buttons.filterNot { it.id in block }
+        if (target.folder) {
+            val inside = descendantIds(rest, targetId)
+            val at = rest.indexOfLast { it.id == targetId || it.id in inside } + 1
+            val open = rest.map { if (it.id == targetId) it.copy(collapsed = false) else it }
+            return withoutEmptyFolders(open.subList(0, at) + carried + open.subList(at, open.size)) to null
+        }
+        val folderId = generateSequence(1) { it + 1 }.map { "f$it" }.first { it !in usedIds }
+        val folder = CustomMenuButton(folderId, "", FOLDER_TITLE, folder = true, parent = target.parent)
+        val at = rest.indexOfFirst { it.id == targetId }
+        val moved = carried.map { if (it.id == id) it.copy(parent = folderId) else it }
+        val list =
+            rest.subList(0, at) + folder + target.copy(parent = folderId) + moved + rest.subList(at + 1, rest.size)
+        return withoutEmptyFolders(list) to folderId
+    }
+
+    /** A drawn row a drag can land on or by, the dragged item left out, top to bottom. */
+    data class DropRow(val id: String, val parent: String?, val depth: Int, val top: Float, val height: Float)
+
+    /**
+     * Where a release between two rows would put the item: before [beforeId] (null: at the very end), in the folder
+     * [parent], at [depth]. [lineBelow] / [lineAbove] are the rows the gap the line is drawn in lies between.
+     */
+    data class DropPlace(val beforeId: String?, val parent: String?, val depth: Int, val lineBelow: String?, val lineAbove: String?)
+
+    /** The row whose middle half holds [draggedMiddle]: a release there is ON it. Null: between two, [dropPlace]. */
+    fun dropOnto(others: List<DropRow>, draggedMiddle: Float): String? =
+        others.firstOrNull { draggedMiddle >= it.top + it.height / 4f && draggedMiddle <= it.top + it.height * 3f / 4f }?.id
+
+    /**
+     * Where an item dragged among the menu's drawn items lands between two rows, by the middle of the rows and, where the
+     * two stand at different depths, by which of them the item is closer to (user rule 2026-11-01): **it takes that one's
+     * depth**, and the line, which starts at that depth, says so. Closer to the shallower row of the two is the next
+     * item after it at its depth: past a folder's items, under a folder, or out of one.
+     */
+    fun dropPlace(others: List<DropRow>, draggedMiddle: Float): DropPlace {
+        val at = others.indexOfFirst { it.top + it.height / 2f > draggedMiddle }.let { if (it < 0) others.size else it }
+        val above = others.getOrNull(at - 1)
+        val below = others.getOrNull(at)
+        fun before(row: DropRow) = DropPlace(row.id, row.parent, row.depth, above?.id, row.id)
+        if (above == null) return below?.let(::before) ?: DropPlace(null, null, 0, null, null)
+        val bottom = above.top + above.height
+        if (below == null) {
+            val closer = draggedMiddle < bottom + above.height / 4f
+            return if (closer) DropPlace(null, above.parent, above.depth, above.id, null) else DropPlace(null, null, 0, above.id, null)
+        }
+        val closerToAbove = draggedMiddle < (bottom + below.top) / 2f
+        return when {
+            !closerToAbove || above.depth == below.depth -> before(below)
+            above.depth > below.depth -> DropPlace(below.id, above.parent, above.depth, above.id, below.id)
+            // [above] is the folder [below] stands in: at its depth, the next thing after what is in it.
+            else -> {
+                val next = others.subList(at, others.size).firstOrNull { it.depth <= above.depth }
+                DropPlace(next?.id, above.parent, above.depth, above.id, below.id)
+            }
+        }
+    }
 
     /** [buttons] with [id] renamed — a blank title keeps the one it had. */
     fun renamed(buttons: List<CustomMenuButton>, id: String, title: String): List<CustomMenuButton> =
         if (title.isBlank()) buttons else buttons.map { if (it.id == id) it.copy(title = title.trim()) else it }
 
-    fun removed(buttons: List<CustomMenuButton>, id: String): List<CustomMenuButton> = buttons.filterNot { it.id == id }
+    /** [buttons] without [id] and, a folder, what stands in it. */
+    fun removed(buttons: List<CustomMenuButton>, id: String): List<CustomMenuButton> {
+        val gone = descendantIds(buttons, id) + id
+        return withoutEmptyFolders(buttons.filterNot { it.id in gone })
+    }
 
     fun encodeLayout(layout: WindowLayout): String = json.encodeToString(WindowLayout.serializer(), layout)
 
@@ -666,7 +810,11 @@ object CustomMenuButtons {
  * ([CustomMenuButton]): a window's button, or a control of the app ([MenuControl], drawn by [controlContent]). They
  * all have the SAME right-click menu: Update (a window's button whose window changed), Rename, Remove, Customize
  * ([customizing], [onCustomize]) and Reset ([onReset]) — the last two also what a right-click beside them offers, so a
- * menu emptied of everything can still be filled again. While customizing, a line at the top says so and ends it.
+ * menu emptied of everything can still be filled again. Customizing is ended there alone (user rule 2026-11-01).
+ *
+ * User rule 2026-11-01: **an item dropped on another makes a folder of the two** ([onGroup], [CustomMenuButton.folder]),
+ * dropped on a folder it joins it. A folder has an arrow ([onToggleFolder]). A thin vertical line per level shows the
+ * tree; a row is indented and lined for its [MAX_MENU_LEVELS] deepest levels alone, the ones above hidden to the left.
  *
  * (Formerly) the lateral menu's bottom section: the buttons the user made ([CustomMenuButton]), drawn like the menu's own.
  * [editingId]'s title is an edit field instead, opened with the whole title selected — so typing replaces it and
@@ -691,14 +839,18 @@ internal fun CustomMenuSection(
     onCustomize: (Boolean) -> Unit = {},
     /** Draws the control an item is, under the name the user gave it (null: the control's own). */
     controlContent: @Composable (control: MenuControl, title: String?) -> Unit = { _, _ -> },
-    /** The customization mode's drag: the item [id] dropped just before [beforeId] (null: at the end). */
-    onMove: (id: String, beforeId: String?) -> Unit = { _, _ -> },
+    /** The customization mode's drag: the item [id] dropped just before [beforeId] (null: at the end), in the folder [parent]. */
+    onMove: (id: String, beforeId: String?, parent: String?) -> Unit = { _, _, _ -> },
     /** Draws an item that is a Search action on its elements ([CustomMenuButton.action]). */
     actionContent: @Composable (CustomMenuButton) -> Unit = {},
     /** User rule 2026-10-18: the item [id] made global (it stands in the menu of every page) or its page's own again. */
     onSetGlobal: (id: String, global: Boolean) -> Unit = { _, _ -> },
     /** The page's menu back to its default items ([CustomMenuButtons.withPageReset]). */
     onReset: () -> Unit = {},
+    /** The customization mode's drag: the item [id] dropped on the item [targetId]. */
+    onGroup: (id: String, targetId: String) -> Unit = { _, _ -> },
+    /** The arrow of the folder [id] pressed. */
+    onToggleFolder: (id: String) -> Unit = {},
 ) {
     // User rule 2026-10-08: "in customization mode, the user can drag the buttons or fields in the left-side menu".
     // Each drawn item's row (its top and height in this column), the one held and how far the hand has it. The held
@@ -706,131 +858,171 @@ internal fun CustomMenuSection(
     val rows = remember { androidx.compose.runtime.mutableStateMapOf<String, Pair<Float, Float>>() }
     var draggedId by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
-    val shownIds = buttons.map { it.id }
-    fun dropTarget(): String? {
-        val id = draggedId ?: return null
-        val (top, height) = rows[id] ?: return null
-        val others = shownIds.filter { it != id }.mapNotNull { other -> rows[other]?.let { other to it.first + it.second / 2f } }
-        return CustomMenuButtons.dropBefore(others, top + height / 2f + dragOffset)
+    val visible = CustomMenuButtons.visibleRows(buttons)
+    // What a drag can land on: not on itself, nor inside itself.
+    fun others(): List<CustomMenuButtons.DropRow> {
+        val id = draggedId ?: return emptyList()
+        val block = CustomMenuButtons.descendantIds(buttons, id) + id
+        return visible.filter { it.button.id !in block }.mapNotNull { row ->
+            rows[row.button.id]?.let { (top, height) -> CustomMenuButtons.DropRow(row.button.id, row.button.parent, row.depth, top, height) }
+        }
     }
+    fun draggedMiddle(): Float? {
+        val (top, height) = rows[draggedId] ?: return null
+        return top + height / 2f + dragOffset
+    }
+    fun dropOnto(): String? = draggedMiddle()?.let { CustomMenuButtons.dropOnto(others(), it) }
+    fun dropPlace(): CustomMenuButtons.DropPlace? = draggedMiddle()?.let { CustomMenuButtons.dropPlace(others(), it) }
     val lineColor = CalColors.accent
+    val treeColor = CalColors.grid
     Column(
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(MENU_ROW_GAP),
         modifier = Modifier.drawWithContent {
             drawContent()
-            val id = draggedId ?: return@drawWithContent
-            val before = dropTarget()
-            val others = shownIds.filter { it != id }
+            if (draggedId == null) return@drawWithContent
+            val onto = dropOnto()?.let(rows::get)
+            if (onto != null) {
+                // Over an item: a release makes a folder of the two, or joins this one.
+                drawRoundRect(
+                    color = lineColor,
+                    topLeft = Offset(0f, onto.first),
+                    size = androidx.compose.ui.geometry.Size(size.width, onto.second),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(8.dp.toPx()),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+                )
+                return@drawWithContent
+            }
+            val place = dropPlace() ?: return@drawWithContent
             val y =
-                if (before != null) rows[before]?.let { it.first - 5.dp.toPx() }
-                else others.lastOrNull()?.let { rows[it] }?.let { it.first + it.second + 5.dp.toPx() }
-            if (y != null) drawLine(lineColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
+                place.lineAbove?.let(rows::get)?.let { it.first - 5.dp.toPx() }
+                    ?: place.lineBelow?.let(rows::get)?.let { it.first + it.second + 5.dp.toPx() }
+            // It starts where a row of that depth would (user rule 2026-11-01): shorter, one level deeper.
+            val x = MENU_LEVEL_STEP.toPx() * minOf(place.depth, MAX_MENU_LEVELS)
+            if (y != null) drawLine(lineColor, Offset(x, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
         },
     ) {
-        if (customizing) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .border(1.dp, CalColors.accent, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    "Customizing: right-click an outlined setting or button to add it here.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                MenuButton(label = "Done", active = true, onClick = { onCustomize(false) })
-            }
-        }
-        for (button in buttons) {
-            if (button.id == editingId) {
-                CustomMenuTitleField(button, onRename, onEditDone)
-            } else {
-                val control = MenuControl.of(button.control)
-                var menuOpen by remember(button.id) { mutableStateOf(false) }
-                Box(
-                    // While the menu is being customized its items do NOTHING at a press (anomaly 2026-10-08: a switch
-                    // was still flipped, a button still opened its window): they are there to be renamed and removed.
-                    // Only their right-click menu answers.
-                    // …and a press held and moved DRAGS the item to another place of the menu ([heldDrag], which is
-                    // also what swallows the press). The row is measured here, on the box that does not move; what
-                    // follows the hand is the box inside it.
-                    Modifier
+        for ((button, depth) in visible) {
+            androidx.compose.runtime.key(button.id) {
+                val levels = minOf(depth, MAX_MENU_LEVELS)
+                androidx.compose.foundation.layout.Row(
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
                         .onGloballyPositioned { rows[button.id] = it.positionInParent().y to it.size.height.toFloat() }
-                        .then(
-                            if (!customizing) Modifier
-                            else Modifier.heldDrag(
-                                button.id,
-                                onStart = { draggedId = button.id; dragOffset = 0f },
-                                onDrag = { dy -> if (draggedId == button.id) dragOffset += dy },
-                                onEnd = {
-                                    if (draggedId == button.id) {
-                                        val before = dropTarget()
-                                        val moved = kotlin.math.abs(dragOffset) > 4f
-                                        draggedId = null
-                                        dragOffset = 0f
-                                        if (moved) onMove(button.id, before)
-                                    }
-                                },
-                            ),
-                        )
-                        // A control answers a right-click itself (a field's own menu, a switch): the item's menu is
-                        // asked first. A window's button keeps the app's one right-click gesture.
-                        .then(
-                            if (control != null || button.action != null) Modifier.secondaryPressFirst(button.id) { menuOpen = true }
-                            else Modifier,
-                        ),
-                ) {
-                    Box(
-                        Modifier
-                            .zIndex(if (draggedId == button.id) 1f else 0f)
-                            .graphicsLayer {
-                                translationY = if (draggedId == button.id) dragOffset else 0f
-                                alpha = if (draggedId == button.id) 0.85f else 1f
-                            },
-                    ) {
-                    if (button.action != null) {
-                        actionContent(button)
-                    } else if (control != null) {
-                        controlContent(control, button.title.takeIf { it.isNotBlank() })
-                    } else {
-                        MenuButton(
-                            label = button.title,
-                            active = false,
-                            onClick = { onClick(button) },
-                            modifier = contextMenuModifier(enabled = true, key = button.id) { menuOpen = true },
-                        )
-                    }
-                    }
-                    transientMenuDismissal(menuOpen) { menuOpen = false }
-                    AppDropdownMenu(
-                        expanded = menuOpen,
-                        onDismissRequest = { menuOpen = false },
-                        properties = PopupProperties(focusable = false),
-                    ) {
-                        if (canUpdate(button)) {
-                            DropdownMenuItem(text = { Text("Update") }, onClick = { menuOpen = false; onUpdate(button) })
+                        .drawBehind {
+                            // One line per level, from the gap above the row to its bottom: with the next row's, a line
+                            // that runs as long as the folder does, and stops at its last item.
+                            for (level in 0 until levels) {
+                                val x = (level + 0.5f) * MENU_LEVEL_STEP.toPx()
+                                drawLine(treeColor, Offset(x, -MENU_ROW_GAP.toPx()), Offset(x, size.height), strokeWidth = 1f)
+                            }
                         }
-                        DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onStartRename(button.id) })
-                        // Checked while the item stands in the menu of every page.
-                        DropdownMenuItem(
-                            text = { Text((if (button.global) "✓ " else "") + "Global") },
-                            onClick = { menuOpen = false; onSetGlobal(button.id, !button.global) },
-                        )
-                        DropdownMenuItem(text = { Text("Remove") }, onClick = { menuOpen = false; onRemove(button.id) })
-                        DropdownMenuItem(
-                            text = { Text(if (customizing) "Stop customizing" else "Customize") },
-                            onClick = { menuOpen = false; onCustomize(!customizing) },
-                        )
-                        DropdownMenuItem(text = { Text("Reset") }, onClick = { menuOpen = false; onReset() })
+                        .padding(start = MENU_LEVEL_STEP * levels),
+                ) {
+                    if (button.folder) SectionArrow(button.collapsed) { onToggleFolder(button.id) }
+                    if (button.id == editingId) {
+                        Box(Modifier.weight(1f)) { CustomMenuTitleField(button, onRename, onEditDone) }
+                    } else {
+                        val control = MenuControl.of(button.control)
+                        var menuOpen by remember(button.id) { mutableStateOf(false) }
+                        Box(
+                            // While the menu is being customized its items do NOTHING at a press (anomaly 2026-10-08: a switch
+                            // was still flipped, a button still opened its window): they are there to be renamed and removed.
+                            // Only their right-click menu answers.
+                            // …and a press held and moved DRAGS the item to another place of the menu ([heldDrag], which is
+                            // also what swallows the press). The row is measured on what does not move; what follows the
+                            // hand is the box inside it. A folder's arrow stands outside this: it still answers.
+                            Modifier
+                                .weight(1f)
+                                .then(
+                                    if (!customizing) Modifier
+                                    else Modifier.heldDrag(
+                                        button.id,
+                                        onStart = { draggedId = button.id; dragOffset = 0f },
+                                        onDrag = { dy -> if (draggedId == button.id) dragOffset += dy },
+                                        onEnd = {
+                                            if (draggedId == button.id) {
+                                                val onto = dropOnto()
+                                                val place = dropPlace()
+                                                val moved = kotlin.math.abs(dragOffset) > 4f
+                                                draggedId = null
+                                                dragOffset = 0f
+                                                if (moved) {
+                                                    if (onto != null) onGroup(button.id, onto)
+                                                    else if (place != null) onMove(button.id, place.beforeId, place.parent)
+                                                }
+                                            }
+                                        },
+                                    ),
+                                )
+                                // A control answers a right-click itself (a field's own menu, a switch): the item's menu is
+                                // asked first. A window's button keeps the app's one right-click gesture.
+                                .then(
+                                    if (control != null || button.action != null) Modifier.secondaryPressFirst(button.id) { menuOpen = true }
+                                    else Modifier,
+                                ),
+                        ) {
+                            Box(
+                                Modifier
+                                    .zIndex(if (draggedId == button.id) 1f else 0f)
+                                    .graphicsLayer {
+                                        translationY = if (draggedId == button.id) dragOffset else 0f
+                                        alpha = if (draggedId == button.id) 0.85f else 1f
+                                    },
+                            ) {
+                                if (button.action != null) {
+                                    actionContent(button)
+                                } else if (control != null) {
+                                    controlContent(control, button.title.takeIf { it.isNotBlank() })
+                                } else {
+                                    MenuButton(
+                                        label = button.title,
+                                        active = false,
+                                        onClick = { onClick(button) },
+                                        modifier = contextMenuModifier(enabled = true, key = button.id) { menuOpen = true },
+                                    )
+                                }
+                            }
+                            transientMenuDismissal(menuOpen) { menuOpen = false }
+                            AppDropdownMenu(
+                                expanded = menuOpen,
+                                onDismissRequest = { menuOpen = false },
+                                properties = PopupProperties(focusable = false),
+                            ) {
+                                if (!button.folder && canUpdate(button)) {
+                                    DropdownMenuItem(text = { Text("Update") }, onClick = { menuOpen = false; onUpdate(button) })
+                                }
+                                DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onStartRename(button.id) })
+                                // Checked while the item stands in the menu of every page. A folder is its items, each global or not.
+                                if (!button.folder) {
+                                    DropdownMenuItem(
+                                        text = { Text((if (button.global) "✓ " else "") + "Global") },
+                                        onClick = { menuOpen = false; onSetGlobal(button.id, !button.global) },
+                                    )
+                                }
+                                DropdownMenuItem(text = { Text("Remove") }, onClick = { menuOpen = false; onRemove(button.id) })
+                                DropdownMenuItem(
+                                    text = { Text(if (customizing) "Stop customizing" else "Customize") },
+                                    onClick = { menuOpen = false; onCustomize(!customizing) },
+                                )
+                                DropdownMenuItem(text = { Text("Reset") }, onClick = { menuOpen = false; onReset() })
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+/** The gap between two rows of the menu, which a level's line crosses. */
+private val MENU_ROW_GAP = 10.dp
+
+/** How far each level of a folder is indented, and where its line stands. */
+private val MENU_LEVEL_STEP = 9.dp
+
+/** How many levels a row is indented for: there is no limit to the depth, and past this the levels above are out of view. */
+internal const val MAX_MENU_LEVELS: Int = 6
 
 @Composable
 private fun CustomMenuTitleField(
