@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The logs' lists move as the logs are written; a test run is silent — 2026-11-01
+
+User rule: a Search window on the Claude Code logs moved only at a Refresh, because a write reached the archive 5 s later and never the catalog the windows read. The archive and the lists now move at the system's event, off the UI thread; only the send waits its window. Separately, a test run spoke through the desktop's real voice and posted to its real notifier: one `checkChange` asked for 46 lines and 71 notifications, every engine a test built without replacing them. Every `Test` task now sets `omniapp.silentAudio` (`TestAudio`), and what a run would have played is in `shared/build/silenced-audio.log`. No migration. Client rebuild for the lists; the gate needs none.
+
 ### Ctrl+Z reaches what it should — 2026-11-01
 
 User rule, after a menu Reset no Ctrl+Z could revert: read off the release DB, the unit was there and never walked, and a banked record sat on top of it. What the left-side menu changes is now undone from whichever window has the focus, text fields and no focus at all included; the line's banked work is walked by no chord and costs no redo; a unit of the menu's restores whatever the app froze since. New units: every setting that had none (`SettingEntries`, a new `values` on `SettingsDelta`, `byUser` on `RecordDelta`, both defaulted on older units), the pins, a task relation's Keep and Remove, a task link, Sleep / Work, a record removed by hand, a calendar window's and a Search configurations window's configuration, a window's name, a window set global. A period's stripped work and a column's pins now come back in the unit that moved them. No migration. Client rebuild only: an older build reads a new settings unit as empty.

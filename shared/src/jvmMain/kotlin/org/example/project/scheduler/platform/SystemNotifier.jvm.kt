@@ -65,6 +65,7 @@ object DesktopAppWindow {
 }
 
 actual fun sendSystemNotification(title: String, message: String, target: NotificationTarget) {
+    if (TestAudio.refuses("notification", "$title: $message")) return
     runCatching {
         val icon = trayIcon ?: return
         // This device's sound is off (user rule 2026-10-18): a tray balloon cannot be shown without the shell's sound

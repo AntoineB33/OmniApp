@@ -774,25 +774,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
             if (updated != null) claudeLogs = updated
         }
-        // User rule 2026-11-01: while the app is open, what Claude Code writes on this device goes up as it is written — on
-        // the system's event, whatever page is shown and at most once per window ([ClaudeLogArchive.PUSH_WINDOW_MILLIS]), in
-        // one request and with no pull. Offline, nothing is lost: it is what the next send finds not on the server.
+        // User rule 2026-11-01: while the app is open, what Claude Code writes on this device is in the archive and in the
+        // lists at once, on the system's event, whatever page is shown (anomaly 2026-11-01: it reached the archive 5 s
+        // later and no list until a Refresh). A burst is folded by the conflated channel: a read runs after the one
+        // before it, never on a timer. It goes up at most once per window ([ClaudeLogArchive.PUSH_WINDOW_MILLIS]), in one
+        // request and with no pull. Offline, nothing is lost: it is what the next send finds not on the server.
         LaunchedEffect(claudeLogDirectory, claudeLogsAccount) {
             if (claudeLogDirectory.isEmpty()) return@LaunchedEffect
             val written = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+            val toSend = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
             val watch =
                 withContext(Dispatchers.Default) { org.example.project.claudelogs.watchClaudeLogs(claudeLogDirectory) { written.trySend(Unit) } }
                     ?: return@LaunchedEffect
-            try {
-                for (first in written) {
+            launch {
+                for (first in toSend) {
                     delay(org.example.project.claudelogs.ClaudeLogArchive.PUSH_WINDOW_MILLIS)
-                    written.tryReceive()
+                    toSend.tryReceive()
                     var kept = ""
                     val batches =
                         withContext(Dispatchers.Default) {
                             claudeLogLock.withLock {
                                 kept = claudeLogKeeper.activeAccount()
-                                claudeLogKeeper.absorbChanged(kept, claudeLogIndex.changed(claudeLogDirectory).orEmpty())
                                 claudeLogKeeper.pushBatches(kept)
                             }
                         }
@@ -800,6 +802,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     val cursor = withContext(Dispatchers.Default) { claudeLogLock.withLock { claudeLogKeeper.cursor(kept) } }
                     val synced = vm.syncClaudeLogs(batches, cursor, pull = false) ?: continue
                     withContext(Dispatchers.Default) { claudeLogLock.withLock { claudeLogKeeper.applySync(synced) } }
+                }
+            }
+            try {
+                for (first in written) {
+                    val listed = claudeLogsWanted
+                    val readable = claudeLogs.folderReadable
+                    val updated =
+                        withContext(Dispatchers.Default) {
+                            claudeLogLock.withLock {
+                                val kept = claudeLogKeeper.activeAccount()
+                                val moved = claudeLogKeeper.absorbChanged(kept, claudeLogIndex.changed(claudeLogDirectory).orEmpty())
+                                // Nobody has asked for the logs yet: they are in the archive, the page's first read lists them.
+                                if (moved && listed) claudeCatalog(claudeLogKeeper.sessions(kept), readable) else null
+                            }
+                        }
+                    if (updated != null) claudeLogs = updated
+                    toSend.trySend(Unit)
                 }
             } finally {
                 watch.close()

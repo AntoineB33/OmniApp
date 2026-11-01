@@ -130,6 +130,11 @@ tasks.whenTaskAdded {
         enabled = false
     }
 }
+// A test run makes no sound and shows no notification (`TestAudio`); what it would have played is written here.
+tasks.withType<Test>().configureEach {
+    systemProperty("omniapp.silentAudio", layout.buildDirectory.file("silenced-audio.log").get().asFile.path)
+}
+
 // The LONG tier of the scheduler simulations (`ScheduleSimulationLongTest`): hundreds of tasks lived through for weeks.
 // Minutes to hours, so it is not in `jvmTest` (its tests skip themselves there); run it when the scheduler's answer
 // can have changed — `docs/invariants/scheduler.md` § *Simulations*. `-PlongScale=0.25` shrinks the accounts,

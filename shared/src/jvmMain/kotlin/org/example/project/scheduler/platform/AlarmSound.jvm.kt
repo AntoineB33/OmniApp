@@ -36,6 +36,7 @@ private val alarmGeneration = AtomicLong(0)
 
 actual fun ringAlarmPlatform(label: String, soundSeconds: Int, sound: AlertSound?, vibrate: Boolean) {
     if (soundSeconds <= 0 || sound == null) return
+    if (TestAudio.refuses("alarm", label)) return
     val generation = alarmGeneration.incrementAndGet()
     // Cut whatever is still sounding right away, rather than waiting for the worker to pick this ring up.
     alarmLine?.let { line -> runCatching { line.stop(); line.flush() } }

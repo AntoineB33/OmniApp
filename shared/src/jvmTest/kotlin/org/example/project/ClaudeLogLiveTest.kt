@@ -6,6 +6,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.example.project.claudelogs.ClaudeLogFile
@@ -89,13 +90,17 @@ class ClaudeLogLiveTest {
         file.writeText(prompt("q"))
         val index = ClaudeLogIndex()
         val keeper = ClaudeLogKeeper(store = null, limitBytes = 1024 * 1024)
-        keeper.absorbChanged("me", index.changed(root.path)!!)
+        assertTrue(keeper.absorbChanged("me", index.changed(root.path)!!), "a new entry: the lists are made again")
         assertEquals(1, keeper.pushBatches("me").flatten().size)
         file.appendText(answer("a"))
-        keeper.absorbChanged("me", index.changed(root.path)!!)
+        assertTrue(keeper.absorbChanged("me", index.changed(root.path)!!))
         assertEquals(2, keeper.pushBatches("me").flatten().size)
-        // Nothing written: nothing to send, so no request at all.
-        keeper.absorbChanged("me", index.changed(root.path)!!)
+        // What a list is made from has the new entry at once: anomaly 2026-11-01, no list moved until a Refresh.
+        assertEquals(listOf("q", "a"), keeper.sessions("me").single().entries.map { it.text })
+        // Nothing written, or a line that is no entry: nothing to send and no list to make again.
+        assertFalse(keeper.absorbChanged("me", index.changed(root.path)!!))
+        file.appendText("{\"type\":\"progress\"}\n")
+        assertFalse(keeper.absorbChanged("me", index.changed(root.path)!!))
         assertEquals(2, keeper.sessions("me").single().entries.size)
     }
 

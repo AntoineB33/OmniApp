@@ -82,6 +82,7 @@ private fun piperModel(): File? {
  * [speechGeneration] at submit time and bails if a [stopSpeaking] has since superseded it.
  */
 actual fun speak(utterance: VoiceUtterance) {
+    if (TestAudio.refuses("voice", utterance.toString())) return
     val generation = speechGeneration.get()
     speechQueue.execute {
         if (generation != speechGeneration.get()) return@execute // superseded before this utterance started

@@ -44,11 +44,15 @@ class ClaudeLogKeeper(
 
     /**
      * [changed] (the sessions of the logs just written) added to the archive of [account], as [absorb] does, without
-     * making the whole archive back into sessions: this runs at every burst of a live session.
+     * making the whole archive back into sessions: this runs at every burst of a live session. Whether the archive
+     * moved: most lines of a log are no entry, and those leave every list as it is.
      */
-    fun absorbChanged(account: String, changed: List<ClaudeLogSession>) {
+    fun absorbChanged(account: String, changed: List<ClaudeLogSession>): Boolean {
         load(account)
-        if (changed.isNotEmpty()) replace(ClaudeLogArchive.merge(records, ClaudeLogArchive.records(changed)))
+        if (changed.isEmpty()) return false
+        val before = records
+        replace(ClaudeLogArchive.merge(records, ClaudeLogArchive.records(changed)))
+        return records !== before
     }
 
     /** What to send for [account]: the newest records that fit the server's bound and it does not hold, in requests. */

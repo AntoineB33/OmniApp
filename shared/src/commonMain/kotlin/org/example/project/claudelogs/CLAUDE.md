@@ -17,11 +17,14 @@ for it: a new need is a kind, a filter, a sort or an action of `SearchDomain`, l
   fit, never what the server holds already, in requests of at most `PUSH_BATCH_BYTES`; rows are written once
   (`ignore-duplicates`), never updated. The sync is asked when the logs are read (`SchedulerSyncEngine.syncClaudeLogs`),
   and by a write of Claude Code's (below), never by a reconcile, never on a timer, and nothing is published to Realtime.
-- **While the app is open, what Claude Code writes goes up as it is written** (user rule 2026-11-01): on the system's
-  event (`watchClaudeLogs`, a capability: the desktop's), whatever page is shown, the first write of a burst starting a
-  wait of `PUSH_WINDOW_MILLIS`; then what changed is read, from where each log was left (`ClaudeLogTails`,
-  `ClaudeLogIndex.changed`), added to the archive (`ClaudeLogKeeper.absorbChanged`) and sent in one request, with no pull.
-  Nothing new, no request. Another device still sees it at its next read: live would mean Realtime on a row table.
+- **While the app is open, what Claude Code writes is listed at once and goes up as it is written** (user rule
+  2026-11-01): on the system's event (`watchClaudeLogs`, a capability: the desktop's), whatever page is shown, what changed
+  is read from where each log was left (`ClaudeLogTails`, `ClaudeLogIndex.changed`), added to the archive
+  (`ClaudeLogKeeper.absorbChanged`) and, when an entry was added and the logs have been asked for, the catalog is made again
+  so every Search window on them moves (anomaly 2026-11-01: the archive moved and no list did until a Refresh). A burst is
+  folded by the conflated channel, never by a timer. The write then waits `PUSH_WINDOW_MILLIS` and is sent in one request,
+  with no pull. Nothing new, no request. Another device still sees it at its next read: live would mean Realtime on a row
+  table.
 - **One reading of a log** (`ClaudeLogParser`) and **one text match** (`ClaudeLogSearch`); the rows are
   `SearchDomain.claudeResults`'s, handed the logs as `App`'s windows are handed in (`ClaudeLogCatalog`).
 - **Between two prompts, one reasoning chain and one answer** (user rule 2026-10-31, `foldedTurns`, read by
