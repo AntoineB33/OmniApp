@@ -32,6 +32,9 @@ object ExternalKeys {
 
     /** Which windows stand on every page. */
     const val GLOBAL_WINDOWS: String = "global-windows"
+
+    /** How loud Claude Code's own sounds are. */
+    const val CLAUDE_SOUNDS: String = "claude-sounds"
 }
 
 /**

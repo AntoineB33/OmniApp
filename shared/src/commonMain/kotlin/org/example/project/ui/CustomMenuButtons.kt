@@ -145,6 +145,9 @@ enum class MenuControl(val title: String) {
     SoundVolume("Global volume"),
     /** Where the Claude Code logs are read from (user rule 2026-10-18) — the Claude Code logs page's menu has it. */
     ClaudeLogsDirectory("Claude Code logs directory"),
+
+    /** User rule 2026-11-01: how loud Claude Code's own sounds are ([org.example.project.claudelogs.readClaudeSoundsVolume]). */
+    ClaudeSoundsVolume("Claude Code sounds"),
     /** User rule 2026-10-18: every sound of the app off on this device — in every page's menu by default. */
     MuteAll("Mute all sound"),
     ;
@@ -342,6 +345,8 @@ object CustomMenuButtons {
         val globalSeeded: Boolean = false,
         /** Whether the list already holds the mute switch ([GLOBAL_MUTE]) — given ONCE to a list made before. */
         val muteSeeded: Boolean = false,
+        /** Whether a list of the logs page already had the slider of Claude Code's sounds ([CLAUDE_SOUNDS]) offered, ONCE. */
+        val claudeSoundsSeeded: Boolean = false,
     )
 
     /**
@@ -353,6 +358,10 @@ object CustomMenuButtons {
 
     /** User rule 2026-10-18: *"add by default the switch button to remove all sound"* — in every page's menu. */
     val GLOBAL_MUTE: CustomMenuButton = CustomMenuButton("g-mute", "", "", control = MenuControl.MuteAll.name, global = true)
+
+    /** The slider of Claude Code's sounds, in the logs page's menu. */
+    val CLAUDE_SOUNDS: CustomMenuButton =
+        CustomMenuButton("d-" + MenuControl.ClaudeSoundsVolume.name, "", "", control = MenuControl.ClaudeSoundsVolume.name)
 
     /** The id of the logs page's own Search button before the global one existed: the global one takes its place. */
     private const val OLD_CLAUDE_SEARCH_ID = "d-claude-search"
@@ -385,6 +394,7 @@ object CustomMenuButtons {
             GLOBAL_SEARCH,
             GLOBAL_MUTE,
             CustomMenuButton("d-" + MenuControl.ClaudeLogsDirectory.name, "", "", control = MenuControl.ClaudeLogsDirectory.name),
+            CLAUDE_SOUNDS,
         )
     }
 
@@ -431,7 +441,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -561,10 +571,14 @@ object CustomMenuButtons {
                 val old = buttons.indexOfFirst { it.id == OLD_CLAUDE_SEARCH_ID }
                 if (old >= 0) buttons.toMutableList().also { it[old] = GLOBAL_SEARCH } else listOf(GLOBAL_SEARCH) + buttons
             }
-        if (stored.muteSeeded || withSearch.any { it.id == GLOBAL_MUTE.id }) return withSearch
         // …and the mute switch, ONCE: just under the global Search button where it stands, else on top.
         val search = withSearch.indexOfFirst { it.id == GLOBAL_SEARCH.id }
-        return withSearch.toMutableList().also { it.add(search + 1, GLOBAL_MUTE) }
+        val withMute =
+            if (stored.muteSeeded || withSearch.any { it.id == GLOBAL_MUTE.id }) withSearch
+            else withSearch.toMutableList().also { it.add(search + 1, GLOBAL_MUTE) }
+        // …and, on the page it is a default of, the slider of Claude Code's sounds, ONCE, at the bottom.
+        return if (stored.claudeSoundsSeeded || CLAUDE_SOUNDS !in defaults || withMute.any { it.id == CLAUDE_SOUNDS.id }) withMute
+        else withMute + CLAUDE_SOUNDS
     }
 
     /** The placement row the windows set global are kept on (user rule 2026-10-18), in the order they were set so. */

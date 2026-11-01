@@ -1101,7 +1101,8 @@ class SearchAddedElementsTest {
         assertEquals(
             // …and (user rule 2026-10-18) the directory the Claude Code logs are read from, this device's.
             listOf(
-                "Claude Code logs" to "no directory", "Mute all sound" to "sound on", "Notifications" to "on",
+                "Claude Code logs" to "no directory", "Claude Code sounds" to "how loud Claude Code is on this device",
+                "Mute all sound" to "sound on", "Notifications" to "on",
                 "Sound setting" to "volume 100 %", "Voice" to "on",
             ),
             rows.map { it.name to it.detail },
@@ -1123,7 +1124,7 @@ class SearchAddedElementsTest {
         assertEquals(
             listOf(
                 SearchDomain.AddedAction.SoundVolume, SearchDomain.AddedAction.VoiceSwitch, SearchDomain.AddedAction.NotificationsSwitch,
-                SearchDomain.AddedAction.ClaudeLogsDirectory, SearchDomain.AddedAction.MuteSwitch,
+                SearchDomain.AddedAction.ClaudeLogsDirectory, SearchDomain.AddedAction.MuteSwitch, SearchDomain.AddedAction.ClaudeSoundsVolume,
             ),
             SearchDomain.addedActions("", setOf(SearchDomain.Kind.AppSetting)).single { it.first == SearchDomain.Kind.AppSetting }.second,
         )

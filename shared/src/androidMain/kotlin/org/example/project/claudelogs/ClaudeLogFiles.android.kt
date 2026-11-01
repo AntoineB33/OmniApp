@@ -45,3 +45,8 @@ actual fun watchClaudeLogs(directory: String, onChange: () -> Unit): AutoCloseab
 
 // A phone's storage is shared with everything else on it: about half a year of logs.
 actual val claudeLogArchiveLimitBytes: Long = 20L * 1024 * 1024
+
+/** Claude Code plays no sound on a phone. */
+actual fun readClaudeSoundsVolume(): Double? = null
+
+actual fun writeClaudeSoundsVolume(volume: Double) = Unit

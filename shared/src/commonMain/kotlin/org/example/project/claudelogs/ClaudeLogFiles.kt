@@ -1,6 +1,16 @@
 package org.example.project.claudelogs
 
 /**
+ * How loud Claude Code's own sounds are on this device, `0..1`, or null where nothing here can set it: no Claude Code
+ * sounds on this device. Read off and written to the file `~/.claude/hooks/sounds/volume.txt`, a whole percentage, which
+ * the sound hook there reads each time it plays.
+ * Local to the device, and held by nobody else. A capability of the build's own source set.
+ */
+expect fun readClaudeSoundsVolume(): Double?
+
+expect fun writeClaudeSoundsVolume(volume: Double)
+
+/**
  * Whether this platform can read Claude Code's logs off the file system — an injected capability of the build's own
  * source set (`docs/PLATFORMS.md`), not a question about which build this is.
  */

@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A volume for Claude Code's sounds — 2026-11-01
+
+User rule: the logs page's menu has a "Claude Code sounds" slider, also an app setting. It writes `~/.claude/hooks/sounds/volume.txt`, which the sound hook reads each time, so the chimes and the voice follow it at once in every session. Existing logs menus get it once. One History Unit, undone from any window. No migration. Client rebuild; the hook is already changed.
+
 ### Two right-click menus open at the pointer — 2026-11-01
 
 The menu beside the left-side menu's items and the "add in the left-side menu" of a control or a Search action while customizing hung from the top of what they are declared in. Both now open where the click was, and `menuSpot` keeps them whole on the screen, tested at every edge and corner. The first of them no longer moves the buttons under it as it opens, by the column's gap (`LateralMenuShiftTest`). No migration. Client rebuild only.

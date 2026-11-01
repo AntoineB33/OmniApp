@@ -13,3 +13,8 @@ actual fun defaultClaudeLogsDirectory(): String? = null
 
 // A phone's storage is shared with everything else on it: about half a year of logs.
 actual val claudeLogArchiveLimitBytes: Long = 20L * 1024 * 1024
+
+/** Claude Code plays no sound on iOS. */
+actual fun readClaudeSoundsVolume(): Double? = null
+
+actual fun writeClaudeSoundsVolume(volume: Double) = Unit

@@ -244,6 +244,9 @@ data class AddedActionHandlers(
     val claudeLogs: () -> org.example.project.claudelogs.ClaudeLogCatalog = { org.example.project.claudelogs.ClaudeLogCatalog.EMPTY },
     val onSetClaudeLogsDirectory: (String) -> Unit = {},
     val onRefreshClaudeLogs: () -> Unit = {},
+    /** How loud Claude Code's own sounds are, null where nothing here sets it, and the change. */
+    val claudeSoundsVolume: () -> Double? = { null },
+    val onSetClaudeSoundsVolume: (Double) -> Unit = {},
     /**
      * User rule 2026-10-18: "New" pressed in the group of ONE element of the kind ([from]) — what the default
      * configuration's "the day / the time of the one it is made from" reads ([org.example.project.scheduler.domain.NewElementTimes]).
@@ -540,6 +543,7 @@ private val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
         SearchDomain.AddedAction.SoundVolume to MenuControl.SoundVolume,
         SearchDomain.AddedAction.PeriodSleepSchedule to MenuControl.SleepSchedule,
         SearchDomain.AddedAction.ClaudeLogsDirectory to MenuControl.ClaudeLogsDirectory,
+        SearchDomain.AddedAction.ClaudeSoundsVolume to MenuControl.ClaudeSoundsVolume,
         SearchDomain.AddedAction.MuteSwitch to MenuControl.MuteAll,
     )
 
@@ -906,6 +910,11 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.AnswerPrompt, SearchDomain.AddedAction.AnswerSession, SearchDomain.AddedAction.ReasoningText,
         SearchDomain.AddedAction.ReasoningPrompt, SearchDomain.AddedAction.ReasoningSession ->
             ClaudeEntryAction(action, added, handlers.claudeLogs())
+        SearchDomain.AddedAction.ClaudeSoundsVolume ->
+            ClaudeSoundsVolumeSlider(
+                handlers.claudeSoundsVolume(), handlers.onSetClaudeSoundsVolume, action.label,
+                enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.ClaudeSounds),
+            )
         SearchDomain.AddedAction.ClaudeLogsDirectory ->
             ClaudeLogsDirectoryField(
                 handlers.claudeLogs(), handlers.onSetClaudeLogsDirectory, handlers.onRefreshClaudeLogs,

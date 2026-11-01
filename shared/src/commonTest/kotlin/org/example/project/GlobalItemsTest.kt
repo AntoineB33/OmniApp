@@ -117,7 +117,7 @@ class GlobalItemsTest {
         assertEquals(listOf("g-search", "g-mute", "d-calendar"), CustomMenuButtons.decode(before).map { it.id })
         val logsBefore =
             """{"buttons":[{"id":"d-claude-search","window":"Search","title":"Search"},{"id":"d-ClaudeLogsDirectory","window":"","title":"","control":"ClaudeLogsDirectory"}],"seeded":true}"""
-        assertEquals(listOf("g-search", "g-mute", "d-ClaudeLogsDirectory"), CustomMenuButtons.decode(logsBefore, CustomMenuButtons.CLAUDE_LOGS_DEFAULTS).map { it.id })
+        assertEquals(listOf("g-search", "g-mute", "d-ClaudeLogsDirectory", CustomMenuButtons.CLAUDE_SOUNDS.id), CustomMenuButtons.decode(logsBefore, CustomMenuButtons.CLAUDE_LOGS_DEFAULTS).map { it.id })
         // …and once only: the user who removes it keeps it removed.
         val removed = CustomMenuButtons.encode(CustomMenuButtons.decode(before).filterNot { it.id == "g-search" })
         assertEquals(listOf("g-mute", "d-calendar"), CustomMenuButtons.decode(removed).map { it.id })

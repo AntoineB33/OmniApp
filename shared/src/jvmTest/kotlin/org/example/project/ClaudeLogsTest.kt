@@ -246,7 +246,7 @@ class ClaudeLogsTest {
         assertEquals(SearchDomain.CLAUDE_KINDS.toSet(), SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).kinds)
         // The logs' directory is an app setting.
         val settings = SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.AppSetting), "Claude", claudeLogs = catalog)
-        assertEquals(listOf("C:\\logs"), settings.map { (it as SearchDomain.ItemResult).detail })
+        assertEquals(listOf("C:\\logs"), settings.filter { it.name == "Claude Code logs" }.map { (it as SearchDomain.ItemResult).detail })
     }
 
     @Test

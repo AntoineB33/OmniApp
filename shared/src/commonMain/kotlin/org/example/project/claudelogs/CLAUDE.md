@@ -37,6 +37,10 @@ for it: a new need is a kind, a filter, a sort or an action of `SearchDomain`, l
 - **Read when asked or written, never on a timer** (the page first shown, the directory set, Load/Refresh, a write);
   `ClaudeLogIndex` reads only the files whose size or date changed, and those from where it stopped. Reads, and the first build of each kind's rows, run off the UI
   thread; a keystroke only filters (`ClaudeLogCatalog.memo`, `ClaudeLogEntry.searchText`).
+- **How loud Claude Code's own sounds are is this device's, and in one place** (user rule 2026-11-01): the file
+  `~/.claude/hooks/sounds/volume.txt`, a percentage the sound hook reads each time it plays (`readClaudeSoundsVolume`), set
+  by one slider (`ClaudeSoundsVolumeSlider`, `MenuControl.ClaudeSoundsVolume`, the app setting's action). No such folder,
+  no setting. One History Unit, undone from any window. Existing logs menus are given the slider once (`claudeSoundsSeeded`).
 - **What the page itself keeps is local-only view state**: the directory (`ClaudeLogsSettings`, the `ClaudeLogs` row) and its
   menu (`CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID`), both in `App`'s `VIEW_ROWS`. A Search window says its page in
   its configuration (`SearchDomain.Config.page`).

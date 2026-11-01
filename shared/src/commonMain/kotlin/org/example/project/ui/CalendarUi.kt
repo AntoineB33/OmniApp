@@ -1834,6 +1834,9 @@ class MenuControlHost(
     val claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
     val onSetClaudeLogsDirectory: (String) -> Unit = {},
     val onRefreshClaudeLogs: () -> Unit = {},
+    /** How loud Claude Code's own sounds are, null where nothing here sets it, and the change. */
+    val claudeSoundsVolume: Double? = null,
+    val onSetClaudeSoundsVolume: (Double) -> Unit = {},
 )
 
 /**
@@ -1921,6 +1924,8 @@ internal fun MenuControlItem(control: MenuControl, title: String?, host: MenuCon
                 )
             }
         }
+        MenuControl.ClaudeSoundsVolume ->
+            ClaudeSoundsVolumeSlider(host.claudeSoundsVolume, host.onSetClaudeSoundsVolume, title ?: control.title)
         // The Claude Code logs' directory: the logs' app setting's own field.
         MenuControl.ClaudeLogsDirectory ->
             Column {

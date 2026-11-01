@@ -842,6 +842,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
         }
         fun setClaudeLogsDirectory(directory: String) = setClaudeLogsSettings(claudeLogsSettings.copy(directory = directory))
+        // How loud Claude Code's own sounds are: the file the hook reads is the one store of it (`readClaudeSoundsVolume`).
+        var claudeSoundsVolume by remember { mutableStateOf(org.example.project.claudelogs.readClaudeSoundsVolume()) }
+        fun putClaudeSoundsVolume(volume: Double) {
+            org.example.project.claudelogs.writeClaudeSoundsVolume(volume)
+            claudeSoundsVolume = volume
+        }
+        fun setClaudeSoundsVolume(volume: Double) {
+            val before = claudeSoundsVolume ?: return
+            if (before == volume) return
+            putClaudeSoundsVolume(volume)
+            viewHistory.record(
+                org.example.project.scheduler.state.ExternalKeys.CLAUDE_SOUNDS, before.toString(), volume.toString(), "Claude Code sounds volume",
+                madeIn = org.example.project.scheduler.state.HistoryWindow.Menu,
+            )
+        }
         fun refreshClaudeLogs() { claudeLogRefreshes++ }
         // The lateral-menu windows come back filled and reduced as they were left, across a close and a
         // restart (popups.md, *Geometry is local-only view state*) — and so do the per-object windows kept
@@ -1740,6 +1755,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     it.copy(config = CustomMenuButtons.encodeGlobalWindows(globalWindows.toList()))
                                 }
                             }
+                        restore.key == org.example.project.scheduler.state.ExternalKeys.CLAUDE_SOUNDS ->
+                            restore.to?.toDoubleOrNull()?.let { putClaudeSoundsVolume(it) }
                         restore.key.startsWith(SEARCH_KEY) -> {
                             val id = restore.key.removePrefix(SEARCH_KEY)
                             if (searchConfigOf(id).encode() == restore.from) {
@@ -4077,6 +4094,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         claudeLogs = claudeLogs,
                         onSetClaudeLogsDirectory = { setClaudeLogsDirectory(it) },
                         onRefreshClaudeLogs = { refreshClaudeLogs() },
+                        claudeSoundsVolume = claudeSoundsVolume,
+                        onSetClaudeSoundsVolume = { setClaudeSoundsVolume(it) },
                     )
                 // The lateral menu is omitted entirely while collapsed, so the content takes the full width
                 // ("completely disappear to the left"). The collapse toggle lives outside it (see below).
@@ -5329,6 +5348,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             claudeLogs = { claudeLogs },
                             onSetClaudeLogsDirectory = { setClaudeLogsDirectory(it) },
                             onRefreshClaudeLogs = { refreshClaudeLogs() },
+                            claudeSoundsVolume = { claudeSoundsVolume },
+                            onSetClaudeSoundsVolume = { setClaudeSoundsVolume(it) },
                             windowShortcuts = { windowShortcuts },
                             shortcutWindows = ::shortcutWindowTitles,
                             onWindowShortcutChange = { saveWindowShortcuts(org.example.project.ui.WindowShortcuts.with(windowShortcuts, it)) },

@@ -13,3 +13,8 @@ actual fun defaultClaudeLogsDirectory(): String? = null
 
 // Held in the page's memory only (the web store keeps nothing): what the server sends, with room to spare.
 actual val claudeLogArchiveLimitBytes: Long = 5L * 1024 * 1024
+
+/** Claude Code plays no sound on the browser. */
+actual fun readClaudeSoundsVolume(): Double? = null
+
+actual fun writeClaudeSoundsVolume(volume: Double) = Unit

@@ -49,6 +49,32 @@ import org.example.project.claudelogs.claudeLogFilesSupported
 import org.example.project.scheduler.domain.SearchDomain
 
 /**
+ * **How loud Claude Code's own sounds are**, user rule 2026-11-01: the one slider of it, wherever it stands — the logs
+ * page's menu ([MenuControl.ClaudeSoundsVolume]) and the app setting's action. Told when it is let go. [volume] is null
+ * where nothing on this device sets it: it says so rather than move a slider that does nothing.
+ */
+@Composable
+internal fun ClaudeSoundsVolumeSlider(volume: Double?, onSet: (Double) -> Unit, label: String, enabled: Boolean = true) {
+    if (volume == null) {
+        Text("$label: not on this device", style = MaterialTheme.typography.labelMedium)
+        return
+    }
+    var draft by remember(volume) { mutableStateOf(volume.toFloat()) }
+    Column {
+        Text(
+            label + "  " + org.example.project.scheduler.domain.SearchDomain.volumePercent(draft.toDouble()) + " %",
+            style = MaterialTheme.typography.labelMedium,
+        )
+        androidx.compose.material3.Slider(
+            value = draft,
+            onValueChange = { draft = it },
+            onValueChangeFinished = { onSet(draft.toDouble()) },
+            enabled = enabled,
+        )
+    }
+}
+
+/**
  * **The Claude Code logs' directory**: where the logs are read from, typed and read when committed (Enter, Load) — a
  * read per keystroke would read the logs of every prefix of the path — and read again by Refresh. One field for
  * everywhere it stands: the logs' app setting's action ([SearchDomain.AddedAction.ClaudeLogsDirectory]) and the item

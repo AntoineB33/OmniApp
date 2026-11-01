@@ -2677,6 +2677,8 @@ object SearchDomain {
         ClaudeLogs("Claude Code logs"),
         /** User rule 2026-10-18: every sound of the app off on this device ([SchedulerState.soundMuted]). */
         Mute("Mute all sound"),
+        /** User rule 2026-11-01: how loud Claude Code's own sounds are, this device's. */
+        ClaudeSounds("Claude Code sounds"),
     }
 
     /** What an [AppSettingEntry]'s row says beside its name: where the setting stands. */
@@ -2684,6 +2686,7 @@ object SearchDomain {
         when (setting) {
             AppSettingEntry.ClaudeLogs -> claudeLogs.directory.ifBlank { "no directory" }
             AppSettingEntry.Mute -> if (state.soundMuted) "muted on this device" else "sound on"
+            AppSettingEntry.ClaudeSounds -> "how loud Claude Code is on this device"
             AppSettingEntry.Sound -> "volume " + volumePercent(state.soundVolume) + " %"
             AppSettingEntry.Voice -> if (state.notificationVoiceEnabled) "on" else "off"
             AppSettingEntry.Notifications -> if (state.notificationsEnabled) "on" else "off"
@@ -3218,6 +3221,8 @@ object SearchDomain {
         ClaudeLogsDirectory(Kind.AppSetting, "Claude Code logs directory"),
         /** Every sound of the app off on this device ([AppSettingEntry.Mute]). */
         MuteSwitch(Kind.AppSetting, "Mute all sound"),
+        /** The volume of Claude Code's own sounds ([AppSettingEntry.ClaudeSounds]). */
+        ClaudeSoundsVolume(Kind.AppSetting, "Claude Code sounds volume"),
     }
 
     /** The actions that show a Claude Code log entry, each one block per added entry. */
@@ -3560,6 +3565,7 @@ object SearchDomain {
             AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow -> "now"
             AddedAction.AlarmTime -> "time date day once one-off right-click"
             AddedAction.SoundVolume -> "sound %"
+            AddedAction.ClaudeSoundsVolume -> "sound volume % chime ring done waiting voice"
             AddedAction.TimerRun -> "start pause reset all elapsed ends day"
             AddedAction.ChronoRun -> "start resume pause reset all compact expand"
             AddedAction.TimerLowestCountdown -> "timers select all start pause reset all elapsed ends day run"

@@ -86,3 +86,18 @@ actual fun watchClaudeLogs(directory: String, onChange: () -> Unit): AutoCloseab
 
 // A desktop keeps decades of logs at the 2026 pace (about 3 MB of text a month).
 actual val claudeLogArchiveLimitBytes: Long = 200L * 1024 * 1024
+
+private fun claudeSoundsFolder(): File? =
+    System.getProperty("user.home")?.takeIf { it.isNotBlank() }
+        ?.let { File(File(File(it, ".claude"), "hooks"), "sounds") }
+        ?.takeIf { it.isDirectory }
+
+actual fun readClaudeSoundsVolume(): Double? {
+    val folder = claudeSoundsFolder() ?: return null
+    return runCatching { File(folder, "volume.txt").readText().trim().toInt() }.getOrDefault(100).coerceIn(0, 100) / 100.0
+}
+
+actual fun writeClaudeSoundsVolume(volume: Double) {
+    val folder = claudeSoundsFolder() ?: return
+    runCatching { File(folder, "volume.txt").writeText(kotlin.math.round(volume.coerceIn(0.0, 1.0) * 100).toInt().toString()) }
+}
