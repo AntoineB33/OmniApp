@@ -741,7 +741,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val claudeLogDirectory = claudeLogsSettings.directory.trim()
         // Each kind's rows made with the catalog, off the UI thread, rather than at the first search.
         fun claudeCatalog(sessions: List<org.example.project.claudelogs.ClaudeLogSession>, readable: Boolean) =
-            org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, sessions, suggestion = claudeLogsDefault, folderReadable = readable)
+            org.example.project.claudelogs.ClaudeLogCatalog(
+                claudeLogDirectory, sessions, suggestion = claudeLogsDefault, folderReadable = readable, working = claudeLogIndex.working,
+            )
                 .also { catalog -> SearchDomain.CLAUDE_KINDS.forEach { SearchDomain.claudeResults(it, "", catalog) } }
         LaunchedEffect(claudeLogDirectory, claudeLogRefreshes, claudeLogsWanted, claudeLogsAccount) {
             if (!claudeLogsWanted) {
@@ -753,6 +755,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             claudeLogs =
                 org.example.project.claudelogs.ClaudeLogCatalog(
                     claudeLogDirectory, shown, loading = true, suggestion = claudeLogsDefault, folderReadable = claudeLogs.folderReadable,
+                    working = claudeLogs.working,
                 )
             var read: org.example.project.claudelogs.ClaudeLogCatalog? = null
             var account: String? = null
@@ -768,7 +771,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                     }
             } finally {
-                claudeLogs = read ?: org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown, suggestion = claudeLogsDefault)
+                claudeLogs =
+                    read ?: org.example.project.claudelogs.ClaudeLogCatalog(claudeLogDirectory, shown, suggestion = claudeLogsDefault, working = claudeLogs.working)
             }
             // Then the server: what this device read goes up (the newest it keeps), what the other devices read comes down.
             val kept = account ?: return@LaunchedEffect
@@ -819,9 +823,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         withContext(Dispatchers.Default) {
                             claudeLogLock.withLock {
                                 val kept = claudeLogKeeper.activeAccount()
+                                val before = claudeLogIndex.working
                                 val moved = claudeLogKeeper.absorbChanged(kept, claudeLogIndex.changed(claudeLogDirectory).orEmpty())
+                                // A reply ending writes no entry, but makes its last text the answer.
+                                val turned = claudeLogIndex.working != before
                                 // Nobody has asked for the logs yet: they are in the archive, the page's first read lists them.
-                                if (moved && listed) claudeCatalog(claudeLogKeeper.sessions(kept), readable) else null
+                                if ((moved || turned) && listed) claudeCatalog(claudeLogKeeper.sessions(kept), readable) else null
                             }
                         }
                     if (updated != null) claudeLogs = updated

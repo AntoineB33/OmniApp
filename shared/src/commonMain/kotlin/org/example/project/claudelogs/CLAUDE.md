@@ -30,6 +30,10 @@ for it: a new need is a kind, a filter, a sort or an action of `SearchDomain`, l
 - **Between two prompts, one reasoning chain and one answer** (user rule 2026-10-31, `foldedTurns`, read by
   `ClaudeLogCatalog.entries` alone): the last text is the answer, all the rest one chain. A reading, not a rewrite: the
   parser, the archive and the server keep the log's own entries, so old logs read the same and nothing is re-pushed.
+- **An answer is what a turn ends on** (user rule 2026-11-01): while the last turn is going on (no `turn_duration` since it
+  last wrote, or a `backgroundTaskId` not yet told ended, `ClaudeLogSession.working`, `ClaudeLogIndex.working`), it has no
+  answer and all its text is its chain. Not kept: a fact of the log as it stands. A log silent for six hours is no turn
+  going on, and the end of a reply remakes the lists though it writes no entry.
 - **Read when asked or written, never on a timer** (the page first shown, the directory set, Load/Refresh, a write);
   `ClaudeLogIndex` reads only the files whose size or date changed, and those from where it stopped. Reads, and the first build of each kind's rows, run off the UI
   thread; a keystroke only filters (`ClaudeLogCatalog.memo`, `ClaudeLogEntry.searchText`).

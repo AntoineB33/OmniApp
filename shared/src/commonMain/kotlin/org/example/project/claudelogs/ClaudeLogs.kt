@@ -51,8 +51,13 @@ class ClaudeLogSession(
     val entries: List<ClaudeLogEntry>,
     /** What the session is filed under: its working directory, else its folder's ([ClaudeLogIndex]), else the folder. */
     val project: String = cwd ?: folder,
+    /**
+     * Whether its last turn is still going, as the log says ([ClaudeLogParser]): the reply has not ended, or it ended
+     * only to wait for a background command. A fact of the log as it stands, never kept in the archive.
+     */
+    val working: Boolean = false,
 ) {
-    fun inProject(project: String): ClaudeLogSession = ClaudeLogSession(path, sessionId, folder, cwd, title, entries, project)
+    fun inProject(project: String): ClaudeLogSession = ClaudeLogSession(path, sessionId, folder, cwd, title, entries, project, working)
 }
 
 /**
@@ -61,14 +66,17 @@ class ClaudeLogSession(
  * a prompt, up to the next one, the LAST text is the answer, and everything else is one reasoning chain — its pieces in
  * order, standing where the first of them stood, so its id does not move while the turn goes on.
  *
+ * User rule 2026-11-01: **an answer is what Claude Code ends a turn on**, so a turn still going ([lastTurnOpen]) has none
+ * yet: all it wrote so far is its chain, and what it says before it waits for a shell is a step, not the answer.
+ *
  * For the reading only ([ClaudeLogCatalog]): the archive and the server keep the entries as the log has them, so the
  * logs kept before this rule read the same.
  */
-fun foldedTurns(entries: List<ClaudeLogEntry>): List<ClaudeLogEntry> {
+fun foldedTurns(entries: List<ClaudeLogEntry>, lastTurnOpen: Boolean = false): List<ClaudeLogEntry> {
     val out = ArrayList<ClaudeLogEntry>(entries.size)
     val turn = ArrayList<ClaudeLogEntry>()
-    fun closeTurn() {
-        val answer = turn.lastOrNull { it.kind == ClaudeLogKind.Answer }
+    fun closeTurn(open: Boolean = false) {
+        val answer = if (open) null else turn.lastOrNull { it.kind == ClaudeLogKind.Answer }
         val chain = turn.filter { it !== answer }
         chain.firstOrNull()?.let { first ->
             out +=
@@ -90,7 +98,7 @@ fun foldedTurns(entries: List<ClaudeLogEntry>): List<ClaudeLogEntry> {
             turn += entry
         }
     }
-    closeTurn()
+    closeTurn(open = lastTurnOpen)
     return out
 }
 
@@ -109,7 +117,14 @@ class ClaudeLogParser(private val file: ClaudeLogFile) {
     private var sessionId: String? = null
     private var lastPrompt: String? = null
 
+    /** Whether the reply last begun has ended: Claude Code logs it, also when it ends only to wait for a command. */
+    private var replyEnded = true
+
+    /** The background commands started and not yet told finished or stopped. */
+    private val background = HashSet<String>()
+
     fun accept(line: String) {
+        noteWork(line)
         when {
             AI_TITLE in line -> obj(line)?.str("aiTitle")?.let { title = it }
             SUMMARY in line -> obj(line)?.str("summary")?.let { summary = it }
@@ -127,7 +142,20 @@ class ClaudeLogParser(private val file: ClaudeLogFile) {
             title = title ?: summary,
             // A copy: this parser goes on reading the log ([ClaudeLogTails]) while the session is read elsewhere.
             entries = entries.toList(),
+            working = !replyEnded || background.isNotEmpty(),
         )
+
+    /** The log's own marks of a turn going on. Read off the raw line, for the reason [accept] is: most of a log is big. */
+    private fun noteWork(line: String) {
+        when {
+            TURN_ENDED in line -> replyEnded = true
+            BACKGROUND_STARTED in line -> BACKGROUND_ID.find(line)?.let { background += it.groupValues[1] }
+            TASK_STOPPED in line -> TASK_ID.find(line)?.let { background -= it.groupValues[1] }
+        }
+        if (TASK_NOTIFICATION in line) NOTIFIED_ID.findAll(line).forEach { background -= it.groupValues[1] }
+        // Told a command ended, Claude Code takes the turn up again.
+        if (TURN_RESUMED in line) replyEnded = false
+    }
 
     private fun acceptUser(o: JsonObject) {
         if (o.str("type") != "user" || !mainChain(o) || o.bool("isMeta")) return
@@ -145,6 +173,7 @@ class ClaudeLogParser(private val file: ClaudeLogFile) {
             }?.trim()
         if (text.isNullOrEmpty() || (origin == null && NOT_A_PROMPT.any { text.startsWith(it) })) return
         noteContext(o)
+        replyEnded = false
         lastPrompt = text
         entries += ClaudeLogEntry(ClaudeLogKind.Prompt, text, timeOf(o), null, entries.size)
     }
@@ -153,6 +182,7 @@ class ClaudeLogParser(private val file: ClaudeLogFile) {
         if (o.str("type") != "assistant" || !mainChain(o)) return
         val content = (o["message"] as? JsonObject)?.get("content") as? JsonArray ?: return
         noteContext(o)
+        replyEnded = false
         val time = timeOf(o)
         for (block in content) {
             val b = block as? JsonObject ?: continue
@@ -188,6 +218,14 @@ class ClaudeLogParser(private val file: ClaudeLogFile) {
         const val THINKING = "\"type\":\"thinking\""
         const val AI_TITLE = "\"type\":\"ai-title\""
         const val SUMMARY = "\"type\":\"summary\""
+        const val TURN_ENDED = "\"subtype\":\"turn_duration\""
+        const val BACKGROUND_STARTED = "\"backgroundTaskId\":\""
+        const val TASK_STOPPED = "\"task_type\":\""
+        const val TASK_NOTIFICATION = "<task-id>"
+        const val TURN_RESUMED = "\"kind\":\"task-notification\""
+        val BACKGROUND_ID = Regex("\"backgroundTaskId\":\"([^\"]+)\"")
+        val TASK_ID = Regex("\"task_id\":\"([^\"]+)\"")
+        val NOTIFIED_ID = Regex("<task-id>([^<]+)</task-id>")
         val NOT_A_PROMPT = listOf("<command-", "<local-command-", "[Request interrupted", "<task-notification>")
 
         fun obj(line: String): JsonObject? = runCatching { JSON.parseToJsonElement(line).jsonObject }.getOrNull()
@@ -224,9 +262,18 @@ class ClaudeLogTails {
 class ClaudeLogIndex(
     private val list: (String) -> List<ClaudeLogFile>? = ::listClaudeLogFiles,
     private val read: (ClaudeLogFile) -> ClaudeLogSession = ClaudeLogTails()::read,
+    private val nowMillis: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() },
 ) {
     private var directory: String? = null
     private val cache = HashMap<String, Pair<ClaudeLogFile, ClaudeLogSession>>()
+
+    /**
+     * The sessions whose last turn is still going, by [ClaudeLogArchive.sessionName], as of the last read. A log silent
+     * for [WORKING_LOG_SILENCE_MILLIS] is no turn going on: a session closed in the middle of one never says it ended,
+     * and a log of a build that did not write the end of a reply would lose its last answer.
+     */
+    var working: Set<String> = emptySet()
+        private set
 
     /**
      * The sessions under [dir], or null when it is not a readable directory. A log that never says where its session
@@ -262,7 +309,17 @@ class ClaudeLogIndex(
             }
         val folderCwd = HashMap<String, String>()
         for (s in sessions) if (s.cwd != null) folderCwd.getOrPut(s.folder) { s.cwd }
+        val written = files.associate { it.path to it.modifiedMillis }
+        val now = nowMillis()
+        working =
+            sessions.filterTo(ArrayList()) { it.working && now - (written[it.path] ?: 0L) < WORKING_LOG_SILENCE_MILLIS }
+                .mapTo(HashSet(), ClaudeLogArchive::sessionName)
         return sessions.map { s -> if (s.cwd == null) folderCwd[s.folder]?.let(s::inProject) ?: s else s } to changed
+    }
+
+    private companion object {
+        /** As long as the longest wait for a command that still tells of its end: the screen guard's own six hours. */
+        const val WORKING_LOG_SILENCE_MILLIS: Long = 6 * 60 * 60_000L
     }
 }
 
@@ -312,10 +369,14 @@ class ClaudeLogCatalog(
     val suggestion: String? = null,
     /** Whether [directory] could be read the last time it was asked; the kept logs are shown either way. */
     val folderReadable: Boolean = true,
+    /** The sessions whose last turn is going on ([ClaudeLogIndex.working]): it has no answer yet ([foldedTurns]). */
+    val working: Set<String> = emptySet(),
 ) {
     /** Every entry with its session, in the order the logs hold them. */
     val entries: List<Pair<ClaudeLogSession, ClaudeLogEntry>> by lazy {
-        sessions.orEmpty().flatMap { session -> foldedTurns(session.entries).map { session to it } }
+        sessions.orEmpty().flatMap { session ->
+            foldedTurns(session.entries, lastTurnOpen = ClaudeLogArchive.sessionName(session) in working).map { session to it }
+        }
     }
 
     private val byId: Map<String, Pair<ClaudeLogSession, ClaudeLogEntry>> by lazy {

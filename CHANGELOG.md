@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An answer is what a turn ends on — 2026-11-01
+
+User rule: while Claude Code is working, or has stopped only to wait for a background command, the turn's last text was listed as an answer. It now stays in the reasoning chain until the turn ends (`ClaudeLogSession.working`, read off the log's `turn_duration`, `backgroundTaskId` and task notifications). A reading: nothing kept changes and nothing is re-sent. No migration. Client rebuild only.
+
 ### A Settings page, and the pages in the Search configurations window — 2026-11-01
 
 User rule: a feature page of the app's settings (`OmniPage.Settings`): its own menu (Search, mute, Voice, Notifications, Global volume, `SETTINGS_DEFAULTS`, on the `LateralMenu/AppSettings` row) and a Search window on the app settings. The Search configurations window has a check-box drop-down of the pages, which narrows its type selector and its sections (`ConfigurationSearch.pages`, absent from what was stored before = every page). The page selector shows the current page in bold. A right-click on an option of any check-box drop-down now checks it alone (it was the Search type selector's only), and a type selector narrowed to a page names its kinds instead of reading "every kind". The pages are stated once, `SearchDomain.FEATURE_PAGES`. No migration. Client rebuild only.
