@@ -189,7 +189,7 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   (`actionGroups`' `inner`, the quotas' mechanism): Duration, Rings for, Below zero, Alert
   (`DEFAULT_CONFIGURATION_ACTIONS`). That group hands those editors the "New timer" row, so they read
   `addedTimersOrDefault` (the default wearing `DEFAULT_CONFIGURATION_ID`) and `TimersEdit` writes
-  `SetNewTimerDefaults` — a setting, not a History Unit. The run's actions never see the default.
+  `SetNewTimerDefaults` — a setting, one History Unit per run of keystrokes. The run's actions never see the default.
 - **Each countdown says the moment it will end, as a day and a time of day** (user rule 2026-10-12, `TimerEndFields`,
   under Elapsed in a timer's run; the ONE reading is `TimerDomain.endMomentMillis`): a RUNNING timer's
   `endsAtMillis` (behind the clock for one counting on below zero); for any timer that is NOT running, **the moment it
@@ -391,7 +391,7 @@ actions being its editor.
   `NewElementDefaults.newQuota`) — and that default is edited through the QUOTA ACTIONS themselves: an added
   **"New quota" creation row** is acted on as a quota (`SearchDomain.actionKindOf`), `addedQuotas` leads with the
   default (wearing `DEFAULT_CONFIGURATION_ID`), and `QuotaEditors`' one `write` sends its changes to
-  `SetNewQuotaDefaults` (a setting, not a History Unit — the alarms' rule). With ONLY the creation row added, the section shows the actions that edit
+  `SetNewQuotaDefaults` (a setting, one History Unit per run of keystrokes — the alarms' rule). With ONLY the creation row added, the section shows the actions that edit
   the default and nothing else (`SearchDomain.actionsFor`, `DEFAULT_CONFIGURATION_ACTIONS`: Title, Amount, Loop,
   Restarts, Resilience — and "New", which creates one from that default) — Duplicate, Delete, the progression and the particular loops are about a quota that exists. Its loop is unset until the user sets it: a new quota then runs over the week it is made in; once
   set, over the default's loop that now falls in (a default that does not repeat keeps its own dates).

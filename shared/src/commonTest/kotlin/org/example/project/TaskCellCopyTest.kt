@@ -542,8 +542,8 @@ class TaskCellCopyTest {
         val off = SchedulerDomain.CopyOptions(includeIds = false, priorityTables = false, includeText = false)
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCopyOptions(off))
         assertEquals(off, SchedulerDomain.CopyOptions.from(s))
-        // Not an Undo/Redo unit (nothing to undo).
-        assertEquals(off, SchedulerDomain.CopyOptions.from(SchedulerReducer.reduce(s, SchedulerIntent.Undo)))
+        // One Undo/Redo unit.
+        assertEquals(SchedulerDomain.CopyOptions(), SchedulerDomain.CopyOptions.from(SchedulerReducer.reduce(s, SchedulerIntent.Undo)))
 
         val reloaded =
             org.example.project.scheduler.persistence.SchedulerStateCodec.decode(

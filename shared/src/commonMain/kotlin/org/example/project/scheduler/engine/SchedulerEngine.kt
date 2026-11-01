@@ -1636,9 +1636,15 @@ class SchedulerEngine(
      * flip where the app may speak again. A same-value call is a no-op, so nothing is announced and nothing is
      * cleared.
      */
-    fun setNotificationsEnabled(enabled: Boolean, fromChord: Boolean = false) {
+    fun setNotificationsEnabled(
+        enabled: Boolean,
+        fromChord: Boolean = false,
+        /** Where the switch was pressed, when that is not the focused window (the left-side menu). */
+        madeIn: org.example.project.scheduler.state.HistoryWindow? = null,
+    ) {
         if (vm.state.value.notificationsEnabled == enabled) return
-        vm.dispatch(SchedulerIntent.SetNotificationsEnabled(enabled))
+        val intent = SchedulerIntent.SetNotificationsEnabled(enabled)
+        vm.dispatch(if (madeIn != null) SchedulerIntent.MadeIn(madeIn, "", intent) else intent)
         if (!enabled) runCatching { clearNotifications() }
         else if (fromChord) notifyUser(NOTIFICATIONS_ON_TITLE, NOTIFICATIONS_ON_MESSAGE, spoken = SpokenMessages.NOTIFICATIONS_ON)
     }

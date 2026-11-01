@@ -60,10 +60,12 @@ fun main() {
     application {
         // The app's own window comes back where, and as big as, it was left (local-only, like its windows).
         val appWindow = rememberPersistedAppWindow(store as? WindowPlacementStore)
+        val keyFallback = androidx.compose.runtime.remember { AppKeyFallback() }
         Window(
             onCloseRequest = ::exitApplication,
             title = "OmniApp",
             state = appWindow.state,
+            onPreviewKeyEvent = { keyFallback.onKey(it) },
         ) {
             KeepAppWindowPlacement(appWindow)
             // PRD §11: a click on a notification brings this window to the front, out of the taskbar if it was
@@ -92,6 +94,7 @@ fun main() {
             // turns off.
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalAppInFocus provides rememberAppInFocus(),
+                LocalAppKeyFallback provides keyFallback,
                 org.example.project.ui.LocalInputActivity provides org.example.project.scheduler.platform.InputActivityRecorder,
                 // A text field's own right-click menu is a window of its own, as every menu of the app is on the
                 // desktop (`AppDropdownMenu.jvm.kt`): over another application's always-on-top window.

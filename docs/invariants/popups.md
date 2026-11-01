@@ -144,9 +144,15 @@ means.
   - **What the menu held is what it starts as** (`CustomMenuButtons.DEFAULTS`: Task tree, Calendar, then Voice,
     Notifications, Look away now, Switch task, Sleep / Work, I'm away, Online). A list stored before is given those
     ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
-  - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename, Remove,
-    Customize. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of its own); a
-    right-click beside the items offers Customize too, so an empty menu can be filled.
+  - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename, Global,
+    Remove, Customize, Reset. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of
+    its own); a right-click beside the items offers Customize and Reset too, so an empty menu can be filled.
+  - **"Reset" puts the menu of the page it is pressed on back to that page's defaults**
+    (`CustomMenuButtons.withPageReset`, `GlobalItemsTest`), one History Unit, so one `Ctrl+Z` from ANY window brings it
+    all back (`persistence.md` § *One history, per-device undo*, as for all the menu does). The other
+    pages lose nothing of their own: a global item the defaults do not hold goes back to the page it was made global
+    from, as that page's own, or goes altogether when that is this page. The defaults' global items are the same item
+    on every page, so one renamed or removed is restored on all of them.
   - **"Customize"** (`MenuCustomizer`, `LocalMenuCustomizer`, Compose-only — off at every start): while on, a line at
     the top of the menu says so and ends it, every control that can stand in the menu is OUTLINED where it lives, and
     a right-click on one offers exactly "add in the left-side menu" (`MenuAddable`). **The menu's own items do nothing at

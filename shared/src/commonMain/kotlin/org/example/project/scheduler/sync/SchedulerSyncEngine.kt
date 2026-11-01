@@ -602,7 +602,8 @@ open class SchedulerSyncEngine(
             val committedInto = changed.filter { it.second.timeMillis > start.historyPushedAt }.map { it.first }.toSet()
             for ((category, list) in units) {
                 if (category !in committedInto) continue
-                val newestApplied = list.filter { it.ownedBy(me) && !it.undone }.maxOfOrNull { it.timeMillis } ?: continue
+                // What the app banked is no new branch ([Delta.authoredByApp]): the user's Ctrl+Y stays alive past it.
+                val newestApplied = list.filter { it.ownedBy(me) && !it.undone && !it.delta.authoredByApp }.maxOfOrNull { it.timeMillis } ?: continue
                 withAuth(session) { client.dropHistoryBranch(it, me, category, newestApplied) }
             }
             base = base.copy(historyPushedAt = changed.maxOf { it.second.changedAtMillis })

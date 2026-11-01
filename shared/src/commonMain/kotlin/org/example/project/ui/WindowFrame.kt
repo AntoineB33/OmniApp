@@ -552,8 +552,14 @@ class WindowFrameHost {
         val trimmed = name.trim()
         val before = tabTitles[id]
         if (trimmed.isEmpty() || trimmed == ownTitle) tabTitles.remove(id) else tabTitles[id] = trimmed
-        if (tabTitles[id] != before) onTabTitlesChanged?.invoke()
+        if (tabTitles[id] != before) {
+            onTabTitlesChanged?.invoke()
+            onRenamed?.invoke(id, before, tabTitles[id])
+        }
     }
+
+    /** The user renamed a window: its name before and after, null being the window's own. A History Unit in `App`. */
+    var onRenamed: ((id: String, before: String?, after: String?) -> Unit)? = null
 
     /**
      * User rule 2026-10-06: **every window's colour**, `0xRRGGBB` by frame id — the background of its head and of its

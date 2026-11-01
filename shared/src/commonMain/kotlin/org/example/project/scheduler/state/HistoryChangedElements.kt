@@ -20,6 +20,18 @@ object ExternalKeys {
 
     /** A window's layout, followed by its frame id. */
     const val WINDOW: String = "window/"
+
+    /** A calendar window's own configuration, followed by its frame id. */
+    const val CALENDAR: String = "calendar/"
+
+    /** A Search configurations window's own configuration, followed by its frame id. */
+    const val CONFIG_SEARCH: String = "config-search/"
+
+    /** The name a window was given from its head, followed by its frame id. */
+    const val WINDOW_TITLE: String = "window-title/"
+
+    /** Which windows stand on every page. */
+    const val GLOBAL_WINDOWS: String = "global-windows"
 }
 
 /**
@@ -77,8 +89,14 @@ val Delta.changedElements: Set<ChangedElement>
                 when {
                     delta.key.startsWith(ExternalKeys.SEARCH) ->
                         add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.SEARCH)))
+                    delta.key.startsWith(ExternalKeys.WINDOW_TITLE) ->
+                        add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.WINDOW_TITLE)))
                     delta.key.startsWith(ExternalKeys.WINDOW) ->
                         add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.WINDOW)))
+                    delta.key.startsWith(ExternalKeys.CALENDAR) ->
+                        add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.CALENDAR)))
+                    delta.key.startsWith(ExternalKeys.CONFIG_SEARCH) ->
+                        add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.CONFIG_SEARCH)))
                 }
             else -> Unit
         }

@@ -530,10 +530,35 @@ class TaskSchedulerViewModel(
      * debounce and marks the snapshot dirty for the next reconcile; the account_state write is its own targeted,
      * event-driven call (not the snapshot reconcile).
      */
-    fun setSleepMode(sleepingUntilMillis: Long?) {
-        dispatch(SchedulerIntent.SetSleepMode(sleepingUntilMillis))
+    fun setSleepMode(sleepingUntilMillis: Long?, byUser: Boolean = false) {
+        val intent = SchedulerIntent.SetSleepMode(sleepingUntilMillis, byUser)
+        // The button stands in the left-side menu: undone from whichever window has the focus.
+        dispatch(if (byUser) SchedulerIntent.MadeIn(org.example.project.scheduler.state.HistoryWindow.Menu, "", intent) else intent)
+        publishSleepMode(sleepingUntilMillis)
+    }
+
+    private var publishedSleep: Long? = null
+    private var sleepPublished = false
+
+    private fun publishSleepMode(sleepingUntilMillis: Long?) {
+        publishedSleep = sleepingUntilMillis
+        sleepPublished = true
         saveScope.launch {
             runCatching { pauseCue?.publishAccountState(sleepingUntilMillis != null, sleepingUntilMillis) }
+        }
+    }
+
+    /**
+     * The Sleep / Work press undone or redone: the state moved without [setSleepMode], and the server must not keep
+     * suppressing the pause cue on a mode the user took back. Event-driven, one write per undo. The first call only
+     * notes what a launch found.
+     */
+    fun sleepModeChanged(sleepingUntilMillis: Long?) {
+        if (!sleepPublished) {
+            publishedSleep = sleepingUntilMillis
+            sleepPublished = true
+        } else if (publishedSleep != sleepingUntilMillis) {
+            publishSleepMode(sleepingUntilMillis)
         }
     }
 

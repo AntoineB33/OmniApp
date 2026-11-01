@@ -210,7 +210,7 @@ sealed interface SchedulerIntent {
 
     /**
      * PRD §5 the relative-priority window: pin/unpin [cellId] for the (task, ancestor) pair, so its
-     * percentage holds while the relative priority is retargeted. Not undoable (it changes no priority).
+     * percentage holds while the relative priority is retargeted. One History Unit since 2026-11-01, though it changes no priority).
      */
     data class ToggleRelativePriorityPin(
         val taskId: TaskId,
@@ -224,7 +224,7 @@ sealed interface SchedulerIntent {
      * input says while an optional-row edit scales the path around it, and is kept for the account (it
      * outlives the window it was set in and reaches the other devices).
      *
-     * Not undoable, exactly like the relative-priority pin above: it changes no priority on its own.
+     * One History Unit, like the relative-priority pin above. on its own.
      */
     data class TogglePriorityWeightPin(
         val listId: CellListId,
@@ -1094,12 +1094,12 @@ sealed interface SchedulerIntent {
         val nowMillis: Long,
     ) : SchedulerIntent
 
-    /** The app's global volume ([SchedulerState.soundVolume]), clamped to `0..1`. Persisted; not undoable. */
+    /** The app's global volume ([SchedulerState.soundVolume]), clamped to `0..1`. Persisted; one History Unit. */
     data class SetSoundVolume(
         val volume: Double,
     ) : SchedulerIntent
 
-    /** PRD §7 Automatic Schedule Switch: enable/disable auto-scheduling. Persisted; not undoable. */
+    /** PRD §7 Automatic Schedule Switch: enable/disable auto-scheduling. Persisted; one History Unit. */
     data class SetAutomaticSchedule(
         val enabled: Boolean,
     ) : SchedulerIntent
@@ -1166,22 +1166,22 @@ sealed interface SchedulerIntent {
 
     /**
      * User rule 2026-10-06: the balance of the score's two criteria ([SchedulerState.minimumTimeWeight]), kept in its
-     * bounds — an account setting: persisted and synced, not undoable; the plan is made again under it.
+     * bounds — an account setting: persisted and synced, one History Unit; the plan is made again under it.
      */
     data class SetMinimumTimeWeight(val weight: Double) : SchedulerIntent
 
     /**
      * User rule 2026-10-04: the scheduler engine's time limit after a change, in seconds
-     * ([SchedulerState.planCalculationLimitSeconds]) — this device's own setting: persisted, never synced, not undoable.
+     * ([SchedulerState.planCalculationLimitSeconds]) — this device's own setting: persisted, never synced, one History Unit.
      */
     data class SetPlanCalculationLimit(val seconds: Int) : SchedulerIntent
 
-    /** User rule 2026-10-18: every sound of the app off on this device ([SchedulerState.soundMuted]) — never synced, not undoable. */
+    /** User rule 2026-10-18: every sound of the app off on this device ([SchedulerState.soundMuted]) — never synced, one History Unit. */
     data class SetSoundMuted(val muted: Boolean) : SchedulerIntent
 
     /**
      * PRD §15 Screen breaks: show/hide the screen breaks on the calendar (a cosmetic display preference). Hiding
-     * does not touch the schedule or notifications. Persisted; not undoable.
+     * does not touch the schedule or notifications. Persisted; one History Unit.
      */
     data class SetShowScreenBreaks(
         val show: Boolean,
@@ -1189,7 +1189,7 @@ sealed interface SchedulerIntent {
 
     /**
      * PRD §14 Reminders: show/hide the reminder tags on the calendar (a cosmetic display preference). Hiding
-     * does not touch the chores or their scheduling/checked state. Persisted; not undoable.
+     * does not touch the chores or their scheduling/checked state. Persisted; one History Unit.
      */
     data class SetShowReminders(
         val show: Boolean,
@@ -1197,7 +1197,7 @@ sealed interface SchedulerIntent {
 
     /**
      * PRD §8: put the calendar in its Day display mode ([dayMode]) or back in the Week one — a display
-     * preference of this device. Persisted; never synced; not undoable.
+     * preference of this device. Persisted; never synced; one History Unit.
      */
     data class SetCalendarDayMode(
         val dayMode: Boolean,
@@ -1219,7 +1219,7 @@ sealed interface SchedulerIntent {
      * Silences what the app *posts* and nothing else: the notification log keeps every entry (so the History
      * window's Notifications column is unchanged), the voice has its own switch too, and the schedule is
      * untouched. See [org.example.project.scheduler.state.SchedulerState.notificationsEnabled]. Persisted +
-     * synced; not undoable.
+     * synced; one History Unit.
      */
     data class SetNotificationsEnabled(
         val enabled: Boolean,
@@ -1284,7 +1284,7 @@ sealed interface SchedulerIntent {
     /**
      * PRD §4/§7: turn the default-sub-tree policy on/off (the switch left of the lateral-menu button). Off
      * means new cells are created bare, exactly as before the feature existed; the template itself is kept
-     * either way. Persisted + synced; not undoable.
+     * either way. Persisted + synced; one History Unit.
      */
     data class SetDefaultSubtreeEnabled(
         val enabled: Boolean,
@@ -1319,12 +1319,14 @@ sealed interface SchedulerIntent {
     /**
      * Sleep/Work toggle (left-menu control): set the next scheduled wake instant (epoch millis) when the user
      * presses **Sleep**, or `null` when they press **Work** (or the wake instant lapses on launch). Persisted +
-     * synced (authoritative); not undoable; does not touch the schedule. The ViewModel also mirrors the mode to
+     * synced (authoritative); one History Unit when the user presses it ([byUser]); does not touch the schedule. The ViewModel also mirrors the mode to
      * the `account_state` table so the server cron (`tick_pause_cues()`) can suppress the pause-end cue while
      * sleeping.
      */
     data class SetSleepMode(
         val sleepingUntilMillis: Long?,
+        /** The Sleep / Work button, a History Unit. The wake instant lapsing is the app's, and is none. */
+        val byUser: Boolean = false,
     ) : SchedulerIntent
 
     /**
@@ -1433,7 +1435,7 @@ sealed interface SchedulerIntent {
 
     /**
      * PRD §13 deep copy: the account's one maximum depth (see [SchedulerState.deepCopyMaxDepth]), set from
-     * the deep-copy window. Clamped into [org.example.project.scheduler.domain.SchedulerDomain.DEEP_COPY_DEPTH_RANGE]; not an Undo/Redo unit.
+     * the deep-copy window. Clamped into [org.example.project.scheduler.domain.SchedulerDomain.DEEP_COPY_DEPTH_RANGE]; one History Unit.
      */
     data class SetDeepCopyMaxDepth(val depth: Int) : SchedulerIntent
 
@@ -1441,7 +1443,7 @@ sealed interface SchedulerIntent {
 
     /**
      * PRD §14/§18: the account's default configuration of a new alarm / timer / reminder, set from its "Default …"
-     * window ([SchedulerState.newAlarmDefaults] …). Only the element's settings are kept; not an Undo/Redo unit.
+     * window ([SchedulerState.newAlarmDefaults] …). Only the element's settings are kept; one History Unit.
      */
     data class SetNewAlarmDefaults(val defaults: org.example.project.scheduler.model.AlarmEntry) : SchedulerIntent
 
@@ -1460,7 +1462,7 @@ sealed interface SchedulerIntent {
     /**
      * PRD §13 deep copy: the account's three **what does a copy carry** switches (see
      * [org.example.project.scheduler.domain.SchedulerDomain.CopyOptions]), set from the deep-copy window
-     * when it copies. Like the depth, one answer for the whole account and not an Undo/Redo unit.
+     * when it copies. Like the depth, one answer for the whole account and one History Unit.
      */
     data class SetCopyOptions(val options: org.example.project.scheduler.domain.SchedulerDomain.CopyOptions) :
         SchedulerIntent

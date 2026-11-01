@@ -182,11 +182,12 @@ class TaskRelationsTest {
         s = SchedulerReducer.reduce(s, SchedulerIntent.Undo)
         assertEquals(setOf(f.write), s.lists[f.bookList]!!.optionalTaskIds)
 
-        // A pair that never was a table row leaves the tree alone — no empty unit for Ctrl+Z to walk over.
+        // A pair that never was a table row is its mark alone: one unit too, and Ctrl+Z files it back.
         var marks = SchedulerReducer.reduce(f.state, SchedulerIntent.RecordTaskRelation(f.write, f.book, true))
-        val before = marks.histories
+        val before = marks
         marks = SchedulerReducer.reduce(marks, SchedulerIntent.DropTaskRelation(f.write, f.book))
-        assertEquals(before, marks.histories)
+        assertEquals(before.histories.main.units.size + 1, marks.histories.main.units.size)
+        assertEquals(before.taskRelations, SchedulerReducer.reduce(marks, SchedulerIntent.Undo).taskRelations)
     }
 
     @Test
@@ -248,15 +249,14 @@ class TaskRelationsTest {
     }
 
     @Test
-    fun filing_a_pair_records_no_history_unit() {
+    fun filing_a_pair_is_one_history_unit_and_the_window_reporting_on_it_is_none() {
         val f = fixture()
-        val before = f.state.histories
-        val s = SchedulerReducer.reduce(
-            SchedulerReducer.reduce(f.state, SchedulerIntent.RecordTaskRelation(f.write, f.book, true)),
-            SchedulerIntent.KeepTaskRelation(f.write, f.book),
-        )
-        // Like a relative-priority pin: it changes no priority, so nothing undoes it.
-        assertEquals(before, s.histories)
+        val reported = SchedulerReducer.reduce(f.state, SchedulerIntent.RecordTaskRelation(f.write, f.book, true))
+        // The app's own note of what a window was opened on: nothing the user did.
+        assertEquals(f.state.histories, reported.histories)
+        val s = SchedulerReducer.reduce(reported, SchedulerIntent.KeepTaskRelation(f.write, f.book))
+        assertEquals(reported.histories.main.units.size + 1, s.histories.main.units.size)
+        assertEquals(reported.taskRelations, SchedulerReducer.reduce(s, SchedulerIntent.Undo).taskRelations)
     }
 
     // ----- section 4: the pairs an external change has broken -------------------------------------

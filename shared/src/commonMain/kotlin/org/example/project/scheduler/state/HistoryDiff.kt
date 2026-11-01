@@ -431,6 +431,13 @@ data class RecordChanges(
 ) {
     val tasks: Set<TaskId> get() = added.keys + removed.keys
 
+    /** This change, then [later]: what one gesture moved in two steps. */
+    fun then(later: RecordChanges): RecordChanges =
+        RecordChanges(
+            (added.keys + later.added.keys).associateWith { added[it].orEmpty() + later.added[it].orEmpty() },
+            (removed.keys + later.removed.keys).associateWith { removed[it].orEmpty() + later.removed[it].orEmpty() },
+        )
+
     fun applyTo(state: SchedulerState, forward: Boolean): SchedulerState {
         var tasks = state.tasks
         for (id in this.tasks) {

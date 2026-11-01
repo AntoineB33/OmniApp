@@ -921,8 +921,9 @@ object SchedulerStateCodec {
             // Written as (removed periods, added periods) per task: `RecordChanges.of` gives the change back.
             is RecordDelta ->
                 PersistedDelta.Record(
-                    changes.removed.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
-                    changes.added.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
+                    byUser = byUser,
+                    before = changes.removed.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
+                    after = changes.added.mapKeys { it.key.value }.mapValues { e -> e.value.map { PersistedTimeRange(it.startEpochMillis, it.endEpochMillis) } },
                 )
             is SleepDelta ->
                 PersistedDelta.Sleep(
@@ -959,6 +960,8 @@ object SchedulerStateCodec {
                     treeAfter = tree?.side(forward = true),
                     panelsBefore = panels.before.values.map { it.toPersistedPanel() },
                     panelsAfter = panels.after.values.map { it.toPersistedPanel() },
+                    valuesBefore = values.before,
+                    valuesAfter = values.after,
                 )
             NoOpDelta -> PersistedDelta.NoOp
         }
@@ -1532,6 +1535,7 @@ object SchedulerStateCodec {
                 RecordDelta(
                     before.mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } },
                     after.mapKeys { TaskId(it.key) }.mapValues { e -> e.value.map { TaskTimeRange(it.start, it.end) } },
+                    byUser,
                 )
             is PersistedDelta.Sleep ->
                 SleepDelta(
@@ -1586,6 +1590,7 @@ object SchedulerStateCodec {
                             panelsBefore.associate { it.id to it.toPanel() },
                             panelsAfter.associate { it.id to it.toPanel() },
                         ),
+                    values = EntryChanges(valuesBefore, valuesAfter),
                 )
             PersistedDelta.NoOp -> NoOpDelta
         }
@@ -2507,6 +2512,8 @@ private sealed interface PersistedDelta {
     data class Record(
         val before: Map<String, List<PersistedTimeRange>>,
         val after: Map<String, List<PersistedTimeRange>>,
+        /** New 2026-11-01: the user took it out. Absent from every unit before, which were all the app's. */
+        val byUser: Boolean = false,
     ) : PersistedDelta
 
     @Serializable
@@ -2617,6 +2624,9 @@ private sealed interface PersistedDelta {
         val treeAfter: PersistedTreeSnapshot? = null,
         val panelsBefore: List<PersistedPanel> = emptyList(),
         val panelsAfter: List<PersistedPanel> = emptyList(),
+        /** New 2026-11-01: the other settings it moved ([SettingEntries]). Absent from every older unit. */
+        val valuesBefore: Map<String, String> = emptyMap(),
+        val valuesAfter: Map<String, String> = emptyMap(),
     ) : PersistedDelta
 
     @Serializable
@@ -3264,3 +3274,125 @@ private data class PersistedPeriodCrossing(
     val sinceMillis: Long? = null,
     val ranges: List<PersistedTimeRange> = emptyList(),
 )
+
+/**
+ * PRD §6 (user rule 2026-10-01, "history units for almost every user action"; 2026-11-01): **the settings a
+ * [org.example.project.scheduler.state.SettingsDelta] carries as plain entries** — every switch, number and default of
+ * the account that has no kind of its own in the delta, each pin, each task relation's mark and each task's link. Key →
+ * value as text, diffed entry by entry, so a unit holds the one entry it moved and undoes it three-way
+ * ([org.example.project.scheduler.state.EntryChanges]). Here for the `Persisted*` mappers. A new setting is one line in
+ * [of] and one in [with]; `SettingEntriesTest` walks them all back.
+ */
+internal object SettingEntries {
+    private val json = Json { ignoreUnknownKeys = true }
+
+    /** The entries that are local-only view state: the fields [SchedulerState.withLocalViewStateNeutralized] resets. */
+    val LOCAL_ONLY: Set<String> =
+        setOf("showScreenBreaks", "showReminders", "calendarDayMode", "planCalculationLimitSeconds", "soundMuted")
+
+    private fun pair(prefix: String, a: String, b: String): String = "$prefix|$a|$b"
+
+    fun of(s: SchedulerState): Map<String, String> =
+        buildMap {
+            put("automaticSchedule", s.automaticSchedule.toString())
+            put("soundVolume", s.soundVolume.toString())
+            put("minimumTimeWeight", s.minimumTimeWeight.toString())
+            put("soundMuted", s.soundMuted.toString())
+            put("planCalculationLimitSeconds", s.planCalculationLimitSeconds.toString())
+            put("showScreenBreaks", s.showScreenBreaks.toString())
+            put("showReminders", s.showReminders.toString())
+            put("calendarDayMode", s.calendarDayMode.toString())
+            put("defaultSubtreeEnabled", s.defaultSubtreeEnabled.toString())
+            put("deepCopyMaxDepth", s.deepCopyMaxDepth.toString())
+            put("deepCopyUnlimited", s.deepCopyUnlimited.toString())
+            put("copyIncludeIds", s.copyIncludeIds.toString())
+            put("copyPriorityTables", s.copyPriorityTables.toString())
+            put("copyIncludeText", s.copyIncludeText.toString())
+            put("copyIncludePriorityPercentages", s.copyIncludePriorityPercentages.toString())
+            put("copyIncludeMinimumTime", s.copyIncludeMinimumTime.toString())
+            put("copyExcludeTitle", s.copyExcludeTitle)
+            s.sleepingUntilMillis?.let { put("sleepingUntilMillis", it.toString()) }
+            s.sleepingSinceMillis?.let { put("sleepingSinceMillis", it.toString()) }
+            put("newAlarmDefaults", json.encodeToString(PersistedAlarm.serializer(), s.newAlarmDefaults.toPersisted()))
+            put("newTimerDefaults", json.encodeToString(PersistedTimer.serializer(), s.newTimerDefaults.toPersisted()))
+            put("newQuotaDefaults", json.encodeToString(PersistedQuota.serializer(), s.newQuotaDefaults.toPersisted()))
+            put("newReminderDefaults", json.encodeToString(PersistedChoreEntry.serializer(), s.newReminderDefaults.toPersisted()))
+            put("newAlarmTimes", json.encodeToString(PersistedNewElementTimes.serializer(), s.newAlarmTimes.toPersisted()))
+            put("newReminderTimes", json.encodeToString(PersistedNewElementTimes.serializer(), s.newReminderTimes.toPersisted()))
+            for ((key, cells) in s.relativePriorityPins) {
+                put(pair("rpin", key.taskId.value, key.relativeTo.value), cells.map { it.value }.sorted().joinToString(","))
+            }
+            for ((list, pins) in s.priorityWeightPins) {
+                put("wpin|" + list.value, pins.map { "${it.column}:${it.cellId?.value.orEmpty()}" }.sorted().joinToString(","))
+            }
+            for ((key, mark) in s.taskRelations) {
+                put(pair("mark", key.taskId.value, key.relativeTo.value), "${mark.kept},${mark.retargeted},${mark.hidden}")
+            }
+            for (link in s.taskLinks) put("link|" + link.taskId.value, link.linkedTo.value)
+        }
+
+    /** [s] with the entry [key] set to [value] — null removes a pin, a mark, a link, or clears a sleeping instant. */
+    fun with(s: SchedulerState, key: String, value: String?): SchedulerState {
+        val parts = key.split('|', limit = 3)
+        return when (parts[0]) {
+            "rpin" -> {
+                val pin = RelativePriorityPinKey(TaskId(parts[1]), TaskId(parts[2]))
+                val cells = value?.split(',')?.filter { it.isNotEmpty() }?.mapTo(LinkedHashSet()) { CellId(it) }
+                s.copy(relativePriorityPins = if (cells.isNullOrEmpty()) s.relativePriorityPins - pin else s.relativePriorityPins + (pin to cells))
+            }
+            "wpin" -> {
+                val list = CellListId(parts[1])
+                val pins =
+                    value?.split(',')?.filter { it.isNotEmpty() }?.mapTo(LinkedHashSet()) { text ->
+                        PriorityWeightPin(text.substringAfter(':').ifEmpty { null }?.let(::CellId), text.substringBefore(':').toInt())
+                    }
+                s.copy(priorityWeightPins = if (pins.isNullOrEmpty()) s.priorityWeightPins - list else s.priorityWeightPins + (list to pins))
+            }
+            "mark" -> {
+                val pairKey = TaskRelationKey(TaskId(parts[1]), TaskId(parts[2]))
+                val flags = value?.split(',')
+                s.copy(
+                    taskRelations =
+                        if (flags == null) s.taskRelations - pairKey
+                        else s.taskRelations + (pairKey to TaskRelationMark(kept = flags[0].toBoolean(), retargeted = flags[1].toBoolean(), hidden = flags[2].toBoolean())),
+                )
+            }
+            "link" -> {
+                val task = TaskId(parts[1])
+                val others = s.taskLinks.filterNot { it.taskId == task }
+                s.copy(taskLinks = if (value == null) others else others + org.example.project.scheduler.model.TaskLink(task, TaskId(value)))
+            }
+            "sleepingUntilMillis" -> s.copy(sleepingUntilMillis = value?.toLong())
+            "sleepingSinceMillis" -> s.copy(sleepingSinceMillis = value?.toLong())
+            else -> if (value == null) s else withScalar(s, key, value)
+        }
+    }
+
+    private fun withScalar(s: SchedulerState, key: String, value: String): SchedulerState =
+        when (key) {
+            "automaticSchedule" -> s.copy(automaticSchedule = value.toBoolean())
+            "soundVolume" -> s.copy(soundVolume = value.toDouble())
+            "minimumTimeWeight" -> s.copy(minimumTimeWeight = value.toDouble())
+            "soundMuted" -> s.copy(soundMuted = value.toBoolean())
+            "planCalculationLimitSeconds" -> s.copy(planCalculationLimitSeconds = value.toInt())
+            "showScreenBreaks" -> s.copy(showScreenBreaks = value.toBoolean())
+            "showReminders" -> s.copy(showReminders = value.toBoolean())
+            "calendarDayMode" -> s.copy(calendarDayMode = value.toBoolean())
+            "defaultSubtreeEnabled" -> s.copy(defaultSubtreeEnabled = value.toBoolean())
+            "deepCopyMaxDepth" -> s.copy(deepCopyMaxDepth = value.toInt())
+            "deepCopyUnlimited" -> s.copy(deepCopyUnlimited = value.toBoolean())
+            "copyIncludeIds" -> s.copy(copyIncludeIds = value.toBoolean())
+            "copyPriorityTables" -> s.copy(copyPriorityTables = value.toBoolean())
+            "copyIncludeText" -> s.copy(copyIncludeText = value.toBoolean())
+            "copyIncludePriorityPercentages" -> s.copy(copyIncludePriorityPercentages = value.toBoolean())
+            "copyIncludeMinimumTime" -> s.copy(copyIncludeMinimumTime = value.toBoolean())
+            "copyExcludeTitle" -> s.copy(copyExcludeTitle = value)
+            "newAlarmDefaults" -> s.copy(newAlarmDefaults = json.decodeFromString(PersistedAlarm.serializer(), value).toAlarmEntry())
+            "newTimerDefaults" -> s.copy(newTimerDefaults = json.decodeFromString(PersistedTimer.serializer(), value).toTimerEntry())
+            "newQuotaDefaults" -> s.copy(newQuotaDefaults = json.decodeFromString(PersistedQuota.serializer(), value).toQuotaEntry())
+            "newReminderDefaults" -> s.copy(newReminderDefaults = json.decodeFromString(PersistedChoreEntry.serializer(), value).toChoreEntry())
+            "newAlarmTimes" -> s.copy(newAlarmTimes = json.decodeFromString(PersistedNewElementTimes.serializer(), value).toNewElementTimes())
+            "newReminderTimes" -> s.copy(newReminderTimes = json.decodeFromString(PersistedNewElementTimes.serializer(), value).toNewElementTimes())
+            else -> s
+        }
+}

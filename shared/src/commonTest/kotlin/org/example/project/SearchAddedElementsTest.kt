@@ -1127,14 +1127,14 @@ class SearchAddedElementsTest {
             ),
             SearchDomain.addedActions("", setOf(SearchDomain.Kind.AppSetting)).single { it.first == SearchDomain.Kind.AppSetting }.second,
         )
-        // The slider's write: clamped, and a setting — no Undo/Redo unit.
+        // The slider's write: clamped, and one Undo/Redo unit however far it is dragged.
         val before = units(s)
         s = r(s, SchedulerIntent.SetSoundVolume(0.4))
         assertEquals(0.4, s.soundVolume)
         assertEquals("volume 40 %", SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "sound setting").single().detail)
         assertEquals(1.0, r(s, SchedulerIntent.SetSoundVolume(7.0)).soundVolume)
         assertEquals(0.0, r(s, SchedulerIntent.SetSoundVolume(-1.0)).soundVolume)
-        assertEquals(before, units(s))
+        assertEquals(before + 1, units(s))
     }
 
     @Test

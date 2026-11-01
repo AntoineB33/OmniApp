@@ -447,6 +447,22 @@ object CustomMenuButtons {
     }
 
     /**
+     * The menu's right-click **"Reset"**: every page's menu once [page]'s is back to its defaults ([defaultsOf]). The other
+     * pages lose nothing of their own: a global item the defaults do not hold leaves [page] by [withGlobal] — back to the
+     * page it was made global from, as that page's own — and the defaults' global items, the same on every page, come
+     * back to all of them, in the place of one left there as that page's own.
+     */
+    fun withPageReset(lists: Map<String, List<CustomMenuButton>>, page: String): Map<String, List<CustomMenuButton>> {
+        val defaults = defaultsOf(page)
+        val defaultIds = defaults.mapTo(HashSet()) { it.id }
+        val backHome =
+            lists[page].orEmpty().filter { it.global && it.id !in defaultIds }
+                .fold(lists) { out, item -> withGlobal(out, page, item.id, on = false).first }
+        val defaultGlobals = defaults.filter { it.global }.associateBy { it.id }
+        return withGlobalsPropagated(backHome.mapValues { (_, items) -> items.map { defaultGlobals[it.id] ?: it } }, page, defaults)
+    }
+
+    /**
      * The placement row the window bar's tab names are kept on ([WindowFrameHost.tabTitles]) — frame id → the name
      * of the button that created that window. No window has this frame id.
      */
@@ -629,9 +645,9 @@ object CustomMenuButtons {
 /**
  * User rule 2026-10-08: **the lateral menu, all of it but the page button** — every item the user's
  * ([CustomMenuButton]): a window's button, or a control of the app ([MenuControl], drawn by [controlContent]). They
- * all have the SAME right-click menu: Update (a window's button whose window changed), Rename, Remove, and Customize
- * ([customizing], [onCustomize]) — which is also what a right-click beside them offers, so a menu emptied of
- * everything can still be filled again. While customizing, a line at the top says so and ends it.
+ * all have the SAME right-click menu: Update (a window's button whose window changed), Rename, Remove, Customize
+ * ([customizing], [onCustomize]) and Reset ([onReset]) — the last two also what a right-click beside them offers, so a
+ * menu emptied of everything can still be filled again. While customizing, a line at the top says so and ends it.
  *
  * (Formerly) the lateral menu's bottom section: the buttons the user made ([CustomMenuButton]), drawn like the menu's own.
  * [editingId]'s title is an edit field instead, opened with the whole title selected — so typing replaces it and
@@ -662,6 +678,8 @@ internal fun CustomMenuSection(
     actionContent: @Composable (CustomMenuButton) -> Unit = {},
     /** User rule 2026-10-18: the item [id] made global (it stands in the menu of every page) or its page's own again. */
     onSetGlobal: (id: String, global: Boolean) -> Unit = { _, _ -> },
+    /** The page's menu back to its default items ([CustomMenuButtons.withPageReset]). */
+    onReset: () -> Unit = {},
 ) {
     // User rule 2026-10-08: "in customization mode, the user can drag the buttons or fields in the left-side menu".
     // Each drawn item's row (its top and height in this column), the one held and how far the hand has it. The held
@@ -787,6 +805,7 @@ internal fun CustomMenuSection(
                             text = { Text(if (customizing) "Stop customizing" else "Customize") },
                             onClick = { menuOpen = false; onCustomize(!customizing) },
                         )
+                        DropdownMenuItem(text = { Text("Reset") }, onClick = { menuOpen = false; onReset() })
                     }
                 }
             }

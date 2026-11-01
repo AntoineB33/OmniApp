@@ -1737,8 +1737,8 @@ private fun hourLabel(hour: Int): String {
  * under it is [items]: the user's list ([CustomMenuSection]) of windows' buttons and controls of the app
  * ([MenuControl], [MenuControlItem]), which starts as what the menu used to hold ([CustomMenuButtons.DEFAULTS]).
  * **A window's button opens a NEW window at every click** — never closes one, and is never drawn as "open" (the
- * window bar says what is open). A right-click beside the items offers [onCustomize] too, so an emptied menu can
- * still be filled.
+ * window bar says what is open). A right-click beside the items offers [onCustomize] and [onReset] too, so an emptied
+ * menu can still be filled.
  */
 @Composable
 fun LateralMenu(
@@ -1749,6 +1749,8 @@ fun LateralMenu(
     /** Whether the menu is being customized, and a right-click on its empty part starting or ending it. */
     customizing: Boolean = false,
     onCustomize: (Boolean) -> Unit = {},
+    /** The page's menu back to its default items. */
+    onReset: () -> Unit = {},
     /** Held by the caller, which scrolls the menu to its end when it adds an item there. */
     scrollState: ScrollState = rememberScrollState(),
     modifier: Modifier = Modifier,
@@ -1782,6 +1784,7 @@ fun LateralMenu(
                 text = { Text(if (customizing) "Stop customizing" else "Customize") },
                 onClick = { backgroundMenu = false; onCustomize(!customizing) },
             )
+            DropdownMenuItem(text = { Text("Reset") }, onClick = { backgroundMenu = false; onReset() })
         }
         items()
     }

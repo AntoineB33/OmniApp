@@ -876,8 +876,7 @@ Global rules that always apply: `CLAUDE.md`.
   **refuses** — the same question the override rule asks, so the on-screen tasks' records go under a
   no-screen period and everybody's under a grey one, as two resiliences rather than as two rules. Same
   funnel as `StripNoScreenRecords` (`stripRecords`, now taking the predicate rather than an `onScreenOnly`
-  flag), applied at once rather than at the next engine start; outside Undo/Redo (an open gap: undoing the
-  period does not bring the stripped work back). A **dragged** period re-applies it only where the period is the **user's** — a fill-laid break or
+  flag), applied at once rather than at the next engine start; in the period's own unit (`withStrippedRecordsInUnit`), so one Ctrl+Z brings the stripped work back. A **dragged** period re-applies it only where the period is the **user's** — a fill-laid break or
   sleep band moving is not the user saying they were not working.
 - **ANY BLOCK CAN BE DRAGGED — EXCEPT A SCREEN BREAK AHEAD OF THE LINE — AND IT THEN GETS A BLUE OUTLINE**
   (`docs/scheduler_input_requirements.md`, 2026-10-10: *"All blocks can be dragged, except screen breaks at t > now

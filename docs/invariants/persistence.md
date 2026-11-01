@@ -72,9 +72,22 @@ window's list, which recorded nothing). Undoable, from the window it was made in
   those settings, of the tree and of the panels, applied three-way piece by piece.
 - **A timer's or a chrono's run the user moves** is a `TimersDelta` / `ChronosDelta` (`alarms-and-timers.md`); the ring
   is not.
-- Still no unit: what the app authors itself (the plan, the ring, a peer's pull), the calendar's transient editors and
-  notices (they keep no layout row), and the account settings not listed above (the deep-copy depth and switches, the
-  default configurations of a new alarm / timer / reminder, the priority pins, the automatic-schedule switch).
+- **Every other switch, number and default of the account, each pin, each task relation the user files, each task link
+  and the Sleep / Work press** (user rule 2026-11-01) is a `SettingsDelta` too, through `SettingEntries`
+  (`persistence/SchedulerStateCodec.kt`, `HistoryReachTest`): entries of text, diffed one by one, so a unit holds the one
+  it moved. A new setting is one line in `SettingEntries.of` and one in `with`. A field typed into or a slider is one unit
+  per run (`coalesceKey`), the deep-copy window's one Save one unit. A weight column added, moved or deleted carries its
+  pins in its own unit, and a period laid over work carries the records it took (`withStrippedRecordsInUnit`,
+  `PanelDelta.records`) — so one Ctrl+Z puts both back.
+- **A unit of local-only view state alone** (`Delta.localOnly`: Day / Week, the two display switches, the mute, the plan's time
+  limit) rides the next push like every unit but is no reason for one: `withLocalViewStateNeutralized` leaves it out of the
+  fingerprint, or the Day / Week switch would talk to the server.
+- What `App` keeps has four more keys (`ExternalKeys`): a calendar window's configuration, a Search configurations
+  window's, the name a window was given and which windows are global.
+- Still no unit, deliberately: what the app authors itself (the plan, the ring, a peer's pull, the wake instant lapsing),
+  the calendar's transient editors and notices (they keep no layout row), where the user is looking and not what they
+  changed (the page shown, the menu collapsed, a window's sections, the overlap key held), and the presses that act on
+  the moment and have no before to go back to (Look away now, Switch task, I'm away).
 - An older build skips a unit whose delta it cannot read (`decodeUnit`), so the new kinds are safe across devices.
 
 The exception: a unit whose gesture is still open (`Delta.coalesceKey` — a field being typed into live, see
@@ -140,6 +153,19 @@ by ctrl+z, ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history unit
   top-level keys, so the local table needed no migration.
 - **Undo takes this device's newest applied unit; redo its oldest undone one.** Other devices' units are skipped,
   never undone, and never block. The category pointer is this device's newest applied unit.
+- **What the app authored is walked by no chord, and is no branch** (anomaly 2026-11-01; `Delta.authoredByApp`,
+  `RecordDelta.byUser`). The work the line banks is a Main unit, to be seen and for the debug rollback, and it stamped the
+  focused window: every few minutes one landed on top, so the next `Ctrl+Z` took a banked record back instead of what the
+  user did, and it dropped their redo. Neither any more, on the server either (`dropHistoryBranch` is asked from the
+  newest unit that is the user's). A record the USER takes out is theirs: "Remove" on a block, a period laid over it.
+- **A change made in the left-side menu is undone from whichever window has the focus** (user rule 2026-11-01; "Reset"
+  was the anomaly). The menu is no window and takes no focus, so its units are stamped `HistoryWindow.Menu`
+  (`SchedulerIntent.MadeIn`, its controls included) and `changesOf` accepts them everywhere; a unit of the menu's buttons
+  stamped with a window, written before, counts too. While such a unit is the next one, `App`'s root takes the chord on
+  the PREVIEW pass (`SchedulerReducer.nextChangeIsAppWide`, `HistoryChordRoutingTest`): a focused text field would answer
+  it with its own undo. With nothing focused no modifier sees a key at all, so the desktop window hands them to
+  `AppKeyFallback`. Restoring the menu is the one restore that is not three-way: nothing can come between its units, and
+  a difference the app made itself (a button's configuration frozen at a start) must not leave an undo doing nothing.
 - **Every chord is relative to the focused window** (user rule, 2026-09-25; `SchedulerReducer.undoIn` over a
   `HistoryWalk`): `Ctrl+Z`/`Ctrl+Y`/`Ctrl+Shift+Z` walk the Main and Calendar units stamped with the focused window
   (the Edit stack while a session is open); `Alt+←/→` the Selection units whose delta is the focused window's (and,

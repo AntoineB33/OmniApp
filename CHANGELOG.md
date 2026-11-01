@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Ctrl+Z reaches what it should — 2026-11-01
+
+User rule, after a menu Reset no Ctrl+Z could revert: read off the release DB, the unit was there and never walked, and a banked record sat on top of it. What the left-side menu changes is now undone from whichever window has the focus, text fields and no focus at all included; the line's banked work is walked by no chord and costs no redo; a unit of the menu's restores whatever the app froze since. New units: every setting that had none (`SettingEntries`, a new `values` on `SettingsDelta`, `byUser` on `RecordDelta`, both defaulted on older units), the pins, a task relation's Keep and Remove, a task link, Sleep / Work, a record removed by hand, a calendar window's and a Search configurations window's configuration, a window's name, a window set global. A period's stripped work and a column's pins now come back in the unit that moved them. No migration. Client rebuild only: an older build reads a new settings unit as empty.
+
+### The left-side menu's right-click has a Reset — 2026-11-01
+
+User rule: "Reset", on an item's right-click menu and on the one beside the items, puts the current page's menu back to its default buttons (`CustomMenuButtons.withPageReset`), one History Unit. A global item made on another page goes back to that page as its own. No migration. Client rebuild only.
+
 ### `CLAUDE.md` cut to what can bite anywhere — 2026-11-01
 
 The state classification table moved to `docs/invariants/persistence.md`; the script index is `docs/SCRIPTS.md` alone; `checkChange` is the one gate, `:shared:check` no longer is; the subsystem files are read by the part that covers a change, not whole; `perf-profile` joined `.claude/screen-commands.txt`. `calendar.md`, the Search window of `task-tree.md` and the frame of `popups.md` got headings, no text moved; the ADRs' invariant links point at `docs/invariants/`. Documentation only.

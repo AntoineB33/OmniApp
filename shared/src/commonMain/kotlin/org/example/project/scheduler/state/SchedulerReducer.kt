@@ -314,7 +314,7 @@ object SchedulerReducer {
             is SchedulerIntent.RenameTaskTree -> reduceRenameTaskTree(state, intent.id, intent.title)
             is SchedulerIntent.LinkTask ->
                 if (org.example.project.scheduler.domain.TaskLinks.refusal(state, intent.taskId, intent.otherTreeId, intent.otherTaskId) != null) state
-                else state.copy(taskLinks = org.example.project.scheduler.domain.TaskLinks.linked(state, intent.taskId, intent.otherTaskId))
+                else settingsUnit(state, "Link task") { it.copy(taskLinks = org.example.project.scheduler.domain.TaskLinks.linked(it, intent.taskId, intent.otherTaskId)) }
             is SchedulerIntent.SetTaskTreeDate -> reduceSetTaskTreeDate(state, intent.id, intent.dateMillis)
             is SchedulerIntent.DeleteTaskTree -> reduceDeleteTaskTree(state, intent.id)
             is SchedulerIntent.SetPriorityWeight ->
@@ -353,11 +353,11 @@ object SchedulerReducer {
                     },
                 )
             is SchedulerIntent.ToggleRelativePriorityPin ->
-                reduceToggleRelativePriorityPin(state, intent.taskId, intent.relativeTo, intent.cellId)
+                settingsUnit(state, "Relative priority pin") { reduceToggleRelativePriorityPin(it, intent.taskId, intent.relativeTo, intent.cellId) }
             is SchedulerIntent.ClearRelativePriorityPins ->
-                reduceClearRelativePriorityPins(state, intent.taskId, intent.relativeTo)
+                settingsUnit(state, "Clear relative priority pins") { reduceClearRelativePriorityPins(it, intent.taskId, intent.relativeTo) }
             is SchedulerIntent.TogglePriorityWeightPin ->
-                reduceTogglePriorityWeightPin(state, intent.listId, intent.cellId, intent.column)
+                settingsUnit(state, "Priority weight pin") { reduceTogglePriorityWeightPin(it, intent.listId, intent.cellId, intent.column) }
             is SchedulerIntent.RecordTaskRelation ->
                 reduceRecordTaskRelation(
                     state,
@@ -365,8 +365,10 @@ object SchedulerReducer {
                     intent.changed,
                 )
             is SchedulerIntent.KeepTaskRelation ->
-                reduceMarkTaskRelation(state, TaskRelationKey(intent.taskId, intent.relativeTo)) {
-                    it.copy(kept = true, hidden = false)
+                settingsUnit(state, "Keep task relation") { working ->
+                    reduceMarkTaskRelation(working, TaskRelationKey(intent.taskId, intent.relativeTo)) {
+                        it.copy(kept = true, hidden = false)
+                    }
                 }
             is SchedulerIntent.DropTaskRelation ->
                 reduceDropTaskRelation(state, TaskRelationKey(intent.taskId, intent.relativeTo))
@@ -387,10 +389,10 @@ object SchedulerReducer {
             // the apply below reads, so the pins can never land on a different column than the weights did.
             is SchedulerIntent.AddPriorityColumn -> {
                 val at = state.lists[intent.listId]?.let { addColumnIndex(it, intent.index) }
-                val committed =
-                    commitDelta(state, priorityTreeDelta(state, "Add weight column") { applyAddPriorityColumn(it, intent.listId, intent.index) })
-                if (at == null) committed
-                else remapPriorityWeightPins(committed, intent.listId) { c -> if (c >= at) c + 1 else c }
+                settingsUnit(state, "Add weight column") { working ->
+                    val added = applyAddPriorityColumn(working, intent.listId, intent.index)
+                    if (at == null) added else remapPriorityWeightPins(added, intent.listId) { c -> if (c >= at) c + 1 else c }
+                }
             }
             // A reset moves no column, so the pins stay where they are: the field the user pinned is still
             // that field, now holding its default.
@@ -398,28 +400,30 @@ object SchedulerReducer {
                 commitDelta(state, priorityTreeDelta(state, "Reset weight column") { applyResetPriorityColumn(it, intent.listId, intent.column) })
             is SchedulerIntent.DeletePriorityColumn -> {
                 val gone = state.lists[intent.listId]?.let { deleteColumnIndex(it, intent.column) }
-                val committed =
-                    commitDelta(state, priorityTreeDelta(state, "Delete weight column") { applyDeletePriorityColumn(it, intent.listId, intent.column) })
-                if (gone == null) committed
-                else remapPriorityWeightPins(committed, intent.listId) { c ->
-                    when {
-                        c == gone -> null
-                        c > gone -> c - 1
-                        else -> c
+                settingsUnit(state, "Delete weight column") { working ->
+                    val deleted = applyDeletePriorityColumn(working, intent.listId, intent.column)
+                    if (gone == null) deleted
+                    else remapPriorityWeightPins(deleted, intent.listId) { c ->
+                        when {
+                            c == gone -> null
+                            c > gone -> c - 1
+                            else -> c
+                        }
                     }
                 }
             }
             is SchedulerIntent.MovePriorityColumn -> {
                 val target = state.lists[intent.listId]?.let { moveColumnTarget(it, intent.from, intent.to) }
-                val committed =
-                    commitDelta(state, priorityTreeDelta(state, "Move weight column") { applyMovePriorityColumn(it, intent.listId, intent.from, intent.to) })
-                if (target == null) committed
-                else remapPriorityWeightPins(committed, intent.listId) { c ->
-                    when {
-                        c == intent.from -> target
-                        c in (intent.from + 1)..target -> c - 1
-                        c in target until intent.from -> c + 1
-                        else -> c
+                settingsUnit(state, "Move weight column") { working ->
+                    val moved = applyMovePriorityColumn(working, intent.listId, intent.from, intent.to)
+                    if (target == null) moved
+                    else remapPriorityWeightPins(moved, intent.listId) { c ->
+                        when {
+                            c == intent.from -> target
+                            c in (intent.from + 1)..target -> c - 1
+                            c in target until intent.from -> c + 1
+                            else -> c
+                        }
                     }
                 }
             }
@@ -666,31 +670,44 @@ object SchedulerReducer {
             is SchedulerIntent.ForceTaskStart -> reduceForceTaskStart(state, intent.taskId)
             is SchedulerIntent.SetSoundVolume -> {
                 val volume = if (intent.volume.isNaN()) state.soundVolume else intent.volume.coerceIn(0.0, 1.0)
-                if (state.soundVolume == volume) state else state.copy(soundVolume = volume)
+                settingsUnit(state, "Global volume", coalesceKey = "setting/volume") {
+                    if (it.soundVolume == volume) it else it.copy(soundVolume = volume)
+                }
             }
             is SchedulerIntent.SetAutomaticSchedule ->
-                if (state.automaticSchedule == intent.enabled) state
-                else state.copy(automaticSchedule = intent.enabled)
+                settingsUnit(state, if (intent.enabled) "Auto schedule on" else "Auto schedule off") {
+                    if (it.automaticSchedule == intent.enabled) it else it.copy(automaticSchedule = intent.enabled)
+                }
             is SchedulerIntent.RecordAtScreenCrossing ->
                 SchedulerDomain.withAtScreenCrossing(state, intent.fromMillis, intent.untilMillis)
             is SchedulerIntent.SetMinimumTimeWeight ->
-                minimumTimeWeightOf(intent.weight).let {
-                    if (it == state.minimumTimeWeight) state else state.copy(minimumTimeWeight = it)
+                minimumTimeWeightOf(intent.weight).let { weight ->
+                    settingsUnit(state, "Minimum time weight", coalesceKey = "setting/minimum-time-weight") {
+                        if (weight == it.minimumTimeWeight) it else it.copy(minimumTimeWeight = weight)
+                    }
                 }
-            is SchedulerIntent.SetSoundMuted -> if (state.soundMuted == intent.muted) state else state.copy(soundMuted = intent.muted)
+            is SchedulerIntent.SetSoundMuted ->
+                settingsUnit(state, if (intent.muted) "Sound off" else "Sound on") {
+                    if (it.soundMuted == intent.muted) it else it.copy(soundMuted = intent.muted)
+                }
             is SchedulerIntent.SetPlanCalculationLimit ->
-                intent.seconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS).let {
-                    if (it == state.planCalculationLimitSeconds) state else state.copy(planCalculationLimitSeconds = it)
+                intent.seconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS).let { seconds ->
+                    settingsUnit(state, "Time limit of the plan", coalesceKey = "setting/plan-limit") {
+                        if (seconds == it.planCalculationLimitSeconds) it else it.copy(planCalculationLimitSeconds = seconds)
+                    }
                 }
             is SchedulerIntent.SetShowScreenBreaks ->
-                if (state.showScreenBreaks == intent.show) state
-                else state.copy(showScreenBreaks = intent.show)
+                settingsUnit(state, if (intent.show) "Show screen breaks" else "Hide screen breaks") {
+                    if (it.showScreenBreaks == intent.show) it else it.copy(showScreenBreaks = intent.show)
+                }
             is SchedulerIntent.SetShowReminders ->
-                if (state.showReminders == intent.show) state
-                else state.copy(showReminders = intent.show)
+                settingsUnit(state, if (intent.show) "Show reminders" else "Hide reminders") {
+                    if (it.showReminders == intent.show) it else it.copy(showReminders = intent.show)
+                }
             is SchedulerIntent.SetCalendarDayMode ->
-                if (state.calendarDayMode == intent.dayMode) state
-                else state.copy(calendarDayMode = intent.dayMode)
+                settingsUnit(state, "Calendar display") {
+                    if (it.calendarDayMode == intent.dayMode) it else it.copy(calendarDayMode = intent.dayMode)
+                }
             is SchedulerIntent.SetNotificationVoice ->
                 settingsUnit(state, if (intent.enabled) "Voice on" else "Voice off") {
                     if (it.notificationVoiceEnabled == intent.enabled) it else it.copy(notificationVoiceEnabled = intent.enabled)
@@ -708,11 +725,16 @@ object SchedulerReducer {
             is SchedulerIntent.SetDefaultSubtreeCellBound ->
                 reduceSetDefaultSubtreeCellBound(state, intent.cellId, intent.bound)
             is SchedulerIntent.SetDefaultSubtreeEnabled ->
-                if (state.defaultSubtreeEnabled == intent.enabled) state
-                else state.copy(defaultSubtreeEnabled = intent.enabled)
+                settingsUnit(state, if (intent.enabled) "Default sub-tree on" else "Default sub-tree off") {
+                    if (it.defaultSubtreeEnabled == intent.enabled) it else it.copy(defaultSubtreeEnabled = intent.enabled)
+                }
             is SchedulerIntent.AddDefaultSubtree -> reduceAddDefaultSubtree(state, intent.cellIds)
             is SchedulerIntent.SetSleepSchedule -> reduceSetSleepSchedule(state, intent.sleep, intent.todayEpochDay)
-            is SchedulerIntent.SetSleepMode -> reduceSetSleepMode(state, intent.sleepingUntilMillis)
+            is SchedulerIntent.SetSleepMode ->
+                if (!intent.byUser) reduceSetSleepMode(state, intent.sleepingUntilMillis)
+                else settingsUnit(state, if (intent.sleepingUntilMillis != null) "Sleep" else "Work") {
+                    reduceSetSleepMode(it, intent.sleepingUntilMillis)
+                }
             is SchedulerIntent.MaterializePastSleep -> materializePastSleep(state, intent.ranges)
             is SchedulerIntent.ReportDeviceSleep ->
                 commitRecordChanges(
@@ -755,52 +777,73 @@ object SchedulerReducer {
             SchedulerIntent.CutSelection -> reduceCutSelection(state)
             is SchedulerIntent.SetDeepCopyMaxDepth -> {
                 val depth = intent.depth.coerceIn(SchedulerDomain.DEEP_COPY_DEPTH_RANGE)
-                if (state.deepCopyMaxDepth == depth) state else state.copy(deepCopyMaxDepth = depth)
+                settingsUnit(state, "Deep copy settings", coalesceKey = DEEP_COPY_SETTINGS) {
+                    if (it.deepCopyMaxDepth == depth) it else it.copy(deepCopyMaxDepth = depth)
+                }
             }
             is SchedulerIntent.SetNewAlarmDefaults ->
-                NewElementDefaults.alarmDefaults(intent.defaults).let {
-                    if (it == state.newAlarmDefaults) state else state.copy(newAlarmDefaults = it)
+                NewElementDefaults.alarmDefaults(intent.defaults).let { defaults ->
+                    settingsUnit(state, "Default alarm", coalesceKey = "setting/default-alarm") {
+                        if (defaults == it.newAlarmDefaults) it else it.copy(newAlarmDefaults = defaults)
+                    }
                 }
             is SchedulerIntent.SetNewTimerDefaults ->
-                NewElementDefaults.timerDefaults(intent.defaults).let {
-                    if (it == state.newTimerDefaults) state else state.copy(newTimerDefaults = it)
+                NewElementDefaults.timerDefaults(intent.defaults).let { defaults ->
+                    settingsUnit(state, "Default timer", coalesceKey = "setting/default-timer") {
+                        if (defaults == it.newTimerDefaults) it else it.copy(newTimerDefaults = defaults)
+                    }
                 }
             is SchedulerIntent.SetNewQuotaDefaults ->
-                NewElementDefaults.quotaDefaults(intent.defaults).let {
-                    if (it == state.newQuotaDefaults) state else state.copy(newQuotaDefaults = it)
+                NewElementDefaults.quotaDefaults(intent.defaults).let { defaults ->
+                    settingsUnit(state, "Default quota", coalesceKey = "setting/default-quota") {
+                        if (defaults == it.newQuotaDefaults) it else it.copy(newQuotaDefaults = defaults)
+                    }
                 }
             is SchedulerIntent.SetNewReminderDefaults ->
-                NewElementDefaults.reminderDefaults(intent.defaults).let {
-                    if (it == state.newReminderDefaults) state else state.copy(newReminderDefaults = it)
+                NewElementDefaults.reminderDefaults(intent.defaults).let { defaults ->
+                    settingsUnit(state, "Default reminder", coalesceKey = "setting/default-reminder") {
+                        if (defaults == it.newReminderDefaults) it else it.copy(newReminderDefaults = defaults)
+                    }
                 }
             is SchedulerIntent.SetNewAlarmTimes ->
-                intent.times.healed().let { if (it == state.newAlarmTimes) state else state.copy(newAlarmTimes = it) }
+                intent.times.healed().let { times ->
+                    settingsUnit(state, "Default alarm times", coalesceKey = "setting/alarm-times") {
+                        if (times == it.newAlarmTimes) it else it.copy(newAlarmTimes = times)
+                    }
+                }
             is SchedulerIntent.SetNewReminderTimes ->
-                intent.times.healed().let { if (it == state.newReminderTimes) state else state.copy(newReminderTimes = it) }
+                intent.times.healed().let { times ->
+                    settingsUnit(state, "Default reminder times", coalesceKey = "setting/reminder-times") {
+                        if (times == it.newReminderTimes) it else it.copy(newReminderTimes = times)
+                    }
+                }
             is SchedulerIntent.SetDeepCopyUnlimited ->
-                if (state.deepCopyUnlimited == intent.unlimited) state
-                else state.copy(deepCopyUnlimited = intent.unlimited)
+                settingsUnit(state, "Deep copy settings", coalesceKey = DEEP_COPY_SETTINGS) {
+                    if (it.deepCopyUnlimited == intent.unlimited) it else it.copy(deepCopyUnlimited = intent.unlimited)
+                }
             is SchedulerIntent.SetGlobalShortcutBinding ->
                 reduceSetGlobalShortcutBinding(state, intent.shortcut, intent.binding)
             is SchedulerIntent.SetCopyOptions -> {
                 val o = intent.options
-                if (state.copyIncludeIds == o.includeIds &&
-                    state.copyPriorityTables == o.priorityTables &&
-                    state.copyIncludeText == o.includeText &&
-                    state.copyIncludePriorityPercentages == o.includePriorityPercentages &&
-                    state.copyIncludeMinimumTime == o.includeMinimumTime &&
-                    state.copyExcludeTitle == o.excludeTitle
-                ) {
-                    state
-                } else {
-                    state.copy(
-                        copyIncludeIds = o.includeIds,
-                        copyPriorityTables = o.priorityTables,
-                        copyIncludeText = o.includeText,
-                        copyIncludePriorityPercentages = o.includePriorityPercentages,
-                        copyIncludeMinimumTime = o.includeMinimumTime,
-                        copyExcludeTitle = o.excludeTitle,
-                    )
+                settingsUnit(state, "Deep copy settings", coalesceKey = DEEP_COPY_SETTINGS) {
+                    if (it.copyIncludeIds == o.includeIds &&
+                        it.copyPriorityTables == o.priorityTables &&
+                        it.copyIncludeText == o.includeText &&
+                        it.copyIncludePriorityPercentages == o.includePriorityPercentages &&
+                        it.copyIncludeMinimumTime == o.includeMinimumTime &&
+                        it.copyExcludeTitle == o.excludeTitle
+                    ) {
+                        it
+                    } else {
+                        it.copy(
+                            copyIncludeIds = o.includeIds,
+                            copyPriorityTables = o.priorityTables,
+                            copyIncludeText = o.includeText,
+                            copyIncludePriorityPercentages = o.includePriorityPercentages,
+                            copyIncludeMinimumTime = o.includeMinimumTime,
+                            copyExcludeTitle = o.excludeTitle,
+                        )
+                    }
                 }
             }
             is SchedulerIntent.PasteTree -> reducePasteTree(state, intent.text)
@@ -853,12 +896,46 @@ object SchedulerReducer {
      * [HistoryCategory.Main] and [HistoryCategory.Calendar] stamped with it. A unit stamped with no window was
      * written before units knew theirs (or by a headless host): a calendar unit is the calendar's, any other the
      * tree's, which is where each was undone from then.
+     *
+     * Two kinds of unit break that rule. A change made in **the left-side menu**, which is no window, is walked from
+     * every window ([isAppWide], user rule 2026-11-01). And what **the app** authored is walked from none
+     * ([Delta.authoredByApp]): the work banked as the line advanced used to sit on top of the stack, so a Ctrl+Z after
+     * a few minutes took a banked record back instead of what the user did last (anomaly 2026-11-01).
      */
     private fun changesOf(state: SchedulerState): HistoryWalk =
         HistoryWalk(listOf(HistoryCategory.Main, HistoryCategory.Calendar)) { category, unit ->
-            (unit.window ?: if (category == HistoryCategory.Calendar) HistoryWindow.Calendar else HistoryWindow.Tree) ==
-                state.focusedWindow
+            !unit.delta.authoredByApp &&
+                (isAppWide(unit) ||
+                    (unit.window ?: if (category == HistoryCategory.Calendar) HistoryWindow.Calendar else HistoryWindow.Tree) ==
+                    state.focusedWindow)
         }
+
+    /**
+     * Whether [unit] was made outside every window. A unit of the menu's buttons is, whatever it is stamped with: the
+     * ones made before [HistoryWindow.Menu] existed carry the window that happened to have the focus.
+     */
+    private fun isAppWide(unit: HistoryUnit): Boolean =
+        unit.window == HistoryWindow.Menu ||
+            (unit.delta as? ExternalDelta)?.key?.startsWith(ExternalKeys.MENU) == true
+
+    /**
+     * Whether the next Ctrl+Z ([undo]) or Ctrl+Y would walk a change made outside every window ([isAppWide]). `App` then
+     * takes the chord before the focused element: a text field would answer it with its own undo, and the change
+     * was not made there (anomaly 2026-11-01: a menu Reset no Ctrl+Z could reach from the Search field).
+     */
+    fun nextChangeIsAppWide(state: SchedulerState, undo: Boolean): Boolean {
+        if (state.editSession != null) return false
+        val walk = changesOf(state)
+        val me = deviceId()
+        val candidates =
+            walk.categories.mapNotNull { category ->
+                val units = state.histories.forCategory(category).units
+                if (undo) units.lastOrNull { it.ownedBy(me) && !it.undone && walk.accepts(category, it) }
+                else units.firstOrNull { it.ownedBy(me) && it.undone && walk.accepts(category, it) }
+            }
+        val next = if (undo) candidates.maxByOrNull { it.deviceSeq } else candidates.minByOrNull { it.deviceSeq }
+        return next != null && isAppWide(next)
+    }
 
     /**
      * `Alt+arrows`: the **selections of the focused window**. Which window a selection belongs to is read off
@@ -1426,6 +1503,9 @@ object SchedulerReducer {
         if (next == chrono) return state
         return commitDelta(state, ChronosDelta(state.chronos, state.chronos.map { if (it.id == id) next else it }))
     }
+
+    /** The one Save of the deep-copy window writes three things: one unit. */
+    private const val DEEP_COPY_SETTINGS: String = "setting/deep-copy"
 
     /**
      * PRD §6 (user rule 2026-10-01): an **account setting** as a History Unit — [change] reduced, and what it changed
@@ -2698,11 +2778,10 @@ object SchedulerReducer {
             vacated?.let {
                 withVacatedPastFilled(resolved, resolvedPanels, kind, it, TaskTimeRange(laid.startEpochMillis, laid.endEpochMillis))
             }
-        return stripRecordsUnderPeriod(
+        val committed =
             if (filled == null) commitPanels(resolved, resolvedPanels, label = label, levelsBefore = state)
-            else commitPanels(filled.state, filled.leftBy(panelId), label = label, records = filled.records, levelsBefore = state),
-            laid,
-        )
+            else commitPanels(filled.state, filled.leftBy(panelId), label = label, records = filled.records, levelsBefore = state)
+        return withStrippedRecordsInUnit(state, committed) { stripRecordsUnderPeriod(it, laid) }
     }
 
     /**
@@ -2767,9 +2846,8 @@ object SchedulerReducer {
                 laidPeriods += resolvedPanels.firstOrNull { it.id == panelId } ?: panel
             }
         }
-        var committed = commitPanels(working, panels, label = "Add to calendar", levelsBefore = state)
-        laidPeriods.forEach { committed = stripRecordsUnderPeriod(committed, it) }
-        return committed
+        val committed = commitPanels(working, panels, label = "Add to calendar", levelsBefore = state)
+        return withStrippedRecordsInUnit(state, committed) { laid -> laidPeriods.fold(laid, ::stripRecordsUnderPeriod) }
     }
 
     /**
@@ -3120,7 +3198,7 @@ object SchedulerReducer {
         // happen.
         val moved = resolvedPanels.firstOrNull { it.id == panelId } ?: updated
         return if (moved.isRestrictivePeriod && SchedulerDomain.isUserPlaced(moved)) {
-            stripRecordsUnderPeriod(committed, moved)
+            withStrippedRecordsInUnit(state, committed) { stripRecordsUnderPeriod(it, moved) }
         } else {
             committed
         }
@@ -4041,7 +4119,13 @@ object SchedulerReducer {
         if (range !in task.record) return state
         val updated =
             state.copy(tasks = state.tasks + (intent.taskId to task.copy(record = task.record - range)))
-        return refilledAfterRecordChange(updated)
+        return refilledAfterRecordChange(
+            commitDelta(
+                state,
+                RecordDelta(mapOf(intent.taskId to task.record), mapOf(intent.taskId to updated.tasks.getValue(intent.taskId).record), byUser = true),
+                committed = updated,
+            ),
+        )
     }
 
     /**
@@ -4055,9 +4139,8 @@ object SchedulerReducer {
      * one) and a grey `no task allowed` one exempts nobody — not as two cases, but because those are the two
      * resiliences. A kind the account defined strips exactly the tasks it left at `0`.
      *
-     * A record is not an Undo/Redo unit (it lives outside the history, like every other banking side effect),
-     * so undoing the period restores the panels it trimmed but not the records it stripped — the contract the
-     * advance tick works under. ([reducePinRecord] no longer does: a dragged record comes back with one Ctrl+Z.)
+     * What it strips belongs to the gesture that laid the period ([withStrippedRecordsInUnit]): one Ctrl+Z puts the
+     * period's span back with its work (user rule 2026-11-01; it used to bring the panels back and lose the work).
      */
     private fun stripRecordsUnderPeriod(state: SchedulerState, panel: TaskPanel): SchedulerState {
         val kind = panel.restrictiveKind
@@ -4066,6 +4149,35 @@ object SchedulerReducer {
             listOf(TaskTimeRange(panel.startEpochMillis, panel.endEpochMillis)),
             affects = { task -> task.resilienceFor(kind) <= 0.0 },
         )
+    }
+
+    /**
+     * [strip] applied to [committed], which holds the calendar unit a gesture just made on top of [origin], with the
+     * records it took out written into that unit ([PanelDelta.records]). A gesture that moved no panel made no unit:
+     * the strip is then a unit of its own.
+     */
+    private fun withStrippedRecordsInUnit(
+        origin: SchedulerState,
+        committed: SchedulerState,
+        strip: (SchedulerState) -> SchedulerState,
+    ): SchedulerState {
+        val stripped = strip(committed)
+        if (stripped === committed) return stripped
+        val moved = stripped.tasks.keys.filter { id -> committed.tasks[id]?.let { it.record != stripped.tasks.getValue(id).record } == true }
+        if (moved.isEmpty()) return stripped
+        val before = moved.associateWith { committed.tasks.getValue(it).record }
+        val after = moved.associateWith { stripped.tasks.getValue(it).record }
+        val me = deviceId()
+        val history = committed.histories.forCategory(HistoryCategory.Calendar)
+        val index = history.units.indexOfLast { it.ownedBy(me) }
+        val unit = history.units.getOrNull(index)
+        val delta = unit?.delta as? PanelDelta
+        if (delta == null || unit === origin.histories.forCategory(HistoryCategory.Calendar).units.lastOrNull { it.ownedBy(me) }) {
+            return commitDelta(committed, RecordDelta(before, after, byUser = true), committed = stripped)
+        }
+        val units = history.units.toMutableList()
+        units[index] = unit.copy(delta = delta.copy(records = delta.records.then(RecordChanges.of(before, after))))
+        return stripped.copy(histories = stripped.histories.withCategory(HistoryCategory.Calendar, historyOf(units, me)))
     }
 
     /**
@@ -4429,28 +4541,18 @@ object SchedulerReducer {
      * Two halves, because a pair reaches the list by two routes:
      *
      * - the **mark** is struck off ([TaskRelationMark.hidden]), which is what silences the half the marks carry
-     *   — a pair the relative-priority window has been opened on or retargeted. Not undoable, like every other
-     *   mark: it changes no priority.
+     *   — a pair the relative-priority window has been opened on or retargeted.
      * - the **weight-table rows** the pair is made of are removed ([TaskRelationsDomain.withoutWeightTableRows]).
      *   An optional row of the target sub-list's priority-weight table IS the relation, so leaving it standing
      *   would leave the user's own table asserting a pair they have just said is not theirs — and there is no
-     *   other gesture in the app that takes a row back out of a table. That half is a **tree change**, so it
-     *   commits one history unit, exactly as [SchedulerIntent.SetPriorityWeightTableRow] does for the row's
-     *   creation: the add and its inverse must be undoable the same way.
+     *   other gesture in the app that takes a row back out of a table.
      *
-     * A pair with no such row commits nothing — no empty history unit for Ctrl+Z to walk back over (the same
-     * rule the weight window's Cancel follows).
+     * Both halves are one history unit (user rule 2026-11-01): the pair comes back whole with one Ctrl+Z.
      */
-    private fun reduceDropTaskRelation(state: SchedulerState, key: TaskRelationKey): SchedulerState {
-        val marked = reduceMarkTaskRelation(state, key) { it.copy(kept = false, hidden = true) }
-        if (TaskRelationsDomain.withoutWeightTableRows(marked, key) === marked) return marked
-        return commitDelta(
-            marked,
-            priorityTreeDelta(marked, "Remove optional table task") {
-                TaskRelationsDomain.withoutWeightTableRows(it, key)
-            },
-        )
-    }
+    private fun reduceDropTaskRelation(state: SchedulerState, key: TaskRelationKey): SchedulerState =
+        settingsUnit(state, "Remove task relation") { working ->
+            TaskRelationsDomain.withoutWeightTableRows(reduceMarkTaskRelation(working, key) { it.copy(kept = false, hidden = true) }, key)
+        }
 
     private fun commitDelta(
         state: SchedulerState,
@@ -4465,7 +4567,8 @@ object SchedulerReducer {
 
         // PRD §5 Branching: a new mutation after an undo orphans the redo units — THIS device's undone units are
         // dropped (`docs/invariants/persistence.md` § *One history, per-device undo*); another device's are its own.
-        val retained = history.units.filterNot { it.ownedBy(me) && it.undone }
+        // A change the app authored is no new branch: the work the line banks must not cost the user their Ctrl+Y.
+        val retained = if (forward.authoredByApp) history.units else history.units.filterNot { it.ownedBy(me) && it.undone }
 
         // PRD §5/§6: a live-edited field commits on every keystroke, so a unit carrying a
         // [Delta.coalesceKey] is offered to the unit at the pointer first — the same field, in the same
@@ -6156,12 +6259,8 @@ private fun reduceTogglePriorityWeightPin(
  * change to [listId]'s columns has to carry that table's pins with it. [moved] maps an old index to its new
  * one, or to null for the column that is gone.
  *
- * Applied to the state the column edit produced rather than inside its history delta, because the delta
- * carries the TREE (`captureTree`) and the pins deliberately sit outside Undo/Redo — a pin changes no
- * priority. The consequence is the one place the two can disagree: undoing a column move puts the columns
- * back and leaves the pins where the move carried them, so a pin can end up beside a neighbouring column
- * until the user flips it (the pin button says which fields are held, so it is visible, and no priority
- * moves on its own).
+ * Applied inside the column edit's own unit ([SchedulerReducer] `settingsUnit`), so undoing a move, an add or a
+ * delete puts the pins back with the columns (user rule 2026-11-01; they used to stay where the edit carried them).
  */
 private fun remapPriorityWeightPins(
     state: SchedulerState,
@@ -7265,14 +7364,23 @@ internal data class DefaultSubtreeDelta(
  * outside Undo/Redo; routing them through a delta makes them undoable AND lets the debug-time
  * rollback revert future-dated records produced under accelerated time. Captures only the affected
  * tasks' records (before/after) so undo/redo touch nothing else.
+ *
+ * [byUser]: the user took the record out ("Remove" on a record block, a period laid over it). Every other one is the
+ * app's, walked by no chord ([Delta.authoredByApp]) — which is also what every unit written before this field is.
  */
 internal data class RecordDelta(
     val changes: RecordChanges,
+    val byUser: Boolean = false,
 ) : Delta {
-    constructor(before: Map<TaskId, List<TaskTimeRange>>, after: Map<TaskId, List<TaskTimeRange>>) :
-        this(RecordChanges.of(before, after))
+    constructor(
+        before: Map<TaskId, List<TaskTimeRange>>,
+        after: Map<TaskId, List<TaskTimeRange>>,
+        byUser: Boolean = false,
+    ) : this(RecordChanges.of(before, after), byUser)
 
-    override val label: String = "Record work"
+    override val label: String = if (byUser) "Remove work" else "Record work"
+
+    override val authoredByApp: Boolean get() = !byUser
 
     override val details: List<String>
         get() = changes.tasks.mapNotNull { id ->
@@ -7745,10 +7853,18 @@ internal data class SettingsDelta(
     val tree: TreeDiff? = null,
     val panels: EntryChanges<String, TaskPanel> = EntryChanges(emptyMap(), emptyMap()),
     override val coalesceKey: String? = null,
+    /** The other settings it moved, entry by entry ([org.example.project.scheduler.persistence.SettingEntries]). */
+    val values: EntryChanges<String, String> = EntryChanges(emptyMap(), emptyMap()),
 ) : Delta {
     fun isEmpty(): Boolean =
         kinds == null && styles.isEmpty() && combinations.isEmpty() && categories.isEmpty() && notifications == null &&
-            voice == null && (tree == null || tree.isEmpty()) && panels.isEmpty()
+            voice == null && (tree == null || tree.isEmpty()) && panels.isEmpty() && values.isEmpty()
+
+    override val localOnly: Boolean
+        get() =
+            !values.isEmpty() && values.touched.all { it in org.example.project.scheduler.persistence.SettingEntries.LOCAL_ONLY } &&
+                kinds == null && styles.isEmpty() && combinations.isEmpty() && categories.isEmpty() && notifications == null &&
+                voice == null && (tree == null || tree.isEmpty()) && panels.isEmpty()
 
     override val details: List<String>
         get() = buildList {
@@ -7760,6 +7876,7 @@ internal data class SettingsDelta(
             voice?.let { add("voice: ${it.first} → ${it.second}") }
             tree?.let { if (!it.isEmpty()) add("tasks") }
             if (!panels.isEmpty()) add("${panels.touched.size} period(s) on the calendar")
+            values.touched.forEach { add("setting: $it") }
         }
 
     override fun coalesceOnto(previous: Delta): Delta? =
@@ -7772,6 +7889,7 @@ internal data class SettingsDelta(
                 notifications = mergePair(previous.notifications, notifications),
                 voice = mergePair(previous.voice, voice),
                 panels = previous.panels.then(panels),
+                values = previous.values.then(values),
             )
         } else {
             null
@@ -7802,6 +7920,11 @@ internal data class SettingsDelta(
         }
         tree?.let { if (!it.isEmpty()) s = it.applyTo(s, forward, exact) }
         if (!panels.isEmpty()) s = s.copy(panels = panels.applyToList(s.panels, forward, exact) { it.id })
+        if (!values.isEmpty()) {
+            val now = org.example.project.scheduler.persistence.SettingEntries.of(s)
+            val next = values.applyTo(now, forward, exact)
+            for (key in values.touched) if (now[key] != next[key]) s = org.example.project.scheduler.persistence.SettingEntries.with(s, key, next[key])
+        }
         return s
     }
 
@@ -7827,6 +7950,11 @@ internal data class SettingsDelta(
                     else TreeDiff.of(before.captureTree(), after.captureTree()).takeIf { !it.isEmpty() },
                 panels = if (before.panels === after.panels) EntryChanges(emptyMap(), emptyMap()) else EntryChanges.ofList(before.panels, after.panels) { it.id },
                 coalesceKey = coalesceKey,
+                values =
+                    EntryChanges.of(
+                        org.example.project.scheduler.persistence.SettingEntries.of(before),
+                        org.example.project.scheduler.persistence.SettingEntries.of(after),
+                    ),
             )
     }
 }

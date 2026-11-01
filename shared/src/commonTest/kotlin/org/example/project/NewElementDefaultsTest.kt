@@ -65,13 +65,14 @@ class NewElementDefaultsTest {
     }
 
     @Test
-    fun the_setters_keep_settings_only_and_record_no_history_unit() {
+    fun the_setters_keep_settings_only_and_record_one_history_unit() {
         val before = SchedulerState.empty()
         val after = SchedulerReducer.reduce(before, SchedulerIntent.SetNewTimerDefaults(longTimer))
         assertEquals(NewElementDefaults.timerDefaults(longTimer), after.newTimerDefaults)
         assertEquals("", after.newTimerDefaults.id)
         assertNull(after.newTimerDefaults.endsAtMillis)
-        assertEquals(before.histories, after.histories)
+        // User rule 2026-11-01: a user's action, so a unit.
+        assertEquals(before.histories.main.units.size + 1, after.histories.main.units.size)
 
         val alarms = SchedulerReducer.reduce(after, SchedulerIntent.SetNewAlarmDefaults(quietAlarm))
         assertEquals("", alarms.newAlarmDefaults.label)

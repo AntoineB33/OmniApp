@@ -102,6 +102,7 @@ import org.example.project.ui.CustomMenuButtons
 import org.example.project.ui.CustomMenuSection
 import org.example.project.ui.LocalMenuButtonHost
 import org.example.project.ui.MenuButtonHost
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -392,9 +393,18 @@ private class ViewHistoryRecorder {
         }
     }
 
-    fun record(key: String, before: String?, after: String?, label: String, coalesceKey: String? = null) {
+    fun record(
+        key: String,
+        before: String?,
+        after: String?,
+        label: String,
+        coalesceKey: String? = null,
+        /** Where it was made, when that is not the focused window. */
+        madeIn: org.example.project.scheduler.state.HistoryWindow? = null,
+    ) {
         if (!enabled || applyingDepth > 0 || before == after) return
-        dispatch(SchedulerIntent.RecordExternal(key, before, after, label, coalesceKey))
+        val intent = SchedulerIntent.RecordExternal(key, before, after, label, coalesceKey)
+        dispatch(if (madeIn != null) SchedulerIntent.MadeIn(madeIn, "", intent) else intent)
     }
 
     fun onLayout(id: String, previous: WindowPlacement, next: WindowPlacement) {
@@ -420,6 +430,17 @@ private const val TAB_TITLE_FRAMES: Int = 10
  * drop-down inside the app holds the keyboard.
  */
 val LocalAppInFocus = androidx.compose.runtime.compositionLocalOf<Boolean?> { null }
+
+/**
+ * **A key struck while nothing in the app holds the focus** reaches no modifier of the composition (anomaly 2026-11-01),
+ * so the history chords would go nowhere. An entry point whose window sees every key hands them to [onKey] first, and
+ * `App` answers only while nothing inside it would (`docs/PLATFORMS.md`: an injected seam). Null where none is injected.
+ */
+class AppKeyFallback {
+    var onKey: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { false }
+}
+
+val LocalAppKeyFallback = androidx.compose.runtime.compositionLocalOf<AppKeyFallback?> { null }
 
 private enum class FloatingWindow(val title: String) {
     Calendar("Calendar"),
@@ -914,6 +935,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 MENU_KEY + "*", CustomMenuButtons.encodePages(before), CustomMenuButtons.encodePages(next),
                 if (renameOnly) "Rename a menu button" else "Menu buttons",
                 coalesceKey = if (renameOnly) "menu/rename" else null,
+                // The menu is no window: undone from whichever one has the focus (user rule 2026-11-01).
+                madeIn = org.example.project.scheduler.state.HistoryWindow.Menu,
             )
         }
         fun setMenuButtonsOf(menuPage: String, list: List<CustomMenuButton>) {
@@ -923,6 +946,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             setMenuLists(CustomMenuButtons.withGlobalsPropagated(menuListsNow(), menuPage, list), renameOnly)
         }
         fun setMenuButtons(list: List<CustomMenuButton>) = setMenuButtonsOf(page.searchPage, list)
+        // The menu's right-click "Reset": the page it is pressed on. One History Unit, so an undo puts the menu back.
+        fun resetMenuButtons() = setMenuLists(CustomMenuButtons.withPageReset(menuListsNow(), page.searchPage))
 
         // PRD §5 Persistence: flush any pending debounced write when the app/composition is torn down,
         // so a change made within the debounce window survives a normal close.
@@ -1181,6 +1206,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
         // A window renamed from its head (user rule 2026-10-15) keeps the name like a menu button's.
         windowFrames.onTabTitlesChanged = { saveTabTitles() }
+        windowFrames.onRenamed = { id, before, after ->
+            viewHistory.record(org.example.project.scheduler.state.ExternalKeys.WINDOW_TITLE + id, before, after, "Rename window")
+        }
         // The windows' colours (user rule 2026-10-06; [WindowFrameHost.colors]): loaded once, for the windows that
         // come back — so each comes back in its colour — and written whenever a window that opens is given one.
         remember(placementStore) {
@@ -1427,10 +1455,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val calendarConfigs = remember { mutableStateMapOf<String, CalendarNotifications.WindowConfig>() }
         fun calendarConfigOf(id: String): CalendarNotifications.WindowConfig =
             calendarConfigs[id] ?: CalendarNotifications.WindowConfig.decode(placements[id]?.config).also { calendarConfigs[id] = it }
-        fun setCalendarConfig(id: String, config: CalendarNotifications.WindowConfig) {
-            if (config == calendarConfigOf(id)) return
+        fun setCalendarConfig(id: String, config: CalendarNotifications.WindowConfig, record: Boolean = true) {
+            val before = calendarConfigOf(id)
+            if (config == before) return
             calendarConfigs[id] = config
             updatePlacementById(id) { it.copy(config = config.encode().ifEmpty { null }) }
+            if (record) {
+                viewHistory.record(org.example.project.scheduler.state.ExternalKeys.CALENDAR + id, before.encode(), config.encode(), "Calendar window configuration")
+            }
         }
         // The Configuration Search window: open or not, and — per window, by frame id — its OWN configuration
         // (which configurations it lists, and which Search window it edits).
@@ -1444,8 +1476,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 ?: SearchDomain.ConfigurationSearch()).also { configSearches[id] = it }
         fun setConfigSearch(id: String, own: SearchDomain.ConfigurationSearch) {
             if (own == configSearches[id]) return
+            val before = configSearchOf(id)
             configSearches[id] = own
             updatePlacementById(id) { it.copy(config = own.encode()) }
+            // A text field typed into is one unit per run of keystrokes.
+            val typed = before.copy(query = own.query) == own
+            viewHistory.record(
+                org.example.project.scheduler.state.ExternalKeys.CONFIG_SEARCH + id, before.encode(), own.encode(), "Search configurations",
+                coalesceKey = if (typed) org.example.project.scheduler.state.ExternalKeys.CONFIG_SEARCH + id + "/query" else null,
+            )
         }
         // PRD §4 Default sub-tree: whether the floating template window is open (local UI state; the template
         // and the "is it applied" switch are authoritative synced state).
@@ -1624,10 +1663,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 viewHistory.applying {
                     when {
                         // Every page's menu at once (2026-10-18).
-                        restore.key == "$MENU_KEY*" ->
-                            if (CustomMenuButtons.encodePages(menuListsNow()) == restore.from) {
-                                CustomMenuButtons.decodePages(restore.to)?.let { setMenuLists(it) }
-                            }
+                        // Not three-way, unlike the others below: the menu is this device's alone and its units are
+                        // walked in order from every window, so nothing can have come between — while the list can
+                        // differ from the unit by what the app gave it itself (a button's configuration, frozen at the
+                        // next start), and that must not leave an undo doing nothing.
+                        restore.key == "$MENU_KEY*" -> CustomMenuButtons.decodePages(restore.to)?.let { setMenuLists(it) }
                         // A unit of one page's menu, recorded before the menus were one (2026-10-18).
                         restore.key == MENU_KEY || restore.key.startsWith("$MENU_KEY/") -> {
                             val menuPage = restore.key.removePrefix(MENU_KEY).removePrefix("/")
@@ -1635,6 +1675,34 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 setMenuButtonsOf(menuPage, CustomMenuButtons.decode(restore.to, CustomMenuButtons.defaultsOf(menuPage)))
                             }
                         }
+                        restore.key.startsWith(org.example.project.scheduler.state.ExternalKeys.CALENDAR) -> {
+                            val id = restore.key.removePrefix(org.example.project.scheduler.state.ExternalKeys.CALENDAR)
+                            if (calendarConfigOf(id).encode() == restore.from) {
+                                setCalendarConfig(id, CalendarNotifications.WindowConfig.decode(restore.to), record = false)
+                            }
+                        }
+                        restore.key.startsWith(org.example.project.scheduler.state.ExternalKeys.CONFIG_SEARCH) -> {
+                            val id = restore.key.removePrefix(org.example.project.scheduler.state.ExternalKeys.CONFIG_SEARCH)
+                            if (configSearchOf(id).encode() == restore.from) {
+                                SearchDomain.ConfigurationSearch.decode(restore.to)?.let { setConfigSearch(id, it) }
+                            }
+                        }
+                        restore.key.startsWith(org.example.project.scheduler.state.ExternalKeys.WINDOW_TITLE) -> {
+                            val id = restore.key.removePrefix(org.example.project.scheduler.state.ExternalKeys.WINDOW_TITLE)
+                            if (windowFrames.tabTitles[id] == restore.from) {
+                                val to = restore.to
+                                if (to == null) windowFrames.tabTitles.remove(id) else windowFrames.tabTitles[id] = to
+                                saveTabTitles()
+                            }
+                        }
+                        restore.key == org.example.project.scheduler.state.ExternalKeys.GLOBAL_WINDOWS ->
+                            if (CustomMenuButtons.encodeGlobalWindows(globalWindows.toList()) == restore.from) {
+                                globalWindows.clear()
+                                globalWindows.addAll(CustomMenuButtons.decodeGlobalWindows(restore.to))
+                                updatePlacementById(CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID) {
+                                    it.copy(config = CustomMenuButtons.encodeGlobalWindows(globalWindows.toList()))
+                                }
+                            }
                         restore.key.startsWith(SEARCH_KEY) -> {
                             val id = restore.key.removePrefix(SEARCH_KEY)
                             if (searchConfigOf(id).encode() == restore.from) {
@@ -1742,12 +1810,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             windowFrames.present(id)
         }
         // User rule 2026-10-18: windows set global — on every page — or their page's own again; written down at once.
-        fun setWindowsGlobal(ids: List<String>, on: Boolean) {
+        fun setWindowsGlobal(ids: List<String>, on: Boolean, record: Boolean = false) {
             val before = globalWindows.toList()
             for (id in ids) if (on) { if (id !in globalWindows) globalWindows += id } else globalWindows.remove(id)
             if (globalWindows.toList() != before) {
                 updatePlacementById(CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID) {
                     it.copy(config = CustomMenuButtons.encodeGlobalWindows(globalWindows.toList()))
+                }
+                if (record) {
+                    viewHistory.record(
+                        org.example.project.scheduler.state.ExternalKeys.GLOBAL_WINDOWS,
+                        CustomMenuButtons.encodeGlobalWindows(before), CustomMenuButtons.encodeGlobalWindows(globalWindows.toList()),
+                        if (on) "Set windows global" else "Set windows to their page",
+                    )
                 }
             }
         }
@@ -2126,7 +2201,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     setWindowsGlobal(listOfNotNull(standing, calendarId), true)
                     windowFrames.sendToBack(standing)
                     if (calendarId != null) {
-                        setCalendarConfig(calendarId, calendarConfigOf(calendarId).copy(notifications = keys.map { it.substringAfter('/') }))
+                        setCalendarConfig(record = false, id = calendarId, config = calendarConfigOf(calendarId).copy(notifications = keys.map { it.substringAfter('/') }))
                         windowFrames.sendToBack(calendarId)
                     }
                     notificationsCalendarId = calendarId
@@ -3859,11 +3934,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // The period edit window's companions + drawings, for everything that draws a period.
             LocalPeriodKindConfig provides schedulerState.periodKindConfig,
         ) {
+        // Whether anything in the app holds the keyboard: with nothing, a key reaches no modifier here ([AppKeyFallback]).
+        var keyboardHeld by remember { mutableStateOf(false) }
+        LocalAppKeyFallback.current?.onKey = { event ->
+            if (keyboardHeld) false
+            else undoRedoIntentFor(event)?.let { vm.dispatch(it); true } ?: false
+        }
+        // The Sleep / Work press undone or redone: the server hears of it as it heard of the press.
+        LaunchedEffect(schedulerState.sleepingUntilMillis) { vm.sleepModeChanged(schedulerState.sleepingUntilMillis) }
         Box(
             modifier = Modifier
                 .background(MaterialTheme.colorScheme.background)
                 .safeContentPadding()
                 .fillMaxSize()
+                .onFocusChanged { keyboardHeld = it.hasFocus }
                 // The one observer that closes a right-click MENU. It sits above the lateral menu too — a
                 // menu button opens or focuses a window, which is exactly "the user asked for something
                 // else". Windows are not dismissed by it: nothing takes a window away (`PopupWindows.kt`).
@@ -3876,6 +3960,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // the focus undone and redone, in EVERY window — on the PREVIEW pass, so the stroke is the walk's
                 // before a text field or the tree's own Tab can take it ([TabWalk]).
                 .onPreviewKeyEvent { event ->
+                    // User rule 2026-11-01: a change made outside every window is undone from whichever has the focus,
+                    // so its chord is taken before the focused element — a text field would answer with its own undo.
+                    val chord = undoRedoIntentFor(event)
+                    if ((chord == SchedulerIntent.Undo || chord == SchedulerIntent.Redo) &&
+                        SchedulerReducer.nextChangeIsAppWide(vm.state.value, undo = chord == SchedulerIntent.Undo)
+                    ) {
+                        vm.dispatch(chord)
+                        return@onPreviewKeyEvent true
+                    }
                     val move =
                         org.example.project.ui.TabWalk.moveFor(
                             event.key, event.type == KeyEventType.KeyDown, event.isCtrlPressed || event.isMetaPressed,
@@ -3904,6 +3997,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             Row(modifier = Modifier.fillMaxSize()) {
                 // User rule 2026-10-08: the whole menu under the page button is the user's list — windows' buttons and
                 // controls of the app ([MenuControl]), drawn by the one code each has ([MenuControlItem]).
+                // The menu is no window: what its controls change is undone from whichever one has the focus.
+                fun inMenu(intent: SchedulerIntent): SchedulerIntent =
+                    SchedulerIntent.MadeIn(org.example.project.scheduler.state.HistoryWindow.Menu, "", intent)
                 val menuControlHost =
                     org.example.project.ui.MenuControlHost(
                         state = schedulerState,
@@ -3911,35 +4007,36 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         away = userAway,
                         onlineStatus = if (vm.syncState == null) null else syncStatusLabel(syncStateValue, accountValue),
                         displayMode = calendarDisplayMode,
-                        onSetVoice = { vm.dispatch(SchedulerIntent.SetNotificationVoice(it)) },
+                        onSetVoice = { vm.dispatch(inMenu(SchedulerIntent.SetNotificationVoice(it))) },
                         // PRD §11: the Notifications switch. Driven through the ENGINE, not straight to the reducer,
                         // because switching off also withdraws the notifications the OS is already showing — see
                         // [SchedulerEngine.setNotificationsEnabled].
-                        onSetNotifications = { engine.setNotificationsEnabled(it) },
-                        onSetSoundMuted = { vm.dispatch(SchedulerIntent.SetSoundMuted(it)) },
+                        onSetNotifications = { engine.setNotificationsEnabled(it, madeIn = org.example.project.scheduler.state.HistoryWindow.Menu) },
+                        onSetSoundMuted = { vm.dispatch(inMenu(SchedulerIntent.SetSoundMuted(it))) },
                         onLookAwayNow = { engine.restartLookAway() },
                         onSwitchTask = { engine.forceTaskSwitch() },
                         onToggleSleepWork = {
                             if (schedulerState.isSleeping(clock.nowMillis())) {
-                                vm.setSleepMode(null)
+                                vm.setSleepMode(null, byUser = true)
                             } else {
                                 vm.setSleepMode(
                                     SchedulerDomain.nextWakeInstantMillis(schedulerState.sleep, clock.nowMillis(), tz),
+                                    byUser = true,
                                 )
                             }
                         },
                         onToggleAway = { engine.setUserAway(!userAway) },
                         onOpenOnline = { openNewWindow(FloatingWindow.Online) },
-                        onSetAutoSchedule = { vm.dispatch(SchedulerIntent.SetAutomaticSchedule(it)) },
-                        onSetReminders = { vm.dispatch(SchedulerIntent.SetShowReminders(it)) },
-                        onSetScreenBreaks = { vm.dispatch(SchedulerIntent.SetShowScreenBreaks(it)) },
+                        onSetAutoSchedule = { vm.dispatch(inMenu(SchedulerIntent.SetAutomaticSchedule(it))) },
+                        onSetReminders = { vm.dispatch(inMenu(SchedulerIntent.SetShowReminders(it))) },
+                        onSetScreenBreaks = { vm.dispatch(inMenu(SchedulerIntent.SetShowScreenBreaks(it))) },
                         onSetDisplayMode = {
-                            vm.dispatch(SchedulerIntent.SetCalendarDayMode(it == org.example.project.ui.CalendarDisplayMode.Day))
+                            vm.dispatch(inMenu(SchedulerIntent.SetCalendarDayMode(it == org.example.project.ui.CalendarDisplayMode.Day)))
                         },
-                        onSetPlanTimeLimit = { vm.dispatch(SchedulerIntent.SetPlanCalculationLimit(it)) },
-                        onSetMinimumTimeWeight = { vm.dispatch(SchedulerIntent.SetMinimumTimeWeight(it)) },
-                        onSetSleepSchedule = { vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong())) },
-                        onSetSoundVolume = { vm.dispatch(SchedulerIntent.SetSoundVolume(it)) },
+                        onSetPlanTimeLimit = { vm.dispatch(inMenu(SchedulerIntent.SetPlanCalculationLimit(it))) },
+                        onSetMinimumTimeWeight = { vm.dispatch(inMenu(SchedulerIntent.SetMinimumTimeWeight(it))) },
+                        onSetSleepSchedule = { vm.dispatch(inMenu(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong()))) },
+                        onSetSoundVolume = { vm.dispatch(inMenu(SchedulerIntent.SetSoundVolume(it))) },
                         claudeLogs = claudeLogs,
                         onSetClaudeLogsDirectory = { setClaudeLogsDirectory(it) },
                         onRefreshClaudeLogs = { refreshClaudeLogs() },
@@ -3958,6 +4055,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     scrollState = menuScroll,
                     customizing = menuCustomizer.active,
                     onCustomize = { menuCustomizer.active = it },
+                    onReset = { resetMenuButtons() },
                     items = {
                         CustomMenuSection(
                             buttons = menuButtons.filter(::menuButtonShown),
@@ -3987,6 +4085,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             customizing = menuCustomizer.active,
                             onCustomize = { menuCustomizer.active = it },
+                            onReset = { resetMenuButtons() },
                             controlContent = { control, title -> org.example.project.ui.MenuControlItem(control, title, menuControlHost) },
                             onMove = { id, beforeId -> setMenuButtons(CustomMenuButtons.moved(menuButtons, id, beforeId)) },
                             actionContent = { button ->
@@ -5582,7 +5681,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // window or the task tree (a per-object window is drawn on its own page only).
                 isGlobal = { it in globalWindows },
                 canBeGlobal = { lateralWindowOf(it) != null },
-                onSetGlobal = { ids, on -> setWindowsGlobal(ids, on) },
+                onSetGlobal = { ids, on -> setWindowsGlobal(ids, on, record = true) },
                 // Reset is the DEFAULT layout (user rule 2026-10-01): every window closed, then the calendar alone,
                 // open and maximized. The task tree's placement goes back to a first run's too (centred, default
                 // size, maximized), for when it is next opened.

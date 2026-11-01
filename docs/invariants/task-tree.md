@@ -257,7 +257,7 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   (`FULL_SUBTREE_DEPTH`) **plus the §4 deletion** of the same cells (one history unit, "Cut" — which is what
   frees the ids a later Ctrl+V restores). Do not re-point Ctrl+X at the account depth: a number set for one deep
   copy would then silently truncate every later cut.
-- **The account's `deepCopyMaxDepth`** (default/reset 20, persisted + synced, not an Undo/Redo unit) is the
+- **The account's `deepCopyMaxDepth`** (default/reset 20, persisted + synced, one History Unit) is the
   **deep-copy window's** number — the window opens on it and writes it back when it copies.
 - **What a copy carries is the account's too** — `CopyOptions`: `copyIncludeIds`, `copyPriorityTables`,
   `copyIncludeText` (all default on, persisted + synced, not Undo/Redo units), the deep-copy window's three
@@ -1149,7 +1149,7 @@ suggestions before it was ever entered.
   — "Sound setting" is the first — added and opened like any element (its row opens the Search window holding it
   alone), and its controls are ACTIONS on the added elements: "Global volume" (`AddedAction.SoundVolume`) is a slider
   over `SchedulerState.soundVolume`, enabled while the sound setting is added, written on release
-  (`SchedulerIntent.SetSoundVolume` — a setting: persisted, synced, not an Undo/Redo unit). The engine mirrors it to
+  (`SchedulerIntent.SetSoundVolume` — a setting: persisted, synced, one History Unit per drag). The engine mirrors it to
   `platform/AppVolume`, which the players read: the desktop voice and ring scale their own 16-bit samples
   (`scaledPcm16Le`, never the shared tone cycle), the phone sets the track's and the synthesizer's volume. A new
   setting is one more `AppSettingEntry` and its actions — never a window of its own.

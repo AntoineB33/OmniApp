@@ -80,12 +80,13 @@ class PriorityWeightPinTest {
     }
 
     @Test
-    fun pinning_is_not_an_undo_unit() {
+    fun pinning_is_one_undo_unit() {
         val f = fixture()
         val units = f.state.histories.forCategory(HistoryCategory.Main).units.size
         val s = toggle(f.state, f.bookList, f.chapterCell, column = 0)
-        // A pin moves no priority, exactly like the relative-priority window's own pins.
-        assertEquals(units, s.histories.forCategory(HistoryCategory.Main).units.size)
+        // User rule 2026-11-01: a user's action, so a unit, exactly like the relative-priority window's own pins.
+        assertEquals(units + 1, s.histories.forCategory(HistoryCategory.Main).units.size)
+        assertEquals(f.state.priorityWeightPins, SchedulerReducer.reduce(s, SchedulerIntent.Undo).priorityWeightPins)
     }
 
     // ----- the anomaly this exists for: the pin outlives the window --------------------------------
@@ -121,7 +122,8 @@ class PriorityWeightPinTest {
         val f = fixture()
         val one = toggle(toggle(f.state, f.bookList, f.chapterCell, 0), f.bookList, f.otherCell, 0)
         val other = toggle(toggle(f.state, f.bookList, f.otherCell, 0), f.bookList, f.chapterCell, 0)
-        assertEquals(SchedulerStateCodec.syncFingerprint(one), SchedulerStateCodec.syncFingerprint(other))
+        // The state's, not the history's: two orders are two histories.
+        assertEquals(SchedulerStateCodec.syncFingerprint(one).statePayload, SchedulerStateCodec.syncFingerprint(other).statePayload)
     }
 
     // ----- a pin follows its column ---------------------------------------------------------------

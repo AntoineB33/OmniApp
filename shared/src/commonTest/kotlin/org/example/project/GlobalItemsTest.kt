@@ -24,6 +24,42 @@ class GlobalItemsTest {
     private fun ids(lists: Map<String, List<CustomMenuButton>>, page: String) = lists.getValue(page).map { it.id }
 
     @Test
+    fun reset_puts_the_page_back_to_its_defaults_and_takes_nothing_from_another_page() {
+        val search = CustomMenuButtons.GLOBAL_SEARCH
+        val mute = CustomMenuButtons.GLOBAL_MUTE
+        val own = item("own")
+        val lists =
+            mapOf(
+                // The scheduler's menu reordered, its Search button renamed, an item of its own added, and two global
+                // items: one made global from the logs page, one from the scheduler's.
+                "" to listOf(own, mute, search.copy(title = "Find"), item("logs-item", true).copy(homePage = claude), item("mine", true).copy(homePage = "")),
+                claude to listOf(item("logs-own"), mute, search.copy(title = "Find"), item("logs-item", true).copy(homePage = claude), item("mine", true).copy(homePage = "")),
+            )
+        val reset = CustomMenuButtons.withPageReset(lists, "")
+        assertEquals(CustomMenuButtons.DEFAULTS, reset.getValue(""))
+        // The logs page keeps its own items; the item made global there is its own again; the one made global on the
+        // reset page leaves with it; the default global items are the same item everywhere.
+        assertEquals(listOf("logs-own", "g-search", "g-mute", "logs-item"), ids(reset, claude))
+        assertEquals("Search", reset.getValue(claude)[1].title)
+        val logsItem = reset.getValue(claude).last()
+        assertFalse(logsItem.global)
+        assertEquals(null, logsItem.homePage)
+    }
+
+    @Test
+    fun reset_gives_every_page_a_default_global_item_it_lost_once_and_no_page_twice() {
+        val logs = CustomMenuButtons.CLAUDE_LOGS_DEFAULTS
+        // Emptied here; the logs page holds the Search button as its own (un-set there), and has lost the mute switch.
+        val lists = mapOf("" to emptyList(), claude to listOf(item("x"), CustomMenuButtons.GLOBAL_SEARCH.copy(global = false)))
+        val reset = CustomMenuButtons.withPageReset(lists, "")
+        assertEquals(CustomMenuButtons.DEFAULTS, reset.getValue(""))
+        assertEquals(listOf("x", "g-search", "g-mute"), ids(reset, claude))
+        assertTrue(reset.getValue(claude).drop(1).all { it.global })
+        // And the logs page's own defaults, reset from there.
+        assertEquals(logs, CustomMenuButtons.withPageReset(reset, claude).getValue(claude))
+    }
+
+    @Test
     fun an_item_made_global_stands_on_every_page_under_an_id_of_its_own() {
         // Each page mints its own ids: the two "b1" are two different items.
         val lists = mapOf("" to listOf(item("b1"), item("b2")), claude to listOf(item("b1")))

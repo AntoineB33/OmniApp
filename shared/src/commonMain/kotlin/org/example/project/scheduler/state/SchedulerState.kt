@@ -176,6 +176,12 @@ enum class HistoryWindow(val label: String) {
     HistoryEntryInfo("History entry"),
     TaskTreeDetail("Task tree details"),
     Notice("Notice"),
+
+    /**
+     * The left-side menu, which is no window and never holds the focus. What is done there is stamped so
+     * ([SchedulerIntent.MadeIn]) and undone from WHICHEVER window has the focus (user rule 2026-11-01).
+     */
+    Menu("Left-side menu"),
 }
 
 /**
@@ -546,6 +552,20 @@ sealed interface Delta {
     val coalesceKey: String? get() = null
 
     /**
+     * Whether the APP authored this change, not the user (the work the line banks as it advances). Such a unit stays
+     * in the history, to be seen and for the debug rollback, but no chord walks it and it discards no redo:
+     * `docs/invariants/persistence.md` § *One history, per-device undo*.
+     */
+    val authoredByApp: Boolean get() = false
+
+    /**
+     * Whether this change touched local-only view state alone (`persistence.md` § *State: authoritative, derived,
+     * local-only*). The unit is a unit like any, and rides the next push, but it is no reason for one: it is out of the
+     * sync fingerprint ([SchedulerState.withLocalViewStateNeutralized]).
+     */
+    val localOnly: Boolean get() = false
+
+    /**
      * Merge this unit onto [previous] — the unit currently at the category's pointer — returning the single
      * unit the two together are, or `null` when they must stay two (a different delta kind, or a different
      * [coalesceKey]). Only ever asked when this unit's [coalesceKey] is non-null.
@@ -564,6 +584,14 @@ sealed interface Delta {
      * commit applies onto the very state the change was computed from, so it sets its values exactly.
      */
     fun commit(state: SchedulerState): SchedulerState = redo(state)
+}
+
+/** These histories without the units of local-only view state ([Delta.localOnly]): the same object when there are none. */
+internal fun SchedulerHistories.withoutLocalOnlyUnits(): SchedulerHistories {
+    val units = main.units
+    if (units.none { it.delta.localOnly }) return this
+    val kept = units.filterNot { it.delta.localOnly }
+    return withCategory(HistoryCategory.Main, SchedulerHistory(pointer = kept.indexOfLast { !it.undone }, units = kept))
 }
 
 /** Tree + title index fields affected by structural / edit mutations. */
@@ -1327,7 +1355,8 @@ data class SchedulerState(
             recordRewrites = 0,
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, SchedulerHistory())
-                .withCategory(HistoryCategory.Selection, SchedulerHistory()),
+                .withCategory(HistoryCategory.Selection, SchedulerHistory())
+                .withoutLocalOnlyUnits(),
         )
 
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots

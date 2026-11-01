@@ -206,7 +206,7 @@ class QuotaTest {
         val chrono = SearchDomain.ItemResult(SearchDomain.Kind.Creation, SearchDomain.Kind.Chrono.name, "New chrono", "")
         assertEquals(SearchDomain.Kind.Creation, SearchDomain.actionKindOf(chrono))
 
-        // The setting itself: settings only, no identity, no particular loop; not an Undo/Redo unit.
+        // The setting itself: settings only, no identity, no particular loop; one Undo/Redo unit.
         var s = SchedulerState.empty()
         val before = s.histories
         s = SchedulerReducer.reduce(
@@ -216,7 +216,7 @@ class QuotaTest {
         assertEquals("", s.newQuotaDefaults.id)
         assertEquals(emptyList(), s.newQuotaDefaults.loops)
         assertEquals(40.0, s.newQuotaDefaults.amount)
-        assertEquals(before, s.histories, "a default configuration is a setting, not a history unit")
+        assertEquals(before.main.units.size + 1, s.histories.main.units.size, "a default configuration is one history unit")
     }
 
     @Test
