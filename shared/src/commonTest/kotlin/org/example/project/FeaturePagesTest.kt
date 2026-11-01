@@ -72,7 +72,7 @@ class FeaturePagesTest {
     @Test
     fun the_settings_page_opens_on_the_settings_with_its_own_menu() {
         val config = SearchDomain.pageDefaultConfig(SearchDomain.SETTINGS_PAGE)
-        assertEquals(setOf(Kind.AppSetting), config.kinds)
+        assertEquals(setOf(Kind.AppSetting, Kind.WorkplaceSetup), config.kinds)
         assertEquals(SearchDomain.SETTINGS_PAGE, config.page)
         assertEquals(config, SearchDomain.Config.decode(config.encode()))
         val menu = CustomMenuButtons.defaultsOf(SearchDomain.SETTINGS_PAGE)

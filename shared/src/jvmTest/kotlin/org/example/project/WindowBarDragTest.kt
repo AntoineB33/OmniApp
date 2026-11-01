@@ -127,7 +127,7 @@ class WindowBarDragTest {
         host.focus("C")
         host.walkTabsInBarOrder(+1)
         assertEquals("A", host.focusedId)
-        host.forgetTabPlace("A")
+        host.windowClosed("A")
         assertEquals(listOf("C", "B"), host.tabOrder)
     }
 }

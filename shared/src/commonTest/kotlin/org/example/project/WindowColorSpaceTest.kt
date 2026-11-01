@@ -101,7 +101,7 @@ class WindowColorSpaceTest {
         // Nothing that happens afterwards moves a colour: more windows, a re-registration, a close beside it.
         open(host, "Search#3")
         open(host, "Search#2")
-        host.unregister("Search")
+        host.windowClosed("Search")
         assertEquals(copy, host.colors["Search#2"])
         assertNull(host.colors["Search"], "closed: the colour goes with it")
         assertEquals(4, written)

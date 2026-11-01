@@ -156,6 +156,7 @@ object SnapshotMerge {
                 chores = chores,
                 alarms = alarms,
                 timers = timers.map(org.example.project.scheduler.domain.TimerDomain::healed),
+                workplaceSetups = mergeKeyedList(base.workplaceSetups, local.workplaceSetups, remote.workplaceSetups, { it.id }) { b, l, r -> pick(b, l, r) },
                 chronos = chronos.map(org.example.project.scheduler.domain.ChronoDomain::healed),
                 quotas = quotas.map(org.example.project.scheduler.domain.QuotaDomain::healed),
                 automaticSchedule = pick(base.automaticSchedule, local.automaticSchedule, remote.automaticSchedule),

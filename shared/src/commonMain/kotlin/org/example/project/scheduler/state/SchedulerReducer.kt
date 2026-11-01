@@ -627,6 +627,9 @@ object SchedulerReducer {
                 TimerDomain.rang(it, intent.nowMillis)
             }
             is SchedulerIntent.SetChronos -> reduceSetChronos(state, intent.entries, intent.editKey)
+            is SchedulerIntent.SetWorkplaceSetups ->
+                if (state.workplaceSetups == intent.entries) state
+                else commitDelta(state, WorkplaceSetupsDelta(state.workplaceSetups, intent.entries, intent.editKey))
             is SchedulerIntent.SetQuotas -> {
                 val withIds =
                     org.example.project.scheduler.domain.QuotaDomain.assignQuotaIds(intent.entries)
@@ -7550,6 +7553,37 @@ internal data class QuotasDelta(
 
     override fun commit(state: SchedulerState): SchedulerState =
         state.copy(quotas = changes.applyToList(state.quotas, forward = true, exact = true) { it.id })
+}
+
+/** User rule 2026-11-01: a change to the account's **workplace setups**: [ChronosDelta]'s rule, the rows whole. */
+internal data class WorkplaceSetupsDelta(
+    val changes: EntryChanges<String, org.example.project.scheduler.domain.WorkplaceSetup>,
+    override val coalesceKey: String? = null,
+) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.domain.WorkplaceSetup>,
+        after: List<org.example.project.scheduler.domain.WorkplaceSetup>,
+        coalesceKey: String? = null,
+    ) : this(EntryChanges.ofList(before, after) { it.id }, coalesceKey)
+
+    override val label: String
+        get() = listLabel(changes.before.keys.toList(), changes.after.keys.toList(), "workplace setup")
+
+    override val details: List<String>
+        get() = changes.touched.map { id -> "workplace setup: " + (changes.after[id] ?: changes.before[id])?.title.orEmpty().ifBlank { id } }
+
+    override fun coalesceOnto(previous: Delta): Delta? =
+        if (previous is WorkplaceSetupsDelta && previous.coalesceKey == coalesceKey) copy(changes = previous.changes.then(changes))
+        else null
+
+    override fun undo(state: SchedulerState): SchedulerState =
+        state.copy(workplaceSetups = changes.applyToList(state.workplaceSetups, forward = false) { it.id })
+
+    override fun redo(state: SchedulerState): SchedulerState =
+        state.copy(workplaceSetups = changes.applyToList(state.workplaceSetups, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(workplaceSetups = changes.applyToList(state.workplaceSetups, forward = true, exact = true) { it.id })
 }
 
 /**

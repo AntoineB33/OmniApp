@@ -618,7 +618,7 @@ suggestions before it was ever entered.
 - **The Search window's actions**: on a task, *Set of tasks* edits the set (`SetTaskFulfilment`; a target is added
   at 100% with a `NamingCell` and its percentage edited on its line) and *Fulfilled by* lists the tasks whose set
   holds it, each opening its own Search window. **Creating a task** from the Search window makes a task with no path
-  (`CreatePathlessTask`) and opens a new Search window with it as the only added element.
+  (`CreatePathlessTask`) and adds it to that window (below, "New").
 - **The decode heals** a set: blank ids, the task itself, and percentages ≤ 0 or NaN are dropped, the rest clamped to
   100%.
 
@@ -826,8 +826,10 @@ suggestions before it was ever entered.
 
 - **"New" and "Duplicate" are actions of every kind a user makes** (user rule 2026-10-01; task, category, period,
   alarm, timer, chrono, quota, reminder): "New" makes one through `App.createElement` (the "creation" row's path)
-  and **opens it in a NEW Search window as its only added element** — every kind, never joining the asking window's
-  list (user rule 2026-10-04; it joined it until then, a task excepted) — and "Duplicate" copies every added one of the kind, its title + `" copy"`
+  and **adds it to the asking window's list** — every kind (user rule 2026-11-01, undoing the 2026-10-04 one that opened
+  a new window) — with only the macro groups holding it open and the section started at the first of them
+  (`SearchDomain.withOnlyGroupsOf`, `App.showCreated`); the left-side menu's New, which asks from no window, opens a
+  Search window on it — and "Duplicate" copies every added one of the kind, its title + `" copy"`
   (`SearchDomain.duplicateIntents`: `DuplicateTasks` — one unit, the copy in the original's list with its settings, not
   its sub-tree —, `DuplicateCategory` / `DuplicatePeriodKind` — `" copy 2"`, … where the name is taken, since those
   names are unique; a period's copy keeps every task's resilience as it stood to the original —, and one more row of

@@ -792,8 +792,6 @@ class WindowFrameHost {
         recent.remove(id)
         stack.remove(id)
         if (focusedId == id) focusedId = null
-        tabTitles.remove(id)
-        colors.remove(id)
         selectedTabs = selectedTabs - id
         if (tabAnchor == id) tabAnchor = null
         closing -= id
@@ -862,9 +860,16 @@ class WindowFrameHost {
         onTabOrderChanged?.invoke(before, after)
     }
 
-    /** The window [id] closed: its frame id may be another window's tomorrow, which must not stand in its place. */
-    fun forgetTabPlace(id: String) {
+    /**
+     * The window [id] closed: its frame id may be another window's tomorrow, which must not stand in its place, nor wear its
+     * name or its colour. **Here and not in [unregister]** (anomaly 2026-11-01: *"I opened 'Claude quota', restarted the app,
+     * and its title became 'all quotas'"*): a window also unregisters as a change of page takes it off the screen, and the
+     * next write of the names then left it out of the row for good.
+     */
+    fun windowClosed(id: String) {
         if (id in tabOrder) tabOrder = tabOrder - id
+        tabTitles.remove(id)
+        colors.remove(id)
     }
 
     /** The selected windows, in bar order — what the bar's menu acts on. */

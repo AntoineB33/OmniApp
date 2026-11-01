@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Applying a workplace setup opens only what is missing — 2026-11-02
+
+User rule: applying a setup lists the file explorer tabs already open (`WorkplaceDomain.WINDOWS_11_LISTING`, which opens nothing) and plans from them (`WorkplaceDomain.plan`): nothing for a window one open window holds whole, else the missing tabs in the open window holding the fewest of its paths, the first on a tie, and a new window only where none holds any. Anomaly: a double-click on a Search row could be lost on the press that gives the window back the focus, after a right-click menu or another application; rows now read it off the two presses' own times, kept outside the gesture (cause inferred from the record, not reproduced headlessly). No migration. Client rebuild only.
+
+### A double-click applies a workplace setup — 2026-11-01
+
+User rule: double-clicking a workplace setup, in the results or the added elements, applies it instead of adding it (its creation row still makes one), and the row's "apply" menu entry, Enter and the group's "Open" do the same; one that cannot be applied or fails joins the asking window with the reason shown under Apply. Every press goes through `WorkplaceRuns` (a second press while it runs is ignored), and the desktop runs one script at a time, its timeout now real. No migration. Client rebuild only.
+
+### A new element joins its Search window; a window keeps its name; the sound switches together — 2026-11-01
+
+User rules: a creation row or an action's "New" pressed in a Search window now adds the new element to that window's list, retracts every macro group of actions but those holding it, and starts the section at the first (`SearchDomain.withOnlyGroupsOf`); the left-side menu's New, which has no list, still opens a Search window. Anomaly: a window's tab name and colour were dropped as a change of page took it off the screen, and the next write lost them for good ("Claude quota" became "all quotas"): they now go at its close (`WindowFrameHost.windowClosed`), and a button gives its name back to a nameless window. Mute, Voice and Notifications stand together in the scheduler's menu, once in a stored one (`Stored.soundsTogether`). No migration. Client rebuild only.
+
+### Workplace setups — 2026-11-01
+
+User rule: a new element of the Search window, checked by default on the Settings page, with a title, an OS, its windows and an Apply button: file explorer windows with a tab on each path, on Windows 11. New, Duplicate, Delete and undo as for a chrono; synced as generic rows, with no migration. Windows has no command for an explorer tab, so Apply opens the window and types each tab into it, checking before every keystroke that the window is still in front (`WorkplaceDomain.windows11Script`). Client rebuild only.
+
 ### The window bar's tabs can be dragged — 2026-11-01
 
 User rule: a tab dragged with the mouse reorganizes the bar, and a tab linked to others takes its whole group with it. Kept on the `TabOrder` row, local-only; one History Unit, undone from any window. Ctrl+Tab now walks the order drawn rather than the order of opening, which it read until now. No migration. Client rebuild only.

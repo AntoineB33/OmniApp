@@ -888,6 +888,9 @@ data class SchedulerState(
      * the now-line, so a running chrono writes nothing. Empty by default.
      */
     val chronos: List<org.example.project.scheduler.model.ChronoEntry> = emptyList(),
+
+    /** User rule 2026-11-01: the account's workplace setups: windows to open at one press, persisted and synced like [chronos]. */
+    val workplaceSetups: List<org.example.project.scheduler.domain.WorkplaceSetup> = emptyList(),
     /**
      * User rule 2026-10-03: the account's **quotas** ([org.example.project.scheduler.model.QuotaEntry]). Authoritative,
      * persisted and synced like [chronos]; a quota's progression is derived and never stored.

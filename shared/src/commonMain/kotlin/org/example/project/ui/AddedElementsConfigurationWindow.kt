@@ -26,6 +26,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -205,14 +207,16 @@ data class AddedActionHandlers(
     val timerRun: @Composable (subjects: Set<AlarmWindowSubject>, compact: Boolean) -> Unit,
     val reminderEditor: @Composable (Set<String>) -> Unit,
     /**
-     * "New": one element of the kind, made the way its "creation" row makes it (`App.createElement`) — and opened in a
-     * NEW Search window as its only added element (user rule 2026-10-04, every kind). It does not join this window's.
+     * "New": one element of the kind, made the way its "creation" row makes it (`App.createElement`). It joins this
+     * window's added elements, its actions shown (user rule 2026-11-01, every kind).
      */
     val onCreate: (SearchDomain.Kind) -> Unit,
     /** "Duplicate": these intents ([SearchDomain.duplicateIntents]) dispatched; the keys of the kind's elements they made. */
     val onDuplicate: (List<SchedulerIntent>, SearchDomain.Kind) -> List<String>,
     /** "Add to the calendar": these drafts saved as the calendar's element window saves its own. */
     val onPlaceOnCalendar: (List<org.example.project.scheduler.domain.CalendarElements.Draft>) -> Unit,
+    /** The workplace setups being applied: `App`'s, shared with a double-click on their rows. */
+    val workplaceRuns: WorkplaceRuns = WorkplaceRuns(),
     /** "Constrained in": the constraint picker over these reminders (by id) at once; what it saves, all of them get. */
     val onEditReminderConstraint: (List<String>) -> Unit = {},
     /** "Blocks on the calendar": the Search window of these elements' (by key) blocks ([SearchDomain.blocksSearchConfig]). */
@@ -357,7 +361,7 @@ internal fun AddedActionsSection(
             verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
         ) {
             if (sections.isEmpty()) NoteText("No action matches.")
-            AddedActionSections(state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, reveal)
+            AddedActionSections(state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, reveal, scroll)
         }
         ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
         }
@@ -379,6 +383,8 @@ private fun AddedActionSections(
     onOpenEach: (List<SearchDomain.Result>) -> Unit,
     onClear: (List<SearchDomain.Result>) -> Unit,
     reveal: Pair<String, Int>? = null,
+    /** The section's scroll, which [reveal] starts at its group. */
+    scroll: androidx.compose.foundation.ScrollState? = null,
 ) {
     // User rule 2026-10-10: the groups from the widest reach to the narrowest — every element, each kind holding
     // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
@@ -387,7 +393,7 @@ private fun AddedActionSections(
     val listed = SearchDomain.listedGroupIds(groups)
     val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(config, id, listed)) }
     for (group in groups) {
-        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, reveal = reveal?.takeIf { it.first == group.id })
+        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, reveal = reveal?.takeIf { it.first == group.id }, scroll = scroll)
     }
 }
 
@@ -413,19 +419,30 @@ private fun ActionGroupBlock(
     micro: Boolean = false,
     /** Set on the group the section is asked to scroll to ([AddedActionsSection]'s `reveal`). */
     reveal: Pair<String, Int>? = null,
+    /** The section's scroll: a group asked for stands at its top. */
+    scroll: androidx.compose.foundation.ScrollState? = null,
 ) {
     val added = group.members
     val collapsed = group.id in config.collapsedActionGroups
     // User rule 2026-10-13: the added elements' "show only its actions" scrolls the section to this group — once the
     // others are retracted and laid out, the place to scroll to being the one it has THEN.
+    // User rule 2026-11-01: the section STARTS at it; brought into view alone, it could stand at the bottom.
     val requester = remember { BringIntoViewRequester() }
+    var top by remember { mutableStateOf(0f) }
     LaunchedEffect(reveal) {
         if (reveal == null) return@LaunchedEffect
+        // One frame for the others to retract, one for this one's new place to be told.
         withFrameNanos { }
-        requester.bringIntoView()
+        withFrameNanos { }
+        if (scroll != null) scroll.scrollTo(kotlin.math.round(top).toInt()) else requester.bringIntoView()
     }
     // One box per group, spaced as the section spaces its rows: what the scroll brings into view is the whole group.
-    Column(Modifier.fillMaxWidth().bringIntoViewRequester(requester), verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .onPlaced { top = it.positionInParent().y }
+            .bringIntoViewRequester(requester),
+        verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
     // A group inside a group of elements is titled as a micro group is: set as far right ([MICRO_TITLE_INDENT]).
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -794,7 +811,8 @@ private fun AddedActionEditor(
                 run(SearchDomain.AddedCommand.RemindersTimeNow)
             }
         SearchDomain.AddedAction.AlarmTitle, SearchDomain.AddedAction.TimerTitle,
-        SearchDomain.AddedAction.ChronoTitle, SearchDomain.AddedAction.ReminderTitle, SearchDomain.AddedAction.QuotaTitle ->
+        SearchDomain.AddedAction.ChronoTitle, SearchDomain.AddedAction.ReminderTitle, SearchDomain.AddedAction.QuotaTitle,
+        SearchDomain.AddedAction.WorkplaceTitle ->
             SharedTitleField(state, added, SearchDomain.TITLED_KINDS.getValue(action), run)
         // The sound setting's control: the app's global volume. Written on release, so a drag is one write.
         // User rule 2026-10-08: the voice's and the notifications' switches, the lateral menu's own by default — here
@@ -853,7 +871,8 @@ private fun AddedActionEditor(
         // --- A new element of the kind (in a Search window of its own), and a copy of each added one (joining these) ---
         SearchDomain.AddedAction.TaskNew, SearchDomain.AddedAction.CategoryNew, SearchDomain.AddedAction.PeriodNew,
         SearchDomain.AddedAction.AlarmNew, SearchDomain.AddedAction.TimerNew, SearchDomain.AddedAction.ChronoNew,
-        SearchDomain.AddedAction.ReminderNew, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.ShortcutNew -> {
+        SearchDomain.AddedAction.ReminderNew, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.ShortcutNew,
+        SearchDomain.AddedAction.WorkplaceNew -> {
             val kind = action.section ?: return
             // Made from the element whose group this is, when the group is one element's.
             FrameButton("New " + kind.label) { handlers.onCreateFrom(kind, added.singleOrNull { it.kind == kind }) }
@@ -861,7 +880,8 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.TaskDuplicate, SearchDomain.AddedAction.CategoryDuplicate,
         SearchDomain.AddedAction.PeriodDuplicate, SearchDomain.AddedAction.AlarmDuplicate,
         SearchDomain.AddedAction.TimerDuplicate, SearchDomain.AddedAction.ChronoDuplicate,
-        SearchDomain.AddedAction.ReminderDuplicate, SearchDomain.AddedAction.QuotaDuplicate -> {
+        SearchDomain.AddedAction.ReminderDuplicate, SearchDomain.AddedAction.QuotaDuplicate,
+        SearchDomain.AddedAction.WorkplaceDuplicate -> {
             val kind = action.section ?: return
             val count = added.count { it.kind == kind }
             FrameButton(if (count == 1) "Duplicate" else "Duplicate $count", enabled = count > 0) {
@@ -910,6 +930,21 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.AnswerPrompt, SearchDomain.AddedAction.AnswerSession, SearchDomain.AddedAction.ReasoningText,
         SearchDomain.AddedAction.ReasoningPrompt, SearchDomain.AddedAction.ReasoningSession ->
             ClaudeEntryAction(action, added, handlers.claudeLogs())
+        SearchDomain.AddedAction.WorkplaceOsChoice -> {
+            val setups = SearchDomain.addedWorkplaceSetups(state, added)
+            val common = setups.map { it.os }.distinct().singleOrNull()
+            ChoiceDropDown(
+                options = org.example.project.scheduler.domain.WorkplaceOs.entries,
+                selected = common,
+                label = { it.label },
+                onSelect = { os ->
+                    val ids = setups.mapTo(HashSet()) { it.id }
+                    run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetWorkplaceSetups(state.workplaceSetups.map { if (it.id in ids) it.copy(os = os) else it })))
+                },
+            )
+        }
+        SearchDomain.AddedAction.WorkplaceWindows -> WorkplaceWindowsEditor(state, added, run)
+        SearchDomain.AddedAction.WorkplaceApply -> WorkplaceApplyButton(SearchDomain.addedWorkplaceSetups(state, added), handlers.workplaceRuns)
         SearchDomain.AddedAction.ClaudeSoundsVolume ->
             ClaudeSoundsVolumeSlider(
                 handlers.claudeSoundsVolume(), handlers.onSetClaudeSoundsVolume, action.label,
@@ -1105,7 +1140,7 @@ private fun AddedActionEditor(
         }
         // The bin, over every added element of the kind; what it deleted leaves the added list too.
         SearchDomain.AddedAction.AlarmDelete, SearchDomain.AddedAction.TimerDelete, SearchDomain.AddedAction.ChronoDelete,
-        SearchDomain.AddedAction.QuotaDelete,
+        SearchDomain.AddedAction.QuotaDelete, SearchDomain.AddedAction.WorkplaceDelete,
         SearchDomain.AddedAction.ReminderDelete, SearchDomain.AddedAction.CategoryDelete -> {
             val kind = action.section ?: return
             val keys = added.filter { it.kind == kind }.map(SearchDomain::keyOf)
@@ -2248,6 +2283,79 @@ private fun NewElementTimesEditor(
                 TimeOfDayField(times.fixedMinutes, enabled = true) { minutes -> onChange(times.copy(fixedMinutes = minutes)) }
                 InstantButtons { at -> onChange(times.copy(fixedMinutes = minuteOfDayOf(at))) }
             }
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-01: **the windows of each added workplace setup**: each a file explorer, with a field per tab. Written
+ * as it is typed, one History Unit per field typed into.
+ */
+@Composable
+private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDomain.Result>, run: (SearchDomain.AddedCommand) -> Unit) {
+    val setups = SearchDomain.addedWorkplaceSetups(state, added)
+    fun write(id: String, windows: List<org.example.project.scheduler.domain.WorkplaceWindow>, editKey: String? = null) =
+        run(SearchDomain.AddedCommand.Raw(
+            SchedulerIntent.SetWorkplaceSetups(org.example.project.scheduler.domain.WorkplaceDomain.withWindows(state.workplaceSetups, id, windows), editKey),
+        ))
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (setup in setups) {
+            ElementHeading(setup.title.ifBlank { "Workplace setup" }, setups.size)
+            setup.windows.forEachIndexed { windowAt, window ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("File explorer " + (windowAt + 1), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                        FrameButton("Remove window") { write(setup.id, setup.windows.filterIndexed { i, _ -> i != windowAt }) }
+                    }
+                    window.tabs.forEachIndexed { tabAt, path ->
+                        fun replaced(tabs: List<String>) =
+                            setup.windows.mapIndexed { i, w -> if (i == windowAt) w.copy(tabs = tabs) else w }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            androidx.compose.runtime.key(setup.id, windowAt, tabAt) {
+                                OutlinedTextField(
+                                    value = path,
+                                    onValueChange = { text ->
+                                        write(
+                                            setup.id, replaced(window.tabs.mapIndexed { i, t -> if (i == tabAt) text else t }),
+                                            "workplace/" + setup.id + "/" + windowAt + "/" + tabAt,
+                                        )
+                                    },
+                                    singleLine = true,
+                                    label = { Text("Tab " + (tabAt + 1) + " path") },
+                                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
+                                )
+                            }
+                            FrameButton("✕", enabled = window.tabs.size > 1) { write(setup.id, replaced(window.tabs.filterIndexed { i, _ -> i != tabAt })) }
+                        }
+                    }
+                    FrameButton("+ Tab") {
+                        write(setup.id, setup.windows.mapIndexed { i, w -> if (i == windowAt) w.copy(tabs = w.tabs + "") else w })
+                    }
+                }
+            }
+            FrameButton("+ File explorer window") { write(setup.id, setup.windows + org.example.project.scheduler.domain.WorkplaceWindow()) }
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-01: **the button that applies the added workplace setups**, on the device of their OS. It opens windows
+ * and types into them, a tab at a time, while the keyboard is left alone: what went wrong is said under it.
+ */
+@Composable
+private fun WorkplaceApplyButton(setups: List<org.example.project.scheduler.domain.WorkplaceSetup>, runs: WorkplaceRuns) {
+    val can = setups.filter { runs.canApply(it) }
+    val running = setups.any { runs.isRunning(it.id) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        FrameButton(if (running) "Opening…" else "Apply", enabled = can.isNotEmpty() && !running) {
+            can.forEach { runs.apply(it) }
+        }
+        val error = setups.firstNotNullOfOrNull { runs.errorOf(it.id) }
+        val other = setups.firstOrNull { it.os != runs.here }
+        when {
+            error != null -> NoteText(error, color = MaterialTheme.colorScheme.error)
+            other != null -> NoteText("For " + other.os.label + ": this device applies none of those.")
+            setups.isNotEmpty() && can.isEmpty() -> NoteText("Give it a path first.")
         }
     }
 }

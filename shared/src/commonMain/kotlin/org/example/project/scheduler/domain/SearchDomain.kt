@@ -138,6 +138,9 @@ object SearchDomain {
          */
         AppSetting("app setting"),
 
+        /** User rule 2026-11-01: a workplace setup ([org.example.project.scheduler.domain.WorkplaceSetup]). */
+        WorkplaceSetup("workplace setup"),
+
         /**
          * A window of the app, open or not ([WindowEntry]): what the rows name is not in the account's state but
          * in `App`'s windows, which hands the list in ([results]'s `windows`).
@@ -174,7 +177,7 @@ object SearchDomain {
     val CREATABLE: List<Kind> =
         listOf(
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.TaskTree, Kind.Window, Kind.Shortcut,
+            Kind.TaskTree, Kind.Window, Kind.Shortcut, Kind.WorkplaceSetup,
         )
 
     /**
@@ -190,7 +193,7 @@ object SearchDomain {
     val CLAUDE_KINDS: List<Kind> = listOf(Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning)
 
     /** The kinds of the settings page: the app's settings, whose actions are their controls ([AppSettingEntry]). */
-    val SETTINGS_KINDS: List<Kind> = listOf(Kind.AppSetting)
+    val SETTINGS_KINDS: List<Kind> = listOf(Kind.AppSetting, Kind.WorkplaceSetup)
 
     /**
      * **The feature pages, the one statement of them**: [id] is what a Search window's configuration and the lateral
@@ -201,7 +204,7 @@ object SearchDomain {
 
     val FEATURE_PAGES: List<FeaturePage> by lazy {
         listOf(
-            FeaturePage("", "Task Scheduler", Kind.entries - CLAUDE_KINDS.toSet()),
+            FeaturePage("", "Task Scheduler", Kind.entries - CLAUDE_KINDS.toSet() - Kind.WorkplaceSetup),
             FeaturePage(CLAUDE_LOGS_PAGE, "Claude Code logs", CLAUDE_KINDS),
             FeaturePage(SETTINGS_PAGE, "Settings", SETTINGS_KINDS),
         )
@@ -1355,6 +1358,7 @@ object SearchDomain {
         TaskTreeSort(Kind.TaskTree, "Sort by", sorts = true),
         RelationSort(Kind.TaskRelation, "Sort by", sorts = true),
         ShortcutSort(Kind.Shortcut, "Sort by", sorts = true),
+        WorkplaceSetupSort(Kind.WorkplaceSetup, "Sort by", sorts = true),
         AppSettingSort(Kind.AppSetting, "Sort by", sorts = true),
         WindowSort(Kind.Window, "Sort by", sorts = true),
         CreationSort(Kind.Creation, "Sort by", sorts = true),
@@ -2182,6 +2186,9 @@ object SearchDomain {
                             }
                     ItemResult(kind, timer.id, timer.label.ifBlank { "Timer" }, detail)
                 }
+                Kind.WorkplaceSetup -> state.workplaceSetups.map { setup ->
+                    ItemResult(kind, setup.id, setup.title.ifBlank { "Workplace setup" }, WorkplaceDomain.detail(setup))
+                }
                 Kind.Chrono -> state.chronos.map { chrono ->
                     val detail = when {
                         chrono.running -> "running"
@@ -2567,7 +2574,7 @@ object SearchDomain {
                         ))
             }
             is ItemResult -> when (result.kind) {
-                Kind.Task -> true
+                Kind.Task, Kind.WorkplaceSetup -> true
                 Kind.Category ->
                     tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
                 Kind.RestrictivePeriod -> when (filters.periodOrigin) {
@@ -2759,11 +2766,10 @@ object SearchDomain {
 
     private fun creationDetail(kind: Kind): String =
         when (kind) {
-            Kind.Task -> "at the top of the tree, in its edit window"
             Kind.Window -> "a Search window of the window types"
             Kind.Shortcut -> "a chord for a window"
             Kind.TaskTree -> "a copy of the open tree"
-            else -> "in its own window"
+            else -> "added to this window's list"
         }
 
     /** A [Kind.Window] row's status, read back off its detail — the one thing the detail says. */
@@ -2844,7 +2850,7 @@ object SearchDomain {
     val HISTORY_CHANGED_KINDS: List<Kind> =
         listOf(
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.TaskTree, Kind.Shortcut, Kind.Window,
+            Kind.TaskTree, Kind.Shortcut, Kind.Window, Kind.WorkplaceSetup,
         )
 
     /** Whether a unit that changed [changed] passes the two "changed" filters: one of the checked kinds, the one element. */
@@ -3221,6 +3227,15 @@ object SearchDomain {
         ClaudeLogsDirectory(Kind.AppSetting, "Claude Code logs directory"),
         /** Every sound of the app off on this device ([AppSettingEntry.Mute]). */
         MuteSwitch(Kind.AppSetting, "Mute all sound"),
+        /** A workplace setup's own: its name, its OS, its windows and the press that opens them. */
+        WorkplaceTitle(Kind.WorkplaceSetup, "Title"),
+        WorkplaceOsChoice(Kind.WorkplaceSetup, "Operating system"),
+        WorkplaceWindows(Kind.WorkplaceSetup, "Windows"),
+        WorkplaceApply(Kind.WorkplaceSetup, "Apply"),
+        WorkplaceNew(Kind.WorkplaceSetup, "New"),
+        WorkplaceDuplicate(Kind.WorkplaceSetup, "Duplicate"),
+        WorkplaceDelete(Kind.WorkplaceSetup, "Delete"),
+
         /** The volume of Claude Code's own sounds ([AppSettingEntry.ClaudeSounds]). */
         ClaudeSoundsVolume(Kind.AppSetting, "Claude Code sounds volume"),
     }
@@ -3492,6 +3507,22 @@ object SearchDomain {
     }
 
     /**
+     * User rule 2026-11-01, a new element added to a window: [config] with **only the macro groups holding [element] open**,
+     * every other retracted, and the id of the first of them (what the section scrolls to). What is inside the groups stays
+     * as the user left it, as in [withOnlyElementGroupOpen]. Null where no group holds it.
+     */
+    fun withOnlyGroupsOf(config: Config, added: List<Result>, element: Result): Pair<Config, String>? {
+        val groups = actionGroups(actionsFor(addedActions(config.actionQuery, Kind.entries.toSet(), actionKindsOf(added)), added), added)
+        val key = keyOf(element)
+        val its = groups.filter { group -> group.members.any { keyOf(it) == key } }
+        val first = its.firstOrNull() ?: return null
+        val macro = groups.mapTo(HashSet()) { it.id }
+        val inside = listedGroupIds(groups) - macro
+        val retracted = (macro - its.mapTo(HashSet()) { it.id }) + config.collapsedActionGroups.filter { it in inside }
+        return config.copy(collapsedActionGroups = retracted) to first.id
+    }
+
+    /**
      * How well an action's title answers the actions section's search bar: 0 = the same words, 1 = starts with it,
      * 2 = contains it, 3 = holds every word of it somewhere ("add to calendar" finds "Add to the calendar"); null =
      * does not answer. A blank search answers nothing, so nothing is moved.
@@ -3571,11 +3602,17 @@ object SearchDomain {
             AddedAction.TimerLowestCountdown -> "timers select all start pause reset all elapsed ends day run"
             AddedAction.ChronoHighestCount -> "chronos select all start pause reset all run compact expand"
             AddedAction.TaskNew, AddedAction.CategoryNew, AddedAction.PeriodNew, AddedAction.AlarmNew, AddedAction.TimerNew,
-            AddedAction.ChronoNew, AddedAction.ReminderNew, AddedAction.QuotaNew, AddedAction.ShortcutNew -> "new create"
+            AddedAction.ChronoNew, AddedAction.ReminderNew, AddedAction.QuotaNew, AddedAction.ShortcutNew,
+            AddedAction.WorkplaceNew -> "new create"
+            AddedAction.WorkplaceTitle -> "name rename"
+            AddedAction.WorkplaceOsChoice -> "os windows 11 system"
+            AddedAction.WorkplaceWindows -> "file explorer tab path folder add remove"
+            AddedAction.WorkplaceApply -> "open run start"
             AddedAction.ShortcutChord -> "set rebind reset remove press a chord ctrl shift alt"
             AddedAction.ShortcutWindow -> "choose a window"
             AddedAction.TaskDuplicate, AddedAction.CategoryDuplicate, AddedAction.PeriodDuplicate, AddedAction.AlarmDuplicate,
-            AddedAction.TimerDuplicate, AddedAction.ChronoDuplicate, AddedAction.ReminderDuplicate, AddedAction.QuotaDuplicate -> "duplicate copy"
+            AddedAction.TimerDuplicate, AddedAction.ChronoDuplicate, AddedAction.ReminderDuplicate, AddedAction.QuotaDuplicate,
+            AddedAction.WorkplaceDuplicate -> "duplicate copy"
             AddedAction.HistoryRules -> "copy the set of rules"
             AddedAction.HistoryInformation -> "copy all"
             AddedAction.TaskFulfilment -> "tasks add a task fulfils"
@@ -3593,6 +3630,7 @@ object SearchDomain {
             AddedAction.CategoryName -> "unique rename"
             AddedAction.CategoryRules, AddedAction.CategoryAddRule -> "rule label"
             AddedAction.AlarmDelete, AddedAction.TimerDelete, AddedAction.ChronoDelete, AddedAction.QuotaDelete,
+            AddedAction.WorkplaceDelete,
             AddedAction.ReminderDelete, AddedAction.CategoryDelete, AddedAction.PeriodDelete, AddedAction.ShortcutDelete -> "delete remove bin"
             AddedAction.TimerAlert, AddedAction.ReminderAlert, AddedAction.AlarmAlert -> "alert sound voice notify vibrate"
             AddedAction.ReminderConstraint -> "choose none"
@@ -3792,6 +3830,7 @@ object SearchDomain {
             AddedAction.AlarmTitle to Kind.Alarm,
             AddedAction.TimerTitle to Kind.Timer,
             AddedAction.ChronoTitle to Kind.Chrono,
+            AddedAction.WorkplaceTitle to Kind.WorkplaceSetup,
             AddedAction.QuotaTitle to Kind.Quota,
             AddedAction.ReminderTitle to Kind.Reminder,
         )
@@ -3809,6 +3848,7 @@ object SearchDomain {
                 Kind.Alarm -> state.alarms.map { it.id to it.label }
                 Kind.Timer -> state.timers.map { it.id to it.label }
                 Kind.Chrono -> state.chronos.map { it.id to it.label }
+                Kind.WorkplaceSetup -> state.workplaceSetups.map { it.id to it.title }
                 Kind.Quota -> state.quotas.map { it.id to it.title }
                 Kind.Reminder -> state.chores.map { it.id.ifEmpty { it.title } to it.title }
                 else -> emptyList()
@@ -3865,6 +3905,12 @@ object SearchDomain {
     fun addedTimersOrDefault(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.TimerEntry> {
         val own = addedTimers(state, added)
         return if (defaultConfigurationAdded(added, Kind.Timer)) listOf(state.newTimerDefaults.copy(id = DEFAULT_CONFIGURATION_ID)) + own else own
+    }
+
+    /** The added workplace setups the account still holds, in the list's order. */
+    fun addedWorkplaceSetups(state: SchedulerState, added: List<Result>): List<WorkplaceSetup> {
+        val byId = state.workplaceSetups.associateBy { it.id }
+        return addedIds(added, Kind.WorkplaceSetup).mapNotNull { byId[it] }
     }
 
     /** The added chronos the account still holds, in the list's order. */
@@ -4960,6 +5006,7 @@ object SearchDomain {
             Kind.Alarm -> state.alarms.mapTo(HashSet()) { it.id }
             Kind.Timer -> state.timers.mapTo(HashSet()) { it.id }
             Kind.Chrono -> state.chronos.mapTo(HashSet()) { it.id }
+            Kind.WorkplaceSetup -> state.workplaceSetups.mapTo(HashSet()) { it.id }
             Kind.Quota -> state.quotas.mapTo(HashSet()) { it.id }
             Kind.Reminder -> state.chores.mapTo(HashSet()) { it.id }
             else -> emptySet()
@@ -5010,6 +5057,13 @@ object SearchDomain {
                     )
                 }
                 if (copies.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTimers(state.timers + copies))
+            }
+            Kind.WorkplaceSetup -> {
+                val ids = state.workplaceSetups.mapTo(HashSet()) { it.id }
+                val copies = state.workplaceSetups.filter { s -> rows.any { it.id == s.id } }.map { setup ->
+                    setup.copy(id = WorkplaceDomain.mintId(ids).also { ids += it }, title = named(setup.id))
+                }
+                if (copies.isEmpty()) emptyList() else listOf(SchedulerIntent.SetWorkplaceSetups(state.workplaceSetups + copies))
             }
             Kind.Chrono -> {
                 val ids = state.chronos.mapTo(HashSet()) { it.id }
@@ -5123,6 +5177,10 @@ object SearchDomain {
                         val next = state.timers.filterNot { it.id in ids }
                         if (next.size == state.timers.size) emptyList() else listOf(SchedulerIntent.SetTimers(next))
                     }
+                    Kind.WorkplaceSetup -> {
+                        val next = state.workplaceSetups.filterNot { it.id in ids }
+                        if (next.size == state.workplaceSetups.size) emptyList() else listOf(SchedulerIntent.SetWorkplaceSetups(next))
+                    }
                     Kind.Chrono -> {
                         val next = state.chronos.filterNot { it.id in ids }
                         if (next.size == state.chronos.size) emptyList() else listOf(SchedulerIntent.SetChronos(next))
@@ -5183,6 +5241,10 @@ object SearchDomain {
                     Kind.Timer -> {
                         val next = state.timers.map { t -> titles[t.id]?.let { t.copy(label = it) } ?: t }
                         if (next == state.timers) emptyList() else listOf(SchedulerIntent.SetTimers(next, command.editKey))
+                    }
+                    Kind.WorkplaceSetup -> {
+                        val next = state.workplaceSetups.map { s -> titles[s.id]?.let { s.copy(title = it) } ?: s }
+                        if (next == state.workplaceSetups) emptyList() else listOf(SchedulerIntent.SetWorkplaceSetups(next, command.editKey))
                     }
                     Kind.Chrono -> {
                         val next = state.chronos.map { c -> titles[c.id]?.let { c.copy(label = it) } ?: c }

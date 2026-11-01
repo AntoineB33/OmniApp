@@ -141,8 +141,9 @@ means.
   - **A control is drawn in the menu by the code that draws it where it lives** (`MenuControlItem`, fed by `App`'s
     `MenuControlHost`): never a second look for the menu. A new control is one entry of `MenuControl`, one branch
     there, and a `MenuAddable` round it where it lives.
-  - **What the menu held is what it starts as** (`CustomMenuButtons.DEFAULTS`: Task tree, Calendar, then Voice,
-    Notifications, Look away now, Switch task, Sleep / Work, I'm away, Online). A list stored before is given those
+  - **What the menu held is what it starts as** (`CustomMenuButtons.DEFAULTS`: the Search button, the three sound
+    switches together, Mute, Voice, Notifications (brought together once in a menu stored before), Task tree, Calendar, Look
+    away now, Switch task, Sleep / Work, I'm away, Online). A list stored before is given those
     ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
   - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename, Global,
     Remove, Customize, Reset. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of
@@ -360,7 +361,8 @@ means.
   framed has the focus (a press on the background), and a reduced tab never does. **A tab a button made is named
   after it** (user rule 2026-10-01): the window a lateral-menu button the user made (☆) CREATES carries that button's
   name on its tab (`WindowFrameHost.tabTitles`, `tabTitleOf`) — the window registering in the frames after the click;
-  one only brought back keeps its tab. The name goes when the window closes (`unregister`) and is kept locally on the
+  one only brought back keeps its tab, or is given the name where it has none. The name goes when the window CLOSES
+  (`windowClosed`), never as it leaves the screen at a change of page (`unregister`, anomaly 2026-11-01), and is kept locally on the
   `TabTitles` placement row, read back at startup for the windows that come back. Drawn at the app root and **over the lateral menu** — a window reduced while the menu is
   open must not be filed behind it. The content area is inset by the bar's height while it shows, so a
   maximized window stops above it. **The WHOLE tab takes the press** (user rule 2026-10-11:

@@ -663,7 +663,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // write every close makes, and before the close hands the focus on (`onLayout`).
             if (previous.visible && !next.visible && id !in VIEW_ROWS) {
                 windowFrames.closeOpenedFrom(id)
-                windowFrames.forgetTabPlace(id)
+                windowFrames.windowClosed(id)
             }
             // A closed window is no button's any more: its frame id may be another window's tomorrow.
             if (previous.visible && !next.visible) {
@@ -2123,6 +2123,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // openers and handlers that run inside [askedFrom] its frame id (`SearchRowOpeners.askedThrough`,
         // `AddedActionHandlers.askedThrough`); the lateral menu's items get the plain ones, so nothing they open is linked.
         val searchAsk = remember { arrayOfNulls<String>(1) }
+        // The group of actions a Search window is asked to show, by frame id, until it has taken the ask.
+        val searchActionReveals = remember { mutableStateMapOf<String, String>() }
         fun askedFrom(source: String): (() -> Unit) -> Unit = { block ->
             val before = searchAsk[0]
             searchAsk[0] = source
@@ -2516,6 +2518,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 asked = id
                 menuButtonWindows[button.id] = id
                 if (id in before) {
+                    // A window with no name its button can give it: one whose name was lost, as a restart could.
+                    if (!pressed.global && id !in windowFrames.tabTitles) {
+                        windowFrames.tabTitles[id] = button.title
+                        saveTabTitles()
+                    }
                     // Brought back as it stands: what it looks like now is this button's reference, where it kept none.
                     if (saved == null && button.id !in menuButtonOpenedLayouts) windowLayoutOf(id)?.let { menuButtonOpenedLayouts[button.id] = it }
                 } else if (saved != null) {
@@ -2620,11 +2627,35 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §7 Search, a "creation" row (user spec 2026-09-26): a new element of [kind], made the way that kind's
         // own "+ New …" makes it — through the same intents and the account's default configuration — and opened in
         // its window. A new WINDOW is a Search window listing the window types.
-        // Whoever asks — a creation row, or the actions' "New" button of any kind (user rule 2026-10-04) — the new
-        // element opens in a NEW Search window as its only added element; it never joins the asking window's list.
+        // User rule 2026-11-01: a creation row, or the actions' "New" button of any kind, pressed in a Search window: the new
+        // element joins THAT window's added elements ([showCreated]). A press from nowhere's list (the left-side menu's) opens
+        // a Search window on it.
         // [from]: the element whose group's "New" made it (user rule 2026-10-18) — what a new alarm's or reminder's
         // date and time may be taken from ([NewElementTimes]); null when made from anywhere else.
+        fun showCreated(kind: SearchDomain.Kind, id: String) {
+            val source = searchSource() ?: return openElementSearch(kind, id)
+            val key = kind.name + "/" + id
+            val config = searchConfigOf(source)
+            val next = config.copy(added = SearchDomain.withAdded(config.added, listOf(key)))
+            val rows = SearchDomain.resolve(vm.state.value, next.added, { emptyMap() }, searchWindowEntries(), schedulerRuns, claudeLogs)
+            val shown = rows.firstOrNull { SearchDomain.keyOf(it) == key }?.let { SearchDomain.withOnlyGroupsOf(next, rows, it) }
+            setSearchConfig(source, shown?.first ?: next)
+            shown?.second?.let { group -> searchActionReveals[source] = group }
+        }
+        // User rule 2026-11-01: a workplace setup's row applies it. It has no button there to say what stops it, so a setup
+        // that cannot be applied or failed joins the window that asked, its Apply button and what that button says in view.
+        val workplaceRuns = remember { org.example.project.ui.WorkplaceRuns() }
+        fun applyWorkplaceSetup(id: String) {
+            val setup = vm.state.value.workplaceSetups.firstOrNull { it.id == id } ?: return
+            val asked = searchAsk[0]
+            val show = {
+                if (asked == null) showCreated(SearchDomain.Kind.WorkplaceSetup, id)
+                else askedFrom(asked)() { showCreated(SearchDomain.Kind.WorkplaceSetup, id) }
+            }
+            if (workplaceRuns.canApply(setup)) workplaceRuns.apply(setup) { engineScope.launch { show() } } else show()
+        }
         fun createElement(kind: SearchDomain.Kind, from: SearchDomain.Result? = null) {
+            org.example.project.scheduler.platform.Diagnostics.log("new element asked: " + kind.name + " from " + searchSource())
             val fromId = (from as? SearchDomain.ItemResult)?.takeIf { it.kind == kind }?.id
             val st = vm.state.value
             val now = clock.nowMillis()
@@ -2633,25 +2664,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base $it" }
                     .first { name -> taken.none { it.equals(name, ignoreCase = true) } }
             when (kind) {
-                // PRD §9 (user rule 2026-10-03): a new task has NO path — it is made to be given a set of tasks — and opens
-                // in a new Search window as its only element, whoever asked (the actions' "New", a creation row).
+                // PRD §9 (user rule 2026-10-03): a new task has NO path — it is made to be given a set of tasks.
                 SearchDomain.Kind.Task -> {
                     vm.dispatch(SchedulerIntent.CreatePathlessTask(unique("New task", st.tasks.values.map { it.title })))
                     SearchDomain.newElementKeys(st, vm.state.value, SearchDomain.Kind.Task).firstOrNull()?.let { key ->
-                        openElementSearch(SearchDomain.Kind.Task, key.removePrefix(SearchDomain.Kind.Task.name + "/"))
+                        showCreated(SearchDomain.Kind.Task, key.removePrefix(SearchDomain.Kind.Task.name + "/"))
                     }
                 }
                 SearchDomain.Kind.Category -> {
                     val title = unique("New category", st.categories.map { it.title })
                     vm.dispatch(SchedulerIntent.CreateCategory(title))
                     vm.state.value.categories.firstOrNull { it.title == title }?.let {
-                        openElementSearch(SearchDomain.Kind.Category, it.id.value)
+                        showCreated(SearchDomain.Kind.Category, it.id.value)
                     }
                 }
                 SearchDomain.Kind.RestrictivePeriod -> {
                     val name = unique("New period", st.allPeriodKinds)
                     vm.dispatch(SchedulerIntent.AddPeriodKind(name))
-                    if (name in vm.state.value.allPeriodKinds) openElementSearch(SearchDomain.Kind.RestrictivePeriod, name)
+                    if (name in vm.state.value.allPeriodKinds) showCreated(SearchDomain.Kind.RestrictivePeriod, name)
                 }
                 SearchDomain.Kind.Alarm -> {
                     val id = AlarmDomain.mintAlarmId(st.alarms.map { it.id })
@@ -2659,17 +2689,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     vm.dispatch(
                         SchedulerIntent.SetAlarms(st.alarms + NewElementDefaults.newAlarm(st.newAlarmDefaults, st.newAlarmTimes, id, now, tz, source)),
                     )
-                    openElementSearch(SearchDomain.Kind.Alarm, id)
+                    showCreated(SearchDomain.Kind.Alarm, id)
                 }
                 SearchDomain.Kind.Timer -> {
                     val id = TimerDomain.mintTimerId(st.timers.map { it.id })
                     vm.dispatch(SchedulerIntent.SetTimers(st.timers + NewElementDefaults.newTimer(st.newTimerDefaults, id)))
-                    openElementSearch(SearchDomain.Kind.Timer, id)
+                    showCreated(SearchDomain.Kind.Timer, id)
+                }
+                SearchDomain.Kind.WorkplaceSetup -> {
+                    val id = org.example.project.scheduler.domain.WorkplaceDomain.mintId(st.workplaceSetups.map { it.id })
+                    vm.dispatch(SchedulerIntent.SetWorkplaceSetups(st.workplaceSetups + org.example.project.scheduler.domain.WorkplaceSetup(id)))
+                    showCreated(SearchDomain.Kind.WorkplaceSetup, id)
                 }
                 SearchDomain.Kind.Chrono -> {
                     val id = ChronoDomain.mintChronoId(st.chronos.map { it.id })
                     vm.dispatch(SchedulerIntent.SetChronos(st.chronos + ChronoEntry(id = id)))
-                    openElementSearch(SearchDomain.Kind.Chrono, id)
+                    showCreated(SearchDomain.Kind.Chrono, id)
                 }
                 // User rule 2026-10-03: a new quota is a week's, from this week's Monday 00:00 (the app is Monday-first).
                 SearchDomain.Kind.Quota -> {
@@ -2679,7 +2714,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     val end = monday.plus(7, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
                     // From the account's default configuration (the quota actions of an added "New quota" row).
                     vm.dispatch(SchedulerIntent.SetQuotas(st.quotas + NewElementDefaults.newQuota(st.newQuotaDefaults, id, now, start, end)))
-                    openElementSearch(SearchDomain.Kind.Quota, id)
+                    showCreated(SearchDomain.Kind.Quota, id)
                 }
                 SearchDomain.Kind.Reminder -> {
                     val todayStart = today.atStartOfDayIn(tz).toEpochMilliseconds()
@@ -2688,7 +2723,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     val created = NewElementDefaults.newReminder(st.newReminderDefaults, "", at)
                     vm.dispatch(SchedulerIntent.SetChores(st.chores + created, todayStart, now))
                     vm.state.value.chores.lastOrNull()?.id?.takeIf { it.isNotEmpty() }?.let {
-                        openElementSearch(SearchDomain.Kind.Reminder, it)
+                        showCreated(SearchDomain.Kind.Reminder, it)
                     }
                 }
                 SearchDomain.Kind.TaskTree -> {
@@ -2701,7 +2736,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 SearchDomain.Kind.Shortcut -> {
                     val id = org.example.project.ui.WindowShortcuts.mintId(windowShortcuts)
                     saveWindowShortcuts(windowShortcuts + org.example.project.ui.WindowShortcut(id))
-                    openElementSearch(SearchDomain.Kind.Shortcut, org.example.project.ui.WindowShortcuts.SEARCH_PREFIX + id)
+                    showCreated(SearchDomain.Kind.Shortcut, org.example.project.ui.WindowShortcuts.SEARCH_PREFIX + id)
                 }
                 else -> Unit
             }
@@ -5367,11 +5402,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onOpenWindow = ::showWindow,
                             onCreate = { createElement(it) },
+                            onApplyWorkplaceSetup = { applyWorkplaceSetup(it) },
                         )
                     // What the actions on the added elements open or draw — the cell menu's handlers, and the Alarms
                     // window's and the reminder editor's components embedded over the same callbacks.
                     val addedActionHandlers =
                         AddedActionHandlers(
+                            workplaceRuns = workplaceRuns,
                             claudeLogs = { claudeLogs },
                             onSetClaudeLogsDirectory = { setClaudeLogsDirectory(it) },
                             onRefreshClaudeLogs = { refreshClaudeLogs() },
@@ -5476,6 +5513,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onDismiss = { searchWindowOpen = false },
                             config = searchConfig,
                             onConfigChange = { setSearchConfig(searchId, it) },
+                            actionRevealAsked = searchActionReveals[searchId],
+                            onActionRevealTaken = { searchActionReveals.remove(searchId) },
                             openedConfig = searchOpenedConfigs[searchId],
                             deployKinds = searchId in searchKindsToDeploy,
                             onKindsDeployed = { searchKindsToDeploy.remove(searchId) },

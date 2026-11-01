@@ -347,6 +347,8 @@ object CustomMenuButtons {
         val muteSeeded: Boolean = false,
         /** Whether a list of the logs page already had the slider of Claude Code's sounds ([CLAUDE_SOUNDS]) offered, ONCE. */
         val claudeSoundsSeeded: Boolean = false,
+        /** Whether a list of the scheduler's menu already had its sound switches brought together ([withSoundsTogether]), ONCE. */
+        val soundsTogether: Boolean = false,
     )
 
     /**
@@ -374,12 +376,14 @@ object CustomMenuButtons {
     val DEFAULTS: List<CustomMenuButton> =
         listOf(
             GLOBAL_SEARCH,
+            // The three sound switches together (user rule 2026-11-01).
             GLOBAL_MUTE,
+            CustomMenuButton("d-" + MenuControl.Voice.name, "", "", control = MenuControl.Voice.name),
+            CustomMenuButton("d-" + MenuControl.Notifications.name, "", "", control = MenuControl.Notifications.name),
             CustomMenuButton("d-task-tree", "TaskTree", "Task tree"),
             CustomMenuButton("d-calendar", "Calendar", "Calendar"),
         ) + listOf(
-            MenuControl.Voice, MenuControl.Notifications, MenuControl.LookAwayNow, MenuControl.SwitchTask,
-            MenuControl.SleepWork, MenuControl.Away, MenuControl.Online,
+            MenuControl.LookAwayNow, MenuControl.SwitchTask, MenuControl.SleepWork, MenuControl.Away, MenuControl.Online,
         ).map { CustomMenuButton("d-" + it.name, "", "", control = it.name) }
 
     /**
@@ -441,7 +445,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -577,8 +581,24 @@ object CustomMenuButtons {
             if (stored.muteSeeded || withSearch.any { it.id == GLOBAL_MUTE.id }) withSearch
             else withSearch.toMutableList().also { it.add(search + 1, GLOBAL_MUTE) }
         // …and, on the page it is a default of, the slider of Claude Code's sounds, ONCE, at the bottom.
-        return if (stored.claudeSoundsSeeded || CLAUDE_SOUNDS !in defaults || withMute.any { it.id == CLAUDE_SOUNDS.id }) withMute
-        else withMute + CLAUDE_SOUNDS
+        val withSounds =
+            if (stored.claudeSoundsSeeded || CLAUDE_SOUNDS !in defaults || withMute.any { it.id == CLAUDE_SOUNDS.id }) withMute
+            else withMute + CLAUDE_SOUNDS
+        return if (stored.soundsTogether) withSounds else withSoundsTogether(withSounds)
+    }
+
+    /**
+     * [buttons] with the Voice and Notifications switches just under the mute switch (user rule 2026-11-01), once, in a list
+     * made before: the menu that has all three at the same place of its tree. Left as it is otherwise: moved apart into
+     * folders, or removed, they are the user's.
+     */
+    private fun withSoundsTogether(buttons: List<CustomMenuButton>): List<CustomMenuButton> {
+        val mute = buttons.firstOrNull { it.id == GLOBAL_MUTE.id } ?: return buttons
+        val rest = listOf(MenuControl.Voice, MenuControl.Notifications).map { c -> buttons.firstOrNull { it.control == c.name } ?: return buttons }
+        if (rest.any { it.parent != mute.parent }) return buttons
+        val others = buttons.filterNot { it in rest }
+        val at = others.indexOf(mute) + 1
+        return others.subList(0, at) + rest + others.subList(at, others.size)
     }
 
     /** The placement row the order of the bar's tabs is kept on (user rule 2026-11-01): [encodeGlobalWindows]' shape. */

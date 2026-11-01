@@ -6,7 +6,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -211,7 +215,15 @@ data class SearchRowOpeners(
     val onOpenAppSetting: (String) -> Unit = {},
     /** A calendar block's row: what is on the calendar at its start — the calendar's own "edit…" there. */
     val onOpenCalendarAt: (Long) -> Unit = {},
+    /** A workplace setup's row, by id: it is applied (user rule 2026-11-01), a command like a "creation" row. */
+    val onApplyWorkplaceSetup: (String) -> Unit = {},
 ) {
+    companion object {
+        /** The kinds a double-click on a result row opens: commands. Every other is added ([doubleClickOpens] false). */
+        fun doubleClickOpens(kind: SearchDomain.Kind): Boolean =
+            kind == SearchDomain.Kind.Creation || kind == SearchDomain.Kind.WorkplaceSetup
+    }
+
     /**
      * These openers, each run inside [around] (user rule 2026-10-18): what a Search window is handed, so `App` knows
      * which window a row was opened from and links the window it opens to it ([SearchDomain.linkedConfig]). The
@@ -233,6 +245,7 @@ data class SearchRowOpeners(
             onCreate = { around { onCreate(it) } },
             onOpenAppSetting = { around { onOpenAppSetting(it) } },
             onOpenCalendarAt = { around { onOpenCalendarAt(it) } },
+            onApplyWorkplaceSetup = { around { onApplyWorkplaceSetup(it) } },
         )
 
     /** Open [result]: a task only while the account still holds it (a task only a stored tree holds has no editor). */
@@ -257,6 +270,7 @@ data class SearchRowOpeners(
             // A notification is a fact that happened: it has nothing to open. Nor has a log entry — its actions show it.
             SearchDomain.Kind.Notification, SearchDomain.Kind.ClaudePrompt, SearchDomain.Kind.ClaudeAnswer,
             SearchDomain.Kind.ClaudeReasoning -> Unit
+            SearchDomain.Kind.WorkplaceSetup -> onApplyWorkplaceSetup(item.id)
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }
             SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
@@ -283,6 +297,9 @@ fun SearchWindow(
      */
     onGoToTaskTree: (TaskId, SchedulerDomain.TaskOccurrence?) -> Unit,
     onDeepCopyCell: (CellId) -> Unit,
+    /** The group of actions `App` asks this window to show: a new element joined it. [onActionRevealTaken] once it has. */
+    actionRevealAsked: String? = null,
+    onActionRevealTaken: () -> Unit = {},
     /** What the actions on the added elements open or draw ([AddedActionHandlers]): `App`'s, shared with the window of them all. */
     actionHandlers: AddedActionHandlers,
     /** The calendar's layer bands' kinds at an instant, for the "is on the calendar at" filter (`App` draws them). */
@@ -687,6 +704,14 @@ fun SearchWindow(
       var actionsCollapsed by remember { mutableStateOf(splits?.actionsHidden ?: false) }
       // The group of actions the added elements' "show only its actions" last asked for, and the count of the asks.
       var actionReveal by remember { mutableStateOf<Pair<String, Int>?>(null) }
+      // …or `App` did, for a new element that joined this window: the section opens to show its group.
+      LaunchedEffect(actionRevealAsked) {
+          if (actionRevealAsked != null) {
+              actionsCollapsed = false
+              actionReveal = actionRevealAsked to ((actionReveal?.second ?: 0) + 1)
+              onActionRevealTaken()
+          }
+      }
       var addedCollapsed by remember { mutableStateOf(splits?.addedHidden ?: false) }
       LaunchedEffect(splits) {
           splits?.let {
@@ -1022,10 +1047,10 @@ fun SearchWindow(
                                         onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
                                         onOpen = { openers.open(state, result) },
                                         // User rule 2026-10-01: a double-click ADDS the element (a task row's enters
-                                        // Edit Mode, the tree's rule) — never opens another window on it. A
-                                        // "creation" row is the exception: it is a command, not an element to add.
+                                        // Edit Mode, the tree's rule) — never opens another window on it. A "creation"
+                                        // row and a workplace setup are the exceptions: commands, not elements to add.
                                         onDoubleClick = {
-                                            if (result.kind == SearchDomain.Kind.Creation) openers.open(state, result)
+                                            if (SearchRowOpeners.doubleClickOpens(result.kind)) openers.open(state, result)
                                             else addKeys(listOf(resultKey(result)))
                                         },
                                         onAdd = { addSelected() },
@@ -1830,22 +1855,44 @@ internal fun kindsLabel(kinds: Set<SearchDomain.Kind>, options: List<SearchDomai
 
 private fun resultKey(result: SearchDomain.Result): String = SearchDomain.keyOf(result)
 
-/** The press gestures every result row shares: press selects, double-click opens, right-click menus. */
+/** When a row was last pressed, by the event's own clock, outliving a restart of the row's gesture. */
+private class LastPress {
+    var atMillis: Long? = null
+}
+
+/**
+ * The press gestures every result row shares: press selects, double-click opens, right-click menus. **The double-click is
+ * read off the two presses' own times** (anomaly 2026-11-01: *"it doesn't work only when there is already something in the
+ * added elements list"*): the press that follows a right-click menu, or another application, gives the window back the
+ * focus, and a detector that keeps its first tap inside its gesture could lose it there.
+ */
 private fun Modifier.resultRowGestures(
     key: Any,
     onSelect: () -> Unit,
     onSecondarySelect: () -> Unit,
     onOpen: () -> Unit,
     onOpenMenu: () -> Unit,
-): Modifier =
-    this
+): Modifier = composed {
+    val last = remember { LastPress() }
+    Modifier
         .pointerInput(key) {
-            // `onPress` rather than `onTap`: a tap waits out the double-click window before it fires, and a
-            // row that selects a third of a second after the click reads as a row that missed it.
-            detectTapGestures(onPress = { onSelect() }, onDoubleTap = { onOpen() })
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                down.consume()
+                // On the press rather than a tap: a tap waits out the double-click window before it fires, and a
+                // row that selects a third of a second after the click reads as a row that missed it.
+                onSelect()
+                val before = last.atMillis
+                val second = currentEvent.buttons.isPrimaryPressed && before != null &&
+                    down.uptimeMillis - before <= viewConfiguration.doubleTapTimeoutMillis
+                last.atMillis = down.uptimeMillis.takeUnless { second }
+                if (second) onOpen()
+                waitForUpOrCancellation()?.consume()
+            }
         }
         // Innermost, so it sees the press first and consumes a right-click before the tap detector does.
         .then(contextMenuModifier(enabled = true, key = key, onSelect = onSecondarySelect, onOpen = onOpenMenu))
+}
 
 /**
  * The colour of ALL the text of a Claude Code log entry's row, the results' and the added elements' (user rule
@@ -2536,6 +2583,7 @@ private fun ItemResultRow(
                     SearchDomain.Kind.Window -> "show window"
                     // What the right-click did on its own until 2026-10-03: making a new element of the row's kind.
                     SearchDomain.Kind.Creation -> "create"
+                    SearchDomain.Kind.WorkplaceSetup -> "apply"
                     else -> null
                 }
             if (elsewhere != null) {

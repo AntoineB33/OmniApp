@@ -933,6 +933,12 @@ sealed interface SchedulerIntent {
      * a label edited. A **Main History Unit**, [SetTimers]' rule and [SetTimers]' [editKey]; the run state rides
      * along untouched and is moved only by [StartChrono] / [PauseChrono] / [ResetChrono].
      */
+    /** User rule 2026-11-01: the account's workplace setups, one History Unit. [editKey] as [SetChronos]' for a field typed into. */
+    data class SetWorkplaceSetups(
+        val entries: List<org.example.project.scheduler.domain.WorkplaceSetup>,
+        val editKey: String? = null,
+    ) : SchedulerIntent
+
     data class SetChronos(
         val entries: List<org.example.project.scheduler.model.ChronoEntry>,
         val editKey: String? = null,

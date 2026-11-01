@@ -67,7 +67,7 @@ class WindowFrameHostTest {
         assertEquals("Search#2", host.tabTitleOf(row), "no name of its own: the window's title")
         host.tabTitles["Search#2"] = "Today's tasks"
         assertEquals("Today's tasks", host.tabTitleOf(row))
-        host.unregister("Search#2")
+        host.windowClosed("Search#2")
         assertNull(host.tabTitles["Search#2"], "closed: the name goes with it, so a later window under that id is not named")
         // The stored form, on its own placement row.
         val titles = mapOf("Search#2" to "Today's tasks", "TaskEdit#1" to "Tea")
