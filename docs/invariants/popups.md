@@ -390,6 +390,13 @@ means.
   from a window to the last of those opened from it, and the line of a deeper window is drawn ABOVE (calendar,
   Search, configurations: a line under the first two, and above it a line under the last two). Everything that
   reads "bar order" — the Shift+click range, the menu's selection — reads `tabLayout.order`, never `registrations`.
+- **A tab is dragged to reorganize the bar, with all it is linked to** (user rule 2026-11-01; `WindowFrameHost.moveTab`,
+  `WindowTabGroups.moved`, `WindowBarDragTest`): a press held and moved with the mouse, past the slop, is a drag and no
+  click, a finger still scrolling the bar. The group of the tab, up and down its links, follows the hand with its lines, a
+  vertical line says where it lands, and it lands between two groups: a group is never cut. The order
+  (`WindowFrameHost.tabOrder`, the `TabOrder` row) is read before the order of opening: a new window stands at the end, a
+  closed one leaves it, and a change of page keeps it. One History Unit, undone from any window. **Ctrl+Tab walks the bar's
+  order**, which is no longer the order of opening.
 - **A window set GLOBAL stands, and has its tab, on every feature page** (user rule 2026-10-18; the window bar menu's
   "global", over the selected tabs; `App`'s `globalWindows`, the `GlobalWindows` row): a lateral-menu window (and its
   copies) or the task tree — a per-object window is drawn on its own page only, since it would otherwise be composed

@@ -18,17 +18,24 @@ internal object WindowTabGroups {
     /** A line under the tabs from [from] (a window others were opened from) to [to] (the last of them). */
     data class Underline(val from: String, val to: String, val depth: Int)
 
-    /** The bar: its tabs in [order], and the lines under them. */
-    data class Layout(val order: List<String>, val underlines: List<Underline>) {
+    /** The bar: its tabs in [order], the lines under them, and the [groups] of linked tabs, a lone tab being one of its own. */
+    data class Layout(val order: List<String>, val underlines: List<Underline>, val groups: List<List<String>> = listOf(order)) {
         /** How many levels of lines the bar draws. */
         val levels: Int get() = underlines.maxOfOrNull { it.depth + 1 } ?: 0
+
+        /** The tabs that move with [id]: all it is linked to, up and down. */
+        fun groupOf(id: String): List<String> = groups.firstOrNull { id in it }.orEmpty()
     }
 
     /**
      * The bar for the windows [opened] (frame ids, in the order they were opened), [parentOf] naming the window each
-     * was opened from. A parent that is not open, or a window named as its own ancestor, is no parent.
+     * was opened from. [place] is the order the user dragged the tabs into, read before the order of opening: a window
+     * it does not name stands after those it does (user rule 2026-11-01).
+     * A parent that is not open, or a window named as its own ancestor, is no parent.
      */
-    fun layout(opened: List<String>, parentOf: (String) -> String?): Layout {
+    fun layout(windows: List<String>, place: List<String> = emptyList(), parentOf: (String) -> String?): Layout {
+        val rank = place.withIndex().associate { (index, id) -> id to index }
+        val opened = if (rank.isEmpty()) windows else windows.sortedBy { rank[it] ?: Int.MAX_VALUE }
         val ids = opened.toSet()
         val named = opened.associateWith { id -> parentOf(id)?.takeIf { it in ids && it != id } }
         // A window that is its own ancestor (never made by the app, but a rule must not loop on it) stands alone.
@@ -49,13 +56,36 @@ internal object WindowTabGroups {
         }
         val order = ArrayList<String>(opened.size)
         val underlines = ArrayList<Underline>()
-        fun place(id: String, depth: Int) {
+        fun placed(id: String, depth: Int) {
             order += id
             val fromIt = children[id] ?: return
             underlines += Underline(from = id, to = fromIt.last(), depth = depth)
-            for (child in fromIt) place(child, depth + 1)
+            for (child in fromIt) placed(child, depth + 1)
         }
-        for (root in roots) place(root, 0)
-        return Layout(order, underlines)
+        val groups = ArrayList<List<String>>(roots.size)
+        for (root in roots) {
+            val first = order.size
+            placed(root, 0)
+            groups += order.subList(first, order.size).toList()
+        }
+        return Layout(order, underlines, groups)
     }
+
+    /**
+     * User rule 2026-11-01: the bar's order once the tab [id] is dragged: **its whole group goes**, to stand before the
+     * group of [beforeId], at the very end for null. A group is never cut: a tab stands beside the one it is linked to.
+     */
+    fun moved(layout: Layout, id: String, beforeId: String?): List<String> {
+        val group = layout.groupOf(id)
+        if (group.isEmpty() || beforeId in group) return layout.order
+        val rest = layout.groups.filter { it !== group && it != group }
+        val at = rest.indexOfFirst { beforeId in it }.takeIf { it >= 0 } ?: rest.size
+        return (rest.subList(0, at) + listOf(group) + rest.subList(at, rest.size)).flatten()
+    }
+
+    /**
+     * Where a group dragged with its middle at [middle] lands: before the first of the [others] (the first tab of each
+     * other group and that group's middle, left to right) whose middle is to the right of it; null: after them all.
+     */
+    fun dropBefore(others: List<Pair<String, Float>>, middle: Float): String? = others.firstOrNull { it.second > middle }?.first
 }

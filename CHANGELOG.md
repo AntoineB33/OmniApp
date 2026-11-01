@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The window bar's tabs can be dragged — 2026-11-01
+
+User rule: a tab dragged with the mouse reorganizes the bar, and a tab linked to others takes its whole group with it. Kept on the `TabOrder` row, local-only; one History Unit, undone from any window. Ctrl+Tab now walks the order drawn rather than the order of opening, which it read until now. No migration. Client rebuild only.
+
 ### A volume for Claude Code's sounds — 2026-11-01
 
 User rule: the logs page's menu has a "Claude Code sounds" slider, also an app setting. It writes `~/.claude/hooks/sounds/volume.txt`, which the sound hook reads each time, so the chimes and the voice follow it at once in every session. Existing logs menus get it once. One History Unit, undone from any window. No migration. Client rebuild; the hook is already changed.

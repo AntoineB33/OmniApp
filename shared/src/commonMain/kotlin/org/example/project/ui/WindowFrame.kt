@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.unit.toSize
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -838,8 +839,33 @@ class WindowFrameHost {
         closeWindows(opened)
     }
 
+    /**
+     * User rule 2026-11-01: **the order the user dragged the tabs into**, by frame id: read before the order of opening,
+     * and held through a change of page, which takes tabs out of [entries] and back ([forgetTabPlace] ends it, at a close).
+     * Kept by `App` on the `TabOrder` row, like the tabs' names.
+     */
+    var tabOrder: List<String> by mutableStateOf(emptyList())
+
+    /** The user dragged the tabs: their order before and after. A History Unit in `App`. */
+    var onTabOrderChanged: ((before: List<String>, after: List<String>) -> Unit)? = null
+
     /** The bar: the tabs in the order it draws them, and the lines under them ([WindowTabGroups.layout]). */
-    internal val tabLayout: WindowTabGroups.Layout get() = WindowTabGroups.layout(entries.map { it.id }, tabParentOf)
+    internal val tabLayout: WindowTabGroups.Layout get() = WindowTabGroups.layout(entries.map { it.id }, tabOrder, tabParentOf)
+
+    /** The tab [id] dragged, with all that is linked to it, to stand before the group of [beforeId] (null: at the end). */
+    fun moveTab(id: String, beforeId: String?) {
+        val layout = tabLayout
+        val after = WindowTabGroups.moved(layout, id, beforeId)
+        if (after == layout.order) return
+        val before = tabOrder
+        tabOrder = after
+        onTabOrderChanged?.invoke(before, after)
+    }
+
+    /** The window [id] closed: its frame id may be another window's tomorrow, which must not stand in its place. */
+    fun forgetTabPlace(id: String) {
+        if (id in tabOrder) tabOrder = tabOrder - id
+    }
 
     /** The selected windows, in bar order — what the bar's menu acts on. */
     private val selectedEntries: List<Registration>
@@ -923,7 +949,7 @@ class WindowFrameHost {
      * tab to the right, the last to the left. False where the bar has no tab.
      */
     fun walkTabsInBarOrder(step: Int): Boolean {
-        val next = TabWalk.next(entries.map { it.id }, focusedId, step) ?: return false
+        val next = TabWalk.next(tabLayout.order, focusedId, step) ?: return false
         present(next)
         return true
     }
@@ -2064,6 +2090,21 @@ fun WindowBar(
     // Where each tab stands in the row of tabs (left, right, bottom): what the lines under them are drawn from.
     val tabBounds = remember { mutableStateMapOf<String, Rect>() }
     val lineColor = MaterialTheme.colorScheme.onSurface
+    // User rule 2026-11-01: the tab held and how far the hand has it. Its whole group follows; a line says where it lands.
+    var draggedTab by remember { mutableStateOf<String?>(null) }
+    var dragX by remember { mutableStateOf(0f) }
+    val draggedGroup = draggedTab?.let(tabs::groupOf).orEmpty()
+    fun dropBefore(): String? {
+        val first = tabBounds[draggedGroup.firstOrNull()] ?: return null
+        val last = tabBounds[draggedGroup.last()] ?: return null
+        val others =
+            tabs.groups.filter { it != draggedGroup }.mapNotNull { group ->
+                val left = tabBounds[group.first()] ?: return@mapNotNull null
+                val right = tabBounds[group.last()] ?: return@mapNotNull null
+                group.first() to (left.left + right.right) / 2f
+            }
+        return WindowTabGroups.dropBefore(others, (first.left + last.right) / 2f + dragX)
+    }
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shadowElevation = 12.dp,
@@ -2142,13 +2183,22 @@ fun WindowBar(
                             val to = tabBounds[line.to] ?: continue
                             val y = maxOf(from.bottom, to.bottom) + TAB_LINE_GAP.toPx() +
                                 (tabs.levels - 1 - line.depth) * TAB_LINE_PITCH.toPx()
+                            // A group's lines go with it.
+                            val shift = if (line.from in draggedGroup) dragX else 0f
                             drawLine(
                                 color = lineColor,
-                                start = Offset(from.left, y),
-                                end = Offset(to.right, y),
+                                start = Offset(from.left + shift, y),
+                                end = Offset(to.right + shift, y),
                                 strokeWidth = TAB_LINE_WIDTH.toPx(),
                                 cap = StrokeCap.Round,
                             )
+                        }
+                        if (draggedTab != null) {
+                            val before = dropBefore()
+                            val x =
+                                if (before != null) tabBounds[before]?.let { it.left - 3.dp.toPx() }
+                                else tabs.order.lastOrNull { it !in draggedGroup }?.let(tabBounds::get)?.let { it.right + 3.dp.toPx() }
+                            if (x != null) drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
                         }
                     },
                 verticalAlignment = Alignment.CenterVertically,
@@ -2160,7 +2210,22 @@ fun WindowBar(
                         DisposableEffect(id) { onDispose { tabBounds.remove(id) } }
                         MinimizedChip(
                             row, host,
-                            Modifier.onPlaced { tabBounds[id] = Rect(it.positionInParent(), it.size.toSize()) },
+                            // Measured outside what follows the hand: a tab's place is where it stands, not where it is held.
+                            Modifier
+                                .onPlaced { tabBounds[id] = Rect(it.positionInParent(), it.size.toSize()) }
+                                .graphicsLayer {
+                                    translationX = if (id in draggedGroup) dragX else 0f
+                                    alpha = if (id in draggedGroup) 0.85f else 1f
+                                },
+                            onDragStart = { draggedTab = id; dragX = 0f },
+                            onDrag = { dragX += it },
+                            onDragEnd = {
+                                val before = dropBefore()
+                                val moved = draggedTab
+                                draggedTab = null
+                                dragX = 0f
+                                if (moved != null) host.moveTab(moved, before)
+                            },
                         )
                     }
                 }
@@ -2217,7 +2282,18 @@ private fun WindowBarMoreButton(onUndo: () -> Unit, onRedo: () -> Unit) {
 }
 
 @Composable
-private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHost, modifier: Modifier = Modifier) {
+private fun MinimizedChip(
+    row: WindowFrameHost.Registration,
+    host: WindowFrameHost,
+    modifier: Modifier = Modifier,
+    /** User rule 2026-11-01, a press held and moved: the tab is dragged, and the release is no click. */
+    onDragStart: () -> Unit = {},
+    onDrag: (dx: Float) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+) {
+    val latestDragEnd by rememberUpdatedState(onDragEnd)
+    val latestDrag by rememberUpdatedState(onDrag)
+    val latestDragStart by rememberUpdatedState(onDragStart)
     // A reduced window's tab is set back, so the bar tells at a glance which windows are on screen; the tab of
     // the window that has the FOCUS ([WindowFrameHost.focusedId]) stands out, so it also tells which one a
     // keystroke — or a click on its tab, which reduces it — goes to. A reduced window never has the focus.
@@ -2253,11 +2329,40 @@ private fun MinimizedChip(row: WindowFrameHost.Registration, host: WindowFrameHo
             // sees it (`awaitFirstDown` waits for a press nobody has taken).
             .pointerInput(row.id) {
                 awaitEachGesture {
-                    awaitFirstDown()
+                    val down = awaitFirstDown()
                     // A right-click is the bar's menu ([WindowBar]) and selects nothing — left unconsumed for it.
                     if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
                     val modifiers = currentEvent.keyboardModifiers
-                    if (waitForUpOrCancellation() != null) {
+                    // The mouse drags a tab. A finger scrolls the bar with that same move, as it does.
+                    val released =
+                        if (down.type != androidx.compose.ui.input.pointer.PointerType.Mouse) {
+                            waitForUpOrCancellation() != null
+                        } else {
+                            var dragging = false
+                            var ended = false
+                            var travelled = 0f
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) {
+                                    ended = true
+                                    break
+                                }
+                                val dx = change.position.x - change.previousPosition.x
+                                travelled += dx
+                                if (!dragging && kotlin.math.abs(travelled) > viewConfiguration.touchSlop) {
+                                    dragging = true
+                                    latestDragStart()
+                                    latestDrag(travelled)
+                                } else if (dragging && dx != 0f) {
+                                    latestDrag(dx)
+                                }
+                                if (dragging) change.consume()
+                            }
+                            if (dragging) latestDragEnd()
+                            ended && !dragging
+                        }
+                    if (released) {
                         host.onTabPressed(
                             row.id,
                             shift = modifiers.isShiftPressed,

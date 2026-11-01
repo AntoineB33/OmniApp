@@ -581,6 +581,9 @@ object CustomMenuButtons {
         else withMute + CLAUDE_SOUNDS
     }
 
+    /** The placement row the order of the bar's tabs is kept on (user rule 2026-11-01): [encodeGlobalWindows]' shape. */
+    const val TAB_ORDER_PLACEMENT_ID: String = "TabOrder"
+
     /** The placement row the windows set global are kept on (user rule 2026-10-18), in the order they were set so. */
     const val GLOBAL_WINDOWS_PLACEMENT_ID: String = "GlobalWindows"
 

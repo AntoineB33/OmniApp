@@ -35,6 +35,9 @@ object ExternalKeys {
 
     /** How loud Claude Code's own sounds are. */
     const val CLAUDE_SOUNDS: String = "claude-sounds"
+
+    /** The order of the window bar's tabs. */
+    const val TAB_ORDER: String = "tab-order"
 }
 
 /**

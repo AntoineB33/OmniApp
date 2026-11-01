@@ -327,7 +327,7 @@ private val VIEW_ROWS: Set<String> =
         CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, org.example.project.ui.WindowShortcuts.PLACEMENT_ID, "AppWindow",
         CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID,
         org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID, CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID,
-        CustomMenuButtons.SETTINGS_PLACEMENT_ID,
+        CustomMenuButtons.SETTINGS_PLACEMENT_ID, CustomMenuButtons.TAB_ORDER_PLACEMENT_ID,
         org.example.project.ui.AppViewState.PLACEMENT_ID,
     )
 
@@ -661,7 +661,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             placementStore?.savePlacement(id, next)
             // A window that closes takes the windows opened from it with it (user rule 2026-10-06) — here, the one
             // write every close makes, and before the close hands the focus on (`onLayout`).
-            if (previous.visible && !next.visible && id !in VIEW_ROWS) windowFrames.closeOpenedFrom(id)
+            if (previous.visible && !next.visible && id !in VIEW_ROWS) {
+                windowFrames.closeOpenedFrom(id)
+                windowFrames.forgetTabPlace(id)
+            }
             // A closed window is no button's any more: its frame id may be another window's tomorrow.
             if (previous.visible && !next.visible) {
                 menuButtonWindows.entries.filter { it.value == id }.forEach {
@@ -1258,6 +1261,26 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
         // A window renamed from its head (user rule 2026-10-15) keeps the name like a menu button's.
         windowFrames.onTabTitlesChanged = { saveTabTitles() }
+        // The order the tabs were dragged into (user rule 2026-11-01): loaded once, for the windows that come back.
+        remember(placementStore) {
+            windowFrames.tabOrder =
+                CustomMenuButtons.decodeGlobalWindows(placements[CustomMenuButtons.TAB_ORDER_PLACEMENT_ID]?.config)
+                    .filter { placements[it]?.visible == true }
+            true
+        }
+        fun saveTabOrder() =
+            updatePlacementById(CustomMenuButtons.TAB_ORDER_PLACEMENT_ID) {
+                it.copy(config = CustomMenuButtons.encodeGlobalWindows(windowFrames.tabOrder))
+            }
+        windowFrames.onTabOrderChanged = { before, after ->
+            saveTabOrder()
+            viewHistory.record(
+                org.example.project.scheduler.state.ExternalKeys.TAB_ORDER,
+                CustomMenuButtons.encodeGlobalWindows(before), CustomMenuButtons.encodeGlobalWindows(after), "Reorganize tabs",
+                // The bar is no window: undone from whichever one has the focus, as the left-side menu is.
+                madeIn = org.example.project.scheduler.state.HistoryWindow.Menu,
+            )
+        }
         windowFrames.onRenamed = { id, before, after ->
             viewHistory.record(org.example.project.scheduler.state.ExternalKeys.WINDOW_TITLE + id, before, after, "Rename window")
         }
@@ -1755,6 +1778,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     it.copy(config = CustomMenuButtons.encodeGlobalWindows(globalWindows.toList()))
                                 }
                             }
+                        restore.key == org.example.project.scheduler.state.ExternalKeys.TAB_ORDER -> {
+                            windowFrames.tabOrder = CustomMenuButtons.decodeGlobalWindows(restore.to)
+                            saveTabOrder()
+                        }
                         restore.key == org.example.project.scheduler.state.ExternalKeys.CLAUDE_SOUNDS ->
                             restore.to?.toDoubleOrNull()?.let { putClaudeSoundsVolume(it) }
                         restore.key.startsWith(SEARCH_KEY) -> {
