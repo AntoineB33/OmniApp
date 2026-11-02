@@ -1265,6 +1265,10 @@ suggestions before it was ever entered.
 
 #### What the actions do
 
+- **An action's blocks stand one under the other wherever it is held** (anomaly 2026-11-02: *"the Lowest countdown group
+  title is overlapped by the text of the group when expanded"*; `AddedActionEditor`, `ActionEditorLayoutTest`). An action
+  may draw several blocks, and a `Box` around it lays them on one another, so the column is in `AddedActionEditor`, the
+  one way to an action: the section's "Lowest countdown" and "Highest count", and the lateral menu's `MenuActionItem`.
 - **The actions act through the app's own intents** (`SearchDomain.addedIntents`): a tree edit over several tasks
   is ONE intent and one Undo/Redo unit (`SetTasksCategory`, `SetTasksMinimumTime`); the alarms' switch rides
   `SetAlarms`; a timer's or a chrono's run is its row's own run-state intent per element (a unit each since

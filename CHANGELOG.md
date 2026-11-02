@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An action's blocks no longer lie on one another — 2026-11-02
+
+Anomaly: "Lowest countdown" (and "Highest count") drew its title line under what follows it, its editor held in a `Box`. The lateral menu's `MenuActionItem` did the same to every action of several blocks. `AddedActionEditor` now stacks them itself. `ActionEditorLayoutTest`.
+
 ### Search bars highlight what they match; the actions bar opens on the contents — 2026-11-02
 
 User rule: what a search bar holds is highlighted in what it searches (`SearchDomain.matchRanges`, `HighlightsSearch`): the Search window's rows, the actions section, the two configuration windows. With text in the actions bar, each added log entry holding it has a group of its own first, its whole content highlighted (`ActionGroup.contents`). The actions section is now a `LazyColumn` by group, in both windows (`AddedActionList`): 500 added entries of 3 KB took 2 s per keystroke as a column, 25 ms now. No persisted change.

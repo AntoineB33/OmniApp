@@ -653,7 +653,13 @@ internal fun MenuActionItem(
     }
 }
 
-/** The control of one action — every one of them acts on the added elements of its kind. */
+/**
+ * The control of one action — every one of them acts on the added elements of its kind. **Its blocks stand one under the
+ * other wherever it is held** (anomaly 2026-11-02: *"the Lowest countdown group title is overlapped by the text of the
+ * group"*): many actions draw several, and a caller's `Box` laid them on one another — a title line under what follows
+ * it in the section, every such action as an item of the lateral menu. So the column is here, not in each caller.
+ * `ActionEditorLayoutTest`.
+ */
 @Composable
 private fun AddedActionEditor(
     state: SchedulerState,
@@ -669,6 +675,26 @@ private fun AddedActionEditor(
     onClear: (() -> Unit)?,
     /** The action's title is the editor's to write, for the ones that put buttons beside it; else its caller wrote it. */
     titled: Boolean = false,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+        AddedActionBlocks(state, action, added, config, onConfigChange, handlers, run, nowMillis, onOpenEach, onClear, titled)
+    }
+}
+
+/** What [AddedActionEditor] draws: as many blocks as the action has, so never called but from it. */
+@Composable
+private fun AddedActionBlocks(
+    state: SchedulerState,
+    action: SearchDomain.AddedAction,
+    added: List<SearchDomain.Result>,
+    config: SearchDomain.Config,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    handlers: AddedActionHandlers,
+    run: (SearchDomain.AddedCommand) -> Unit,
+    nowMillis: () -> Long,
+    onOpenEach: () -> Unit,
+    onClear: (() -> Unit)?,
+    titled: Boolean,
 ) {
     val taskIds = SearchDomain.addedTaskIds(state, added)
     val tasks = taskIds.mapNotNull { state.tasks[it] }
