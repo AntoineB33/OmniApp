@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Claude Code windows in a workplace setup — 2026-11-02
+
+User rule: a setup's window can be Claude Code in a cmd window on one folder (`WorkplaceApp.ClaudeCode`; the stored shape is `PersistedWorkplaceWindow.app`'s, no migration). The folder is the process's working directory, never parsed by cmd, and stands in a `rem` so the listing can read it (`WorkplaceDomain.openClaudeFolders`): applying opens one only where none the app started is on that folder. One started by hand is not seen, Windows not telling a process's folder. What is typed into now opens before the windows that would take the foreground. Client rebuild only: a build older than this reads such a window as a file explorer.
+
 ### An action's blocks no longer lie on one another — 2026-11-02
 
 Anomaly: "Lowest countdown" (and "Highest count") drew its title line under what follows it, its editor held in a `Box`. The lateral menu's `MenuActionItem` did the same to every action of several blocks. `AddedActionEditor` now stacks them itself. `ActionEditorLayoutTest`.

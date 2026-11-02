@@ -64,7 +64,7 @@ actual fun applyWorkplaceSetup(setup: WorkplaceSetup, onDone: (error: String?) -
         val error =
             synchronized(applying) {
                 runPowerShell(WorkplaceDomain.WINDOWS_11_LISTING, LIST_TIMEOUT_SECONDS).mapCatching { listing ->
-                    val steps = WorkplaceDomain.plan(setup, WorkplaceDomain.openWindows(listing))
+                    val steps = WorkplaceDomain.plan(setup, WorkplaceDomain.openWindows(listing), WorkplaceDomain.openClaudeFolders(listing))
                     // All there already: nothing is opened, nothing typed.
                     if (steps.isNotEmpty()) runPowerShell(WorkplaceDomain.windows11Script(steps), APPLY_TIMEOUT_SECONDS).getOrThrow()
                 }.exceptionOrNull()?.let { it.message ?: "The workplace setup failed." }

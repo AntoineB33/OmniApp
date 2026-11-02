@@ -2321,8 +2321,8 @@ private fun NewElementTimesEditor(
 }
 
 /**
- * User rule 2026-11-01: **the windows of each added workplace setup**: each a file explorer, with a field per tab. Written
- * as it is typed, one History Unit per field typed into.
+ * User rule 2026-11-01: **the windows of each added workplace setup**: a file explorer, with a field per tab, or an app on
+ * one folder (VS Code, Claude Code in cmd). Written as it is typed, one History Unit per field typed into.
  */
 @Composable
 private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDomain.Result>, run: (SearchDomain.AddedCommand) -> Unit) {
@@ -2338,8 +2338,7 @@ private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDoma
             setup.windows.forEachIndexed { windowAt, window ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        val code = window.app == org.example.project.scheduler.domain.WorkplaceApp.VsCode
-                        Text((if (code) "VS Code " else "File explorer ") + (windowAt + 1), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                        Text(window.app.label + " " + (windowAt + 1), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                         FrameButton("Remove window") { write(setup.id, setup.windows.filterIndexed { i, _ -> i != windowAt }) }
                     }
                     window.tabs.forEachIndexed { tabAt, path ->
@@ -2357,18 +2356,15 @@ private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDoma
                                     },
                                     singleLine = true,
                                     label = {
-                                        Text(
-                                            if (window.app == org.example.project.scheduler.domain.WorkplaceApp.VsCode) "Folder"
-                                            else "Tab " + (tabAt + 1) + " path",
-                                        )
+                                        Text(if (window.app.tabbed) "Tab " + (tabAt + 1) + " path" else "Folder")
                                     },
                                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                                 )
                             }
-                            if (window.app != org.example.project.scheduler.domain.WorkplaceApp.VsCode) FrameButton("✕", enabled = window.tabs.size > 1) { write(setup.id, replaced(window.tabs.filterIndexed { i, _ -> i != tabAt })) }
+                            if (window.app.tabbed) FrameButton("✕", enabled = window.tabs.size > 1) { write(setup.id, replaced(window.tabs.filterIndexed { i, _ -> i != tabAt })) }
                         }
                     }
-                    if (window.app != org.example.project.scheduler.domain.WorkplaceApp.VsCode) {
+                    if (window.app.tabbed) {
                         FrameButton("+ Tab") {
                             write(setup.id, setup.windows.mapIndexed { i, w -> if (i == windowAt) w.copy(tabs = w.tabs + "") else w })
                         }
@@ -2376,9 +2372,10 @@ private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDoma
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FrameButton("+ File explorer window") { write(setup.id, setup.windows + org.example.project.scheduler.domain.WorkplaceWindow()) }
-                FrameButton("+ VS Code window") {
-                    write(setup.id, setup.windows + org.example.project.scheduler.domain.WorkplaceWindow(app = org.example.project.scheduler.domain.WorkplaceApp.VsCode))
+                org.example.project.scheduler.domain.WorkplaceApp.entries.forEach { app ->
+                    FrameButton("+ " + app.label + " window") {
+                        write(setup.id, setup.windows + org.example.project.scheduler.domain.WorkplaceWindow(app = app))
+                    }
                 }
             }
         }

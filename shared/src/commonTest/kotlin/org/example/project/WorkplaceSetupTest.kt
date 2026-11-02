@@ -223,6 +223,47 @@ class WorkplaceSetupTest {
         assertEquals(WorkplaceApp.FileExplorer, SchedulerStateCodec.decode(later)!!.workplaceSetups.last().windows.single().app)
     }
 
+    private val claude = WorkplaceSetup("k", "Claude", windows = listOf(WorkplaceWindow(listOf("C:\\it's"), WorkplaceApp.ClaudeCode)))
+
+    /** User rule 2026-11-02: *"add Claude Code cmd for specific paths as windows to open"*. */
+    @Test
+    fun a_claude_code_window_starts_it_in_cmd_in_its_folder_and_types_nothing() {
+        val steps = WorkplaceDomain.plan(claude, emptyList())
+        assertEquals(listOf(WorkplaceStep(null, listOf("C:\\it's"), WorkplaceApp.ClaudeCode)), steps)
+        val script = WorkplaceDomain.windows11Script(steps)
+        assertTrue("\nOpen-ClaudeCode 'C:\\it''s'\n" in script, script)
+        val function = script.substringAfter("function Open-ClaudeCode").substringBefore("function Add-Tabs")
+        assertFalse("Send-Keys" in function)
+        // The folder is the working directory: cmd reads it as a remark alone, so it can run nothing.
+        assertTrue("WorkingDirectory = \$folder" in function, function)
+        assertTrue(WorkplaceDomain.canApply(claude, WorkplaceOs.Windows11))
+        assertEquals("Windows 11 · 1 Claude Code window", WorkplaceDomain.detail(claude))
+    }
+
+    @Test
+    fun a_claude_code_window_already_open_on_its_folder_is_not_opened_again() {
+        val listing = "5\tC:\\a\r\nclaude\t\"C:\\WINDOWS\\system32\\cmd.exe\" /k claude & rem \"C:\\It's\"\r\nclaude\tcmd.exe /c echo hi\r\nclaude\t\r\n"
+        assertEquals(listOf("C:\\It's"), WorkplaceDomain.openClaudeFolders(listing))
+        assertEquals(listOf(window(5, "C:\\a")), WorkplaceDomain.openWindows(listing), "the explorers read as before")
+        assertEquals(emptyList(), WorkplaceDomain.plan(claude, emptyList(), WorkplaceDomain.openClaudeFolders(listing)))
+        // An open one serves one window of the setup.
+        val two = claude.copy(windows = claude.windows + claude.windows)
+        assertEquals(1, WorkplaceDomain.plan(two, emptyList(), WorkplaceDomain.openClaudeFolders(listing)).size)
+    }
+
+    @Test
+    fun what_is_typed_into_opens_before_what_would_take_the_foreground() {
+        val mixed = claude.copy(windows = claude.windows + setup.windows)
+        val script = WorkplaceDomain.windows11Script(mixed).substringAfter("function Add-Tabs")
+        assertTrue(script.indexOf("\nOpen-ExplorerWindow '") in 0 until script.indexOf("\nOpen-ClaudeCode '"), script)
+    }
+
+    @Test
+    fun a_claude_code_window_survives_the_store() {
+        val written = SchedulerStateCodec.encode(SchedulerState.empty().copy(workplaceSetups = listOf(claude)))
+        assertEquals(listOf(claude), SchedulerStateCodec.decode(written)!!.workplaceSetups)
+    }
+
     private fun creationRow(kind: Kind) = SearchDomain.ItemResult(Kind.Creation, kind.name, "New " + kind.label, "")
 
     private fun groups(added: List<SearchDomain.Result>) =

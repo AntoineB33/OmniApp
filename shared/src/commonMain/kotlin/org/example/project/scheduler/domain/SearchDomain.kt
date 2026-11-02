@@ -3617,7 +3617,7 @@ object SearchDomain {
             AddedAction.WorkplaceNew -> "new create"
             AddedAction.WorkplaceTitle -> "name rename"
             AddedAction.WorkplaceOsChoice -> "os windows 11 system"
-            AddedAction.WorkplaceWindows -> "file explorer vs code visual studio tab path folder add remove default"
+            AddedAction.WorkplaceWindows -> "file explorer vs code visual studio claude code cmd terminal tab path folder add remove default"
             AddedAction.WorkplaceApply -> "open run start"
             AddedAction.ShortcutChord -> "set rebind reset remove press a chord ctrl shift alt"
             AddedAction.ShortcutWindow -> "choose a window"

@@ -5,15 +5,18 @@ enum class WorkplaceOs(val label: String) {
     Windows11("Windows 11"),
 }
 
-/** What a window of a workplace setup is. */
-enum class WorkplaceApp {
-    FileExplorer,
-    VsCode,
+/** What a window of a workplace setup is, and whether it holds a tab per path or one folder per window. */
+enum class WorkplaceApp(val label: String, val tabbed: Boolean = false) {
+    FileExplorer("File explorer", tabbed = true),
+    VsCode("VS Code"),
+
+    /** User rule 2026-11-02: a cmd window running Claude Code in a folder. */
+    ClaudeCode("Claude Code"),
 }
 
 /**
  * One window of a workplace setup, on the paths the user typed in [tabs]: a file explorer with a tab on each, or (user rule
- * 2026-11-02) VS Code on the one folder.
+ * 2026-11-02) VS Code or Claude Code in a cmd window on the one folder.
  */
 data class WorkplaceWindow(val tabs: List<String> = listOf(""), val app: WorkplaceApp = WorkplaceApp.FileExplorer)
 
@@ -34,7 +37,7 @@ data class OpenExplorerWindow(val handle: Long, val paths: List<String>)
 
 /**
  * What is left to do for one window of a setup: [paths] opened as tabs of the window [handle], of a new one where null; or,
- * [app] being VS Code, the one folder opened.
+ * [app] being another's, the one folder opened.
  */
 data class WorkplaceStep(val handle: Long?, val paths: List<String>, val app: WorkplaceApp = WorkplaceApp.FileExplorer)
 
@@ -48,14 +51,13 @@ object WorkplaceDomain {
     /** What a setup's row says beside its name. */
     fun detail(setup: WorkplaceSetup): String {
         val filled = setup.windows.filter { window -> window.tabs.any { it.isNotBlank() } }
-        val (code, explorers) = filled.partition { it.app == WorkplaceApp.VsCode }
+        val (explorers, others) = filled.partition { it.app.tabbed }
         val tabs = explorers.sumOf { window -> window.tabs.count { it.isNotBlank() } }
         val parts =
             listOfNotNull(
-                count(explorers.size, "window").takeIf { explorers.isNotEmpty() || code.isEmpty() },
-                count(tabs, "tab").takeIf { explorers.isNotEmpty() || code.isEmpty() },
-                count(code.size, "VS Code window").takeIf { code.isNotEmpty() },
-            )
+                count(explorers.size, "window").takeIf { explorers.isNotEmpty() || others.isEmpty() },
+                count(tabs, "tab").takeIf { explorers.isNotEmpty() || others.isEmpty() },
+            ) + others.groupBy { it.app }.map { (app, windows) -> count(windows.size, app.label + " window") }
         return setup.os.label + " · " + parts.joinToString(", ")
     }
 
@@ -98,17 +100,39 @@ object WorkplaceDomain {
             .map { (handle, paths) -> OpenExplorerWindow(handle, paths) }
 
     /**
+     * The folders of the Claude Code windows [WINDOWS_11_LISTING] found, each once per window. A folder is read off the cmd
+     * command line [CLAUDE_COMMAND] gave it: Windows does not tell a process's current folder, so a Claude Code started by
+     * hand is not seen.
+     */
+    fun openClaudeFolders(listing: String): List<String> =
+        listing.lineSequence()
+            .filter { it.startsWith(CLAUDE_LISTING_PREFIX) }
+            .map { it.substringAfter(CLAUDE_COMMAND, "").trim().removeSurrounding("\"") }
+            .filter { it.isNotEmpty() }
+            .toList()
+
+    /** What cmd is told: Claude Code, then a remark naming the folder for the listing. The folder itself is the working one. */
+    private const val CLAUDE_COMMAND = "/k claude & rem "
+
+    private const val CLAUDE_LISTING_PREFIX = "claude\t"
+
+    /**
      * User rule 2026-11-02, **what applying [setup] still has to open, [open] being on the screen**: nothing for a window
      * of the setup one open window already holds whole; else the tabs it lacks in the open window holding **the fewest of
      * its paths, at least one** (the first on a tie), which then holds them all; a new window where none holds any. An open
      * window serves one window of the setup. A VS Code window is always asked for: VS Code itself brings forward the window
-     * already on a folder rather than open a second one.
+     * already on a folder rather than open a second one. Nothing does that for a cmd window, so a Claude Code window is opened
+     * unless one of [claudeOpen] is on its folder, each of them serving one window of the setup, as an explorer does.
      */
-    fun plan(setup: WorkplaceSetup, open: List<OpenExplorerWindow>): List<WorkplaceStep> {
+    fun plan(setup: WorkplaceSetup, open: List<OpenExplorerWindow>, claudeOpen: List<String> = emptyList()): List<WorkplaceStep> {
         val free = open.toMutableList()
+        val freeClaude = claudeOpen.mapTo(ArrayList(), ::samePath)
         return setup.windows.flatMap { window ->
             val required = window.tabs.map { it.trim() }.filter { it.isNotEmpty() }.distinctBy(::samePath)
             if (window.app == WorkplaceApp.VsCode) return@flatMap required.map { WorkplaceStep(null, listOf(it), WorkplaceApp.VsCode) }
+            if (window.app == WorkplaceApp.ClaudeCode) {
+                return@flatMap required.filterNot { freeClaude.remove(samePath(it)) }.map { WorkplaceStep(null, listOf(it), WorkplaceApp.ClaudeCode) }
+            }
             if (required.isEmpty()) return@flatMap emptyList()
             fun held(candidate: OpenExplorerWindow): Int {
                 val theirs = candidate.paths.mapTo(HashSet(), ::samePath)
@@ -132,16 +156,19 @@ object WorkplaceDomain {
      * **The PowerShell that does [steps] on Windows 11.** Windows has no command for a tab of the file explorer, so a
      * window is opened on its first path and each other tab is typed into it: Ctrl+T, the address bar, the path. Before
      * every keystroke the script asks whether that window is still the one in front, and stops if not: the keys of a
-     * window that lost the foreground would go to whatever took it.
+     * window that lost the foreground would go to whatever took it. So what is typed into comes first: a window opened
+     * before it would take the foreground it needs.
      */
     fun windows11Script(steps: List<WorkplaceStep>): String =
         buildString {
             append(WINDOWS_11_PRELUDE)
-            for (step in steps) {
+            for (step in steps.sortedBy { !it.app.tabbed }) {
                 val first = step.paths.firstOrNull() ?: continue
                 val typed = { paths: List<String> -> paths.joinToString(", ") { powerShellQuoted(sendKeysText(it)) } }
                 if (step.app == WorkplaceApp.VsCode) {
                     append("Open-VsCode ").append(powerShellQuoted(first)).append("\n")
+                } else if (step.app == WorkplaceApp.ClaudeCode) {
+                    append("Open-ClaudeCode ").append(powerShellQuoted(first)).append("\n")
                 } else if (step.handle == null) {
                     append("Open-ExplorerWindow ").append(powerShellQuoted(first)).append(" @(").append(typed(step.paths.drop(1))).append(")\n")
                 } else {
@@ -153,7 +180,10 @@ object WorkplaceDomain {
     /** [setup] opened with nothing on the screen. */
     fun windows11Script(setup: WorkplaceSetup): String = windows11Script(plan(setup, emptyList()))
 
-    /** The PowerShell that lists every tab of the file explorer; it opens nothing. Windows lists each tab, under its window. */
+    /**
+     * The PowerShell that lists every tab of the file explorer, and every cmd command line for the Claude Code windows
+     * ([openClaudeFolders]); it opens nothing. Windows lists each tab, under its window.
+     */
     val WINDOWS_11_LISTING =
         """
         |${'$'}ErrorActionPreference = 'Stop'
@@ -164,6 +194,9 @@ object WorkplaceDomain {
         |    ${'$'}path = try { ${'$'}_.Document.Folder.Self.Path } catch { ${'$'}null }
         |    if (${'$'}path) { [string][long]${'$'}_.HWND + "`t" + ${'$'}path }
         |}
+        |try {
+        |    Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" | ForEach-Object { 'claude' + "`t" + ${'$'}_.CommandLine }
+        |} catch { }
         |
         """.trimMargin()
 
@@ -219,6 +252,17 @@ object WorkplaceDomain {
         |    if (-not (Test-Path -LiteralPath ${'$'}folder -PathType Container)) { throw ('No such folder: ' + ${'$'}folder) }
         |    if (${'$'}folder.Length -gt 3) { ${'$'}folder = ${'$'}folder.TrimEnd('\') }
         |    Start-Process ${'$'}program -ArgumentList ('"' + ${'$'}folder + '"')
+        |}
+        |function Open-ClaudeCode([string]${'$'}folder) {
+        |    if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { throw 'Claude Code was not found on this device.' }
+        |    if (-not (Test-Path -LiteralPath ${'$'}folder -PathType Container)) { throw ('No such folder: ' + ${'$'}folder) }
+        |    if (${'$'}folder.StartsWith('\\')) { throw ('cmd cannot start in a network path: ' + ${'$'}folder) }
+        |    if (${'$'}folder.Length -gt 3) { ${'$'}folder = ${'$'}folder.TrimEnd('\') }
+        |    ${'$'}start = New-Object System.Diagnostics.ProcessStartInfo
+        |    ${'$'}start.FileName = ${'$'}env:ComSpec
+        |    ${'$'}start.Arguments = '$CLAUDE_COMMAND"' + ${'$'}folder + '"'
+        |    ${'$'}start.WorkingDirectory = ${'$'}folder
+        |    [void][System.Diagnostics.Process]::Start(${'$'}start)
         |}
         |function Add-Tabs([long]${'$'}window, [string[]]${'$'}paths) {
         |    foreach (${'$'}path in ${'$'}paths) {
