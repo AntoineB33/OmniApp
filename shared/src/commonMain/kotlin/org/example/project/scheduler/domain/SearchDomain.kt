@@ -3489,27 +3489,10 @@ object SearchDomain {
     }
 
     /**
-     * User rule 2026-10-13, the added elements' row menu: *"retract all macro groups except the one for this element
-     * alone, and scroll to it if necessary"* — [config] with every group of the actions section retracted but
-     * [element]'s own, which is opened, and that group's id (what the section scrolls to). The groups are the ones the
-     * section lists for [added] ([actionGroups]); what a group holds inside it (a kind's default configuration) keeps
-     * the arrow it had. Null where the section lists no group of the element's own.
-     */
-    fun withOnlyElementGroupOpen(config: Config, added: List<Result>, element: Result): Pair<Config, String>? {
-        val groups = actionGroups(actionsFor(addedActions(config.actionQuery, Kind.entries.toSet(), actionKindsOf(added)), added), added)
-        val key = keyOf(element)
-        val own = groups.firstOrNull { it.element && it.members.singleOrNull()?.let(::keyOf) == key } ?: return null
-        // What is inside the groups — the groups inside them, every action's micro group — stays as the user left it.
-        val macro = groups.mapTo(HashSet()) { it.id }
-        val inside = listedGroupIds(groups) - macro
-        val retracted = macro - own.id + config.collapsedActionGroups.filter { it in inside }
-        return config.copy(collapsedActionGroups = retracted) to own.id
-    }
-
-    /**
-     * User rule 2026-11-01, a new element added to a window: [config] with **only the macro groups holding [element] open**,
-     * every other retracted, and the id of the first of them (what the section scrolls to). What is inside the groups stays
-     * as the user left it, as in [withOnlyElementGroupOpen]. Null where no group holds it.
+     * User rule 2026-11-01, **a new element added to a window, and the added elements' "show only its actions"** (the same
+     * rule since 2026-11-02): [config] with **only the macro groups holding [element] open**, every other retracted, and the
+     * id of the first of them (what the section scrolls to). What is inside the groups stays as the user left it. Null where
+     * no group holds it.
      */
     fun withOnlyGroupsOf(config: Config, added: List<Result>, element: Result): Pair<Config, String>? {
         val groups = actionGroups(actionsFor(addedActions(config.actionQuery, Kind.entries.toSet(), actionKindsOf(added)), added), added)
@@ -3606,7 +3589,7 @@ object SearchDomain {
             AddedAction.WorkplaceNew -> "new create"
             AddedAction.WorkplaceTitle -> "name rename"
             AddedAction.WorkplaceOsChoice -> "os windows 11 system"
-            AddedAction.WorkplaceWindows -> "file explorer tab path folder add remove"
+            AddedAction.WorkplaceWindows -> "file explorer vs code visual studio tab path folder add remove"
             AddedAction.WorkplaceApply -> "open run start"
             AddedAction.ShortcutChord -> "set rebind reset remove press a chord ctrl shift alt"
             AddedAction.ShortcutWindow -> "choose a window"

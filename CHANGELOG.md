@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Show only its actions" opens every group that can apply — 2026-11-02
+
+User rule: the added elements' "show only its actions" now keeps open every macro group holding the element, as a new element does, and starts the section at the first; `withOnlyElementGroupOpen`, which kept its own group alone, is gone for `SearchDomain.withOnlyGroupsOf`. No migration. Client rebuild only.
+
+### VS Code windows in a workplace setup — 2026-11-02
+
+User rule: a setup's window can be VS Code on one folder (`WorkplaceApp`, `PersistedWorkplaceWindow.app`, absent in older payloads, which read as a file explorer). It is launched straight on `Code.exe`, nothing typed; VS Code itself brings forward a window already on that folder. No migration. Client rebuild only.
+
 ### Applying a workplace setup opens only what is missing — 2026-11-02
 
 User rule: applying a setup lists the file explorer tabs already open (`WorkplaceDomain.WINDOWS_11_LISTING`, which opens nothing) and plans from them (`WorkplaceDomain.plan`): nothing for a window one open window holds whole, else the missing tabs in the open window holding the fewest of its paths, the first on a tie, and a new window only where none holds any. Anomaly: a double-click on a Search row could be lost on the press that gives the window back the focus, after a right-click menu or another application; rows now read it off the two presses' own times, kept outside the gesture (cause inferred from the record, not reproduced headlessly). No migration. Client rebuild only.

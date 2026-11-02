@@ -1280,7 +1280,7 @@ class SearchAddedElementsTest {
      * groups except the one for this element alone, and scroll to it if necessary."*
      */
     @Test
-    fun a_row_of_the_added_elements_leaves_its_own_group_of_actions_open_alone() {
+    fun a_row_of_the_added_elements_leaves_the_groups_holding_it_open_alone() {
         fun quota(id: String, title: String) = SearchDomain.ItemResult(SearchDomain.Kind.Quota, id, title, "")
         val a = quota("q1", "Sport")
         val b = quota("q2", "Reading")
@@ -1288,20 +1288,21 @@ class SearchAddedElementsTest {
         val added = listOf(a, x, b)
         val ownOfB = "element/" + SearchDomain.keyOf(b)
         // The default configuration inside the quotas' group was retracted, B's own group too: the first keeps its
-        // arrow, the second is opened, and every other group of elements is retracted.
+        // arrow, the second is opened, and so is every group whose actions can apply to B (user rule 2026-11-02); the
+        // others are retracted, and the section starts at the first.
         val before = SearchDomain.Config(collapsedActionGroups = setOf("default/Quota", ownOfB, "gone"))
-        val (after, id) = SearchDomain.withOnlyElementGroupOpen(before, added, b)!!
-        assertEquals(ownOfB, id)
+        val (after, id) = SearchDomain.withOnlyGroupsOf(before, added, b)!!
+        assertEquals("all", id)
         assertEquals(
-            setOf("all", "kind/Quota", "element/" + SearchDomain.keyOf(a), "element/" + SearchDomain.keyOf(x), "default/Quota"),
+            setOf("element/" + SearchDomain.keyOf(a), "element/" + SearchDomain.keyOf(x), "default/Quota"),
             after.collapsedActionGroups,
         )
         // One element alone: its one group, opened.
-        val (lone, loneId) = SearchDomain.withOnlyElementGroupOpen(SearchDomain.Config(collapsedActionGroups = setOf("element/" + SearchDomain.keyOf(a))), listOf(a), a)!!
+        val (lone, loneId) = SearchDomain.withOnlyGroupsOf(SearchDomain.Config(collapsedActionGroups = setOf("element/" + SearchDomain.keyOf(a))), listOf(a), a)!!
         assertEquals("element/" + SearchDomain.keyOf(a), loneId)
         assertTrue(lone.collapsedActionGroups.isEmpty())
         // Not in the list: nothing to show.
-        assertNull(SearchDomain.withOnlyElementGroupOpen(before, listOf(a, x), b))
+        assertNull(SearchDomain.withOnlyGroupsOf(before, listOf(a, x), b))
     }
 
     /**

@@ -1148,9 +1148,9 @@ fun SearchWindow(
                 onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
                 onKeepOnly = { keys -> onConfigChange(config.copy(added = SearchDomain.keepingOnly(config.added, keys))) },
                 onRemoveAll = { keys -> onConfigChange(config.copy(added = SearchDomain.removing(config.added, keys))) },
-                // User rule 2026-10-13: every group of the actions retracted but this element's own, and scrolled to.
+                // User rule 2026-11-02: only the groups of actions that can apply to this element open, as for a new one.
                 onShowOnlyActions = { row ->
-                    SearchDomain.withOnlyElementGroupOpen(config, addedRows, row)?.let { (next, groupId) ->
+                    SearchDomain.withOnlyGroupsOf(config, addedRows, row)?.let { (next, groupId) ->
                         onConfigChange(next)
                         actionsCollapsed = false
                         actionReveal = groupId to ((actionReveal?.second ?: 0) + 1)
@@ -1215,8 +1215,8 @@ private const val ADDED_SURFACE: String = "added/"
 private const val REMOVE_OTHERS_LABEL: String = "remove the others"
 
 /**
- * The added elements' row menu (user rule 2026-10-13): every group of the actions section retracted but the one of this
- * element alone, which the section scrolls to ([SearchDomain.withOnlyElementGroupOpen]).
+ * The added elements' row menu (user rule 2026-11-02): every group of the actions section retracted but those holding this
+ * element, the section starting at the first of them ([SearchDomain.withOnlyGroupsOf]).
  */
 private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
 
@@ -1252,7 +1252,7 @@ private fun AddedElementsList(
     onKeepOnly: (Set<String>) -> Unit,
     /** The row menu's "remove": the selected elements leave the list. */
     onRemoveAll: (Set<String>) -> Unit,
-    /** The row menu's "show only its actions": the actions section shows the row's own group alone ([SHOW_ONLY_ACTIONS_LABEL]). */
+    /** The row menu's "show only its actions": the actions section shows the row's groups alone ([SHOW_ONLY_ACTIONS_LABEL]). */
     onShowOnlyActions: (SearchDomain.Result) -> Unit,
     /** The task elements whose sub-tree is open ([SearchSplits.expandedAdded]). */
     expandedTasks: Set<TaskId>,

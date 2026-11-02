@@ -5,8 +5,17 @@ enum class WorkplaceOs(val label: String) {
     Windows11("Windows 11"),
 }
 
-/** One window of a workplace setup: a file explorer, with a tab on each of [tabs] (a path, typed by the user). */
-data class WorkplaceWindow(val tabs: List<String> = listOf(""))
+/** What a window of a workplace setup is. */
+enum class WorkplaceApp {
+    FileExplorer,
+    VsCode,
+}
+
+/**
+ * One window of a workplace setup, on the paths the user typed in [tabs]: a file explorer with a tab on each, or (user rule
+ * 2026-11-02) VS Code on the one folder.
+ */
+data class WorkplaceWindow(val tabs: List<String> = listOf(""), val app: WorkplaceApp = WorkplaceApp.FileExplorer)
 
 /**
  * User rule 2026-11-01: **a workplace setup**: windows of the operating system [os] to open at one press, *"to quickly
@@ -23,8 +32,11 @@ data class WorkplaceSetup(
 /** A file explorer window open on this device: its [handle] and the path of each of its tabs. */
 data class OpenExplorerWindow(val handle: Long, val paths: List<String>)
 
-/** What is left to do for one window of a setup: [paths] opened as tabs of the window [handle], of a new one where null. */
-data class WorkplaceStep(val handle: Long?, val paths: List<String>)
+/**
+ * What is left to do for one window of a setup: [paths] opened as tabs of the window [handle], of a new one where null; or,
+ * [app] being VS Code, the one folder opened.
+ */
+data class WorkplaceStep(val handle: Long?, val paths: List<String>, val app: WorkplaceApp = WorkplaceApp.FileExplorer)
 
 object WorkplaceDomain {
     /** A new id, none of [used]. */
@@ -35,9 +47,16 @@ object WorkplaceDomain {
 
     /** What a setup's row says beside its name. */
     fun detail(setup: WorkplaceSetup): String {
-        val windows = setup.windows.count { window -> window.tabs.any { it.isNotBlank() } }
-        val tabs = setup.windows.sumOf { window -> window.tabs.count { it.isNotBlank() } }
-        return setup.os.label + " · " + count(windows, "window") + ", " + count(tabs, "tab")
+        val filled = setup.windows.filter { window -> window.tabs.any { it.isNotBlank() } }
+        val (code, explorers) = filled.partition { it.app == WorkplaceApp.VsCode }
+        val tabs = explorers.sumOf { window -> window.tabs.count { it.isNotBlank() } }
+        val parts =
+            listOfNotNull(
+                count(explorers.size, "window").takeIf { explorers.isNotEmpty() || code.isEmpty() },
+                count(tabs, "tab").takeIf { explorers.isNotEmpty() || code.isEmpty() },
+                count(code.size, "VS Code window").takeIf { code.isNotEmpty() },
+            )
+        return setup.os.label + " · " + parts.joinToString(", ")
     }
 
     private fun count(n: Int, noun: String) = "$n $noun" + if (n == 1) "" else "s"
@@ -82,13 +101,15 @@ object WorkplaceDomain {
      * User rule 2026-11-02, **what applying [setup] still has to open, [open] being on the screen**: nothing for a window
      * of the setup one open window already holds whole; else the tabs it lacks in the open window holding **the fewest of
      * its paths, at least one** (the first on a tie), which then holds them all; a new window where none holds any. An open
-     * window serves one window of the setup.
+     * window serves one window of the setup. A VS Code window is always asked for: VS Code itself brings forward the window
+     * already on a folder rather than open a second one.
      */
     fun plan(setup: WorkplaceSetup, open: List<OpenExplorerWindow>): List<WorkplaceStep> {
         val free = open.toMutableList()
-        return setup.windows.mapNotNull { window ->
+        return setup.windows.flatMap { window ->
             val required = window.tabs.map { it.trim() }.filter { it.isNotEmpty() }.distinctBy(::samePath)
-            if (required.isEmpty()) return@mapNotNull null
+            if (window.app == WorkplaceApp.VsCode) return@flatMap required.map { WorkplaceStep(null, listOf(it), WorkplaceApp.VsCode) }
+            if (required.isEmpty()) return@flatMap emptyList()
             fun held(candidate: OpenExplorerWindow): Int {
                 val theirs = candidate.paths.mapTo(HashSet(), ::samePath)
                 return required.count { samePath(it) in theirs }
@@ -97,11 +118,11 @@ object WorkplaceDomain {
             val target = whole ?: free.filter { held(it) > 0 }.minByOrNull(::held)
             target?.let(free::remove)
             when {
-                whole != null -> null
-                target == null -> WorkplaceStep(null, required)
+                whole != null -> emptyList()
+                target == null -> listOf(WorkplaceStep(null, required))
                 else -> {
                     val theirs = target.paths.mapTo(HashSet(), ::samePath)
-                    WorkplaceStep(target.handle, required.filter { samePath(it) !in theirs })
+                    listOf(WorkplaceStep(target.handle, required.filter { samePath(it) !in theirs }))
                 }
             }
         }
@@ -119,7 +140,9 @@ object WorkplaceDomain {
             for (step in steps) {
                 val first = step.paths.firstOrNull() ?: continue
                 val typed = { paths: List<String> -> paths.joinToString(", ") { powerShellQuoted(sendKeysText(it)) } }
-                if (step.handle == null) {
+                if (step.app == WorkplaceApp.VsCode) {
+                    append("Open-VsCode ").append(powerShellQuoted(first)).append("\n")
+                } else if (step.handle == null) {
                     append("Open-ExplorerWindow ").append(powerShellQuoted(first)).append(" @(").append(typed(step.paths.drop(1))).append(")\n")
                 } else {
                     append("Add-ExplorerTabs ").append(step.handle).append(" @(").append(typed(step.paths)).append(")\n")
@@ -188,6 +211,14 @@ object WorkplaceDomain {
         |function Add-ExplorerTabs([long]${'$'}window, [string[]]${'$'}paths) {
         |    if ([OmniForeground]::IsIconic([IntPtr]${'$'}window)) { [void][OmniForeground]::ShowWindow([IntPtr]${'$'}window, 9) }
         |    Add-Tabs ${'$'}window ${'$'}paths
+        |}
+        |function Open-VsCode([string]${'$'}folder) {
+        |    ${'$'}command = Get-Command code.cmd -ErrorAction SilentlyContinue
+        |    ${'$'}program = if (${'$'}command) { Join-Path (Split-Path (Split-Path ${'$'}command.Source)) 'Code.exe' } else { Join-Path ${'$'}env:LOCALAPPDATA 'Programs\Microsoft VS Code\Code.exe' }
+        |    if (-not (Test-Path -LiteralPath ${'$'}program)) { throw 'VS Code was not found on this device.' }
+        |    if (-not (Test-Path -LiteralPath ${'$'}folder -PathType Container)) { throw ('No such folder: ' + ${'$'}folder) }
+        |    if (${'$'}folder.Length -gt 3) { ${'$'}folder = ${'$'}folder.TrimEnd('\') }
+        |    Start-Process ${'$'}program -ArgumentList ('"' + ${'$'}folder + '"')
         |}
         |function Add-Tabs([long]${'$'}window, [string[]]${'$'}paths) {
         |    foreach (${'$'}path in ${'$'}paths) {

@@ -2304,7 +2304,8 @@ private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDoma
             setup.windows.forEachIndexed { windowAt, window ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("File explorer " + (windowAt + 1), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                        val code = window.app == org.example.project.scheduler.domain.WorkplaceApp.VsCode
+                        Text((if (code) "VS Code " else "File explorer ") + (windowAt + 1), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                         FrameButton("Remove window") { write(setup.id, setup.windows.filterIndexed { i, _ -> i != windowAt }) }
                     }
                     window.tabs.forEachIndexed { tabAt, path ->
@@ -2321,19 +2322,31 @@ private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDoma
                                         )
                                     },
                                     singleLine = true,
-                                    label = { Text("Tab " + (tabAt + 1) + " path") },
+                                    label = {
+                                        Text(
+                                            if (window.app == org.example.project.scheduler.domain.WorkplaceApp.VsCode) "Folder"
+                                            else "Tab " + (tabAt + 1) + " path",
+                                        )
+                                    },
                                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                                 )
                             }
-                            FrameButton("✕", enabled = window.tabs.size > 1) { write(setup.id, replaced(window.tabs.filterIndexed { i, _ -> i != tabAt })) }
+                            if (window.app != org.example.project.scheduler.domain.WorkplaceApp.VsCode) FrameButton("✕", enabled = window.tabs.size > 1) { write(setup.id, replaced(window.tabs.filterIndexed { i, _ -> i != tabAt })) }
                         }
                     }
-                    FrameButton("+ Tab") {
-                        write(setup.id, setup.windows.mapIndexed { i, w -> if (i == windowAt) w.copy(tabs = w.tabs + "") else w })
+                    if (window.app != org.example.project.scheduler.domain.WorkplaceApp.VsCode) {
+                        FrameButton("+ Tab") {
+                            write(setup.id, setup.windows.mapIndexed { i, w -> if (i == windowAt) w.copy(tabs = w.tabs + "") else w })
+                        }
                     }
                 }
             }
-            FrameButton("+ File explorer window") { write(setup.id, setup.windows + org.example.project.scheduler.domain.WorkplaceWindow()) }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FrameButton("+ File explorer window") { write(setup.id, setup.windows + org.example.project.scheduler.domain.WorkplaceWindow()) }
+                FrameButton("+ VS Code window") {
+                    write(setup.id, setup.windows + org.example.project.scheduler.domain.WorkplaceWindow(app = org.example.project.scheduler.domain.WorkplaceApp.VsCode))
+                }
+            }
         }
     }
 }

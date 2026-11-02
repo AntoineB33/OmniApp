@@ -53,7 +53,8 @@ private fun runPowerShell(script: String, timeoutSeconds: Long): Result<String> 
         }
         reading.join(1_000)
         if (process.exitValue() != 0) {
-            error(output.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "The workplace setup failed.")
+            error(output.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !it.startsWith("#<") && !it.startsWith("<Objs") }
+                ?: "The workplace setup failed.")
         }
         output
     }

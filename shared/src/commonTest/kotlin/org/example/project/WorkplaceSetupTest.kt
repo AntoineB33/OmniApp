@@ -8,6 +8,7 @@ import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.SearchDomain.Kind
 import org.example.project.scheduler.domain.WorkplaceDomain
+import org.example.project.scheduler.domain.WorkplaceApp
 import org.example.project.scheduler.domain.WorkplaceOs
 import org.example.project.scheduler.domain.OpenExplorerWindow
 import org.example.project.scheduler.domain.WorkplaceSetup
@@ -182,6 +183,43 @@ class WorkplaceSetupTest {
             listOf(window(394168, "C:\\a b", "C:\\c"), window(5, "D:\\é")),
             WorkplaceDomain.openWindows("394168\tC:\\a b\r\n5\tD:\\é\r\n394168\tC:\\c\r\n\r\nnoise\r\n"),
         )
+    }
+
+    private val code = WorkplaceSetup("c", "Code", windows = listOf(WorkplaceWindow(listOf("C:\\it's"), WorkplaceApp.VsCode)))
+
+    @Test
+    fun a_vs_code_window_opens_on_its_folder_and_types_nothing() {
+        val steps = WorkplaceDomain.plan(code, listOf(window(1, "C:\\it's")))
+        assertEquals(listOf(WorkplaceStep(null, listOf("C:\\it's"), WorkplaceApp.VsCode)), steps, "VS Code keeps to one window on a folder itself")
+        val script = WorkplaceDomain.windows11Script(steps)
+        assertTrue("\nOpen-VsCode 'C:\\it''s'\n" in script, script)
+        assertFalse("\nOpen-ExplorerWindow '" in script)
+        // The name of its function goes to the file explorer's rule neither: no path is typed for it.
+        assertFalse("Send-Keys" in script.substringAfter("function Open-VsCode").substringBefore("function Add-Tabs"))
+        assertTrue(WorkplaceDomain.canApply(code, WorkplaceOs.Windows11))
+    }
+
+    @Test
+    fun both_kinds_of_window_stand_in_one_setup() {
+        val both = code.copy(windows = setup.windows + code.windows + WorkplaceWindow(listOf(" "), WorkplaceApp.VsCode))
+        assertEquals(
+            listOf(WorkplaceStep(null, listOf("C:\\code", "D:\\docs (old)")), WorkplaceStep(null, listOf("C:\\it's"), WorkplaceApp.VsCode)),
+            WorkplaceDomain.plan(both, emptyList()),
+        )
+        assertEquals("Windows 11 · 1 window, 2 tabs, 1 VS Code window", WorkplaceDomain.detail(both))
+        assertEquals("Windows 11 · 1 VS Code window", WorkplaceDomain.detail(code))
+        assertEquals("Windows 11 · 0 windows, 0 tabs", WorkplaceDomain.detail(WorkplaceSetup("x")))
+    }
+
+    @Test
+    fun a_window_stored_before_vs_code_is_a_file_explorer_and_vs_code_is_kept() {
+        val written = SchedulerStateCodec.encode(SchedulerState.empty().copy(workplaceSetups = listOf(setup, code)))
+        assertEquals(listOf(setup, code), SchedulerStateCodec.decode(written)!!.workplaceSetups)
+        val older = written.replace(",\"app\":\"FileExplorer\"", "").replace("\"app\":\"FileExplorer\",", "")
+        assertFalse("FileExplorer" in older, "the shape before the field existed")
+        assertEquals(WorkplaceApp.FileExplorer, SchedulerStateCodec.decode(older)!!.workplaceSetups.first().windows.single().app)
+        val later = written.replace("\"VsCode\"", "\"Emacs\"")
+        assertEquals(WorkplaceApp.FileExplorer, SchedulerStateCodec.decode(later)!!.workplaceSetups.last().windows.single().app)
     }
 
     @Test

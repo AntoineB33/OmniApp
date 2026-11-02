@@ -920,11 +920,10 @@ suggestions before it was ever entered.
     empty. "Remove every element from the list" is no longer an action
     of its own (`RETIRED_ACTIONS`); as an item of the lateral menu the group shows "Open" alone — there is no list
     there to take anything off.
-  - **A row of the added elements can leave ITS group open alone** (user rule 2026-10-13: *"in the right-click
-    menu, add the option to retract all macro groups except the one for this element alone, and scroll to it if
-    necessary"*; "show only its actions", `SearchDomain.withOnlyElementGroupOpen`, `SearchAddedElementsTest`). It is
-    about the row under the pointer, whatever is selected. Every group of elements is retracted but the element's
-    own, which is opened (`collapsedActionGroups`, so it is kept with the window); a group INSIDE a group keeps its
+  - **A row of the added elements can leave ITS groups open alone** (user rule 2026-10-13, widened 2026-11-02 to every
+    macro group holding it, the rule of a new element: "show only its actions", `SearchDomain.withOnlyGroupsOf`,
+    `SearchAddedElementsTest`). It is about the row under the pointer, whatever is selected. Every other macro group is
+    retracted and those are opened (`collapsedActionGroups`, so it is kept with the window); a group INSIDE a group keeps its
     arrow; the actions section is expanded if it was retracted, and scrolls to the group once the others are laid
     out retracted (`AddedActionsSection`'s `reveal` → the group's `BringIntoViewRequester`).
   - **A press on a TITLE is a press on its arrow** (user rule 2026-10-13: *"Clicking in the title of a macro group

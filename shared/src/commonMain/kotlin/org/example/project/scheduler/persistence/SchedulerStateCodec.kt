@@ -2323,7 +2323,11 @@ private fun PersistedQuota.toQuotaEntry(): QuotaEntry =
 
 /** User rule 2026-11-01: one window of a workplace setup. */
 @Serializable
-private data class PersistedWorkplaceWindow(val tabs: List<String> = emptyList())
+private data class PersistedWorkplaceWindow(
+    val tabs: List<String> = emptyList(),
+    // User rule 2026-11-02, by name: absent before VS Code windows existed, and one a later build added reads as a file explorer.
+    val app: String? = null,
+)
 
 /** User rule 2026-11-01: one workplace setup. Its OS by name: one a later build added reads as the first this one knows. */
 @Serializable
@@ -2335,14 +2339,20 @@ private data class PersistedWorkplaceSetup(
 )
 
 private fun org.example.project.scheduler.domain.WorkplaceSetup.toPersisted(): PersistedWorkplaceSetup =
-    PersistedWorkplaceSetup(id, title, os.name, windows.map { PersistedWorkplaceWindow(it.tabs) })
+    PersistedWorkplaceSetup(id, title, os.name, windows.map { PersistedWorkplaceWindow(it.tabs, it.app.name) })
 
 private fun PersistedWorkplaceSetup.toWorkplaceSetup(): org.example.project.scheduler.domain.WorkplaceSetup =
     org.example.project.scheduler.domain.WorkplaceSetup(
         id, title,
         org.example.project.scheduler.domain.WorkplaceOs.entries.firstOrNull { it.name == os }
             ?: org.example.project.scheduler.domain.WorkplaceOs.entries.first(),
-        windows.map { org.example.project.scheduler.domain.WorkplaceWindow(it.tabs) },
+        windows.map { window ->
+            org.example.project.scheduler.domain.WorkplaceWindow(
+                window.tabs,
+                org.example.project.scheduler.domain.WorkplaceApp.entries.firstOrNull { it.name == window.app }
+                    ?: org.example.project.scheduler.domain.WorkplaceApp.FileExplorer,
+            )
+        },
     )
 
 /** PRD §18 Chronos: one persisted chrono. Every field defaulted, so a later build's shape decodes cleanly. */
