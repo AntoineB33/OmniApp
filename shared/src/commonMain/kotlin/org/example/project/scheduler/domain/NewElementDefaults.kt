@@ -60,6 +60,7 @@ object NewElementDefaults {
     val ALARM: AlarmEntry = AlarmEntry(id = "")
     val TIMER: TimerEntry = TimerEntry(id = "")
     val REMINDER: ChoreEntry = ChoreEntry(title = "", spanDays = 0.0, alert = AlertSettings.REMINDER)
+    val WORKPLACE: WorkplaceSetup = WorkplaceSetup(id = "")
 
     /**
      * User rule 2026-10-03: what a new quota starts with before the account says otherwise. Its loop is UNSET (start
@@ -167,6 +168,11 @@ object NewElementDefaults {
 
     /** [entry] as a default is kept: its settings, nothing of its identity. */
     fun alarmDefaults(entry: AlarmEntry): AlarmEntry = newAlarm(entry, id = "", timeOfDayMinutes = 0)
+
+    /** A new workplace setup under [id], from [defaults]: a name is its own, as an alarm's. */
+    fun newWorkplaceSetup(defaults: WorkplaceSetup, id: String): WorkplaceSetup = defaults.copy(id = id, title = "")
+
+    fun workplaceDefaults(entry: WorkplaceSetup): WorkplaceSetup = newWorkplaceSetup(entry, id = "")
 
     fun timerDefaults(entry: TimerEntry): TimerEntry = newTimer(entry, id = "")
 

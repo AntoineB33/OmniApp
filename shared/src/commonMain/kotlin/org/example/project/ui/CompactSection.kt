@@ -107,7 +107,7 @@ internal fun NoteText(
     color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     style: TextStyle = MaterialTheme.typography.bodySmall,
 ) {
-    Text(text, style = style, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = modifier)
+    Text(searchHighlighted(text), style = style, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = modifier)
 }
 
 /** [OutlinedTextField] in a compact section: a task cell's height and text, the drop-down faces' outline. */

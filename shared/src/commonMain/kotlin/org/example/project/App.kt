@@ -2698,7 +2698,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
                 SearchDomain.Kind.WorkplaceSetup -> {
                     val id = org.example.project.scheduler.domain.WorkplaceDomain.mintId(st.workplaceSetups.map { it.id })
-                    vm.dispatch(SchedulerIntent.SetWorkplaceSetups(st.workplaceSetups + org.example.project.scheduler.domain.WorkplaceSetup(id)))
+                    vm.dispatch(SchedulerIntent.SetWorkplaceSetups(st.workplaceSetups + NewElementDefaults.newWorkplaceSetup(st.newWorkplaceDefaults, id)))
                     showCreated(SearchDomain.Kind.WorkplaceSetup, id)
                 }
                 SearchDomain.Kind.Chrono -> {

@@ -2928,6 +2928,23 @@ object SearchDomain {
         }
     }
 
+    /**
+     * **Where a search bar's [query] stands in [text]** (user rule 2026-11-02), the one answer of every highlight: each
+     * hit of each of its terms — words, or "quoted phrases" ([ClaudeLogSearch.rawTerms]) — case aside.
+     */
+    fun matchRanges(text: String, query: String): List<IntRange> {
+        if (text.isEmpty()) return emptyList()
+        val ranges = ArrayList<IntRange>()
+        for (term in ClaudeLogSearch.rawTerms(query)) {
+            var at = text.indexOf(term, ignoreCase = true)
+            while (at >= 0) {
+                ranges += at until at + term.length
+                at = text.indexOf(term, at + term.length, ignoreCase = true)
+            }
+        }
+        return ranges
+    }
+
     private fun reminderDetail(chore: ChoreEntry): String {
         val span = chore.daysFormula.ifBlank { formatNumber(chore.spanDays) }
         val cadence =
@@ -3283,23 +3300,25 @@ object SearchDomain {
 
     /**
      * The kind whose actions apply to an added element (user rule 2026-10-03): its own — except an added **creation
-     * row of a kind that has a default configuration** edited through that kind's actions ("New quota"), which is
-     * acted on as that kind: the actions then edit what a new one starts with ([defaultConfigurationAdded]).
+     * row of a kind with something to offer through that kind's actions** ([ROW_ACTION_KINDS]), which is acted on as that
+     * kind: the actions then edit what a new one starts with ([defaultConfigurationAdded]), or only make one.
      */
     fun actionKindOf(result: Result): Kind =
         if (result.kind == Kind.Creation && result is ItemResult) {
-            // …and "New keyboard shortcut" (user rule 2026-10-12): its one action is the shortcuts' "New".
-            when (result.id) {
-                Kind.Quota.name -> Kind.Quota
-                Kind.Shortcut.name -> Kind.Shortcut
-                // User rule 2026-10-18: an alarm's and a reminder's default configuration, as the timers'.
-                Kind.Alarm.name -> Kind.Alarm
-                Kind.Reminder.name -> Kind.Reminder
-                else -> result.kind
-            }
+            ROW_ACTION_KINDS.firstOrNull { it.name == result.id } ?: result.kind
         } else {
             result.kind
         }
+
+    /**
+     * The kinds whose creation row is acted on as them: those with a default configuration, and (user rule 2026-11-02, the
+     * audit of the kinds) those with only their "New" to offer. A task tree and a window have no action of the kind.
+     */
+    private val ROW_ACTION_KINDS: List<Kind> =
+        listOf(
+            Kind.Quota, Kind.Shortcut, Kind.Alarm, Kind.Reminder, Kind.Timer, Kind.WorkplaceSetup,
+            Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Chrono,
+        )
 
     /** Whether the "New [kind]" creation row is among [added] — its default configuration is then being edited. */
     fun defaultConfigurationAdded(added: List<Result>, kind: Kind): Boolean =
@@ -3327,6 +3346,12 @@ object SearchDomain {
             AddedAction.AlarmNew, AddedAction.AlarmTime, AddedAction.AlarmDays, AddedAction.AlarmRingsFor,
             AddedAction.AlarmRepeat, AddedAction.AlarmAlert, AddedAction.AlarmOnOff,
             AddedAction.ReminderNew, AddedAction.ReminderEvery, AddedAction.ReminderTime, AddedAction.ReminderAlert,
+            // User rule 2026-11-02 (*"I don't see the actions for the default configurations for the workplace setup
+            // element"*): what a new one starts with ([SchedulerState.newWorkplaceDefaults]), no name, as an alarm's.
+            AddedAction.WorkplaceNew, AddedAction.WorkplaceOsChoice, AddedAction.WorkplaceWindows,
+            // …and a "New timer" row, which showed none of the timers' settings above; and the "New" of the kinds with no
+            // default configuration to edit, as a "New keyboard shortcut" row.
+            AddedAction.TimerNew, AddedAction.TaskNew, AddedAction.CategoryNew, AddedAction.PeriodNew, AddedAction.ChronoNew,
         )
 
     /**
@@ -3384,6 +3409,8 @@ object SearchDomain {
         val inner: List<ActionGroup> = emptyList(),
         /** The heading of an [inner] group, which is not named after its members. */
         val heading: String? = null,
+        /** What ONE element contains, which [actionGroups] puts first while the section's bar is found in it. */
+        val contents: Boolean = false,
     ) {
         /**
          * What the group is known by across edits of the list — what its expansion arrow is remembered under
@@ -3392,6 +3419,7 @@ object SearchDomain {
          */
         val id: String
             get() = when {
+                contents -> "contents/" + members.joinToString(",") { keyOf(it) }
                 heading != null -> "default/" + kind?.name
                 element -> "element/" + members.joinToString(",") { keyOf(it) }
                 kind != null -> "kind/" + kind.name
@@ -3404,7 +3432,7 @@ object SearchDomain {
                 val label = kind?.label?.replaceFirstChar { it.uppercase() }
                 return when {
                     heading != null -> heading
-                    element -> listOfNotNull(label, members.singleOrNull()?.name?.takeIf { it.isNotBlank() }).joinToString(": ")
+                    element || contents -> listOfNotNull(label, members.singleOrNull()?.name?.takeIf { it.isNotBlank() }).joinToString(": ")
                     else -> (label ?: "Every element") + "  ·  " + members.size
                 }
             }
@@ -3589,7 +3617,7 @@ object SearchDomain {
             AddedAction.WorkplaceNew -> "new create"
             AddedAction.WorkplaceTitle -> "name rename"
             AddedAction.WorkplaceOsChoice -> "os windows 11 system"
-            AddedAction.WorkplaceWindows -> "file explorer vs code visual studio tab path folder add remove"
+            AddedAction.WorkplaceWindows -> "file explorer vs code visual studio tab path folder add remove default"
             AddedAction.WorkplaceApply -> "open run start"
             AddedAction.ShortcutChord -> "set rebind reset remove press a chord ctrl shift alt"
             AddedAction.ShortcutWindow -> "choose a window"
@@ -3690,13 +3718,58 @@ object SearchDomain {
         return out
     }
 
-    /** [actionGroups] with each group's actions sorted by the section's search bar ([sortedByActionSearch]). */
-    fun actionGroups(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>, search: String): List<ActionGroup> {
+    /**
+     * [actionGroups] with each group's actions sorted by the section's search bar ([sortedByActionSearch]) — and, user
+     * rule 2026-11-02, **the contents of the added elements that hold [search] first** ([contentsGroups]): a word the
+     * rows do not show is looked for here, so it is what the section opens on. It is the one exception to "the bar moves
+     * no group": what moves is an action, out of each element's group into a group before them, and it hides nothing.
+     */
+    fun actionGroups(
+        sections: List<Pair<Kind?, List<AddedAction>>>,
+        added: List<Result>,
+        search: String,
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+    ): List<ActionGroup> {
         val groups = actionGroups(sections, added)
         if (search.isBlank()) return groups
         fun sorted(group: ActionGroup): ActionGroup =
             group.copy(actions = sortedByActionSearch(group.actions, search), inner = group.inner.map(::sorted))
-        return groups.map(::sorted)
+        val listed = sections.flatMapTo(HashSet()) { it.second }
+        val contents = contentsGroups(added, search, claudeLogs, listed)
+        val moved = contents.mapTo(HashSet()) { it.id.removePrefix("contents/") }
+        fun without(group: ActionGroup): ActionGroup {
+            val element = group.members.singleOrNull()?.takeIf { group.element && keyOf(it) in moved } ?: return group
+            return group.copy(actions = group.actions.filterNot { it == contentActionOf(element.kind) })
+        }
+        return contents + groups.map { sorted(without(it)) }
+    }
+
+    /**
+     * The action that shows an element's whole content, where its row shows only a part of it: what a search can find
+     * and the row not show. A kind whose search reads more than its row gains its action here.
+     */
+    private fun contentActionOf(kind: Kind): AddedAction? =
+        when (kind) {
+            Kind.ClaudePrompt -> AddedAction.PromptText
+            Kind.ClaudeAnswer -> AddedAction.AnswerText
+            Kind.ClaudeReasoning -> AddedAction.ReasoningText
+            else -> null
+        }
+
+    /**
+     * One group per element of [added] whose content holds every term of [search] (the logs' one match,
+     * [ClaudeLogSearch]), in the list's order, holding the action that shows it — a [listed] one only, so the actions'
+     * filter still narrows them. One group each, not one for them all: the section is lazy by group, and a keystroke
+     * over hundreds of long texts must lay out the ones on screen. No "Open all" in them: they are what it says, no more.
+     */
+    private fun contentsGroups(added: List<Result>, search: String, claudeLogs: ClaudeLogCatalog, listed: Set<AddedAction>): List<ActionGroup> {
+        val terms = ClaudeLogSearch.terms(search)
+        if (terms.isEmpty()) return emptyList()
+        return added.mapNotNull { row ->
+            val action = contentActionOf(row.kind)?.takeIf { it in listed } ?: return@mapNotNull null
+            val found = (row as? ItemResult)?.let { claudeLogs.find(it.id) } ?: return@mapNotNull null
+            if (ClaudeLogSearch.matches(found.second, terms)) ActionGroup(row.kind, listOf(row), listOf(action), contents = true) else null
+        }
     }
 
     fun actionGroups(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>): List<ActionGroup> {
@@ -3888,6 +3961,21 @@ object SearchDomain {
     fun addedTimersOrDefault(state: SchedulerState, added: List<Result>): List<org.example.project.scheduler.model.TimerEntry> {
         val own = addedTimers(state, added)
         return if (defaultConfigurationAdded(added, Kind.Timer)) listOf(state.newTimerDefaults.copy(id = DEFAULT_CONFIGURATION_ID)) + own else own
+    }
+
+    /** [addedWorkplaceSetups], and first the default configuration of a new one where the "New workplace setup" row is added. */
+    fun addedWorkplaceSetupsOrDefault(state: SchedulerState, added: List<Result>): List<WorkplaceSetup> {
+        val own = addedWorkplaceSetups(state, added)
+        return if (defaultConfigurationAdded(added, Kind.WorkplaceSetup)) listOf(state.newWorkplaceDefaults.copy(id = DEFAULT_CONFIGURATION_ID)) + own else own
+    }
+
+    /** [change] on the setups [ids]: the default configuration, among them, being its own setting, not a row of the list. */
+    fun workplaceEdits(state: SchedulerState, ids: Set<String>, editKey: String? = null, change: (WorkplaceSetup) -> WorkplaceSetup): List<SchedulerIntent> {
+        val next = state.workplaceSetups.map { if (it.id in ids) change(it) else it }
+        return listOfNotNull(
+            SchedulerIntent.SetNewWorkplaceDefaults(change(state.newWorkplaceDefaults)).takeIf { DEFAULT_CONFIGURATION_ID in ids },
+            SchedulerIntent.SetWorkplaceSetups(next, editKey).takeIf { next != state.workplaceSetups },
+        )
     }
 
     /** The added workplace setups the account still holds, in the list's order. */

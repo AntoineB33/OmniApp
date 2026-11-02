@@ -187,7 +187,7 @@ internal fun ClaudeEntryAction(action: SearchDomain.AddedAction, added: List<Sea
         val (session, entry) = found
         when (action) {
             SearchDomain.AddedAction.PromptText, SearchDomain.AddedAction.AnswerText, SearchDomain.AddedAction.ReasoningText -> {
-                SelectionContainer { Text(entry.text, style = MaterialTheme.typography.bodyMedium) }
+                SelectionContainer { Text(searchHighlighted(entry.text), style = MaterialTheme.typography.bodyMedium) }
                 HistoryCopyButton(label = "Copy", value = entry.text)
             }
             SearchDomain.AddedAction.AnswerPrompt, SearchDomain.AddedAction.ReasoningPrompt ->

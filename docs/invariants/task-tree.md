@@ -975,6 +975,17 @@ suggestions before it was ever entered.
     window's filter, `Config.actionQuery`, a different field. Opened by the calendar's "add…", the bar holds "add
     to calendar" (`CALENDAR_ADD_ACTION_SEARCH`, in `calendarAddConfig` and where "add…" re-points an open window).
     Local view state (`actionSearch` in the stored configuration, absent = empty).
+  - **The contents of the added elements holding the bar's text come first** (user rule 2026-11-02: *"If the word is
+    not showing on the text displayed in the cells of the search result list, I click 'select all' and 'add', then
+    write it in the search bar of the action section. There, the first elements must be the contents of each added
+    element, with the word highlighted."*; `SearchDomain.actionGroups` with the logs, `contentActionOf`,
+    `ClaudeLogsTest`). The one exception to "moves no group": each element holding every term (the logs' match,
+    `ClaudeLogSearch`) has a group of its own before all the others (`ActionGroup.contents`), in the list's order, holding
+    the action that shows its content, which leaves its element's group for as long — moved, not doubled, and the
+    others stand as they stood. A kind whose search reads more than its row shows gains its action in `contentActionOf`;
+    today that is the three logs kinds alone. **One group per element, never one for them all: the section is a
+    `LazyColumn` by group** (`AddedActionList`), and a keystroke re-lays out the texts it highlights. As a plain column, 500
+    added entries of 3 KB held the UI 2 s per keystroke, 25 ms since. So nothing that can be long may share a group.
   - **"Add to the calendar"'s end has a button called "Default" where the added elements have a length of their
     own** (user rule 2026-10-11: *"If the added elements list is only a 15min screen break, then add a default button
     next to the 'ends' field to set it to 15 minutes"*; widened 2026-10-14: *"for a timer element […] a button named

@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search bars highlight what they match; the actions bar opens on the contents — 2026-11-02
+
+User rule: what a search bar holds is highlighted in what it searches (`SearchDomain.matchRanges`, `HighlightsSearch`): the Search window's rows, the actions section, the two configuration windows. With text in the actions bar, each added log entry holding it has a group of its own first, its whole content highlighted (`ActionGroup.contents`). The actions section is now a `LazyColumn` by group, in both windows (`AddedActionList`): 500 added entries of 3 KB took 2 s per keystroke as a column, 25 ms now. No persisted change.
+
+### Default configurations: workplace setups, and the audit of the kinds — 2026-11-02
+
+User rule: a workplace setup has a default configuration, its OS and windows (`SchedulerState.newWorkplaceDefaults`, `SetNewWorkplaceDefaults`, the quotas' path; absent in older payloads, which read as the built-in one), edited in the actions like the other kinds' and read by a new setup. The audit found a "New timer" row showing none of the timers' stored defaults, now shown, and the rows of tasks, categories, restrictive periods and chronos without their "New", now given (`SearchDomain.ROW_ACTION_KINDS`). Tasks, categories and restrictive periods have no stored default to edit. No migration. Client rebuild only.
+
 ### "Show only its actions" opens every group that can apply — 2026-11-02
 
 User rule: the added elements' "show only its actions" now keeps open every macro group holding the element, as a new element does, and starts the section at the first; `withOnlyElementGroupOpen`, which kept its own group alone, is gone for `SearchDomain.withOnlyGroupsOf`. No migration. Client rebuild only.

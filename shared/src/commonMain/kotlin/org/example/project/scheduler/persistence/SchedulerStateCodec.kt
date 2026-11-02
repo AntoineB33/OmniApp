@@ -672,6 +672,7 @@ object SchedulerStateCodec {
             newTimerDefaults = newTimerDefaults.toPersisted(),
             // Written only once the account changed it: an untouched default is no field at all.
             newQuotaDefaults = newQuotaDefaults.takeIf { it != NewElementDefaults.QUOTA }?.toPersisted(),
+            newWorkplaceDefaults = newWorkplaceDefaults.takeIf { it != NewElementDefaults.WORKPLACE }?.toPersisted(),
             newReminderDefaults = newReminderDefaults.toPersisted(),
             // Written only once the account changed them: an untouched rule is no field at all.
             newAlarmTimes = newAlarmTimes.takeIf { it != NewElementDefaults.ALARM_TIMES }?.toPersisted(),
@@ -1365,6 +1366,8 @@ object SchedulerStateCodec {
                 newTimerDefaults?.toTimerEntry()?.let(NewElementDefaults::timerDefaults) ?: NewElementDefaults.TIMER,
             newQuotaDefaults =
                 newQuotaDefaults?.toQuotaEntry()?.let(NewElementDefaults::quotaDefaults) ?: NewElementDefaults.QUOTA,
+            newWorkplaceDefaults =
+                newWorkplaceDefaults?.toWorkplaceSetup()?.let(NewElementDefaults::workplaceDefaults) ?: NewElementDefaults.WORKPLACE,
             newReminderDefaults =
                 newReminderDefaults?.toChoreEntry()?.let(NewElementDefaults::reminderDefaults)
                     ?: NewElementDefaults.REMINDER,
@@ -1839,6 +1842,8 @@ private data class PersistedState(
     val newTimerDefaults: PersistedTimer? = null,
     /** New 2026-10-03; missing = the built-in default a new quota had before. */
     val newQuotaDefaults: PersistedQuota? = null,
+    // User rule 2026-11-02: absent in a payload written before it existed, or left as built in.
+    val newWorkplaceDefaults: PersistedWorkplaceSetup? = null,
     val newReminderDefaults: PersistedChoreEntry? = null,
     /** New 2026-10-18: when a new alarm / reminder is set; missing = the kind's own (`NewElementDefaults.ALARM_TIMES`…). */
     val newAlarmTimes: PersistedNewElementTimes? = null,
@@ -3367,6 +3372,7 @@ internal object SettingEntries {
             put("newAlarmDefaults", json.encodeToString(PersistedAlarm.serializer(), s.newAlarmDefaults.toPersisted()))
             put("newTimerDefaults", json.encodeToString(PersistedTimer.serializer(), s.newTimerDefaults.toPersisted()))
             put("newQuotaDefaults", json.encodeToString(PersistedQuota.serializer(), s.newQuotaDefaults.toPersisted()))
+            put("newWorkplaceDefaults", json.encodeToString(PersistedWorkplaceSetup.serializer(), s.newWorkplaceDefaults.toPersisted()))
             put("newReminderDefaults", json.encodeToString(PersistedChoreEntry.serializer(), s.newReminderDefaults.toPersisted()))
             put("newAlarmTimes", json.encodeToString(PersistedNewElementTimes.serializer(), s.newAlarmTimes.toPersisted()))
             put("newReminderTimes", json.encodeToString(PersistedNewElementTimes.serializer(), s.newReminderTimes.toPersisted()))
@@ -3441,6 +3447,7 @@ internal object SettingEntries {
             "newAlarmDefaults" -> s.copy(newAlarmDefaults = json.decodeFromString(PersistedAlarm.serializer(), value).toAlarmEntry())
             "newTimerDefaults" -> s.copy(newTimerDefaults = json.decodeFromString(PersistedTimer.serializer(), value).toTimerEntry())
             "newQuotaDefaults" -> s.copy(newQuotaDefaults = json.decodeFromString(PersistedQuota.serializer(), value).toQuotaEntry())
+            "newWorkplaceDefaults" -> s.copy(newWorkplaceDefaults = json.decodeFromString(PersistedWorkplaceSetup.serializer(), value).toWorkplaceSetup())
             "newReminderDefaults" -> s.copy(newReminderDefaults = json.decodeFromString(PersistedChoreEntry.serializer(), value).toChoreEntry())
             "newAlarmTimes" -> s.copy(newAlarmTimes = json.decodeFromString(PersistedNewElementTimes.serializer(), value).toNewElementTimes())
             "newReminderTimes" -> s.copy(newReminderTimes = json.decodeFromString(PersistedNewElementTimes.serializer(), value).toNewElementTimes())

@@ -10,6 +10,7 @@ import org.example.project.scheduler.domain.SearchDomain.Kind
 import org.example.project.scheduler.domain.WorkplaceDomain
 import org.example.project.scheduler.domain.WorkplaceApp
 import org.example.project.scheduler.domain.WorkplaceOs
+import org.example.project.scheduler.domain.NewElementDefaults
 import org.example.project.scheduler.domain.OpenExplorerWindow
 import org.example.project.scheduler.domain.WorkplaceSetup
 import org.example.project.scheduler.domain.WorkplaceStep
@@ -220,6 +221,79 @@ class WorkplaceSetupTest {
         assertEquals(WorkplaceApp.FileExplorer, SchedulerStateCodec.decode(older)!!.workplaceSetups.first().windows.single().app)
         val later = written.replace("\"VsCode\"", "\"Emacs\"")
         assertEquals(WorkplaceApp.FileExplorer, SchedulerStateCodec.decode(later)!!.workplaceSetups.last().windows.single().app)
+    }
+
+    private fun creationRow(kind: Kind) = SearchDomain.ItemResult(Kind.Creation, kind.name, "New " + kind.label, "")
+
+    private fun groups(added: List<SearchDomain.Result>) =
+        SearchDomain.actionGroups(
+            SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added), added,
+        )
+
+    private val defaultActions = listOf(SearchDomain.AddedAction.WorkplaceOsChoice, SearchDomain.AddedAction.WorkplaceWindows)
+
+    @Test
+    fun its_default_configuration_is_listed_like_the_other_kinds() {
+        val row = groups(listOf(creationRow(Kind.WorkplaceSetup))).single()
+        assertTrue(row.actions.containsAll(defaultActions + SearchDomain.AddedAction.WorkplaceNew), "${row.actions}")
+        assertFalse(SearchDomain.AddedAction.WorkplaceApply in row.actions, "no setup to apply")
+        // Inside the group of one setup, and of several.
+        val item = SearchDomain.ItemResult(Kind.WorkplaceSetup, "a", "a", "")
+        for (added in listOf(listOf(item), listOf(item, item.copy(id = "b")))) {
+            val inner = groups(added).flatMap { it.inner }.single { it.id == "default/WorkplaceSetup" }
+            assertEquals(defaultActions, inner.actions)
+        }
+    }
+
+    @Test
+    fun a_new_setup_starts_from_it_with_a_name_of_its_own() {
+        val windows = listOf(WorkplaceWindow(listOf("C:\\code"), WorkplaceApp.VsCode))
+        val s = r(SchedulerState.empty(), SchedulerIntent.SetNewWorkplaceDefaults(WorkplaceSetup("x", "Named", windows = windows)))
+        assertEquals(WorkplaceSetup("", "", windows = windows), s.newWorkplaceDefaults)
+        assertEquals(WorkplaceSetup("workplace-1", "", windows = windows), NewElementDefaults.newWorkplaceSetup(s.newWorkplaceDefaults, "workplace-1"))
+        assertEquals(NewElementDefaults.WORKPLACE, r(s, SchedulerIntent.Undo).newWorkplaceDefaults, "a unit, as the other defaults")
+    }
+
+    @Test
+    fun an_edit_reaches_the_default_and_the_added_setups_each_their_own_way() {
+        val s = SchedulerState.empty().copy(workplaceSetups = listOf(setup))
+        val added = listOf(creationRow(Kind.WorkplaceSetup), SearchDomain.ItemResult(Kind.WorkplaceSetup, setup.id, "Code", ""))
+        val listed = SearchDomain.addedWorkplaceSetupsOrDefault(s, added)
+        assertEquals(listOf(SearchDomain.DEFAULT_CONFIGURATION_ID, setup.id), listed.map { it.id })
+        val windows = listOf(WorkplaceWindow(listOf("D:\\x")))
+        val next = SearchDomain.workplaceEdits(s, listed.mapTo(HashSet()) { it.id }) { it.copy(windows = windows) }.fold(s, ::r)
+        assertEquals(windows, next.newWorkplaceDefaults.windows)
+        assertEquals(windows, next.workplaceSetups.single().windows)
+        assertEquals(1, next.workplaceSetups.size, "the default is no row of the list")
+    }
+
+    @Test
+    fun its_default_survives_the_store_and_a_payload_before_it_has_the_built_in_one() {
+        val untouched = SchedulerStateCodec.encode(SchedulerState.empty())
+        assertFalse("newWorkplaceDefaults" in untouched, "an untouched default writes no field: the older shape")
+        assertEquals(NewElementDefaults.WORKPLACE, SchedulerStateCodec.decode(untouched)!!.newWorkplaceDefaults)
+        val s = r(SchedulerState.empty(), SchedulerIntent.SetNewWorkplaceDefaults(WorkplaceSetup("", windows = listOf(WorkplaceWindow(listOf("C:\\a"))))))
+        assertEquals(s.newWorkplaceDefaults, SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))!!.newWorkplaceDefaults)
+    }
+
+    @Test
+    fun two_devices_keep_a_default_only_one_changed_through_a_merge() {
+        val base = SchedulerState.empty()
+        val local = r(base, SchedulerIntent.SetNewWorkplaceDefaults(WorkplaceSetup("", windows = listOf(WorkplaceWindow(listOf("C:\\a"))))))
+        val merged = SnapshotMerge.merge(SchedulerStateCodec.encodeSnapshot(base), SchedulerStateCodec.encodeSnapshot(local), SchedulerStateCodec.encodeSnapshot(base))!!
+        assertEquals(local.newWorkplaceDefaults, SchedulerStateCodec.decodeSnapshot(merged)!!.newWorkplaceDefaults)
+    }
+
+    /** The audit of 2026-11-02: what each creatable kind's row offers, a task tree's and a window's having no action of theirs. */
+    @Test
+    fun every_creatable_kind_with_a_new_offers_it_on_its_row() {
+        for (kind in SearchDomain.CREATABLE - Kind.TaskTree - Kind.Window) {
+            val actions = groups(listOf(creationRow(kind))).single().actions
+            assertTrue(actions.any { it.section == kind && it.label == "New" }, "$kind: $actions")
+        }
+        val timer = groups(listOf(creationRow(Kind.Timer))).single().actions
+        assertTrue(timer.containsAll(listOf(SearchDomain.AddedAction.TimerDuration, SearchDomain.AddedAction.TimerAlert)), "$timer")
+        assertFalse(SearchDomain.AddedAction.TimerDelete in timer)
     }
 
     @Test

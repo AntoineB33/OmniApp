@@ -26,7 +26,9 @@ for it: a new need is a kind, a filter, a sort or an action of `SearchDomain`, l
   with no pull. Nothing new, no request. Another device still sees it at its next read: live would mean Realtime on a row
   table.
 - **One reading of a log** (`ClaudeLogParser`) and **one text match** (`ClaudeLogSearch`); the rows are
-  `SearchDomain.claudeResults`'s, handed the logs as `App`'s windows are handed in (`ClaudeLogCatalog`).
+  `SearchDomain.claudeResults`'s, handed the logs as `App`'s windows are handed in (`ClaudeLogCatalog`). The actions
+  section's bar reads the same match over the added entries, whose contents it puts first (`task-tree.md`, user rule
+  2026-11-02).
 - **Between two prompts, one reasoning chain and one answer** (user rule 2026-10-31, `foldedTurns`, read by
   `ClaudeLogCatalog.entries` alone): the last text is the answer, all the rest one chain. A reading, not a rewrite: the
   parser, the archive and the server keep the log's own entries, so old logs read the same and nothing is re-pushed.

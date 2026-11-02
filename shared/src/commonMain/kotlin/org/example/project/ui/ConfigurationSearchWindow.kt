@@ -232,20 +232,23 @@ fun ConfigurationSearchWindow(
                 // The groups whose configurations reach the most rows of the result list first, each with its
                 // expansion arrow (user rule 2026-10-11: "just like in the action section").
                 val listed = groups.mapTo(HashSet()) { it.id }
-                for (group in groups) {
-                    val collapsed = group.id in own.collapsedGroups
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        val toggle = { onOwnChange(SearchDomain.withSettingGroupToggled(own, group.id, listed)) }
-                        SectionArrow(collapsed, toggle)
-                        Box(Modifier.togglesSection(toggle)) { SectionTitle(group.title) }
-                    }
-                    if (collapsed) continue
-                    // What every kind of the group has under one name: one field, written to all of them.
-                    for (family in group.shared) {
-                        SettingRow(family.first().label) { SharedSettingEditor(family, config, onConfigChange, onPickOnCalendar, claudeLogs) }
-                    }
-                    for (setting in group.settings) {
-                        SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange, windows, onPickOnCalendar, claudeLogs) }
+                // User rule 2026-11-02: what the bar holds is highlighted in what it searches.
+                HighlightsSearch(own.query) {
+                    for (group in groups) {
+                        val collapsed = group.id in own.collapsedGroups
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            val toggle = { onOwnChange(SearchDomain.withSettingGroupToggled(own, group.id, listed)) }
+                            SectionArrow(collapsed, toggle)
+                            Box(Modifier.togglesSection(toggle)) { SectionTitle(group.title) }
+                        }
+                        if (collapsed) continue
+                        // What every kind of the group has under one name: one field, written to all of them.
+                        for (family in group.shared) {
+                            SettingRow(family.first().label) { SharedSettingEditor(family, config, onConfigChange, onPickOnCalendar, claudeLogs) }
+                        }
+                        for (setting in group.settings) {
+                            SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange, windows, onPickOnCalendar, claudeLogs) }
+                        }
                     }
                 }
             }
@@ -332,7 +335,7 @@ const val CONFIGURATION_SEARCH_FRAME_ID: String = "ConfigSearch"
 @Composable
 internal fun SectionTitle(text: String) {
     Text(
-        text = text,
+        text = searchHighlighted(text),
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         maxLines = 1,
@@ -349,7 +352,7 @@ internal fun SettingRow(label: String, editor: @Composable () -> Unit) {
         modifier = Modifier.fillMaxWidth().heightIn(min = TASK_ROW_MIN_HEIGHT),
     ) {
         Text(
-            text = label,
+            text = searchHighlighted(label),
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

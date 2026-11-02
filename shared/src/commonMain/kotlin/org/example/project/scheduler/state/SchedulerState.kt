@@ -1089,6 +1089,9 @@ data class SchedulerState(
      */
     val newQuotaDefaults: org.example.project.scheduler.model.QuotaEntry =
         org.example.project.scheduler.domain.NewElementDefaults.QUOTA,
+    /** User rule 2026-11-02: what a new workplace setup starts with, its OS and its windows. The quotas' rule. */
+    val newWorkplaceDefaults: org.example.project.scheduler.domain.WorkplaceSetup =
+        org.example.project.scheduler.domain.NewElementDefaults.WORKPLACE,
     /**
      * User rule 2026-10-18: **when a new alarm / reminder is set** — its date (an alarm's) and its time of day, part of
      * its default configuration ([org.example.project.scheduler.domain.NewElementTimes]). Authoritative, persisted +

@@ -802,6 +802,12 @@ object SchedulerReducer {
                         if (defaults == it.newQuotaDefaults) it else it.copy(newQuotaDefaults = defaults)
                     }
                 }
+            is SchedulerIntent.SetNewWorkplaceDefaults ->
+                NewElementDefaults.workplaceDefaults(intent.defaults).let { defaults ->
+                    settingsUnit(state, "Default workplace setup", coalesceKey = "setting/default-workplace") {
+                        if (defaults == it.newWorkplaceDefaults) it else it.copy(newWorkplaceDefaults = defaults)
+                    }
+                }
             is SchedulerIntent.SetNewReminderDefaults ->
                 NewElementDefaults.reminderDefaults(intent.defaults).let { defaults ->
                     settingsUnit(state, "Default reminder", coalesceKey = "setting/default-reminder") {

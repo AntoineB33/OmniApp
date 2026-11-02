@@ -1458,6 +1458,9 @@ sealed interface SchedulerIntent {
     /** User rule 2026-10-03: what a new quota starts with ([SchedulerState.newQuotaDefaults]) — the timers' rule. */
     data class SetNewQuotaDefaults(val defaults: org.example.project.scheduler.model.QuotaEntry) : SchedulerIntent
 
+    /** User rule 2026-11-02: what a new workplace setup starts with ([SchedulerState.newWorkplaceDefaults]). */
+    data class SetNewWorkplaceDefaults(val defaults: org.example.project.scheduler.domain.WorkplaceSetup) : SchedulerIntent
+
     data class SetNewReminderDefaults(val defaults: org.example.project.scheduler.model.ChoreEntry) : SchedulerIntent
 
     /** User rule 2026-10-18: when a new alarm / reminder is set ([SchedulerState.newAlarmTimes]) — its defaults' rule. */

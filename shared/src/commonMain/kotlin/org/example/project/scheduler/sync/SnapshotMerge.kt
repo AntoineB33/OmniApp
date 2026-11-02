@@ -187,6 +187,7 @@ object SnapshotMerge {
                 newAlarmDefaults = pick(base.newAlarmDefaults, local.newAlarmDefaults, remote.newAlarmDefaults),
                 newTimerDefaults = pick(base.newTimerDefaults, local.newTimerDefaults, remote.newTimerDefaults),
                 newQuotaDefaults = pick(base.newQuotaDefaults, local.newQuotaDefaults, remote.newQuotaDefaults),
+                newWorkplaceDefaults = pick(base.newWorkplaceDefaults, local.newWorkplaceDefaults, remote.newWorkplaceDefaults),
                 newReminderDefaults =
                     pick(base.newReminderDefaults, local.newReminderDefaults, remote.newReminderDefaults),
                 newAlarmTimes = pick(base.newAlarmTimes, local.newAlarmTimes, remote.newAlarmTimes),

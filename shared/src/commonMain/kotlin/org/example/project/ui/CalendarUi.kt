@@ -3448,7 +3448,8 @@ internal fun HistoryInfoLine(info: HistoryInfo) {
  */
 @Composable
 internal fun HistoryTextLine(value: String, label: String? = null, copyLabel: String = "copy") {
-    var expanded by remember(value) { mutableStateOf(false) }
+    // Saveable: the actions section is a lazy list, and a line scrolled away and back stays expanded.
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable(value) { mutableStateOf(false) }
     // Whether the one line cuts anything: known once it is laid out, and kept while the text is expanded.
     var cut by remember(value) { mutableStateOf(value.contains('\n')) }
     var hiddenAbovePx by remember { mutableStateOf(0f) }
@@ -3465,7 +3466,7 @@ internal fun HistoryTextLine(value: String, label: String? = null, copyLabel: St
     ) {
         if (label != null) {
             Text(
-                text = "$label:",
+                text = searchHighlighted("$label:"),
                 style = MaterialTheme.typography.labelSmall,
                 color = CalColors.muted,
                 modifier = Modifier.width(76.dp),
@@ -3473,7 +3474,7 @@ internal fun HistoryTextLine(value: String, label: String? = null, copyLabel: St
         }
         SelectionContainer(modifier = Modifier.weight(1f)) {
             Text(
-                text = value,
+                text = searchHighlighted(value),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = if (expanded) Int.MAX_VALUE else 1,
                 overflow = TextOverflow.Ellipsis,

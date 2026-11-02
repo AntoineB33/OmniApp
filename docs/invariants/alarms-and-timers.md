@@ -183,6 +183,9 @@ arming loop, a second sweep, a second ring path or a second notification funnel.
   exactly, ordered by `ChronoDomain.byCount` (the highest count first; a paused one at its banked time), picked in
   `Config.pickedChronos`, and drawn on one row each by "Compact" (`Config.compactChronos`, `ChronoRowEditor(oneRow)`:
   title, count, buttons). A set action listed only with two chronos or more, like the timers'.
+- **Every creatable kind's row offers what it can** (audit of 2026-11-02, `SearchDomain.ROW_ACTION_KINDS`): a stored default
+  to edit for an alarm, a timer, a quota, a reminder and a workplace setup; only "New" for a task, a category, a restrictive
+  period, a chrono and a shortcut; nothing of the kind for a task tree or a window, which have no such action.
 - **A new timer's default configuration is edited in the Search window's actions, with no button and no link**
   (user rule 2026-10-12; the alarms' and reminders' links stand). It is the group "Default configuration of a new
   timer" inside the group of the timers — or inside the timer's own group when it is the only timer added

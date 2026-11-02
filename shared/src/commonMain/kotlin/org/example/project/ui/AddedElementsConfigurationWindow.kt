@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -26,8 +28,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.layout.onPlaced
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -164,15 +164,15 @@ fun AddedElementsConfigurationWindow(
 
             // --- The actions ------------------------------------------------------------------------
             // User rule 2026-10-14: typing in the bar brings the list back to its top.
-            val actionsScroll = rememberScrollState()
-            ScrollsToTopWhenTyped(config.actionQuery, actionsScroll)
-            Column(
-                modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(actionsScroll),
-                verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
-            ) {
-                if (sections.isEmpty()) NoteText("No configuration matches.")
-                AddedActionSections(state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear)
-            }
+            val actionsList = rememberLazyListState()
+            ScrollsToTopWhenTyped(config.actionQuery, actionsList)
+            AddedActionList(
+                state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear,
+                list = actionsList,
+                highlighted = config.actionQuery,
+                noneListed = "No configuration matches.",
+                modifier = Modifier.fillMaxWidth().weight(1f),
+            )
         }
         }
     }
@@ -348,30 +348,32 @@ internal fun AddedActionsSection(
                 added,
             )
         // A vertical scrollbar on its right (user rule 2026-10-03), the same the lists of the window have.
-        val scroll = rememberScrollState()
+        val list = rememberLazyListState()
         // User rule 2026-10-14: typing in the section's bar brings its list back to the top.
-        ScrollsToTopWhenTyped(config.actionSearch, scroll)
+        ScrollsToTopWhenTyped(config.actionSearch, list)
         Box(Modifier.fillMaxWidth().weight(1f)) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(end = 12.dp)
-                .verticalScroll(scroll)
-                .keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
-            verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
-        ) {
-            if (sections.isEmpty()) NoteText("No action matches.")
-            AddedActionSections(state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, reveal, scroll)
-        }
-        ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
+            AddedActionList(
+                state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear,
+                list = list,
+                highlighted = config.actionSearch,
+                noneListed = "No action matches.",
+                reveal = reveal,
+                modifier = Modifier.fillMaxSize().padding(end = 12.dp).keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
+            )
+            ListScrollbar(list, Modifier.align(Alignment.CenterEnd))
         }
     }
     }
 }
 
-/** The sections of actions, each under its kind's title — one drawing for the quarter and for the window. */
+/**
+ * The groups of actions, one drawing for the quarter and for the window. **A list drawn by group**: only the groups on
+ * screen are composed and laid out (measured 2026-11-02: as a plain column, a keystroke over 500 added log entries of
+ * 3 KB held the UI 2 s, every text being laid out again for its highlight). A group is one item, so nothing that can be
+ * long may share one: [SearchDomain.actionGroups] gives each element's contents a group.
+ */
 @Composable
-private fun AddedActionSections(
+private fun AddedActionList(
     state: SchedulerState,
     sections: List<Pair<SearchDomain.Kind?, List<SearchDomain.AddedAction>>>,
     added: List<SearchDomain.Result>,
@@ -382,18 +384,44 @@ private fun AddedActionSections(
     nowMillis: () -> Long,
     onOpenEach: (List<SearchDomain.Result>) -> Unit,
     onClear: (List<SearchDomain.Result>) -> Unit,
+    list: LazyListState,
+    /** What the bar over the list holds, highlighted in it (user rule 2026-11-02, [HighlightsSearch]). */
+    highlighted: String,
+    /** Said in place of the groups where no action is listed. */
+    noneListed: String,
+    modifier: Modifier = Modifier,
+    /** The group the list is to start at ([AddedActionsSection]'s). */
     reveal: Pair<String, Int>? = null,
-    /** The section's scroll, which [reveal] starts at its group. */
-    scroll: androidx.compose.foundation.ScrollState? = null,
 ) {
     // User rule 2026-10-10: the groups from the widest reach to the narrowest — every element, each kind holding
     // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
     // …and, inside each, the actions that answer the section's search bar first (user rule 2026-10-11).
-    val groups = SearchDomain.actionGroups(sections, added, config.actionSearch)
+    val groups = SearchDomain.actionGroups(sections, added, config.actionSearch, handlers.claudeLogs())
     val listed = SearchDomain.listedGroupIds(groups)
     val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(config, id, listed)) }
-    for (group in groups) {
-        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, reveal = reveal?.takeIf { it.first == group.id }, scroll = scroll)
+    // User rule 2026-10-13: the added elements' "show only its actions" scrolls the section to this group — once the
+    // others are retracted and laid out. User rule 2026-11-01: the section STARTS at it.
+    val shownGroups by rememberUpdatedState(groups)
+    LaunchedEffect(reveal) {
+        if (reveal == null) return@LaunchedEffect
+        // One frame for the others to retract, one for the list to hold them so.
+        withFrameNanos { }
+        withFrameNanos { }
+        val index = shownGroups.indexOfFirst { it.id == reveal.first }
+        if (index >= 0) list.scrollToItem(index)
+    }
+    HighlightsSearch(highlighted) {
+        LazyColumn(state = list, modifier = modifier, verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+            if (sections.isEmpty()) item { NoteText(noneListed) }
+            // By the group's id, so that the groups before one coming and going do not make it anew. Two groups
+            // sharing an id (an element added twice by an older build) must not take the list down.
+            val seen = HashSet<String>()
+            groups.forEachIndexed { index, group ->
+                item(key = if (seen.add(group.id)) group.id else group.id + "#" + index) {
+                    ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle)
+                }
+            }
+        }
     }
 }
 
@@ -417,32 +445,11 @@ private fun ActionGroupBlock(
     onToggle: (String) -> Unit,
     /** A group INSIDE a group of elements (the default configuration of its kind): titled as an action is ([MicroGroupTitle]). */
     micro: Boolean = false,
-    /** Set on the group the section is asked to scroll to ([AddedActionsSection]'s `reveal`). */
-    reveal: Pair<String, Int>? = null,
-    /** The section's scroll: a group asked for stands at its top. */
-    scroll: androidx.compose.foundation.ScrollState? = null,
 ) {
     val added = group.members
     val collapsed = group.id in config.collapsedActionGroups
-    // User rule 2026-10-13: the added elements' "show only its actions" scrolls the section to this group — once the
-    // others are retracted and laid out, the place to scroll to being the one it has THEN.
-    // User rule 2026-11-01: the section STARTS at it; brought into view alone, it could stand at the bottom.
-    val requester = remember { BringIntoViewRequester() }
-    var top by remember { mutableStateOf(0f) }
-    LaunchedEffect(reveal) {
-        if (reveal == null) return@LaunchedEffect
-        // One frame for the others to retract, one for this one's new place to be told.
-        withFrameNanos { }
-        withFrameNanos { }
-        if (scroll != null) scroll.scrollTo(kotlin.math.round(top).toInt()) else requester.bringIntoView()
-    }
-    // One box per group, spaced as the section spaces its rows: what the scroll brings into view is the whole group.
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .onPlaced { top = it.positionInParent().y }
-            .bringIntoViewRequester(requester),
-        verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
+    // One box per group, spaced as the section spaces its rows.
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
     // A group inside a group of elements is titled as a micro group is: set as far right ([MICRO_TITLE_INDENT]).
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -454,7 +461,7 @@ private fun ActionGroupBlock(
             when {
                 micro -> MicroGroupTitle(group.title)
                 group.heading == null -> SectionTitle(group.title)
-                else -> Text(group.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+                else -> Text(searchHighlighted(group.title), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
             }
         }
     }
@@ -544,7 +551,7 @@ private val MICRO_TITLE_INDENT = 12.dp
 @Composable
 private fun MicroGroupTitle(text: String, nested: Boolean = false) {
     Text(
-        text,
+        searchHighlighted(text),
         style = if (nested) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
         color = if (nested) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
@@ -931,15 +938,15 @@ private fun AddedActionEditor(
         SearchDomain.AddedAction.ReasoningPrompt, SearchDomain.AddedAction.ReasoningSession ->
             ClaudeEntryAction(action, added, handlers.claudeLogs())
         SearchDomain.AddedAction.WorkplaceOsChoice -> {
-            val setups = SearchDomain.addedWorkplaceSetups(state, added)
+            val setups = SearchDomain.addedWorkplaceSetupsOrDefault(state, added)
             val common = setups.map { it.os }.distinct().singleOrNull()
             ChoiceDropDown(
                 options = org.example.project.scheduler.domain.WorkplaceOs.entries,
                 selected = common,
                 label = { it.label },
                 onSelect = { os ->
-                    val ids = setups.mapTo(HashSet()) { it.id }
-                    run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetWorkplaceSetups(state.workplaceSetups.map { if (it.id in ids) it.copy(os = os) else it })))
+                    SearchDomain.workplaceEdits(state, setups.mapTo(HashSet()) { it.id }) { it.copy(os = os) }
+                        .forEach { run(SearchDomain.AddedCommand.Raw(it)) }
                 },
             )
         }
@@ -1451,7 +1458,7 @@ private fun List<Long>.replaced(index: Int, value: Long): List<Long> = mapIndexe
 @Composable
 internal fun ElementHeading(name: String, count: Int) {
     if (count > 1) {
-        Text(name, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Text(searchHighlighted(name), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
     }
 }
 
@@ -2232,7 +2239,7 @@ private fun CategoryChooser(cellId: String, options: List<Pair<CategoryId, Strin
 internal fun FrameButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
     val color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
     Text(
-        text = text,
+        text = searchHighlighted(text),
         style = MaterialTheme.typography.labelLarge,
         color = color,
         maxLines = 1,
@@ -2293,14 +2300,15 @@ private fun NewElementTimesEditor(
  */
 @Composable
 private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDomain.Result>, run: (SearchDomain.AddedCommand) -> Unit) {
-    val setups = SearchDomain.addedWorkplaceSetups(state, added)
+    val setups = SearchDomain.addedWorkplaceSetupsOrDefault(state, added)
     fun write(id: String, windows: List<org.example.project.scheduler.domain.WorkplaceWindow>, editKey: String? = null) =
-        run(SearchDomain.AddedCommand.Raw(
-            SchedulerIntent.SetWorkplaceSetups(org.example.project.scheduler.domain.WorkplaceDomain.withWindows(state.workplaceSetups, id, windows), editKey),
-        ))
+        SearchDomain.workplaceEdits(state, setOf(id), editKey) { it.copy(windows = windows) }.forEach { run(SearchDomain.AddedCommand.Raw(it)) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (setup in setups) {
-            ElementHeading(setup.title.ifBlank { "Workplace setup" }, setups.size)
+            ElementHeading(
+                if (setup.id == SearchDomain.DEFAULT_CONFIGURATION_ID) "Default configuration" else setup.title.ifBlank { "Workplace setup" },
+                setups.size,
+            )
             setup.windows.forEachIndexed { windowAt, window ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

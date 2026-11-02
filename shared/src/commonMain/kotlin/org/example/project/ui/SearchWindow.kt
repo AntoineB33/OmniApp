@@ -1037,6 +1037,7 @@ fun SearchWindow(
                                     ItemResultRow(
                                         kindWidth = resultKindWidth,
                                         item = result,
+                                        query = query,
                                         checked = resultKey(result) in checkedKeys,
                                         onCheckedChange = { toggleChecked(resultKey(result)) },
                                         selected = rowSelected(index),
@@ -2001,12 +2002,7 @@ private fun SearchTaskRow(
     val columnWidth = with(density) { titlePx.toDp() }.coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
     val columnPx = with(density) { columnWidth.toPx() }
     // The query's hits in the title, drawn the way the tree's Ctrl+F draws its own.
-    val hits =
-        remember(result.title, query) {
-            val q = query.trim()
-            if (q.isEmpty()) emptyList()
-            else Regex(Regex.escape(q), RegexOption.IGNORE_CASE).findAll(result.title).map { it.range }.toList()
-        }
+    val hits = remember(result.title, query) { SearchDomain.matchRanges(result.title, query) }
 
     Column(Modifier.fillMaxWidth()) {
         // The cell IS the row: it takes the list's row height itself (no slot around it, whose bare band
@@ -2498,6 +2494,8 @@ private fun ItemResultRow(
     /** The list's kind section's width ([rememberKindSectionWidth]). */
     kindWidth: Dp,
     item: SearchDomain.ItemResult,
+    /** What the Search window's bar holds: highlighted in the row's texts ([searchHighlighted]). */
+    query: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     selected: Boolean,
@@ -2541,7 +2539,7 @@ private fun ItemResultRow(
             ResultCheckBox(checked, onCheckedChange)
             KindSection(item.kind, kindWidth)
             Text(
-                text = item.name,
+                text = searchHighlighted(item.name, query),
                 style = MaterialTheme.typography.bodyMedium,
                 color = logEntryColor(item.kind) ?: Color.Unspecified,
                 maxLines = 1,
@@ -2549,7 +2547,7 @@ private fun ItemResultRow(
                 modifier = Modifier.weight(1f, fill = false),
             )
             Text(
-                text = item.detail,
+                text = searchHighlighted(item.detail, query),
                 style = MaterialTheme.typography.labelSmall,
                 color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

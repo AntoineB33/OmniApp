@@ -103,6 +103,77 @@ class ClaudeLogsTest {
         assertEquals(listOf("The parser skips the last line."), names(kinds = setOf(SearchDomain.Kind.ClaudeReasoning)))
     }
 
+    /** The actions over [rows], added, as the section groups them with [search] in its bar. */
+    private fun groups(rows: List<SearchDomain.Result>, search: String, actionQuery: String = ""): List<SearchDomain.ActionGroup> {
+        val sections =
+            SearchDomain.actionsFor(
+                SearchDomain.addedActions(actionQuery, SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(rows)), rows,
+            )
+        return SearchDomain.actionGroups(sections, rows, search, catalog)
+    }
+
+    private fun everyRow() = SearchDomain.results(SchedulerState.empty(), claudeKinds, "", timeZone = utc, claudeLogs = catalog)
+
+    /** User rule 2026-11-02: everything the bars match is highlighted, one answer for all of them. */
+    @Test
+    fun everyHitOfEveryTermOfASearchIsHighlighted() {
+        val text = "The Bug, the bug: a line"
+        assertEquals(listOf(4..6, 13..15), SearchDomain.matchRanges(text, "bug"))
+        assertEquals(listOf(4..6, 13..15, 20..23), SearchDomain.matchRanges(text, "BUG line"))
+        assertEquals(listOf(13..18), SearchDomain.matchRanges(text, "\"bug: a\""))
+        assertEquals(emptyList(), SearchDomain.matchRanges(text, "  "))
+        assertEquals(emptyList(), SearchDomain.matchRanges(text, "absent"))
+        val shown = org.example.project.ui.highlightedText(text, "bug")
+        assertEquals(text, shown.text)
+        assertEquals(listOf(4 to 7, 13 to 16), shown.spanStyles.map { it.start to it.end })
+        assertTrue(org.example.project.ui.highlightedText(text, "").spanStyles.isEmpty())
+    }
+
+    /**
+     * User rule 2026-11-02: *"If the word is not showing on the text displayed in the cells of the search result list, I
+     * click 'select all' and 'add', then write it in the search bar of the action section. There, the first elements must
+     * be the contents of each added element."*
+     */
+    @Test
+    fun theContentsOfTheAddedElementsHoldingTheActionSearchComeFirst() {
+        val rows = everyRow()
+        val shown = groups(rows, "the")
+        val contents = shown.takeWhile { it.contents }
+        // One group per element holding it, in the list's order: "Now fix it" does not hold it.
+        assertEquals(rows.filterNot { it.name == "Now fix it" }, contents.map { it.members.single() })
+        assertEquals(
+            listOf(SearchDomain.AddedAction.ReasoningText),
+            contents.single { it.kind == SearchDomain.Kind.ClaudeReasoning }.actions,
+        )
+        assertEquals("Reasoning chain: The parser skips the last line.", contents.single { it.kind == SearchDomain.Kind.ClaudeReasoning }.title)
+        // Moved, not doubled: a content stands once, and the element without the word keeps its own in its group.
+        val own = shown.drop(contents.size).filter { it.element }
+        assertTrue(contents.all { group -> own.single { it.members == group.members }.actions.none { it in group.actions } })
+        assertTrue(SearchDomain.AddedAction.PromptText in own.single { it.members.single().name == "Now fix it" }.actions)
+        // Every other group stands as it stood, and every action is still somewhere.
+        assertEquals(groups(rows, "").map { it.id }, shown.drop(contents.size).map { it.id })
+        assertEquals(groups(rows, "").flatMap { it.actions }.toSet(), shown.flatMap { it.actions }.toSet())
+        // Each its own id, for the section's lazy list and its arrow.
+        assertEquals(shown.size, shown.map { it.id }.toSet().size)
+    }
+
+    @Test
+    fun oneAddedElementHasItsContentFirstTooEvenOverATitleThatAnswers() {
+        val answer = everyRow().single { it.kind == SearchDomain.Kind.ClaudeAnswer }
+        val shown = groups(listOf(answer), "bug")
+        assertEquals(listOf(SearchDomain.AddedAction.AnswerText), shown.first().actions)
+        assertTrue(SearchDomain.AddedAction.AnswerText !in shown[1].actions)
+    }
+
+    @Test
+    fun noContentLeadsWhereNoneHoldsTheSearchOrTheFilterHidesIt() {
+        val rows = everyRow()
+        assertTrue(groups(rows, "").none { it.contents })
+        assertTrue(groups(rows, "absent").none { it.contents })
+        assertTrue(groups(rows, "\"").none { it.contents })
+        assertEquals(groups(rows, "the", actionQuery = "session").map { it.id }, groups(rows, "", actionQuery = "session").map { it.id })
+    }
+
     @Test
     fun anEntryRowIsNamedByItsFirstLineAndFoundAgainByItsId() {
         val multi = ClaudeLogSession("C:\\logs\\p\\s2.jsonl", "s2", "p", null, null, listOf(ClaudeLogEntry(ClaudeLogKind.Answer, "\nFirst line\nsecond line", 5L, null, 0)))
