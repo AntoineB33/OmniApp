@@ -349,6 +349,8 @@ object CustomMenuButtons {
         val claudeSoundsSeeded: Boolean = false,
         /** Whether a list of the scheduler's menu already had its sound switches brought together ([withSoundsTogether]), ONCE. */
         val soundsTogether: Boolean = false,
+        /** Whether a list of the scheduler's menu was already given the Life plan button ([LIFE_PLAN]), ONCE. */
+        val lifePlanSeeded: Boolean = false,
     )
 
     /**
@@ -364,6 +366,9 @@ object CustomMenuButtons {
     /** The slider of Claude Code's sounds, in the logs page's menu. */
     val CLAUDE_SOUNDS: CustomMenuButton =
         CustomMenuButton("d-" + MenuControl.ClaudeSoundsVolume.name, "", "", control = MenuControl.ClaudeSoundsVolume.name)
+
+    /** User rule 2026-11-02: the button of the life plan's window, a default of the Schedule page's menu. */
+    val LIFE_PLAN: CustomMenuButton = CustomMenuButton("d-life-plan", LIFE_PLAN_WINDOW_ID, "Life plan")
 
     /** The id of the logs page's own Search button before the global one existed: the global one takes its place. */
     private const val OLD_CLAUDE_SEARCH_ID = "d-claude-search"
@@ -382,6 +387,7 @@ object CustomMenuButtons {
             CustomMenuButton("d-" + MenuControl.Notifications.name, "", "", control = MenuControl.Notifications.name),
             CustomMenuButton("d-task-tree", "TaskTree", "Task tree"),
             CustomMenuButton("d-calendar", "Calendar", "Calendar"),
+            LIFE_PLAN,
         ) + listOf(
             MenuControl.LookAwayNow, MenuControl.SwitchTask, MenuControl.SleepWork, MenuControl.Away, MenuControl.Online,
         ).map { CustomMenuButton("d-" + it.name, "", "", control = it.name) }
@@ -445,7 +451,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, lifePlanSeeded = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -584,7 +590,12 @@ object CustomMenuButtons {
         val withSounds =
             if (stored.claudeSoundsSeeded || CLAUDE_SOUNDS !in defaults || withMute.any { it.id == CLAUDE_SOUNDS.id }) withMute
             else withMute + CLAUDE_SOUNDS
-        return if (stored.soundsTogether) withSounds else withSoundsTogether(withSounds)
+        val together = if (stored.soundsTogether) withSounds else withSoundsTogether(withSounds)
+        // ...and, on the page it is a default of, the Life plan button, ONCE: under the Calendar button, where it stands.
+        if (stored.lifePlanSeeded || LIFE_PLAN !in defaults || together.any { it.id == LIFE_PLAN.id }) return together
+        val calendar = together.indexOfFirst { it.id == "d-calendar" }
+        return if (calendar < 0) together + LIFE_PLAN
+        else together.toMutableList().also { it.add(calendar + 1, LIFE_PLAN.copy(parent = together[calendar].parent)) }
     }
 
     /**

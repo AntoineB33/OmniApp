@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The life plan window — 2026-11-02
+
+User rule: a default "Life plan" button in the Schedule page's lateral menu opens a window whose drop-down picks "Steps" (a list like the Search window's, each row holding sub-elements under an arrow), "Problems" (a text area, in tabs chosen, deleted and added from a field with a drop-down), "Career evolution" and "Crisis resilience" (named, not defined yet). `SchedulerState.lifePlan` is a new synced list, a line of a tab being one row, so typing rewrites one row and a History Unit holds the lines touched (`LifePlanDelta`, `server-quota.md`). A payload without it decodes to an empty plan. A stored menu is given the button once, under Calendar (`Stored.lifePlanSeeded`). No migration: rows split by the existing rule. Client rebuild only. `LifePlanTest`.
+
 ### Claude Code windows in a workplace setup — 2026-11-02
 
 User rule: a setup's window can be Claude Code in a cmd window on one folder (`WorkplaceApp.ClaudeCode`; the stored shape is `PersistedWorkplaceWindow.app`'s, no migration). The folder is the process's working directory, never parsed by cmd, and stands in a `rem` so the listing can read it (`WorkplaceDomain.openClaudeFolders`): applying opens one only where none the app started is on that folder. One started by hand is not seen, Windows not telling a process's folder. What is typed into now opens before the windows that would take the foreground. Client rebuild only: a build older than this reads such a window as a file explorer.

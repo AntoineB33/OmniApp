@@ -142,7 +142,7 @@ means.
     `MenuControlHost`): never a second look for the menu. A new control is one entry of `MenuControl`, one branch
     there, and a `MenuAddable` round it where it lives.
   - **What the menu held is what it starts as** (`CustomMenuButtons.DEFAULTS`: the Search button, the three sound
-    switches together, Mute, Voice, Notifications (brought together once in a menu stored before), Task tree, Calendar, Look
+    switches together, Mute, Voice, Notifications (brought together once in a menu stored before), Task tree, Calendar, Life plan, Look
     away now, Switch task, Sleep / Work, I'm away, Online). A list stored before is given those
     ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
   - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename, Global,
@@ -205,6 +205,17 @@ means.
   the fields, for the action, for the Sleep window — which the calendar's "edit… → sleep schedule" on a Sleep band
   still opens — and for the lateral menu's item (the action added to the menu IS `MenuControl.SleepSchedule`). A
   field re-reads a value written from another place, never under the hand typing it.
+
+- **The life plan is a lateral-menu window of the Schedule page** (user rule 2026-11-02; `ui/LifePlanWindow.kt`,
+  `CustomMenuButtons.LIFE_PLAN`, given ONCE under the Calendar button to a menu stored before, `Stored.lifePlanSeeded`). A
+  drop-down picks what it shows (`LifePlanSection`). "Steps" is a list of rows drawn as the Search window's result list
+  (`resultRowModifier`), each a step whose title is typed straight into, with its "+" (a sub-element) and its bin, and an
+  arrow where it has sub-elements. "Problems" is a text area under a field: the field holds the open tab's title, and its
+  ▾ lists every tab with a bin, then "+ New tab". "Career evolution" and "Crisis resilience" are named and not defined yet,
+  and store nothing. The window `claimsKeyboard`. What is written is the account's (`persistence.md`); the section, the open
+  tab and the steps expanded are local-only, per frame id, on the `LifePlanViews` row, so a window's ⧉ starts as it stands
+  and its windows have no configuration a menu button could tell apart. A field typed into is a `LiveFieldText`: its own
+  text coming back a frame late is ignored, any other (an undo, a sync) is taken.
 
 ### Maximized, resized, filled
 

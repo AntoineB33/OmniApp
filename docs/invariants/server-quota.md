@@ -55,6 +55,8 @@ block every 20, a minimum-time change every 10. The account is the release accou
   event-driven and throttled (`PUSH_WINDOW_MILLIS`), with no pull: `ServerQuotaTest` runs twice the user's busiest hour.
 - **Never rewrite a large row to change a small part of it.** That is the outage. A value that changes with editing
   goes in its own row, sized by what changed (`sync-and-accounts.md` § *Sync by rows*).
+  So a long text the user writes is rows too: a life plan tab is one row per line (`LifePlanDomain.withText`), and typing
+  in a line rewrites that line. A single line is still one row, however long it is typed.
 - **A History Unit is a diff of what changed**, never a copy of the tree (`persistence.md` § *A History Unit is what
   changed*; `HistoryUnitSizeTest`: under 2 KB).
 - **Only `scheduler_head` is in the Realtime publication for sync**: one small message per push per connected device.

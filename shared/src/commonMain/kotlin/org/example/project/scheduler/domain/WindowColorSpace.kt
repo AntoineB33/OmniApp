@@ -33,7 +33,7 @@ object WindowColorSpace {
     val DEFAULT_WINDOWS: List<String> =
         listOf(
             "Calendar", "TaskTree", "Search", UNFOCUSED_NOTIF, "History", "Sleep", "Alarms", "TaskTrees",
-            "TaskRelations", "Categories", "DefaultSubtree", "Shortcuts", "Online", "ConfigSearch", "AddedConfig",
+            "TaskRelations", "Categories", "DefaultSubtree", "Shortcuts", "Online", "ConfigSearch", "AddedConfig", "LifePlan",
             "TaskEdit", "CategoryEdit", "PeriodKindEdit", "PriorityWeights", "RelativePriority", "DeepCopy",
             "AlarmOrTimerEdit", "AlarmOrTimerDefaults", "ReminderEdit", "ReminderDefaults", "HistoryEntryInfo",
             "TaskTreeDetail", "CalendarElements", "CalendarEntryEdit", "CalendarPeriodEdit", "CalendarReminderEdit",

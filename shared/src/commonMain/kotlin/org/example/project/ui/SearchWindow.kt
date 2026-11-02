@@ -1909,7 +1909,7 @@ internal fun logEntryColor(kind: SearchDomain.Kind): Color? =
     }
 
 @Composable
-private fun resultRowModifier(selected: Boolean, inSelection: Boolean = false): Modifier =
+internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false): Modifier =
     Modifier
         .fillMaxWidth()
         .height(RESULT_ROW_HEIGHT)

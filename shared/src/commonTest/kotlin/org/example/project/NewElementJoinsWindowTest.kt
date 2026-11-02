@@ -101,7 +101,7 @@ class NewElementJoinsWindowTest {
 
     @Test
     fun a_menu_stored_before_has_them_brought_together_once() {
-        val older = """{"buttons":[{"id":"g-search","window":"Search","title":"Search","global":true},{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"d-task-tree","window":"TaskTree","title":"Task tree"},{"id":"d-Voice","window":"","title":"","control":"Voice"},{"id":"b1","window":"Search","title":"Mine"},{"id":"d-Notifications","window":"","title":"","control":"Notifications"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"claudeSoundsSeeded":true}"""
+        val older = """{"buttons":[{"id":"g-search","window":"Search","title":"Search","global":true},{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"d-task-tree","window":"TaskTree","title":"Task tree"},{"id":"d-Voice","window":"","title":"","control":"Voice"},{"id":"b1","window":"Search","title":"Mine"},{"id":"d-Notifications","window":"","title":"","control":"Notifications"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"claudeSoundsSeeded":true,"lifePlanSeeded":true}"""
         val read = CustomMenuButtons.decode(older)
         assertEquals(listOf("g-search", "g-mute", "d-Voice", "d-Notifications", "d-task-tree", "b1"), positions(read))
         // Once: moved apart after that, they stay.
@@ -111,9 +111,9 @@ class NewElementJoinsWindowTest {
 
     @Test
     fun switches_removed_or_in_a_folder_are_the_users() {
-        val removed = """{"buttons":[{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"b1","window":"Search","title":"Mine"},{"id":"d-Voice","window":"","title":"","control":"Voice"}],"seeded":true,"globalSeeded":true,"muteSeeded":true}"""
+        val removed = """{"buttons":[{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"b1","window":"Search","title":"Mine"},{"id":"d-Voice","window":"","title":"","control":"Voice"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"lifePlanSeeded":true}"""
         assertEquals(listOf("g-mute", "b1", "d-Voice"), positions(CustomMenuButtons.decode(removed)))
-        val folder = """{"buttons":[{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"f1","window":"","title":"F","folder":true},{"id":"d-Voice","window":"","title":"","control":"Voice","parent":"f1"},{"id":"d-Notifications","window":"","title":"","control":"Notifications","parent":"f1"}],"seeded":true,"globalSeeded":true,"muteSeeded":true}"""
+        val folder = """{"buttons":[{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"f1","window":"","title":"F","folder":true},{"id":"d-Voice","window":"","title":"","control":"Voice","parent":"f1"},{"id":"d-Notifications","window":"","title":"","control":"Notifications","parent":"f1"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"lifePlanSeeded":true}"""
         assertEquals(listOf("g-mute", "f1", "d-Voice", "d-Notifications"), positions(CustomMenuButtons.decode(folder)))
     }
 }

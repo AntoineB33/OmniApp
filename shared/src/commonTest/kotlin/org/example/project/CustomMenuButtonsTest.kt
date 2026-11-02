@@ -25,7 +25,7 @@ class CustomMenuButtonsTest {
     fun the_whole_menu_is_the_users_list_and_starts_as_what_the_menu_held() {
         val defaults = CustomMenuButtons.DEFAULTS
         // The global Search button first (user rule 2026-10-18: "by default, there is a Search button … for all pages").
-        assertEquals(listOf("Search", "TaskTree", "Calendar"), defaults.filter { it.control == null }.map { it.windowId })
+        assertEquals(listOf("Search", "TaskTree", "Calendar", "LifePlan"), defaults.filter { it.control == null }.map { it.windowId })
         assertEquals(
             // The mute switch, global (user rule 2026-10-18), then the controls the fixed part held.
             listOf("MuteAll", "Voice", "Notifications", "LookAwayNow", "SwitchTask", "SleepWork", "Away", "Online"),

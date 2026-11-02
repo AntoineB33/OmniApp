@@ -157,6 +157,7 @@ enum class HistoryWindow(val label: String) {
     ConfigSearch("Search configurations"),
     Online("Online"),
     AddedConfig("Added elements configurations"),
+    LifePlan("Life plan"),
 
     // Every other window type (user rule 2026-10-01: "made in" lists ALL the types of window). A press in one of
     // them moves the focus to it like a press in any window (`WindowFrameHost.onFocus` → `FocusWindow`), so what is
@@ -891,6 +892,9 @@ data class SchedulerState(
 
     /** User rule 2026-11-01: the account's workplace setups: windows to open at one press, persisted and synced like [chronos]. */
     val workplaceSetups: List<org.example.project.scheduler.domain.WorkplaceSetup> = emptyList(),
+
+    /** User rule 2026-11-02: the life plan, one row per step, tab and line of a tab; persisted and synced like [chronos]. */
+    val lifePlan: List<org.example.project.scheduler.domain.LifePlanEntry> = emptyList(),
     /**
      * User rule 2026-10-03: the account's **quotas** ([org.example.project.scheduler.model.QuotaEntry]). Authoritative,
      * persisted and synced like [chronos]; a quota's progression is derived and never stored.

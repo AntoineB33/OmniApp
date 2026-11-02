@@ -627,6 +627,9 @@ object SchedulerReducer {
                 TimerDomain.rang(it, intent.nowMillis)
             }
             is SchedulerIntent.SetChronos -> reduceSetChronos(state, intent.entries, intent.editKey)
+            is SchedulerIntent.SetLifePlan ->
+                if (state.lifePlan == intent.entries) state
+                else commitDelta(state, LifePlanDelta(state.lifePlan, intent.entries, intent.editKey))
             is SchedulerIntent.SetWorkplaceSetups ->
                 if (state.workplaceSetups == intent.entries) state
                 else commitDelta(state, WorkplaceSetupsDelta(state.workplaceSetups, intent.entries, intent.editKey))
@@ -7559,6 +7562,40 @@ internal data class QuotasDelta(
 
     override fun commit(state: SchedulerState): SchedulerState =
         state.copy(quotas = changes.applyToList(state.quotas, forward = true, exact = true) { it.id })
+}
+
+/**
+ * User rule 2026-11-02: a change to the **life plan**: the entries touched, whole. A line of a tab is an entry, so a unit
+ * of typing holds the lines typed in and never the tab's text (`server-quota.md`).
+ */
+internal data class LifePlanDelta(
+    val changes: EntryChanges<String, org.example.project.scheduler.domain.LifePlanEntry>,
+    override val coalesceKey: String? = null,
+) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.domain.LifePlanEntry>,
+        after: List<org.example.project.scheduler.domain.LifePlanEntry>,
+        coalesceKey: String? = null,
+    ) : this(EntryChanges.ofList(before, after) { it.id }, coalesceKey)
+
+    override val label: String
+        get() = "Life plan"
+
+    override val details: List<String>
+        get() = changes.touched.map { id -> "life plan: " + (changes.after[id] ?: changes.before[id])?.text.orEmpty().ifBlank { id } }
+
+    override fun coalesceOnto(previous: Delta): Delta? =
+        if (previous is LifePlanDelta && previous.coalesceKey == coalesceKey) copy(changes = previous.changes.then(changes))
+        else null
+
+    override fun undo(state: SchedulerState): SchedulerState =
+        state.copy(lifePlan = changes.applyToList(state.lifePlan, forward = false) { it.id })
+
+    override fun redo(state: SchedulerState): SchedulerState =
+        state.copy(lifePlan = changes.applyToList(state.lifePlan, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(lifePlan = changes.applyToList(state.lifePlan, forward = true, exact = true) { it.id })
 }
 
 /** User rule 2026-11-01: a change to the account's **workplace setups**: [ChronosDelta]'s rule, the rows whole. */

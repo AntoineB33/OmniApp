@@ -122,7 +122,7 @@ class CustomMenuFoldersTest {
         val (list, _) = group(menu, "b", "a")
         val shut = CustomMenuButtons.toggled(list, "f1")
         assertEquals(shut, CustomMenuButtons.decode(CustomMenuButtons.encode(shut)))
-        val older = """{"buttons":[{"id":"a","window":"Search","title":"a"}],"seeded":true,"globalSeeded":true,"muteSeeded":true}"""
+        val older = """{"buttons":[{"id":"a","window":"Search","title":"a"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"lifePlanSeeded":true}"""
         val read = CustomMenuButtons.decode(older).single()
         assertFalse(read.folder)
         assertNull(read.parent)

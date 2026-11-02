@@ -113,7 +113,7 @@ class GlobalItemsTest {
         assertEquals(CustomMenuButtons.GLOBAL_SEARCH, CustomMenuButtons.DEFAULTS.first())
         assertEquals(CustomMenuButtons.GLOBAL_SEARCH, CustomMenuButtons.CLAUDE_LOGS_DEFAULTS.first())
         // A menu stored before: given it once, on top — and on the logs page in the place of its own Search button.
-        val before = """{"buttons":[{"id":"d-calendar","window":"Calendar","title":"Calendar"}],"seeded":true}"""
+        val before = """{"buttons":[{"id":"d-calendar","window":"Calendar","title":"Calendar"}],"seeded":true,"lifePlanSeeded":true}"""
         assertEquals(listOf("g-search", "g-mute", "d-calendar"), CustomMenuButtons.decode(before).map { it.id })
         val logsBefore =
             """{"buttons":[{"id":"d-claude-search","window":"Search","title":"Search"},{"id":"d-ClaudeLogsDirectory","window":"","title":"","control":"ClaudeLogsDirectory"}],"seeded":true}"""

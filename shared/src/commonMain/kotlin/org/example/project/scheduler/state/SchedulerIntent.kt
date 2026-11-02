@@ -939,6 +939,12 @@ sealed interface SchedulerIntent {
         val editKey: String? = null,
     ) : SchedulerIntent
 
+    /** User rule 2026-11-02: the life plan as it now stands, one History Unit. [editKey] as [SetChronos]' for a field typed into. */
+    data class SetLifePlan(
+        val entries: List<org.example.project.scheduler.domain.LifePlanEntry>,
+        val editKey: String? = null,
+    ) : SchedulerIntent
+
     data class SetChronos(
         val entries: List<org.example.project.scheduler.model.ChronoEntry>,
         val editKey: String? = null,
