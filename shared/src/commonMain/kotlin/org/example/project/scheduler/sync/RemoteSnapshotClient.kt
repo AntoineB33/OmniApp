@@ -573,13 +573,17 @@ class RemoteSnapshotClient(
         if (!response.status.isSuccess()) throw response.toException()
     }
 
-    /** Every active-session row of this account ending at/after [sinceMillis] (all devices, oldest first). */
-    suspend fun fetchActiveSessions(session: SupabaseSession, sinceMillis: Long): List<ActiveSessionRecord> {
+    /**
+     * Every active-session row of this account ending at/after [sinceMillis], oldest first: every device's, or every
+     * device's but [excludeDeviceId]'s.
+     */
+    suspend fun fetchActiveSessions(session: SupabaseSession, sinceMillis: Long, excludeDeviceId: String? = null): List<ActiveSessionRecord> {
         val response =
             http.get("${config.restUrl}/device_active_session") {
                 authHeaders(session)
                 url.parameters.append("user_id", "eq.${session.userId}")
                 url.parameters.append("end_ms", "gte.$sinceMillis")
+                if (excludeDeviceId != null) url.parameters.append("device_id", "neq.$excludeDeviceId")
                 url.parameters.append("select", "device_id,start_ms,end_ms,updated_at,kind")
                 url.parameters.append("order", "start_ms.asc")
             }

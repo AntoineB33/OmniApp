@@ -228,9 +228,9 @@ class FakeSupabase(
 
     /** pg_cron's `pause-cue-tick` runs once a minute whatever the clients do; its log row is the server's own growth. */
     /**
-     * `forget_old_history` (migration 20261103010000), as the daily job runs it: when the live rows of the three row tables
-     * reach 90 % of [limitBytes], the oldest HISTORY rows of `scheduler_entity` (a task no cell holds, a block ended before
-     * [untilMillis]) are deleted, oldest first, with no tombstone, down to 70 %; each account that lost rows gets ONE row of
+     * `forget_old_history` (migrations 20261103010000, 20261104000000), as the daily job runs it: when the live rows of the
+     * three row tables reach 90 % of [limitBytes], the oldest HISTORY rows of `scheduler_entity` (a task no cell holds and
+     * its sub-tree, a block ended before [untilMillis]) are deleted, oldest first, with no tombstone, down to 70 %; each account that lost rows gets ONE row of
      * kind `forgotten` in their place. The 30 days untouched are the caller's [untilMillis] here: the fake keeps no
      * update time. Returns how many rows were forgotten.
      */
@@ -239,16 +239,17 @@ class FakeSupabase(
         val used = listOf("scheduler_entity", "history_unit", "claude_log_entry").sumOf { tables[it]?.liveBytes ?: 0L }
         if (used < limitBytes * 9 / 10) return 0
         var toFree = used - limitBytes * 7 / 10
-        fun history(row: JsonObject): Boolean {
-            if (row["deleted"]?.let(::scalar) == "true") return false
-            val payload = row["payload"]?.let(::scalar)?.let { runCatching { json.parseToJsonElement(it) as? JsonObject }.getOrNull() } ?: return false
-            return when (row["kind"]?.let(::scalar)) {
-                "tasks" -> (payload["occurrences"] as? JsonArray).isNullOrEmpty()
-                "panels" -> ((payload["end"] as? JsonPrimitive)?.content?.toLongOrNull() ?: Long.MAX_VALUE) < untilMillis
-                else -> false
+        // The same predicate the migration spells in SQL (20261104000000: the tree's part walked to a fixed point), per
+        // account: a task no cell holds and its sub-tree, a block ended before the cut.
+        val marker = org.example.project.scheduler.sync.ForgottenRows.Marker(untilMillis = untilMillis)
+        val live = entity.rows.values.filter { it["deleted"]?.let(::scalar) != "true" && it["payload"]?.let(::scalar) != null }
+        val historyRows =
+            live.groupBy { it["user_id"]?.let(::scalar) }.flatMap { (_, rows) ->
+                val byKey = rows.associateBy { org.example.project.scheduler.sync.EntityRows.Key(it["kind"]?.let(::scalar).orEmpty(), it["entity_id"]?.let(::scalar).orEmpty()) }
+                org.example.project.scheduler.sync.ForgottenRows.coveredKeys(byKey.mapValues { it.value["payload"]?.let(::scalar).orEmpty() }, marker)
+                    .map(byKey::getValue)
             }
-        }
-        val chosen = entity.rows.values.filter(::history).sortedBy { it["revision"]?.let(::scalar)?.toLongOrNull() ?: 0L }
+        val chosen = historyRows.sortedBy { it["revision"]?.let(::scalar)?.toLongOrNull() ?: 0L }
             .takeWhile { row -> (toFree > 0).also { toFree -= entity.rowBytes(row) } }
         val keys = chosen.map { Triple(it["user_id"]?.let(::scalar), it["kind"]?.let(::scalar), it["entity_id"]?.let(::scalar)) }.toSet()
         entity.delete({ Triple(it["user_id"]?.let(::scalar), it["kind"]?.let(::scalar), it["entity_id"]?.let(::scalar)) in keys }, null)

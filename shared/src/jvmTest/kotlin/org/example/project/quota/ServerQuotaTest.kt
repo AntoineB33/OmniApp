@@ -106,6 +106,8 @@ class ServerQuotaTest {
         val sharedTables = setOf("cron.job_run_details")
         val report = StringBuilder("\nSERVER QUOTA — heavy hour projected to ${q.ACCOUNTS} accounts\n")
         var database = 0L
+        // What `scheduler_entity` gained in the hour, its tombstones aside: the most its history can have grown by.
+        var entityGrowthPerHour = 0L
         for (name in after.disk.keys) {
             val growthPerHour = (after.live.getValue(name) - before.live.getValue(name)).coerceAtLeast(0)
             val shared = name in sharedTables
@@ -117,6 +119,7 @@ class ServerQuotaTest {
                 // Tombstones grow at the pace of editing, but `purge_scheduler_tombstones` deletes them after a week.
                 val tombstonesPerHour = (tombstoneBytes(server) - tombstonesBefore).coerceAtLeast(0)
                 val keptHours = tombstoneRetentionMillis()?.let { it / (24 * hour) * q.ACTIVE_HOURS_PER_DAY } ?: hoursProjected
+                entityGrowthPerHour = (growthPerHour - tombstonesPerHour).coerceAtLeast(0)
                 perAccount = after.disk.getValue(name) + (growthPerHour - tombstonesPerHour).coerceAtLeast(0) * hoursProjected +
                     tombstonesPerHour * minOf(hoursProjected, keptHours)
             }
@@ -132,6 +135,12 @@ class ServerQuotaTest {
                 val table = server.table(name)
                 val averageRow = if (table.rows.isEmpty()) 0L else table.liveBytes / table.rows.size
                 perAccount = minOf(perAccount, 2 * averageRow * FakeSupabase.HISTORY_UNITS_KEPT * HistoryCategory.entries.size)
+            }
+            if (name == "screen_break_rule" && replacesBreakRules()) {
+                // `publish_break_rules` deletes the account's set and inserts the new one: the table holds one set of
+                // future periods, never a growing log. What it occupies now — its high-water, the replaced sets' dead
+                // rows included — is what it occupies a year on; its live size only moves with the set published.
+                perAccount = after.disk.getValue(name)
             }
             val projected = perAccount * if (shared) 1 else q.ACCOUNTS
             database += projected
@@ -157,8 +166,10 @@ class ServerQuotaTest {
         // is forgotten past 90 % of the limit — only that part, and only into the room the rest leaves. Everything else
         // still grows as measured: when the rest alone is over, the history's trim cannot save the budget.
         if (forgetsOldHistory()) {
-            val historyProjected =
-                (historyAfter - historyBefore).coerceAtLeast(0) * q.ACTIVE_HOURS_PER_DAY.toLong() * q.DAYS_PROJECTED * q.ACCOUNTS
+            // A row that turns into history in the hour (a renamed parent's sub-tree, a block that ends) was in the table
+            // before it: only the bytes the table GAINED can be history's growth, never more.
+            val historyPerHour = (historyAfter - historyBefore).coerceIn(0L, entityGrowthPerHour)
+            val historyProjected = historyPerHour * q.ACTIVE_HOURS_PER_DAY.toLong() * q.DAYS_PROJECTED * q.ACCOUNTS
             val rest = (database - historyProjected).coerceAtLeast(0)
             val room = (q.budget(q.DATABASE_BYTES) * 9 / 10 - rest).coerceAtLeast(0)
             database = rest + minOf(historyProjected, room)
@@ -194,17 +205,32 @@ class ServerQuotaTest {
         return Regex("""where ranked\.running > (\d+)""").findAll(migrations).lastOrNull()?.groupValues?.get(1)?.toLong()
     }
 
-    /** How long `pause-cue-setup.sql` keeps pg_cron's run log, read off its purge job; null when it never purges. */
-    /** The history rows' bytes in `scheduler_entity` (what `forget_old_history` may forget: [ForgottenRows.covers]). */
+    /**
+     * The history rows' bytes in `scheduler_entity` (what `forget_old_history` may forget: [ForgottenRows.coveredKeys]).
+     * A calendar block counts once it ends within a day of [nowMillis]: the heavy user places each an hour or so ahead,
+     * so every block of the hour is history the same day — long before the job's 30-day cut reaches it.
+     */
     private fun historyBytes(server: FakeSupabase, nowMillis: Long): Long {
         val table = server.table("scheduler_entity")
-        val marker = org.example.project.scheduler.sync.ForgottenRows.Marker(untilMillis = nowMillis)
-        return table.rows.values.filter { row ->
-            val kind = (row["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@filter false
-            val payload = (row["payload"] as? kotlinx.serialization.json.JsonPrimitive)?.content
-            row["deleted"]?.toString() != "true" &&
-                org.example.project.scheduler.sync.ForgottenRows.covers(org.example.project.scheduler.sync.EntityRows.Key(kind, ""), payload, marker)
-        }.sumOf(table::rowBytes)
+        val marker = org.example.project.scheduler.sync.ForgottenRows.Marker(untilMillis = nowMillis + 24 * hour)
+        val live = table.rows.values.filter { it["deleted"]?.toString() != "true" }
+        val byKey =
+            live.mapNotNull { row ->
+                val kind = (row["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
+                val id = (row["entity_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
+                val payload = (row["payload"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
+                org.example.project.scheduler.sync.EntityRows.Key(kind, id) to (payload to row)
+            }.toMap()
+        val covered = org.example.project.scheduler.sync.ForgottenRows.coveredKeys(byKey.mapValues { it.value.first }, marker)
+        return covered.sumOf { table.rowBytes(byKey.getValue(it).second) }
+    }
+
+    /** Whether the migrations' `publish_break_rules` replaces the account's whole set (deletes it before inserting). */
+    private fun replacesBreakRules(): Boolean {
+        val root = generateSequence(java.io.File("").absoluteFile) { it.parentFile }.firstOrNull { java.io.File(it, "supabase/migrations").isDirectory } ?: return false
+        val migrations = java.io.File(root, "supabase/migrations").listFiles().orEmpty().sortedBy { it.name }.joinToString("\n") { it.readText() }
+        val body = migrations.substringAfterLast("create or replace function public.publish_break_rules", "").substringBefore("\$\$;")
+        return Regex("""delete from public\.screen_break_rule where user_id = \w+;""").containsMatchIn(body)
     }
 
     /** Whether the migrations hold `forget_old_history` AND pause-cue-setup.sql schedules it: otherwise nothing forgets. */
@@ -215,6 +241,7 @@ class ServerQuotaTest {
         return "function public.forget_old_history()" in migrations && "select public.forget_old_history()" in setup
     }
 
+    /** How long `pause-cue-setup.sql` keeps pg_cron's run log, read off its purge job; null when it never purges. */
     private fun cronLogRetentionMillis(): Long? {
         val sql = generateSequence(java.io.File("").absoluteFile) { it.parentFile }
             .map { java.io.File(it, "supabase/pause-cue-setup.sql") }.firstOrNull { it.isFile }?.readText() ?: return null

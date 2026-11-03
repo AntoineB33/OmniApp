@@ -27,6 +27,11 @@ and SQLite migration included, in `CHANGELOG.md`.
 - Do not kill `org.example.project.exe` or rerun `scripts\account3-deploy-windows.bat` unless the user explicitly asks
   for a redeploy.
 
+## Git: commit and push on `1.6.0` only
+
+User rule 2026-11-04: an agent may commit and push as it sees fit, **on the `1.6.0` branch only**. Never commit to or
+push any other branch (`main` included), and never open a pull request unless asked.
+
 ## Agent safety: the screen belongs to the user
 
 Besides the global rules, each time a screen-taking command finishes a voice tells the user they can come back.

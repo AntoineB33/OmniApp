@@ -127,7 +127,9 @@ second copy of it on a kind of element.
 - Every cell pointing at a task shows the **same** sub-tree — that is what mirroring is. So re-pointing a cell at
   another id must **not** delete the task it left: a titled, cell-less task that still holds a populated sub-list
   is a **detached parent** (`SchedulerDomain.isDetachedParentTask`), kept by `purgeOrphanTasks` and seeded into
-  `pruneDetachedTree`'s walk. Assigning that id back restores its sub-tree.
+  `pruneDetachedTree`'s walk. Assigning that id back restores its sub-tree. Near its limit the server forgets it with
+  its sub-tree, as history (`server-quota.md` § *Near the limit, the server forgets*): a device that holds them keeps
+  them, so the restore works there; a device that never held them gets the title back alone.
 - **The blank title is what deletes.** Emptying a cell (PRD §4 *Deletion*) blanks its task's title, and a
   blank-titled task is never a detached parent — that single rule is what still collects an emptied parent's
   sub-tree, and what keeps a peer's deletion sticking through `SnapshotMerge.repair`. Do not make the retention

@@ -1596,10 +1596,29 @@ data class SchedulerState(
          */
         fun mintedNumber(counter: Int): String = deviceIdTag().let { tag -> if (tag.isEmpty()) "$counter" else "$counter$MINTED_TAG_SEPARATOR$tag" }
 
-        /** The device's tag in the ids it mints: the first 8 characters of its sync id, none without sync. */
-        fun deviceIdTag(): String =
-            SchedulerReducer.deviceId().takeIf { it != SchedulerReducer.LOCAL_DEVICE_ID }
-                ?.filter { it.isLetterOrDigit() }?.take(8).orEmpty()
+        /**
+         * The device's tag in the ids it mints: [DEVICE_TAG_LENGTH] base-36 characters hashed from its whole sync id, none
+         * without sync. Every synced row carries it, often more than once (a cell id holds its list's), so its length is
+         * egress (`server-quota.md`): 2026-11-03 it was the sync id's first 8 hex characters, and the heavy month went over.
+         * Four base-36 characters are 1.68 M tags, against 65 536 for four hex ones: two devices of one account share one
+         * about once in 840 000 accounts. Ids minted under the old tag keep it; the counters go on, so none is reused.
+         */
+        fun deviceIdTag(): String {
+            val id = SchedulerReducer.deviceId().takeIf { it != SchedulerReducer.LOCAL_DEVICE_ID } ?: return ""
+            // FNV-1a, spelled out: the same tag on every platform and every run.
+            var hash = 0x811C9DC5.toInt()
+            for (c in id) hash = (hash xor c.code) * 0x01000193
+            var n = hash.toLong() and 0xFFFFFFFFL
+            val out = CharArray(DEVICE_TAG_LENGTH)
+            for (i in out.indices) {
+                out[i] = "0123456789abcdefghijklmnopqrstuvwxyz"[(n % 36).toInt()]
+                n /= 36
+            }
+            return out.concatToString()
+        }
+
+        /** The length of [deviceIdTag]. */
+        const val DEVICE_TAG_LENGTH: Int = 4
 
         /**
          * Cap on [notificationLog]: a **rolling tail** — the app keeps the most RECENT this-many notifications

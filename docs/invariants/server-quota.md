@@ -34,11 +34,12 @@ block every 20, a minimum-time change every 10. The account is the release accou
   outage. Rows are sized as uncompressed JSON plus a tuple header; every estimate errs toward the quota.
 - **A projection may only be bounded by something the server really does**, and the test reads that bound from the
   deployed files so that deleting it fails the test: the cron-log purge from `pause-cue-setup.sql`, the tombstone
-  purge from the migrations AND its schedule in `pause-cue-setup.sql`, the history trim (1000 per category).
+  purge from the migrations AND its schedule in `pause-cue-setup.sql`, the history trim (1000 per category), the
+  forgetting of old history (`forget_old_history` AND its schedule), the break rules replaced whole (`publish_break_rules`).
 - **A failure prints the per-table, per-call and per-stream breakdown.** Fix the call that costs; do not raise the
   budget or thin the scenario to pass. Changing the scenario needs a reason about real use written next to it.
 
-## Near the limit, the server forgets — HISTORY BUILT 2026-11-03, NOT DEPLOYED; THE TREE'S SUB-LISTS NOT BUILT
+## Near the limit, the server forgets — HISTORY BUILT 2026-11-03/04, NOT DEPLOYED; THE VISIBLE TREE'S SUB-LISTS NOT BUILT
 
 User rules 2026-11-03: *"When there is a new row in the db, it is sent (with a debounce) to the server to be added there
 too. When a db is reaching its defined memory limit (lower for the free Supabase server), then the oldest rows are
@@ -57,11 +58,14 @@ limit, and nothing here may exceed it.
   start at a threshold below the limit and work in batches down to a lower one, because Postgres reuses the space of a
   deleted row rather than giving it back (the outage's mechanism).
   1. **The debounce grows**, up to days near the limit. It saves traffic; it frees no space.
-  2. **The oldest history rows go first**: history units, past records and periods, the tasks no cell holds, logs. Oldest
-     by the time a row is about, not by when it was written.
+  2. **The oldest history rows go first**: history units, past records and periods, the tasks no cell holds and their
+     sub-trees, logs. Oldest by the time a row is about, not by when it was written.
   3. **Then the other tables**: in the task tree, a sub-list of tasks nobody modified recently is replaced by ONE row
      saying that tasks are there and not remembered. A recently modified task is never forgotten, so what a device is
-     working on reaches every other device whole.
+     working on reaches every other device whole. NOT BUILT: measured 2026-11-04, the tree a row reaches does not grow
+     in the heavy year (each rename replaces a task, its sub-list and its cell), so nothing here is needed to hold the
+     tenth. Built, a device without the rows must keep the list's cell ids as it read them: `SnapshotMerge.repair` drops
+     a cell id no row backs, and a list pushed back that way would take the cells from every device that holds them.
 - **The server does the forgetting**, where the size and every account are seen (a scheduled job, like
   `trim_claude_log_entries`), and `ServerQuotaTest` must read that bound off the migration.
   BUILT for history (2026-11-03): `forget_old_history` (migration 20261103010000, daily in pause-cue-setup.sql). It reads
@@ -71,12 +75,26 @@ limit, and nothing here may exceed it.
   tombstone, and each account gets ONE row of kind `forgotten` (`ForgottenRows`) in their place, as the user asked:
   *"instead of deleting them, they are replaced by a single row saying that they are not saved in this db anymore."*
   `ForgottenHistoryTest`. `ServerQuotaTest` projects it honestly: only the history's growth is bounded, into the room
-  the rest leaves.
-- **Measured 2026-11-03, the heavy year is over the budget WITHOUT its history**: 75.2 MB (`scheduler_entity` 52.3,
-  `history_unit` 22.9 at its 1000-unit bound, `screen_break_rule` 16.4), the history 21.8 MB more; egress 520.3 MB a
-  month, over since the ids carry the device's tag. So the history's trim alone cannot hold the tenth. The test account
-  is built with tagged ids and no history of its own: built bare, the hour measured lengthened every id it renamed, a
-  one-off the year then repeated.
+  the rest leaves, and that growth is at most what the table gained in the hour (a row that turns into history was
+  there before it did).
+  WIDENED 2026-11-04 (migration 20261104000000, the same job): **a task no cell holds takes its sub-tree with it** — its
+  sub-list, the cells in it, every task held only there, and on down, walked to a fixed point on both sides
+  (`ForgottenRows.coveredKeys`, the one predicate; the SQL spells it the same way). No row of the tree reaches such a
+  sub-tree, so nothing shows it: it is the sub-tree a renamed parent keeps so that naming it again brings it back
+  (`task-tree.md`). The root task, list and cell are never history. The cut can fall inside a sub-tree; a device that
+  never held it then reads a task whose sub-list is gone, and nothing it shows changes.
+- **Measured 2026-11-04, the heavy year holds the tenth**: database 45.0 MB a year (the rest 35.2 MB: `history_unit`
+  22.0 at its 1000-unit bound, `device_active_session` 3.7, `scheduler_entity` without its history; the history 60.7 MB,
+  9.8 MB of it kept), egress 499.4 MB a month. What took it there, from 91.0 MB and 513.7 MB on 2026-11-03:
+  - the tree's growth was sub-trees of renamed parents (three sub-lists and their cells an hour), now history;
+  - the hour's calendar blocks end within it, so the projection counts a block ending within a day as history;
+  - `screen_break_rule` is ONE set of future periods, replaced whole by `publish_break_rules` (16.4 MB was its live size
+    moving with the set, projected as growth): its high-water is its year, and the test reads the replacement off the
+    migration;
+  - the device tag in minted ids is 4 base-36 characters, not 8 hex (`sync-and-accounts.md`);
+  - a device no longer reads its own active-session rows back (`device_id=neq.` on the pull), which it then threw away.
+  The test account is built with tagged ids and no history of its own: built bare, the hour measured lengthened every id
+  it renamed, a one-off the year then repeated.
 - **What the server forgot is not a deletion** (`sync-and-accounts.md` § *Conflicts are MERGED*): a device holding those
   rows keeps them and does not push them back unless it edits them, and a device without them shows the "not remembered"
   row. A device's own limit forgets on its own side the same way.

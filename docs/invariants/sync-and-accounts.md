@@ -123,7 +123,8 @@ by syncing the draft: a half-typed title is not an authoritative change, and pee
 **An id is unique across the account's devices** (2026-11-03, `SchedulerState.mintedNumber`, `TwoDevicesEditTest`). Each
 counter is the device's own, so two devices minting at once handed out the same task, cell, list, panel, category or tree
 id, and the merge made two things one — or kept one and lost the other. A synced device tags what it mints with its own
-id (`task/user/12.3b941b56`); a build without sync keeps the bare number; ids minted before keep their shape.
+id (`task/user/12.k3x9`: four base-36 characters hashed from it, `deviceIdTag`, short because every synced row carries
+it; eight hex characters until 2026-11-03); a build without sync keeps the bare number; ids minted before keep their shape.
 
 ### Conflicts are MERGED
 

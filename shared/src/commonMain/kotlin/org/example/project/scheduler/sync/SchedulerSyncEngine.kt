@@ -434,7 +434,9 @@ open class SchedulerSyncEngine(
                 withAuth(session) { client.upsertActiveSessions(it, own) }
                 pushedSessions = session.userId to own
             }
-            val peers = withAuth(session) { client.fetchActiveSessions(it, since) }
+            // The server leaves this device's own rows out (`server-quota.md`: egress): it holds them already, and
+            // read back they were only thrown away here.
+            val peers = withAuth(session) { client.fetchActiveSessions(it, since, excludeDeviceId = ownId) }
                 .filter { it.deviceId != ownId }
             store.saveActiveSessions(peers)
             Diagnostics.log("reconcile: active sessions pushed=${own.size}, pulled=${peers.size} (since=$since)")
@@ -554,8 +556,8 @@ open class SchedulerSyncEngine(
             // not sent back. (An incremental read never hears of it: the server forgets without a tombstone.)
             val marker = ForgottenRows.marker(forgotten)
             if (full && marker != null) {
-                for ((key, value) in baseRows) {
-                    if (key !in remoteRows && ForgottenRows.covers(key, value, marker)) remoteRows[key] = value
+                for (key in ForgottenRows.coveredKeys(baseRows, marker)) {
+                    if (key !in remoteRows) remoteRows[key] = baseRows.getValue(key)
                 }
             }
             _forgotten.value = marker
