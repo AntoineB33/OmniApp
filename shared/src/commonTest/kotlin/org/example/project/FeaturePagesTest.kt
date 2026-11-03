@@ -80,10 +80,11 @@ class FeaturePagesTest {
         assertEquals("LateralMenu/AppSettings", CustomMenuButtons.placementIdOf(SearchDomain.SETTINGS_PAGE))
         assertEquals(listOf(CustomMenuButtons.GLOBAL_SEARCH, CustomMenuButtons.GLOBAL_MUTE), menu.take(2))
         assertEquals(
-            // The free tier's usage and the memory limits last (user rule 2026-11-03).
+            // The free tier's usage and the memory limits last (user rule 2026-11-03), the online button above them
+            // (user rule 2026-11-04).
             listOf(
                 MenuControl.Voice.name, MenuControl.Notifications.name, MenuControl.SoundVolume.name,
-                MenuControl.SupabaseUsage.name, MenuControl.MemoryLimits.name,
+                MenuControl.Online.name, MenuControl.SupabaseUsage.name, MenuControl.MemoryLimits.name,
             ),
             menu.drop(2).map { it.control },
         )

@@ -28,7 +28,7 @@ class ProjectUsageRefreshTest {
         assertTrue(usage.databaseBytes > 0 && usage.accountBytes > 0, "$usage")
         assertTrue(usage.accountBytes <= usage.databaseBytes)
         assertEquals(before + 1, server.requestsByCall["POST rpc/project_usage"], "one call per press")
-        assertEquals(false, desktop.vm.projectUsageFailed.value)
+        assertEquals(null, desktop.vm.projectUsageMiss.value)
     }
 
     /**
@@ -50,7 +50,7 @@ class ProjectUsageRefreshTest {
         scenario.pass(5_000L)
         val usage = assertNotNull(desktop.vm.projectUsage.value, "read while offline")
         assertTrue(usage.databaseBytes > 0, "$usage")
-        assertEquals(false, desktop.vm.projectUsageFailed.value)
+        assertEquals(null, desktop.vm.projectUsageMiss.value)
         assertEquals(calls + 1, server.requestsByCall["POST rpc/project_usage"], "one call per press")
 
         // Still offline: an edit is saved and marked, and no request follows it.
@@ -58,5 +58,23 @@ class ProjectUsageRefreshTest {
         desktop.vm.syncNow()
         scenario.pass(60_000L)
         assertEquals(requests + 1, server.requests, "the press, and nothing else, left the device")
+    }
+
+    /**
+     * 2026-11-04: one sentence for every cause ("offline, signed out, or not deployed") left the user guessing. A project
+     * without the migration says so, and says how to deploy it.
+     */
+    @Test
+    fun a_server_without_the_function_says_it_is_not_deployed() = runTest(timeout = 5.minutes) {
+        val server = FakeSupabase({ t0 + testScheduler.currentTime })
+        server.undeployed += "project_usage"
+        val scenario = QuotaScenario(this, server, QuotaScenario.Millis(t0))
+        val desktop = scenario.Device("desktop", "user-usage-undeployed", QuotaScenario.account(topLevel = 3, children = 2), DeviceKind.Desktop)
+        scenario.pass(60_000L)
+        desktop.vm.refreshProjectUsage()
+        scenario.pass(5_000L)
+        assertEquals(null, desktop.vm.projectUsage.value)
+        assertEquals(org.example.project.scheduler.domain.ProjectUsageMiss.NotDeployed, desktop.vm.projectUsageMiss.value)
+        assertTrue("deploy-supabase" in desktop.vm.projectUsageMiss.value!!.said)
     }
 }

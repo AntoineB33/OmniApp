@@ -361,6 +361,8 @@ object CustomMenuButtons {
         val lifePlanSeeded: Boolean = false,
         /** Whether a list of the settings page's menu was already given the usage and the memory limits ([SERVER_USAGE]), ONCE. */
         val usageSeeded: Boolean = false,
+        /** Whether a list of the settings page's menu was already given the online button ([SETTINGS_ONLINE]), ONCE. */
+        val onlineSeeded: Boolean = false,
     )
 
     /**
@@ -425,8 +427,15 @@ object CustomMenuButtons {
         listOf(GLOBAL_SEARCH, GLOBAL_MUTE) +
             listOf(MenuControl.Voice, MenuControl.Notifications, MenuControl.SoundVolume)
                 .map { CustomMenuButton("d-" + it.name, "", "", control = it.name) } +
+            SETTINGS_ONLINE +
             SERVER_USAGE
     }
+
+    /**
+     * User rule 2026-11-04: the settings page's menu holds the online / offline button by default, just above the
+     * Supabase free tier's usage it bears on (whose Refresh is sent even offline). The scheduler's menu has the same item.
+     */
+    val SETTINGS_ONLINE: CustomMenuButton by lazy { CustomMenuButton("d-" + MenuControl.Online.name, "", "", control = MenuControl.Online.name) }
 
     /** User rule 2026-11-03: the settings page's usage of the Supabase free tier and its memory limits, at its bottom. */
     val SERVER_USAGE: List<CustomMenuButton> by lazy {
@@ -467,7 +476,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, lifePlanSeeded = true, usageSeeded = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, lifePlanSeeded = true, usageSeeded = true, onlineSeeded = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -609,7 +618,16 @@ object CustomMenuButtons {
         val together0 = if (stored.soundsTogether) withSounds else withSoundsTogether(withSounds)
         // ...and, on the page they are defaults of, the usage and the memory limits, ONCE, at the bottom.
         val usage = SERVER_USAGE.filter { item -> item in defaults && together0.none { it.id == item.id } }
-        val together = if (stored.usageSeeded) together0 else together0 + usage
+        val together1 = if (stored.usageSeeded) together0 else together0 + usage
+        // ...and, on the settings page, the online button, ONCE: just above the usage where it stands, else at the bottom.
+        // (The scheduler's menu has the same item among its defaults: a list of it the user took it out of keeps it out.)
+        val together =
+            if (stored.onlineSeeded || defaults != SETTINGS_DEFAULTS || together1.any { it.control == MenuControl.Online.name }) together1
+            else {
+                val usageAt = together1.indexOfFirst { it.control == MenuControl.SupabaseUsage.name }
+                if (usageAt < 0) together1 + SETTINGS_ONLINE
+                else together1.toMutableList().also { it.add(usageAt, SETTINGS_ONLINE.copy(parent = together1[usageAt].parent)) }
+            }
         // ...and, on the page it is a default of, the Life plan button, ONCE: under the Calendar button, where it stands.
         if (stored.lifePlanSeeded || LIFE_PLAN !in defaults || together.any { it.id == LIFE_PLAN.id }) return together
         val calendar = together.indexOfFirst { it.id == "d-calendar" }

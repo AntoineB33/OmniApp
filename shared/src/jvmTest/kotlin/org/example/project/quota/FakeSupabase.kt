@@ -523,7 +523,13 @@ class FakeSupabase(
             """{"access_token":"$token","token_type":"bearer","expires_in":3600,"refresh_token":"$token","user":{"id":"$user","email":"${email ?: ""}"},"id":"$user"}"""
     }
 
+    /** The functions this project does not have (a migration not deployed): PostgREST answers them 404, PGRST202. */
+    val undeployed: MutableSet<String> = HashSet()
+
     private fun rpc(name: String, user: String, body: String): Pair<HttpStatusCode, String> {
+        if (name in undeployed) {
+            return HttpStatusCode.NotFound to """{"code":"PGRST202","message":"Could not find the function public.$name without parameters in the schema cache"}"""
+        }
         val args = runCatching { json.parseToJsonElement(body).jsonObject }.getOrElse { JsonObject(emptyMap()) }
         fun str(k: String) = args[k]?.let(::scalar)
         return when (name) {

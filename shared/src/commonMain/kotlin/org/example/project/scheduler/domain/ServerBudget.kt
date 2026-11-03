@@ -41,7 +41,21 @@ object ServerBudget {
  * The project's usage as the server measured it (`project_usage`, migration 20261103000000), at [readAtMillis]: the whole
  * project's database, and this account's own rows in it.
  */
-data class ProjectUsage(val databaseBytes: Long, val accountBytes: Long, val readAtMillis: Long)
+data class ProjectUsage(val databaseBytes: Long, val accountBytes: Long, val readAtMillis: Long) : ProjectUsageAnswer
+
+/** What a press of the Settings page's Refresh got: the [ProjectUsage], or why it got none ([ProjectUsageMiss]). */
+sealed interface ProjectUsageAnswer
+
+/**
+ * Why a press of Refresh read nothing, as the Settings page says it: each cause its own sentence, so the user knows
+ * what to do (2026-11-04: one sentence for all three left the user guessing whether to deploy). Working offline is
+ * not one of them: the press is sent all the same.
+ */
+enum class ProjectUsageMiss(val said: String) : ProjectUsageAnswer {
+    SignedOut("not read: no account is signed in on this device"),
+    NotDeployed("not read: the server has no project_usage yet (scripts\\deploy-supabase.bat)"),
+    Unreachable("not read: the server did not answer"),
+}
 
 /**
  * What this device's logged calls drew this calendar month ([SupabaseUsageEntry]): the bytes sent and received, which is

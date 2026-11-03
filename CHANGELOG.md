@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Refresh says why it read nothing; the online button in the settings page's menu — 2026-11-04
+
+"not read: offline, signed out, or not deployed" was one sentence for three causes: a press now says which (`ProjectUsageMiss`): no account signed in on this device, the server without `project_usage` (a 404: migration 20261103000000 not deployed, with the script to run), or no answer. User rule: the online / offline button is in the settings page's menu by default, just above the free tier's usage; a menu stored before gets it once (`onlineSeeded`), and one the user takes it out of keeps it out. Client rebuild only; the usage itself needs `scripts\deploy-supabase.bat` once. `ProjectUsageRefreshTest`, `ServerUsageSettingsTest`, `FeaturePagesTest`.
+
 ### The Settings page's Refresh works while the device works offline — 2026-11-04
 
 User rule: the refresh button works even if the app is set offline. The press's call (`project_usage`), and the token refresh it may need, go out inside `AskedByUser`, the one way past `RemoteSnapshotClient.offline`; nothing else leaves the device. Client rebuild only. `ProjectUsageRefreshTest`.

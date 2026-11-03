@@ -80,4 +80,22 @@ class ServerUsageSettingsTest {
         val removed = decoded.filterNot { it.control == MenuControl.MemoryLimits.name }
         assertTrue(CustomMenuButtons.decode(CustomMenuButtons.encode(removed), defaults).none { it.control == MenuControl.MemoryLimits.name })
     }
+
+    /** User rule 2026-11-04: the online / offline button is in the settings page's menu by default, given ONCE to one stored before. */
+    @Test
+    fun a_settings_menu_stored_before_gets_the_online_button_once_above_the_usage() {
+        val defaults = CustomMenuButtons.SETTINGS_DEFAULTS
+        val before = defaults.filterNot { it.control == MenuControl.Online.name }
+        val stored = CustomMenuButtons.encode(before).replace(""","onlineSeeded":true""", "")
+        assertFalse("onlineSeeded" in stored, "test premise: a list written before the flag")
+        val decoded = CustomMenuButtons.decode(stored, defaults)
+        assertEquals(defaults, decoded, "it stands where a new menu has it: just above the usage")
+        // Removed by the user afterwards: it stays removed.
+        val removed = decoded.filterNot { it.control == MenuControl.Online.name }
+        assertTrue(CustomMenuButtons.decode(CustomMenuButtons.encode(removed), defaults).none { it.control == MenuControl.Online.name })
+        // The scheduler's menu, which holds the same item, is not given it back once the user took it out.
+        val scheduler = CustomMenuButtons.DEFAULTS.filterNot { it.control == MenuControl.Online.name }
+        val schedulerStored = CustomMenuButtons.encode(scheduler).replace(""","onlineSeeded":true""", "")
+        assertTrue(CustomMenuButtons.decode(schedulerStored, CustomMenuButtons.DEFAULTS).none { it.control == MenuControl.Online.name })
+    }
 }

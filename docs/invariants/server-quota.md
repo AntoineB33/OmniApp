@@ -102,7 +102,8 @@ limit, and nothing here may exceed it.
   Supabase free tier and a refresh button (an asked request, never a poll; sent even while the device works offline,
   user rule 2026-11-04, `sync-and-accounts.md` § *Working offline*). BUILT 2026-11-03: the settings page's menu
   holds `MenuControl.SupabaseUsage` and `MenuControl.MemoryLimits` (`ServerBudget`, `ServerUsageSettingsTest`,
-  `ProjectUsageRefreshTest`).
+  `ProjectUsageRefreshTest`), and above them `MenuControl.Online` (user rule 2026-11-04). A press that reads nothing says
+  why, each cause in its own words (`ProjectUsageMiss`: signed out, `project_usage` not deployed — a 404 —, no answer).
   - **The database is the server's own measure** (`project_usage`, migration 20261103000000): the project's size and this
     account's rows, one call per press of Refresh. **Egress is what this device's logged calls drew this month**, a lower
     bound (the log keeps its newest calls, other devices draw too). Realtime messages and Edge Function calls are not

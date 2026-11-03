@@ -1837,9 +1837,9 @@ class MenuControlHost(
     /** How loud Claude Code's own sounds are, null where nothing here sets it, and the change. */
     val claudeSoundsVolume: Double? = null,
     val onSetClaudeSoundsVolume: (Double) -> Unit = {},
-    /** User rule 2026-11-03: the project's usage as last read (null: never), whether the last read failed, and the button. */
+    /** User rule 2026-11-03: the project's usage as last read (null: never), why the last press read nothing, and the button. */
     val projectUsage: org.example.project.scheduler.domain.ProjectUsage? = null,
-    val projectUsageFailed: Boolean = false,
+    val projectUsageMiss: org.example.project.scheduler.domain.ProjectUsageMiss? = null,
     val onRefreshProjectUsage: () -> Unit = {},
     /** What this device's logged calls drew this month: the egress the app can see. */
     val deviceMonthUsage: org.example.project.scheduler.domain.DeviceMonthUsage? = null,
@@ -1984,7 +1984,7 @@ private fun SupabaseUsagePanel(title: String, host: MenuControlHost) {
             FrameButton("Refresh", onClick = host.onRefreshProjectUsage)
             val said =
                 when {
-                    host.projectUsageFailed -> "not read: offline, signed out, or not deployed"
+                    host.projectUsageMiss != null -> host.projectUsageMiss.said
                     usage != null -> "read at " + kotlin.time.Instant.fromEpochMilliseconds(usage.readAtMillis)
                         .toLocalDateTime(TimeZone.currentSystemDefault()).time.let { t ->
                             t.hour.toString().padStart(2, '0') + ":" + t.minute.toString().padStart(2, '0')

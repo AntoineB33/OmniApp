@@ -548,19 +548,23 @@ class TaskSchedulerViewModel(
 
     /**
      * User rule 2026-11-03: the project's usage on the Settings page, as last read — null until the refresh button is
-     * pressed. In memory only: a reading of the server, never state. [projectUsageFailed]: the last press got nothing
-     * (offline, signed out, or the server's function not deployed).
+     * pressed. In memory only: a reading of the server, never state. [projectUsageMiss]: why the last press got nothing
+     * (signed out, the server's function not deployed, no answer), null when it read.
      */
     private val _projectUsage = MutableStateFlow<org.example.project.scheduler.domain.ProjectUsage?>(null)
     val projectUsage: StateFlow<org.example.project.scheduler.domain.ProjectUsage?> = _projectUsage.asStateFlow()
-    private val _projectUsageFailed = MutableStateFlow(false)
-    val projectUsageFailed: StateFlow<Boolean> = _projectUsageFailed.asStateFlow()
+    private val _projectUsageMiss = MutableStateFlow<org.example.project.scheduler.domain.ProjectUsageMiss?>(null)
+    val projectUsageMiss: StateFlow<org.example.project.scheduler.domain.ProjectUsageMiss?> = _projectUsageMiss.asStateFlow()
 
     /** The refresh button: ONE call to the server per press (`server-quota.md`: no timer-driven request). */
     fun refreshProjectUsage() = saveScope.launch {
-        val read = syncEngine?.fetchProjectUsage(SchedulerReducer.clock.nowMillis())
-        if (read != null) _projectUsage.value = read
-        _projectUsageFailed.value = read == null
+        when (val answer = syncEngine?.fetchProjectUsage(SchedulerReducer.clock.nowMillis()) ?: org.example.project.scheduler.domain.ProjectUsageMiss.SignedOut) {
+            is org.example.project.scheduler.domain.ProjectUsage -> {
+                _projectUsage.value = answer
+                _projectUsageMiss.value = null
+            }
+            is org.example.project.scheduler.domain.ProjectUsageMiss -> _projectUsageMiss.value = answer
+        }
     }
 
     /** The Claude Code logs the account keeps ([SchedulerSyncEngine.syncClaudeLogs]); null when sync is disabled, signed out or offline. */
