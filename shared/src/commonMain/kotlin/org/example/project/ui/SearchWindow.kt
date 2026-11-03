@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
+import org.example.project.scheduler.domain.ElementTree
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.model.CategoryId
@@ -176,7 +177,71 @@ data class SearchSplits(
      */
     val expandedResults: Set<String> = emptySet(),
     val expandedAdded: Set<String> = emptySet(),
+    /** User rule 2026-11-02: the rows of other kinds that are open, of both lists: [RESULT_SURFACE] or [ADDED_SURFACE] + the row's key. */
+    val expandedElements: Set<String> = emptySet(),
 )
+
+/**
+ * User rule 2026-11-02: **the Search window a task cell's Edit Mode shows** ([CellEditPopupLayer]): no head, no added
+ * elements and no actions, nor anything that serves them (the check boxes, Add, the configurations) — not retracted, not
+ * there. It looks through the tasks the cell may take ([eligible]), its rows open no sub-tree, and one click on a row is
+ * the answer: [onPick], while [canPick] (off in Rename, whose field names the cell's own task: no row has anything to act
+ * on). The selection is its own, never the state's, and it leaves the caret where the Edit Mode put it.
+ */
+class SearchPicker(
+    val eligible: Set<TaskId>,
+    val canPick: Boolean,
+    val onPick: (TaskId) -> Unit,
+    /** The cell's "New task" row, null where it has none ([SchedulerDomain.changeTaskMenuEntries]). */
+    val onNewTask: (() -> Unit)?,
+)
+
+/** A press and release on a row of a [SearchPicker]'s list, taken before the row: nothing in the row answers it. */
+private fun Modifier.pickOnClick(onClick: () -> Unit): Modifier =
+    composed {
+        val latest by rememberUpdatedState(onClick)
+        pointerInput(Unit) {
+            awaitEachGesture {
+                val press = awaitPointerEvent(PointerEventPass.Initial)
+                if (press.type != PointerEventType.Press || !press.buttons.isPrimaryPressed) return@awaitEachGesture
+                val down = press.changes.first()
+                down.consume()
+                var traveled = 0f
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
+                    traveled += (change.position - change.previousPosition).getDistance()
+                    // A finger scrolling the list: no click.
+                    if (traveled > viewConfiguration.touchSlop) return@awaitEachGesture
+                    if (!change.pressed) {
+                        latest()
+                        return@awaitEachGesture
+                    }
+                }
+            }
+        }
+    }
+
+/**
+ * User rule 2026-11-02: the search bar's **completion list** ([SearchDomain.completionOptions]), between the bar and the
+ * result list, which it moves down. A click writes the option in the bar and the list stays, showing what now completes.
+ */
+@Composable
+private fun CompletionList(options: List<String>, modifier: Modifier = Modifier, onPick: (String) -> Unit) {
+    if (options.isEmpty()) return
+    LazyColumn(
+        modifier = modifier.fillMaxWidth().heightIn(max = COMPLETION_LIST_MAX_HEIGHT),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        items(options.size, key = { options[it] }) { index ->
+            val option = options[index]
+            EditMenuRow(label = option, focusPreserving = true) { onPick(option) }
+        }
+    }
+}
+
+/** Five rows: the list must leave the results room. */
+private val COMPLETION_LIST_MAX_HEIGHT: Dp = 140.dp
 
 /**
  * How a row of the Search window is OPENED, whatever its kind — the one mapping from a row to the handler the
@@ -217,6 +282,8 @@ data class SearchRowOpeners(
     val onOpenCalendarAt: (Long) -> Unit = {},
     /** A workplace setup's row, by id: it is applied (user rule 2026-11-01), a command like a "creation" row. */
     val onApplyWorkplaceSetup: (String) -> Unit = {},
+    /** The blank field under an element's children, double-clicked: a Search window coming from it ([ElementTree.childSearchConfig]). */
+    val onOpenChildSearch: (parent: String) -> Unit = {},
 ) {
     companion object {
         /** The kinds a double-click on a result row opens: commands. Every other is added ([doubleClickOpens] false). */
@@ -246,6 +313,7 @@ data class SearchRowOpeners(
             onOpenAppSetting = { around { onOpenAppSetting(it) } },
             onOpenCalendarAt = { around { onOpenCalendarAt(it) } },
             onApplyWorkplaceSetup = { around { onApplyWorkplaceSetup(it) } },
+            onOpenChildSearch = { around { onOpenChildSearch(it) } },
         )
 
     /** Open [result]: a task only while the account still holds it (a task only a stored tree holds has no editor). */
@@ -350,13 +418,15 @@ fun SearchWindow(
      */
     splits: SearchSplits? = null,
     onSplitsChange: (SearchSplits) -> Unit = {},
+    /** Set: this is the window of a cell in Edit Mode, its search section alone ([SearchPicker]). */
+    picker: SearchPicker? = null,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
     onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
     onRaise: () -> Unit = {},
 ) {
-    val frame = rememberWindowFrameState("Search", initialOffset, initialSize)
+    val frame = if (picker == null) rememberWindowFrameState("Search", initialOffset, initialSize) else null
     val query = config.query
     val kinds = config.kinds
     val filters = config.filters
@@ -369,10 +439,14 @@ fun SearchWindow(
     val fieldFocus = remember { FocusRequester() }
     val listFocus = remember { FocusRequester() }
     // The bar holds the focus from the moment the window opens: it is where the user types.
-    LaunchedEffect(Unit) { runCatching { fieldFocus.requestFocus() } }
+    // A picker's is not: the caret is in the cell (`task-tree.md`: the first letters typed are never lost).
+    LaunchedEffect(Unit) { if (picker == null) runCatching { fieldFocus.requestFocus() } }
     // The task tree's rule (its selector's name field above it): while the user is in the search BAR, no row is
     // selected. ↓ or Enter there moves into the list, a click on a row does too, and ↑ on the first row goes back.
     var fieldFocused by remember { mutableStateOf(true) }
+    // The picker's list shows a selection only once the keyboard went there, the caret being in the cell until then.
+    var listFocused by remember { mutableStateOf(false) }
+    val rowsSelectable = picker == null || listFocused
     // A task row in its rename-only Edit Mode (the tree's own field, TaskRow's): the task, and what is typed.
     var editingTaskId by remember { mutableStateOf<TaskId?>(null) }
     var editDraft by remember { mutableStateOf("") }
@@ -380,6 +454,9 @@ fun SearchWindow(
     // holds the keyboard, Compose-only.
     var expandedTasks by remember { mutableStateOf(splits?.expandedResults.orEmpty().map { TaskId(it) }.toSet()) }
     var expandedAdded by remember { mutableStateOf(splits?.expandedAdded.orEmpty().map { TaskId(it) }.toSet()) }
+    var expandedElements by remember { mutableStateOf(splits?.expandedElements.orEmpty()) }
+    val toggleElement: (String) -> Unit = { key -> expandedElements = if (key in expandedElements) expandedElements - key else expandedElements + key }
+    val elementCategories = remember(state.elementLinks, state.categories) { ElementTree.categoryTitles(state) }
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
     // Anomaly 2026-10-07 ("I click on a task cell in the sub-tree, then on the root task cell: both are selected"):
     // **ONE surface of the window shows a selection of cells at a time.** A sub-tree's selection is the state's
@@ -407,7 +484,7 @@ fun SearchWindow(
             // An added task shows its shortest path; listing every path is the result list's walk, not needed here.
             SearchDomain.resolve(state, config.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)
         }
-    val searchesTasks = SearchDomain.Kind.Task in kinds
+    val searchesTasks = SearchDomain.Kind.Task in kinds || filters.includedElements.any { it.startsWith(SearchDomain.Kind.Task.name + "/") }
     val allPaths =
         remember(searchesTasks, state.cells, state.lists, state.tasks, state.taskTrees, state.activeTaskTreeId) {
             if (searchesTasks) SearchDomain.allPathsInAnyTree(state) else emptyMap()
@@ -421,28 +498,35 @@ fun SearchWindow(
             config.placement.takeIf { filters.calendarAddKeeping },
             addedRows.takeIf { filters.calendarAddKeeping },
             claudeLogs,
+            picker?.eligible,
         ) {
-            // One kind checked and nothing of it found: its "creation" row stands in the list.
-            SearchDomain.withCreationWhenEmpty(
-                state,
+            val found =
                 SearchDomain.results(
                     state, kinds, query, { allPaths }, filters, sorts, windows, nowMillis = nowMillis(), layerKindsAt = calendarLayerKindsAt,
                     schedulerRuns = schedulerRuns, placement = config.placement,
                     placementOwnLength = if (filters.calendarAddKeeping) SearchDomain.placementDefaultLength(state, addedRows) else null,
                     claudeLogs = claudeLogs,
-                ),
-                kinds,
-            )
+                )
+            if (picker != null) {
+                found.filter { it is SearchDomain.TaskResult && it.taskId in picker.eligible }
+            } else {
+                // One kind checked and nothing of it found: its "creation" row stands in the list.
+                SearchDomain.withCreationWhenEmpty(state, found, kinds)
+            }
         }
     val count = results.size
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
     // among the results (the question changed, the thing was deleted) reads as the first row.
-    val selectedKey = state.windowSelections[windowSelectionKey(HistoryWindow.Search, instance)]
+    var pickerSelectedKey by remember { mutableStateOf<String?>(null) }
+    val selectedKey = if (picker != null) pickerSelectedKey else state.windowSelections[windowSelectionKey(HistoryWindow.Search, instance)]
     val selected = results.indexOfFirst { resultKey(it) == selectedKey }.coerceAtLeast(0)
     // The rows selected with Ctrl+click and Shift+click (user rule 2026-10-01), by result key — what the row menu's
     // "add" adds. Null: the selection is the selected row alone. Compose-only, like the check boxes; the selected row
     // above (the outline the keys move) stays the state's, so `Alt+←` still walks it.
     var multiSelection by remember { mutableStateOf<Set<String>?>(null) }
+    // Anomaly 2026-11-03 (*"When the user clicks elsewhere, the selected element should stop being selected."*): a press
+    // anywhere but on a row of the list (its own menus included) leaves no row selected, until a row is selected again.
+    var deselected by remember { mutableStateOf(false) }
     // Where a Shift+click's range starts ([ClickSelection]): the last row clicked, or moved to with the keys.
     var selectionAnchor by remember { mutableStateOf<String?>(null) }
     /**
@@ -452,7 +536,12 @@ fun SearchWindow(
     fun select(index: Int, record: Boolean = true) {
         val key = results.getOrNull(index)?.let(::resultKey)
         multiSelection = null
+        deselected = false
         selectionAnchor = key
+        if (picker != null) {
+            pickerSelectedKey = key
+            return
+        }
         // No "already selected?" test here: this runs from row gestures started long before, whose `selectedKey`
         // would be that old composition's — the reducer answers it against the live state instead.
         onIntent(SchedulerIntent.SelectInWindow(HistoryWindow.Search, instance, key, record))
@@ -501,10 +590,13 @@ fun SearchWindow(
     val currentState by rememberUpdatedState(state)
     val latestConfig by rememberUpdatedState(config)
     fun openSelected() {
-        results.getOrNull(selected)?.let { openers.open(state, it) }
+        val row = results.getOrNull(selected) ?: return
+        if (picker == null) openers.open(state, row)
+        else if (picker.canPick && row is SearchDomain.TaskResult) picker.onPick(row.taskId)
     }
     /** PRD §4 Edit Mode, stuck to Rename: [initial] is the draft to start from (a typed letter, or the title). */
     fun beginEdit(result: SearchDomain.TaskResult, initial: String) {
+        if (picker != null) return
         editingTaskId = result.taskId
         editDraft = initial
     }
@@ -540,51 +632,20 @@ fun SearchWindow(
     val priorities = remember(state.cells, state.lists, state.tasks) { SchedulerDomain.absoluteTaskPriorities(state) }
     val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
 
-    // The result rows' check boxes. Compose-only, like the selection: which rows are checked is a way of
-    // picking some for the Add button, not a fact about them — nor a configuration.
-    // A cell of an expanded row's sub-tree has a box too, keyed by its task as that task's own row would be.
-    var checkedKeys by remember { mutableStateOf(emptySet<String>()) }
-    // Shift+click sets every box from the last one clicked (`CheckRange`), in the order the boxes are drawn: each
-    // row, then — under an expanded task row — its sub-tree's cells as that sub-tree shows them. Read at the click.
-    val checkRange = rememberCheckRange<String>()
     // Ctrl and Shift as held on the last press in the list, for the rows whose own gesture does not say (a tree cell's
     // does: [TaskRow] passes them).
     val pressModifiers = remember { PressModifiers() }
-    fun boxOrder(): List<String> =
-        buildList {
-            for (result in results) {
-                add(resultKey(result))
-                if (result !is SearchDomain.TaskResult || result.taskId !in expandedTasks) continue
-                val childListId = state.tasks[result.taskId]?.childListId ?: continue
-                SchedulerDomain.visibleOccurrences(state.projectSearchSubtree(childListId), childListId).forEach { row ->
-                    state.cells[row.cellId]?.taskId
-                        ?.takeIf { state.tasks[it]?.title?.isNotBlank() == true }
-                        ?.let { add(SearchDomain.taskKey(it)) }
-                }
-            }
-        }.distinct()
-    val toggleChecked = { key: String -> checkedKeys = checkRange.toggle(boxOrder(), checkedKeys, key) }
     val resultKeys = remember(results) { results.map(::resultKey) }
-    // Every key a box is shown for: the result rows, then the tasks of the expanded rows' sub-trees. A box
-    // checked on a row the list no longer shows is not counted, nor added.
-    val checkableKeys =
-        remember(resultKeys, results, expandedTasks, state.cells, state.lists, state.tasks) {
-            val subtreeKeys =
-                results.asSequence()
-                    .filterIsInstance<SearchDomain.TaskResult>()
-                    .filter { it.taskId in expandedTasks }
-                    .flatMap { SchedulerDomain.structuralSubtreeTaskIds(state, it.taskId) }
-                    .map(SearchDomain::taskKey)
-            (resultKeys.asSequence() + subtreeKeys).distinct().toList()
-        }
-    val allChecked = resultKeys.isNotEmpty() && checkedKeys.containsAll(resultKeys)
     // "A row is selected" is the outline's own rule: not while the bar holds the focus, nor while a row's
     // sub-tree does.
-    val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null
-    // What the Add button adds: the CHECKED rows (the list's order, then the sub-trees'), else nothing (greyed). The
-    // SELECTED rows are the row menu's "add" (user rule 2026-10-01) — two ways, never one falling back on the other.
-    val checkedShown = checkableKeys.filter { it in checkedKeys }
-    val toAdd = checkedShown
+    val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null && rowsSelectable && !deselected
+    // The rows of the list: a press outside every one of them takes the selection away (the app's one observer).
+    val resultRows = rememberOutsidePressEditor(active = hasSelection) {
+        deselected = true
+        multiSelection = null
+    }
+    // User rule 2026-11-03: the rows are added from the row menu's "add" alone, on the SELECTED rows — Ctrl+A selects them
+    // all. The check boxes, "Select all" and "Add" were the same thing a second way.
     // The selected rows, in the list's order: the Ctrl/Shift multi-selection, else the selected row; none while the
     // bar or a sub-tree holds the focus (the outline's own rule).
     val selectedShown =
@@ -661,8 +722,8 @@ fun SearchWindow(
             onEdit = null,
             // User rule 2026-10-01: the menu's "add" adds every SELECTED row — the right-click selected this one first
             // when it was not among them.
-            onAdd = { addSelected() },
-            onAddReplacing = { addSelected(replacing = true) },
+            onAdd = if (picker == null) { { addSelected() } } else null,
+            onAddReplacing = if (picker == null) { { addSelected(replacing = true) } } else null,
             calendarTaskId = taskId,
             // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
             onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
@@ -676,19 +737,7 @@ fun SearchWindow(
         )
     }
 
-    AppWindowFrame(
-        title = SearchDomain.windowTitle(config),
-        // The notifications window is a default window of its own: its colours are not the Search windows'.
-        colorKind = org.example.project.scheduler.domain.WindowColorSpace.UNFOCUSED_NOTIF.takeIf { SearchDomain.isNotificationsWindow(config) },
-        state = frame,
-        onClose = onDismiss,
-        defaultWidth = 1040.dp,
-        defaultHeight = 600.dp,
-        modifier = modifier,
-        onRaise = onRaise,
-        onGeometryChange = onGeometryChange,
-        claimsKeyboard = true,
-    ) {
+    val windowContent: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
       // Three sections: the search on the left; on the right, the actions on the added elements above the list
       // of the added elements. Both separators are dragged to share the room (Compose-only, like the zoom):
       // each split starts at half and neither section shrinks below its minimum. Their joint moves both at once.
@@ -725,10 +774,10 @@ fun SearchWindow(
       fun splitsNow() =
           SearchSplits(
               leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed,
-              expandedTasks.mapTo(HashSet()) { it.value }, expandedAdded.mapTo(HashSet()) { it.value },
+              expandedTasks.mapTo(HashSet()) { it.value }, expandedAdded.mapTo(HashSet()) { it.value }, expandedElements,
           )
       // A section retracted or brought back, a row opened or closed, is told as a dragged line is.
-      LaunchedEffect(searchCollapsed, actionsCollapsed, addedCollapsed, expandedTasks, expandedAdded) { onSplitsChange(splitsNow()) }
+      LaunchedEffect(searchCollapsed, actionsCollapsed, addedCollapsed, expandedTasks, expandedAdded, expandedElements) { onSplitsChange(splitsNow()) }
       var rowWidthPx by remember { mutableStateOf(0f) }
       var rightHeightPx by remember { mutableStateOf(0f) }
       // The left section's width and the top right one's height as laid out (a retracted one: its head's), which a
@@ -765,7 +814,7 @@ fun SearchWindow(
       ) {
       Box(Modifier.fillMaxWidth().weight(1f)) {
       Row(Modifier.fillMaxSize().onSizeChanged { rowWidthPx = it.width.toFloat() }) {
-        if (searchCollapsed) {
+        if (searchCollapsed && picker == null) {
             // Retracted: a strip as wide as its arrow, the whole height.
             Column(Modifier.fillMaxHeight().onSizeChanged { leftShownPx = it.width.toFloat() }.padding(horizontal = 6.dp, vertical = 10.dp)) {
                 SectionArrow(collapsed = true, onToggle = { searchCollapsed = false })
@@ -774,14 +823,17 @@ fun SearchWindow(
         Column(
             modifier = Modifier
                 // The share is read at layout: a dragged line re-lays the window out, it does not recompose it.
-                .sectionShare(horizontal = true, reserved = SECTION_SEPARATOR_THICKNESS) { leftShare }
+                .then(
+                    if (picker != null) Modifier.fillMaxWidth()
+                    else Modifier.sectionShare(horizontal = true, reserved = SECTION_SEPARATOR_THICKNESS) { leftShare },
+                )
                 .fillMaxHeight()
                 // A section squeezed to an edge shows nothing: cut, never spilled over its neighbour.
                 .clipToBounds()
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (picker == null) Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionArrow(collapsed = false, onToggle = { searchCollapsed = true })
                 // One line, never wrapped: a section narrowed to an edge cuts its title, it does not squeeze it.
                 Text(
@@ -803,6 +855,8 @@ fun SearchWindow(
                 verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
             ) {
             // --- The configuration ------------------------------------------------------------------
+            // Leaves the bar on a press outside it ([leaveFocusOnOutsidePress]): the completion list is part of it.
+            val barEditor = rememberFocusOutsidePressEditor(fieldFocused)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -818,7 +872,7 @@ fun SearchWindow(
                         .weight(1f)
                         .focusRequester(fieldFocus)
                         .onFocusChanged { fieldFocused = it.isFocused }
-                        .leaveFocusOnOutsidePress()
+                        .outsidePressPart(barEditor)
                         .revertsOnEscape(query) { onConfigChange(config.copy(query = it)) }
                         // ↓ or Enter leave the bar for the list, onto its first row; every other key types.
                         .onPreviewKeyEvent { event ->
@@ -830,6 +884,7 @@ fun SearchWindow(
                             true
                         },
                 )
+                if (picker == null) {
                 KindsDropDown(
                     kinds = kinds,
                     onKindsChange = { onConfigChange(config.copy(kinds = it)) },
@@ -840,8 +895,13 @@ fun SearchWindow(
                 // configuration cancelled (`SearchDomain.resetConfig`).
                 val reset = SearchDomain.resetConfig(config, openedConfig)
                 ResetButton(enabled = reset != config) { onConfigChange(reset) }
+                }
             }
-            // --- The check boxes' buttons, and the way to every configuration ---------------------------
+            val completionOptions =
+                remember(config.completion, query, state.titleToTaskIds) { SearchDomain.completionOptions(state, config.completion, query) }
+            CompletionList(completionOptions, Modifier.outsidePressPart(barEditor)) { onConfigChange(config.copy(query = it)) }
+            if (picker == null)
+            // --- The way to every configuration ----------------------------------------------------------
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 // Every configuration of this window, in a window of its own — the filters per kind among them. The
                 // count says how many filters are narrowing the list right now, which nothing else here shows.
@@ -858,28 +918,11 @@ fun SearchWindow(
                         .clickable(onClick = onOpenConfigurations)
                         .padding(horizontal = 8.dp, vertical = buttonVerticalPadding(6.dp)),
                 )
-                // Driven by the boxes, not by its own last press ([SelectAllMenuItem]'s rule): it checks the
-                // rows listed now, and unchecks them.
-                FrameButton(if (allChecked) "Deselect all" else "Select all", enabled = resultKeys.isNotEmpty()) {
-                    checkedKeys = if (allChecked) checkedKeys - resultKeys.toSet() else checkedKeys + resultKeys
-                }
-                FrameButton("Add", enabled = toAdd.isNotEmpty()) {
-                    onConfigChange(config.copy(added = SearchDomain.withAdded(config.added, toAdd)))
-                    checkedKeys = checkedKeys - toAdd.toSet()
-                }
-                if (checkedShown.isNotEmpty()) {
-                    Text(
-                        text = "${checkedShown.size} checked",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false,
-                    )
-                }
             }
             }
             }
 
+            picker?.onNewTask?.let { EditMenuRow(label = "New task", onClick = it) }
             // --- The result list --------------------------------------------------------------------
             // Narrowed, the list is cut — laid out at the sections' least width, never squeezed row by row.
             Box(
@@ -901,7 +944,7 @@ fun SearchWindow(
                 } else {
                     // The list holds the keyboard once the user leaves the bar: the tree's keys, for its rows.
                     val rowSelected = { index: Int ->
-                        index == selected && !fieldFocused && subtreeFocusOwner == null &&
+                        index == selected && !fieldFocused && subtreeFocusOwner == null && rowsSelectable && !deselected &&
                             selectionSurface?.startsWith(RESULT_SURFACE) != true
                     }
                     // A row of the multi-selection other than the selected one: the tree's lighter selection grey.
@@ -916,12 +959,13 @@ fun SearchWindow(
                     // A task row, for the list and for its pinned copy ([headOnly]): one drawing, so the two cannot
                     // look different. The copy is never in Edit Mode or in the min-time input — one field a session.
                     val taskRow: @Composable (Int, SearchDomain.TaskResult, Boolean) -> Unit = { index, result, headOnly ->
+                        val pick = picker?.let { p -> Modifier.pickOnClick { if (p.canPick) p.onPick(result.taskId) } } ?: Modifier
+                        Box(pick.outsidePressPart(resultRows)) {
                         SearchTaskRow(
                             state = state,
                             result = result,
+                            picking = picker != null,
                             query = query,
-                            checkedKeys = checkedKeys,
-                            onToggleChecked = toggleChecked,
                             selected = rowSelected(index),
                             inSelection = rowInSelection(index),
                             editing = !headOnly && editingTaskId == result.taskId,
@@ -976,6 +1020,7 @@ fun SearchWindow(
                                 else if (resultNestedPin == result.taskId) resultNestedPin = null
                             },
                         )
+                        }
                     }
                     LazyColumn(
                         state = listState,
@@ -983,8 +1028,8 @@ fun SearchWindow(
                             .fillMaxSize()
                             .padding(end = 12.dp)
                             .focusRequester(listFocus)
+                            .onFocusChanged { listFocused = it.hasFocus }
                             .focusable()
-                            .checkRangeShift(checkRange)
                             .recordPressModifiers(pressModifiers)
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -1010,6 +1055,14 @@ fun SearchWindow(
                                         else select(selected - 1)
                                         true
                                     }
+                                    // User rule 2026-11-03: Ctrl+A selects every row, which the menu's "add" then adds.
+                                    ctrl && event.key == Key.A && picker == null -> {
+                                        if (count > 0) {
+                                            deselected = false
+                                            multiSelection = resultKeys.toSet()
+                                        }
+                                        true
+                                    }
                                     event.key == Key.Enter || event.key == Key.NumPadEnter -> {
                                         openSelected()
                                         true
@@ -1021,7 +1074,7 @@ fun SearchWindow(
                                     // PRD §4: typing on a selected task row enters Edit Mode — renaming, always. What
                                     // counts as typing is the tree's own rule ([printableChar]): a bare Shift (held
                                     // for a shift-click) is no text, though desktop reports it as U+FFFF.
-                                    current is SearchDomain.TaskResult && !ctrl && !event.isAltPressed -> {
+                                    current is SearchDomain.TaskResult && picker == null && !ctrl && !event.isAltPressed -> {
                                         val typed = event.printableChar() ?: return@onPreviewKeyEvent false
                                         beginEdit(current, typed)
                                         true
@@ -1033,13 +1086,15 @@ fun SearchWindow(
                         itemsIndexed(results, key = { _, r -> resultKey(r) }) { index, result ->
                             when (result) {
                                 is SearchDomain.TaskResult -> taskRow(index, result, false)
-                                is SearchDomain.ItemResult ->
+                                is SearchDomain.ItemResult -> Column(Modifier.fillMaxWidth().outsidePressPart(resultRows)) {
+                                    val elementKey = RESULT_SURFACE + resultKey(result)
                                     ItemResultRow(
                                         kindWidth = resultKindWidth,
                                         item = result,
+                                        categories = elementCategories[resultKey(result)].orEmpty(),
+                                        expanded = elementKey in expandedElements,
+                                        onToggleExpand = { toggleElement(elementKey) },
                                         query = query,
-                                        checked = resultKey(result) in checkedKeys,
-                                        onCheckedChange = { toggleChecked(resultKey(result)) },
                                         selected = rowSelected(index),
                                         inSelection = rowInSelection(index),
                                         onSelect = {
@@ -1057,6 +1112,13 @@ fun SearchWindow(
                                         onAdd = { addSelected() },
                                         onAddReplacing = { addSelected(replacing = true) },
                                     )
+                                    if (elementKey in expandedElements) {
+                                        ElementChildren(
+                                            resultKey(result), RESULT_SURFACE, 1, setOf(resultKey(result)), state, windows, schedulerRuns, claudeLogs,
+                                            expandedElements, toggleElement, openers, onIntent, resultKindWidth,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1085,9 +1147,9 @@ fun SearchWindow(
             }
         }
 
-        SectionSeparator(vertical = true, onDrag = dragLeftShare, onDragEnd = tellSplits)
+        if (picker == null) SectionSeparator(vertical = true, onDrag = dragLeftShare, onDragEnd = tellSplits)
 
-        Column(
+        if (picker == null) Column(
             Modifier.weight(1f).fillMaxHeight().clipToBounds().onSizeChanged { rightHeightPx = it.height.toFloat() },
         ) {
             // A retracted section is as tall as its head; the other takes the room, or — both retracted — neither.
@@ -1132,8 +1194,6 @@ fun SearchWindow(
                 rows = addedRows,
                 state = state,
                 priorities = priorities,
-                checkedKeys = checkedKeys,
-                onToggleChecked = toggleChecked,
                 onIntent = onIntent,
                 onSetWeightWindow = onSetWeightWindow,
                 onSetRelativeWindow = onSetRelativeWindow,
@@ -1146,6 +1206,15 @@ fun SearchWindow(
                 selectionSurface = selectionSurface,
                 onSelectionSurface = { selectionSurface = it },
                 onOpen = { openers.open(state, it) },
+                elementCategories = elementCategories,
+                expandedElements = expandedElements,
+                onToggleElement = toggleElement,
+                elementChildren = { key, width ->
+                    ElementChildren(
+                        key, ADDED_SURFACE, 1, setOf(key), state, windows, schedulerRuns, claudeLogs,
+                        expandedElements, toggleElement, openers, onIntent, width,
+                    )
+                },
                 onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
                 onKeepOnly = { keys -> onConfigChange(config.copy(added = SearchDomain.keepingOnly(config.added, keys))) },
                 onRemoveAll = { keys -> onConfigChange(config.copy(added = SearchDomain.removing(config.added, keys))) },
@@ -1169,7 +1238,7 @@ fun SearchWindow(
       }
       // Where the two lines cross: drawn over both strips, it drags the three sections at once. Placed only once
       // the row has been measured, since the crossing is read off the two splits and the room they share.
-      if (rowWidthPx > 0f && rightHeightPx > 0f && !searchCollapsed && !actionsCollapsed && !addedCollapsed) {
+      if (picker == null && rowWidthPx > 0f && rightHeightPx > 0f && !searchCollapsed && !actionsCollapsed && !addedCollapsed) {
           val jointHalfPx = with(density) { SECTION_JOINT_SIZE.toPx() } / 2f
           SectionJoint(
               onDrag = { delta ->
@@ -1187,6 +1256,24 @@ fun SearchWindow(
       }
       }
       }
+    }
+    if (frame == null) {
+        Column(modifier) { windowContent() }
+    } else {
+        AppWindowFrame(
+            title = SearchDomain.windowTitle(config),
+            // The notifications window is a default window of its own: its colours are not the Search windows'.
+            colorKind = org.example.project.scheduler.domain.WindowColorSpace.UNFOCUSED_NOTIF.takeIf { SearchDomain.isNotificationsWindow(config) },
+            state = frame,
+            onClose = onDismiss,
+            defaultWidth = 1040.dp,
+            defaultHeight = 600.dp,
+            modifier = modifier,
+            onRaise = onRaise,
+            onGeometryChange = onGeometryChange,
+            claimsKeyboard = true,
+            content = windowContent,
+        )
     }
 }
 
@@ -1232,8 +1319,6 @@ private fun AddedElementsList(
     /** What an expanded task element's sub-tree needs — the result list's own ([SearchSubtree]). */
     state: SchedulerState,
     priorities: Map<TaskId, Double>,
-    checkedKeys: Set<String>,
-    onToggleChecked: (key: String) -> Unit,
     onIntent: (SchedulerIntent) -> Unit,
     onSetWeightWindow: (CellListId?) -> Unit,
     onSetRelativeWindow: (CellId?) -> Unit,
@@ -1248,6 +1333,11 @@ private fun AddedElementsList(
     selectionSurface: String?,
     onSelectionSurface: (String?) -> Unit,
     onOpen: (SearchDomain.Result) -> Unit,
+    /** The categories a row of another kind than a task carries, the rows open, a row's arrow, and what shows under one ([ElementChildren]). */
+    elementCategories: Map<String, List<String>>,
+    expandedElements: Set<String>,
+    onToggleElement: (String) -> Unit,
+    elementChildren: @Composable (key: String, kindWidth: Dp) -> Unit,
     onRemove: (String) -> Unit,
     /** The row menu's "remove the others": the list holds the selected elements alone. */
     onKeepOnly: (Set<String>) -> Unit,
@@ -1275,6 +1365,11 @@ private fun AddedElementsList(
     val currentOrder by rememberUpdatedState(order)
     // A row that left the list is not selected any more.
     val selected = selection.filterTo(LinkedHashSet()) { it in order }
+    // Anomaly 2026-11-03: a press anywhere but on a row (its menu included) leaves none selected, as in the result list.
+    val selectedRows = rememberOutsidePressEditor(active = selected.isNotEmpty()) {
+        selection = emptySet()
+        selectionMain = null
+    }
     val currentSelected by rememberUpdatedState(selected)
     // User rule 2026-10-07: a task element has its expansion arrow here too, and shows its sub-tree as a result row
     // does ([SearchSubtree]) — with the list's pinned parent row ([pinnedItemIndex]).
@@ -1305,7 +1400,7 @@ private fun AddedElementsList(
         if (collapsed) return@Column
         if (rows.isEmpty()) {
             Text(
-                text = "Check rows of the results and press Add, or right-click selected rows and choose add.",
+                text = "Right-click selected rows of the results and choose add (Ctrl+A selects them all).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1328,7 +1423,7 @@ private fun AddedElementsList(
                     var menuOpen by remember(key) { mutableStateOf(false) }
                     val currentOnOpen by rememberUpdatedState(onOpen)
                     val currentRow by rememberUpdatedState(row)
-                    Box {
+                    Box(Modifier.outsidePressPart(selectedRows)) {
                     Row(
                         modifier = resultRowModifier(
                             selected = rowsShowSelection && key in selected && key == selectionMain,
@@ -1376,6 +1471,8 @@ private fun AddedElementsList(
                                 color = taskColor?.let(TaskPalette::foreground) ?: MaterialTheme.colorScheme.onSurfaceVariant,
                                 background = taskColor,
                             )
+                        } else if (row.kind != SearchDomain.Kind.Creation) {
+                            SectionArrow(ADDED_SURFACE + key !in expandedElements) { onToggleElement(ADDED_SURFACE + key) }
                         }
                         Text(
                             text = row.name,
@@ -1389,7 +1486,7 @@ private fun AddedElementsList(
                             text = when (row) {
                                 is SearchDomain.TaskResult ->
                                     if (row.shownPath.isEmpty()) "no path" else SearchDomain.pathLabel(row.shownPath)
-                                is SearchDomain.ItemResult -> row.detail
+                                is SearchDomain.ItemResult -> withCategories(row.detail, elementCategories[key].orEmpty())
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = logEntryColor(row.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1451,8 +1548,6 @@ private fun AddedElementsList(
                                     SchedulerDomain.firstTaskOccurrence(state, taskId) == null
                                 },
                                 priorities = priorities,
-                                checkedKeys = checkedKeys,
-                                onToggleChecked = onToggleChecked,
                                 focused = subtreeFocusOwner == taskId,
                                 onFocus = { focused ->
                                     if (focused) {
@@ -1477,6 +1572,9 @@ private fun AddedElementsList(
                                 onNestedPin = { on -> if (on) nestedPin = taskId else if (nestedPin == taskId) nestedPin = null },
                             )
                         }
+                        if (row is SearchDomain.ItemResult && ADDED_SURFACE + resultKey(row) in expandedElements) {
+                            elementChildren(resultKey(row), kindWidth)
+                        }
                     }
                 }
             }
@@ -1500,27 +1598,6 @@ private fun AddedElementsList(
             }
             ListScrollbar(listState, Modifier.align(Alignment.CenterEnd))
         }
-    }
-}
-
-/**
- * A result row's check box — what the Add button reads. Drawn small, to fit the row's one height; a press on it
- * toggles it and nothing else.
- */
-@Composable
-private fun ResultCheckBox(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    val shape = RoundedCornerShape(3.dp)
-    Box(
-        modifier = Modifier
-            .padding(end = 6.dp)
-            .size(16.dp)
-            .clip(shape)
-            .background(if (checked) MaterialTheme.colorScheme.primary else Color.Transparent, shape)
-            .border(1.dp, if (checked) MaterialTheme.colorScheme.primary else onTaskCell(MaterialTheme.colorScheme.outline), shape)
-            .clickable { onCheckedChange(!checked) },
-        contentAlignment = Alignment.Center,
-    ) {
-        if (checked) Text("✓", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary)
     }
 }
 
@@ -1936,10 +2013,9 @@ internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false):
 private fun SearchTaskRow(
     state: SchedulerState,
     result: SearchDomain.TaskResult,
+    /** A row of a [SearchPicker]: a click picks it, so it has no check box and opens no sub-tree. */
+    picking: Boolean = false,
     query: String,
-    /** The window's checked keys — this row's and its sub-tree cells' boxes read them ([SearchDomain.taskKey]). */
-    checkedKeys: Set<String>,
-    onToggleChecked: (key: String) -> Unit,
     selected: Boolean,
     /** Among the Ctrl/Shift-selected rows, without being the selected one: the tree's lighter selection grey. */
     inSelection: Boolean,
@@ -1991,7 +2067,7 @@ private fun SearchTaskRow(
     // A task cut from the tree and kept by the timeline: its sub-tree can be looked through, not modified.
     val readOnlySubtree = occurrence == null
     val childListId = live?.childListId
-    val hasChildren = childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
+    val hasChildren = !picking && childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
     val menu = remember(taskId, result.shownPath, state.cells, state.lists, state.tasks) { actions(result.shownPath.takeIf { it.isNotEmpty() }) }
     // The title column is this row's own text, clamped like the tree's (a row has no sub-list to line up with).
     val textMeasurer = rememberTextMeasurer()
@@ -2071,11 +2147,7 @@ private fun SearchTaskRow(
             // Stuck to Rename: no mode selector, no id menu.
             editMenus = null,
             categoryCell = live?.let { { TaskCategoryCell(state, taskId, onIntent, onOpenCategory) } },
-            rowLeading = {
-                val key = SearchDomain.taskKey(taskId)
-                ResultCheckBox(key in checkedKeys) { onToggleChecked(key) }
-                KindSection(result.kind, kindWidth)
-            },
+            rowLeading = { KindSection(result.kind, kindWidth) },
             // The title prevails; the path box is squeezed to a thin box behind a long one, never dropped.
             afterTitle = {
                 Box(Modifier.fillMaxWidth().height(24.dp).padding(start = 8.dp)) {
@@ -2093,8 +2165,6 @@ private fun SearchTaskRow(
                 listId = childListId,
                 readOnly = readOnlySubtree,
                 priorities = priorities,
-                checkedKeys = checkedKeys,
-                onToggleChecked = onToggleChecked,
                 focused = subtreeFocused,
                 onFocus = onSubtreeFocus,
                 onIntent = onIntent,
@@ -2144,8 +2214,6 @@ private fun SearchSubtree(
     listId: CellListId,
     readOnly: Boolean,
     priorities: Map<TaskId, Double>,
-    checkedKeys: Set<String>,
-    onToggleChecked: (key: String) -> Unit,
     focused: Boolean,
     onFocus: (Boolean) -> Unit,
     onIntent: (SchedulerIntent) -> Unit,
@@ -2200,14 +2268,6 @@ private fun SearchSubtree(
             }
         },
         keyboardActive = focused,
-        // Each cell holding a task has the result rows' check box: checking it is checking that task's key, so
-        // Add adds it, and its own row (when listed) shows the same box. A placeholder holds nothing to add.
-        rowLeading = { cellId ->
-            state.cells[cellId]?.taskId?.takeIf { state.tasks[it]?.title?.isNotBlank() == true }?.let { taskId ->
-                val key = SearchDomain.taskKey(taskId)
-                ResultCheckBox(key in checkedKeys) { onToggleChecked(key) }
-            }
-        },
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = SUBTREE_MAX_HEIGHT)
@@ -2453,8 +2513,6 @@ internal fun TaskIdentityRow(
                 // Looked through, never modified: the row only names the task.
                 readOnly = true,
                 priorities = emptyMap(),
-                checkedKeys = emptySet(),
-                onToggleChecked = {},
                 focused = false,
                 onFocus = {},
                 onIntent = onIntent,
@@ -2494,10 +2552,13 @@ private fun ItemResultRow(
     /** The list's kind section's width ([rememberKindSectionWidth]). */
     kindWidth: Dp,
     item: SearchDomain.ItemResult,
+    /** The titles of the categories it carries (user rule 2026-11-02). */
+    categories: List<String>,
+    /** Whether what stands under it is shown, and its arrow's press. */
+    expanded: Boolean,
+    onToggleExpand: () -> Unit,
     /** What the Search window's bar holds: highlighted in the row's texts ([searchHighlighted]). */
     query: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
     selected: Boolean,
     /** Among the Ctrl/Shift-selected rows, without being the selected one: the thin outline. */
     inSelection: Boolean,
@@ -2536,8 +2597,9 @@ private fun ItemResultRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            ResultCheckBox(checked, onCheckedChange)
             KindSection(item.kind, kindWidth)
+            // User rule 2026-11-02: every element has its arrow. A "creation" row is a command, and no element.
+            if (item.kind != SearchDomain.Kind.Creation) SectionArrow(!expanded, onToggleExpand)
             Text(
                 text = searchHighlighted(item.name, query),
                 style = MaterialTheme.typography.bodyMedium,
@@ -2547,7 +2609,7 @@ private fun ItemResultRow(
                 modifier = Modifier.weight(1f, fill = false),
             )
             Text(
-                text = searchHighlighted(item.detail, query),
+                text = searchHighlighted(withCategories(item.detail, categories), query),
                 style = MaterialTheme.typography.labelSmall,
                 color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -2592,6 +2654,80 @@ private fun ItemResultRow(
             }
         }
     }
+}
+
+/** What a row says beside an element's name, with the categories it carries. */
+private fun withCategories(detail: String, categories: List<String>): String =
+    (listOf(detail).filter { it.isNotEmpty() } + categories).joinToString("  ·  ")
+
+/** How far each level of an element's children is indented. */
+private val ELEMENT_CHILD_INDENT: Dp = 24.dp
+
+
+/**
+ * User rule 2026-11-02: **what stands under an element's row, open by its arrow** — its children, each a row with its own
+ * arrow, then a blank field like the one a task's sub-tree ends on. A double-click on the blank field opens a Search window
+ * coming from the element ([SearchRowOpeners.onOpenChildSearch]), where another is found and made its child by "Add a parent".
+ * A child's ✕ takes it out of this parent, never off the account. [path] is the elements above: a loop two devices made
+ * between them is cut here.
+ */
+@Composable
+private fun ElementChildren(
+    parent: String,
+    surface: String,
+    depth: Int,
+    path: Set<String>,
+    state: SchedulerState,
+    windows: List<SearchDomain.WindowEntry>,
+    schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry>,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    expanded: Set<String>,
+    onToggle: (String) -> Unit,
+    openers: SearchRowOpeners,
+    onIntent: (SchedulerIntent) -> Unit,
+    kindWidth: Dp,
+) {
+    val keys = ElementTree.childrenOf(state, parent).filterNot { it in path }
+    val rows = SearchDomain.resolve(state, keys, { emptyMap() }, windows, schedulerRuns, claudeLogs)
+    val indent = Modifier.padding(start = ELEMENT_CHILD_INDENT * depth)
+    for (row in rows) {
+        val key = resultKey(row)
+        androidx.compose.runtime.key(key) {
+            val rowKey = surface + path.joinToString(">") + ">" + key
+            val currentRow by rememberUpdatedState(row)
+            Row(
+                modifier = resultRowModifier(selected = false)
+                    .then(indent)
+                    .resultRowGestures(rowKey, onSelect = {}, onSecondarySelect = {}, onOpen = { openers.open(state, currentRow) }, onOpenMenu = {}),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                KindSection(row.kind, kindWidth)
+                SectionArrow(rowKey !in expanded) { onToggle(rowKey) }
+                Text(row.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                if (ElementTree.canUnlink(state, parent, key)) {
+                    Text(
+                        text = "✕",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { ElementTree.parentIntents(state, listOf(key), parent, on = false).forEach(onIntent) }
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+            if (rowKey in expanded) {
+                ElementChildren(key, rowKey + ">", depth + 1, path + key, state, windows, schedulerRuns, claudeLogs, expanded, onToggle, openers, onIntent, kindWidth)
+            }
+        }
+    }
+    // User rule 2026-11-02: the blank field ends the list of children, as a task's sub-tree ends on its placeholder. It is
+    // a ROW of that list, drawn as its siblings are: their full-width box, nothing in it (anomaly 2026-11-03: a box of its
+    // own inside the indent stood one level deeper, so it read as the last child's, which was not expanded).
+    Box(
+        modifier = resultRowModifier(selected = false)
+            .resultRowGestures(surface + parent + "/blank", onSelect = {}, onSecondarySelect = {}, onOpen = { openers.onOpenChildSearch(parent) }, onOpenMenu = {}),
+    )
 }
 
 /** Ctrl and Shift as held on the last press in a list — read by a row whose gesture does not report them. */

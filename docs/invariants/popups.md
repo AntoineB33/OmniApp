@@ -656,6 +656,8 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   bare `BasicTextField` wears the modifier itself, LAST in its chain. Last is the precedence: a preview key event
   runs from the outside in, so a field with an Enter of its own (a tree cell, the Search bar, find & replace, a
   picker) answers first. A field of several lines keeps Enter as its new line; a chord is not Enter.
+- **A task cell's Edit Mode rectangle is no window and no `Popup`** (`task-tree.md`, *The selection and Edit Mode*): a
+  layer of the content area, over every window, gone with the session. No frame, no tab, no place kept.
 - **A field's edit mode that must end on a press elsewhere registers with the SAME observer**
   (`Modifier.leaveOnOutsidePress`, `TransientMenuHost.openEditor`) — never a per-field outside-press handler.
   A text field alone keeps the caret when the press lands on something that takes no focus (a window's bare

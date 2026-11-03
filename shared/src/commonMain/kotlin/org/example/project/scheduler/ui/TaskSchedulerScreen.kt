@@ -118,6 +118,8 @@ import androidx.compose.ui.input.pointer.isShiftPressed as pointerShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -632,7 +634,7 @@ internal fun CellListSection(
     rowLeading: (@Composable RowScope.(CellId) -> Unit)? = null,
     /** PRD §7/§8: "go to task tree" on the row's §13 menu, or null where the entry has no meaning. */
     onGoToTaskTree: ((TaskId) -> Unit)? = null,
-    /** The state a row's id menu NAMES its rows from, when this drawing is a projection — see [EditModeMenus]. */
+    /** The state a row's id menu NAMES its rows from, when this drawing is a projection — see [org.example.project.ui.CellEditPopupRequest]. */
     namingSource: SchedulerState = state,
     /**
      * PRD §7 Search (user rule 2026-10-07): the cell menu's "add" and "add and remove the others" — the tasks of the
@@ -920,16 +922,21 @@ internal fun CellListSection(
             onToggleExpand = {
                 if (hasChildren) onIntent(SchedulerIntent.ToggleExpand(cellId))
             },
-            editMenus =
+            // User rule 2026-11-02: the cell's menus are a rectangle over the windows, not a block under the row.
+            editMenus = null,
+            editPopup =
                 if (isEditing) {
-                    { refocusField ->
-                        EditModeMenus(
-                            state = currentState,
-                            cellId = cellId,
-                            draftText = editDraft,
-                            onIntent = onIntent,
-                            onModePicked = refocusField,
-                            namingSource = namingSource,
+                    { refocusField, anchor, region ->
+                        org.example.project.ui.PublishCellEditPopup(
+                            org.example.project.ui.CellEditPopupRequest(
+                                state = currentState,
+                                namingSource = namingSource,
+                                cellId = cellId,
+                                onIntent = onIntent,
+                                refocusField = refocusField,
+                                anchor = anchor,
+                                region = region,
+                            ),
                         )
                     }
                 } else {
@@ -1171,122 +1178,6 @@ internal fun cellEditModeOptions(
             },
         )
     return listOf(option("Change Task", CellEditMode.ChangeTask), option("Rename", CellEditMode.Rename))
-}
-
-/**
- * PRD §4 Edit Mode: the menus under a task cell being edited — the **Mode** selector, the **Tasks** id menu
- * and the **Title suggestions** menu, in the one order [EditModeMenuBlock] fixes for every naming field.
- *
- * The id rows carry one thing the other two menus do not: a **right-click contextual menu** holding
- * "go to task" (see [EditMenuRowActions]). An id row names one task, so there is one place to go; a title
- * suggestion names a string several tasks may share, and the Mode selector names no task at all.
- */
-@Composable
-internal fun EditModeMenus(
-    state: SchedulerState,
-    cellId: CellId,
-    draftText: String,
-    onIntent: (SchedulerIntent) -> Unit,
-    /** Hands the caret back to the cell's field after a Mode pick — see [cellEditModeOptions]. */
-    onModePicked: () -> Unit = {},
-    /**
-     * The state the id rows are NAMED from, when the tree being drawn is a projection — the account's own
-     * state in PRD §4's template window and PRD §7's Search sub-trees, exactly as `colorSource` is for the
-     * colours. See [SchedulerDomain.changeTaskMenuEntries].
-     */
-    namingSource: SchedulerState = state,
-) {
-    val session = state.editSession ?: return
-
-    // Only the in-progress "New task" draft is hidden (it's already the "New task" row itself). A picked
-    // existing task must stay listed so it can render as selected (purple) — excluding it here would drop it
-    // from the entries and leave [changeTaskMenuSelectedIndex] unable to match.
-    val taskEntries =
-        if (session.mode == CellEditMode.ChangeTask) {
-            SchedulerDomain.changeTaskMenuEntries(
-                state,
-                cellId,
-                draftText,
-                excludeTaskId = session.newTaskDraftId,
-                namingSource = namingSource,
-            )
-        } else {
-            emptyList()
-        }
-
-    // An id row NAMES a task, so it is drawn in that task's colour like every other place one is named
-    // ([org.example.project.ui.TaskTitleLabel]). Off `namingSource` and not `state`, for the reason the
-    // label itself is: in the template and a Search sub-tree the rows name the ACCOUNT's tasks, and a
-    // colour solved over the projection would be a second answer for the task the tree already colours.
-    val menuTaskColors =
-        TaskPalette.sheetColors(rememberTaskHues(namingSource, TaskHueMemo.account))
-
-    val modeOptions = cellEditModeOptions(state, cellId, onIntent, onModePicked)
-    // Whether there is a menu at all is [SchedulerDomain.changeTaskMenuEntries]' own answer, and it hands it
-    // over as an empty list — a lone "New task" row is a real menu here (PRD §4 *Appearance*: the current
-    // task's id has a past to abandon), so no row count can tell the two apart from out here.
-    val identityRows =
-        if (taskEntries.isNotEmpty()) {
-            val selectedIndex =
-                SchedulerDomain.changeTaskMenuSelectedIndex(taskEntries, session.selectedAssignTaskId)
-            taskEntries.mapIndexed { index, entry ->
-                // PRD §4: an id row's right-click menu — "go to task", which reveals that task where it
-                // lives. It goes through [SchedulerIntent.RevealCell], the find bar's own primitive and the
-                // very one PRD §8's "go to task tree" uses, so the way in is expanded as ONE history unit
-                // and the reveal ends this edit session first (a §4 Forced Exit, like clicking another cell).
-                //
-                // Nothing is focused: the surface being edited IS the tree the row is revealed in, whichever
-                // of the three drawings of it this is — the reveal follows `state`/`onIntent`, so in a
-                // Search sub-tree and the §4 template it lands on that window's own rows, not the
-                // account tree's, which is exactly what "go to task" can mean there.
-                //
-                // Greyed (a null handler) wherever no cell shows the task: the "New task" row, a detached
-                // parent, a tombstone kept alive only for its records. That is the same `null` answer
-                // [SchedulerDomain.firstTaskOccurrence] gives the calendar panel's entry, said as a disabled
-                // row rather than as a notice, because here the user is looking straight at the row.
-                val occurrence = entry.taskId?.let { SchedulerDomain.firstTaskOccurrence(state, it) }
-                EditMenuItem(
-                    label = entry.label,
-                    selected = index == selectedIndex,
-                    taskColor = entry.taskId?.let { menuTaskColors[it] },
-                    taskId = entry.taskId,
-                    actions = EditMenuRowActions(
-                        onGoToTask = occurrence?.let { found ->
-                            { onIntent(SchedulerIntent.RevealCell(found.cellId, found.ancestors)) }
-                        },
-                    ),
-                ) {
-                    if (entry.taskId == null) {
-                        onIntent(SchedulerIntent.SelectCreateAssignTask)
-                    } else {
-                        onIntent(SchedulerIntent.PickTaskFromMenu(entry.taskId))
-                    }
-                }
-            }
-        } else {
-            emptyList()
-        }
-    val suggestions = SchedulerDomain.titleSuggestions(state, draftText).map { suggestion ->
-        EditMenuItem(suggestion) { onIntent(SchedulerIntent.PickTitleSuggestion(suggestion)) }
-    }
-
-    // Render nothing when there is no menu to show, so the empty container takes no vertical space and the
-    // row below is not pushed down by a blank gap. The row only lowers while a menu is actually visible.
-    if (modeOptions.isEmpty() && identityRows.isEmpty() && suggestions.isEmpty()) return
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        EditModeMenuBlock(
-            modeOptions = modeOptions,
-            identityLabel = "Tasks",
-            identityRows = identityRows,
-            suggestions = suggestions,
-        )
-    }
 }
 
 /**
@@ -2845,6 +2736,14 @@ internal fun TaskRow(
      */
     editMenus: (@Composable (refocusField: () -> Unit) -> Unit)?,
     /**
+     * What a cell of the tree has instead of [editMenus] (user rule 2026-11-02): the rectangle that stands over the
+     * windows. Composed for as long as the cell is edited; given what [editMenus] is, the field's bounds in the window
+     * (read at layout) and the edit, for the rectangle to count as inside it.
+     */
+    editPopup: (
+        @Composable (refocusField: () -> Unit, anchor: () -> Rect?, region: org.example.project.ui.OutsidePressEditor) -> Unit
+    )? = null,
+    /**
      * Whether the row opens with the expand/collapse arrow. False only for a row drawn OUTSIDE a tree — the
      * relative-priority window's occurrence chains (PRD §5) — where there is no sub-tree to open under it
      * and so nothing for the arrow's fixed 20 dp box to align.
@@ -2919,6 +2818,8 @@ internal fun TaskRow(
     // the ONE effect that owns this field's focus re-runs. Never a second requestFocus call site: the
     // keyboardOwned gate below must hold for this too.
     var fieldRefocusRequests by remember(cellId) { mutableStateOf(0) }
+    // Where the field stands in the window, for the rectangle of [editPopup]. Written only while editing.
+    var editFieldBounds by remember(cellId) { mutableStateOf<Rect?>(null) }
     // PRD §4 *Forced Exit*: a press anywhere outside the field and its Edit Mode menus (the mode selector, the
     // Tasks menu, the title suggestions) commits the draft and leaves Edit Mode — in this window or any other.
     // The press still does what it was aimed at, so a press on another cell commits here and selects there.
@@ -3245,7 +3146,8 @@ internal fun TaskRow(
                             .then(titleWidth)
                             .defaultMinSize(minHeight = 20.dp)
                             .taskSheetTitleBounds(titleBounds)
-                            .outsidePressPart(editRegion),
+                            .outsidePressPart(editRegion)
+                            .onGloballyPositioned { editFieldBounds = it.boundsInWindow() },
                         contentAlignment = Alignment.CenterStart,
                     ) {
                     BasicTextField(
@@ -3485,11 +3387,9 @@ internal fun TaskRow(
             )
         }
         if (isEditing) {
-            // The menu (mode selector / task list / title suggestions) renders directly below the cell
-            // without its own white background or border, so it no longer appears as a stark white bar
-            // under the (light-blue) editing row. The box only supplies indentation; its own padding
-            // comes from [EditModeMenus], which renders nothing at all when there is no menu to show —
-            // so the row below is pushed down only while a menu is actually visible.
+            // [editMenus] (the rows that name a task outside the tree) render directly below the cell without
+            // a background or a border of their own. The box only supplies indentation; a row with no menu to
+            // show renders nothing in it, so the row below is pushed down only while a menu is visible.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3498,6 +3398,7 @@ internal fun TaskRow(
             ) {
                 editMenus?.invoke { fieldRefocusRequests++ }
             }
+            editPopup?.invoke({ fieldRefocusRequests++ }, { editFieldBounds }, editRegion)
         }
     }
 }

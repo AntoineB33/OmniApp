@@ -11,6 +11,38 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### No check boxes in the Search window's results — 2026-11-03
+
+User rule: the result rows' and sub-tree cells' check boxes, "Select all" and "Add" are gone, redundant with the row menu's "add" on the selected rows. Ctrl+A in the result list, which did nothing, now selects every row. An element's children are indented as before the check boxes' room was added. Client rebuild only. `SearchSelectAllTest`.
+
+### Three anomalies of the Search window and the workplace setups — 2026-11-03
+
+A double-click on a workplace setup applied it and added it to the added elements: applying went through the "New" path (`showCreated`), and no longer does. A file explorer tab a setup opened was typed into from Home, so its up arrow led to "Accueil": the tab Ctrl+T opens is now found among the shell's windows and navigated to the path (`Navigate2`), typing being the fallback. A press anywhere but on a row of the Search window's lists takes the selection away. An element's children started left of its own name (they have no check box), so they read as siblings and the blank field ending them as a child of the last one, unexpanded: they are indented past the box, and the blank field ending an expanded element's children is a row of that list drawn as its siblings are, full width and empty, not a box of its own inside the indent that stood one level deeper (`ElementChildrenTest`). Client rebuild only. `WorkplaceSetupTest`.
+
+### No sync during an edit; ids unique per device — 2026-11-03
+
+Two bugs found by the quota test. A reconcile during Edit Mode pushed each half-typed task, and a pull ended the session mid-word, leaving that letter's task in the cell on both devices: no reconcile runs while a cell is in Edit Mode, the owed one runs at its end, and a pull already in flight keeps the local session. Two devices minted the same ids from their own counters, and the merge fused two tasks into one or lost one: a synced device now tags the ids it mints (`task/user/12.3b941b56`); ids already minted keep their shape. A task no cell holds keeps no empty sub-list and placeholder. Client rebuild only, no migration. `TwoDevicesEditTest`, `EditKeystrokeTasksTest`. `ServerQuotaTest` is over the database budget: the bug had hidden real growth.
+
+### Near its limit the server forgets — 2026-11-03, rule only, not built
+
+User rules: rows reach the server debounced, and a database reaching its limit (the server's lower than a device's) deletes its oldest rows. Close to the limit every table is restricted: a sub-list of tasks not recently modified becomes one row saying tasks are there and not remembered. The requirement that any device can get the whole account from the server is dropped: a device that never held a forgotten row cannot get it back. The restrictions grow as the database fills (the debounce up to days, then history, then the other tables), the server does the forgetting, and the Settings page shows the free tier's usage with a refresh button. Written in `server-quota.md` and `sync-and-accounts.md`; nothing of it is built, and `ServerQuotaTest` stays red on the per-keystroke tasks until it is.
+
+### One task per keystroke in Change Task — 2026-11-03
+
+User rule, reversing the one draft per session: every keystroke that names nothing is a new task, and only the save and the push debounce. The task a cell leaves keeps what is behind the line, which until now was deleted at the first keystroke, and the running block goes on under the new task, so the calendar reads A, AB, ABC. Escape, and Ctrl+Z after Enter however late, rewrite it as A alone (`EditDrafts`, `withTimeGivenBack`), a thing neither did before: both left a hole. Redo keeps the time on A. Stored on the session and on the Edit unit, absent from what an older build wrote. Client rebuild only. `EditKeystrokeTasksTest`.
+
+### A task cell's Edit Mode is a rectangle holding a Search window — 2026-11-02
+
+User rule: in Edit Mode a task cell shows a rectangle below it, or above, on its left, on its right where there is not enough room (`cellEditPopupOffset`), replacing the Mode selector, the Tasks menu and the Title suggestions under the row (`EditModeMenus`, gone). It holds one switch, "switch task" on by default or "rename" off, and a Search window with no head, no added elements and no actions (`SearchPicker`), whose bar is the cell's draft. One click on a result replaces the cell's task and leaves Edit Mode. The search bar of every Search window gains a completion list, off by default (`Config.completion`, the "Completion list" configuration; on task titles here): an option once, never the bar's text, a click writes it in the bar and the list stays, moving the results down. Absent from what an older build stored. Client rebuild only. `CellEditPopupRulesTest`, `CellEditPopupTest`.
+
+### Elements excluded from and included in a search — 2026-11-02
+
+User rule: "Excluded elements" and "Included elements" in the "Every element" group of the Search configurations window, each a check-box drop-down of the account's elements listed as it is scrolled (`Filters.excludedElements`, `includedElements`). An included element is in the list whatever would keep it out: the filters, the exclusions, the checked kinds, the search text. The Search window a blank field opens starts with its parent excluded. Stored on the window, absent from what an older build wrote. Client rebuild only. `ElementFiltersTest`.
+
+### Every element has parents, children and categories — 2026-11-02
+
+User rule: any element can have categories and be a parent or a child of others. One relation holds both (`SchedulerState.elementLinks`, `ElementTree`): a category is a parent of what carries it. A task keeps its own sub-list and `categoryIds`, which `ElementTree.parentIntents` routes to. `ElementTree.canLink` is the one rule: nothing under itself, a task has task children alone, nothing under a task cell category, a "creation" row is no element. Every row of the Search window has an arrow (`ElementChildren`), its children then a blank field whose double-click opens a Search window coming from the element (`Config.elementSource`); "Add a parent" has a button adding that element. Applying a workplace setup applies what stands under it, one after the other (`WorkplaceRuns.applyAll`). A payload without links decodes to none. No migration: rows split by the existing rule. Client rebuild only. `ElementTreeTest`, `ElementChildrenTest`.
+
 ### The life plan window — 2026-11-02
 
 User rule: a default "Life plan" button in the Schedule page's lateral menu opens a window whose drop-down picks "Steps" (a list like the Search window's, each row holding sub-elements under an arrow), "Problems" (a text area, in tabs chosen, deleted and added from a field with a drop-down), "Career evolution" and "Crisis resilience" (named, not defined yet). `SchedulerState.lifePlan` is a new synced list, a line of a tab being one row, so typing rewrites one row and a History Unit holds the lines touched (`LifePlanDelta`, `server-quota.md`). A payload without it decodes to an empty plan. A stored menu is given the button once, under Calendar (`Stored.lifePlanSeeded`). No migration: rows split by the existing rule. Client rebuild only. `LifePlanTest`.

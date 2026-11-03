@@ -40,6 +40,7 @@ import org.example.project.scheduler.state.ChronosDelta
 import org.example.project.scheduler.state.ExternalDelta
 import org.example.project.scheduler.state.EntryChanges
 import org.example.project.scheduler.state.SettingsDelta
+import org.example.project.scheduler.state.ElementLinksDelta
 import org.example.project.scheduler.state.LifePlanDelta
 import org.example.project.scheduler.state.WorkplaceSetupsDelta
 import org.example.project.scheduler.model.Category
@@ -116,6 +117,7 @@ import org.example.project.scheduler.state.TaskTreeEntry
 import org.example.project.scheduler.state.TaskTreeStateSnapshot
 import org.example.project.scheduler.state.SetExpandedDelta
 import org.example.project.scheduler.state.ToggleExpandDelta
+import org.example.project.scheduler.state.EditDrafts
 import org.example.project.scheduler.state.TreeMutationDelta
 import org.example.project.scheduler.state.TimersDelta
 import org.example.project.scheduler.state.TreeSnapshot
@@ -583,6 +585,7 @@ object SchedulerStateCodec {
             chronos = chronos.map { it.toPersisted() },
             workplaceSetups = workplaceSetups.map { it.toPersisted() },
             lifePlan = lifePlan.map { it.toPersisted() },
+            elementLinks = elementLinks.map { it.toPersisted() },
             // Quotas (2026-10-03): the list whole; a quota's progression is derived and never written.
             quotas = quotas.map { it.toPersisted() },
             // PRD §5: the relative-priority window's pinned cells, sorted so the encoded payload (and the
@@ -886,7 +889,11 @@ object SchedulerStateCodec {
             // its tag's original before/after shape, holding ONLY the touched entries on each side. Decoding rebuilds
             // the diff from whatever the two sides hold (`TreeDiff.of`, `EntryChanges.ofList`, `SetChanges.of`), so a
             // unit an older build wrote with whole copies is converted by the very same path.
-            is TreeMutationDelta -> PersistedDelta.TreeMutation(diff.side(forward = false), diff.side(forward = true), label)
+            is TreeMutationDelta ->
+                PersistedDelta.TreeMutation(
+                    diff.side(forward = false), diff.side(forward = true), label,
+                    drafts?.drafts?.map { it.value }.orEmpty(), drafts?.base?.value,
+                )
             is EmptyCellsDelta ->
                 PersistedDelta.EmptyCells(
                     diff.side(forward = false),
@@ -941,6 +948,8 @@ object SchedulerStateCodec {
                 PersistedDelta.Alarms(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is TimersDelta ->
                 PersistedDelta.Timers(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
+            is ElementLinksDelta ->
+                PersistedDelta.ElementLinks(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is LifePlanDelta ->
                 PersistedDelta.LifePlan(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is WorkplaceSetupsDelta ->
@@ -1019,6 +1028,7 @@ object SchedulerStateCodec {
             mode = mode.name,
             selectedAssignTaskId = selectedAssignTaskId?.value,
             newTaskDraftId = newTaskDraftId?.value,
+            draftTaskIds = draftTaskIds.map { it.value },
             treeBefore = treeBefore.toPersisted(),
             renameTreeBefore = renameTreeBefore?.toPersisted(),
         )
@@ -1285,6 +1295,7 @@ object SchedulerStateCodec {
             timers = TimerDomain.assignTimerIds(timers.map { it.toTimerEntry() }).map(TimerDomain::healed),
             workplaceSetups = workplaceSetups.map { it.toWorkplaceSetup() },
             lifePlan = org.example.project.scheduler.domain.LifePlanDomain.healed(lifePlan.map { it.toLifePlanEntry() }),
+            elementLinks = elementLinks.map { it.toElementLink() },
             // PRD §18 Chronos: a payload written before chronos existed decodes to an empty list; every row healed.
             chronos = ChronoDomain.assignChronoIds(chronos.map { it.toChronoEntry() }).map(ChronoDomain::healed),
             // Quotas: a payload written before quotas existed decodes to an empty list; every row healed.
@@ -1489,7 +1500,11 @@ object SchedulerStateCodec {
 
     private fun PersistedDelta.toDelta(): Delta =
         when (this) {
-            is PersistedDelta.TreeMutation -> TreeMutationDelta(before.toSnapshot(), after.toSnapshot(), label)
+            is PersistedDelta.TreeMutation ->
+                TreeMutationDelta(
+                    before.toSnapshot(), after.toSnapshot(), label,
+                    draftTaskIds.takeIf { it.isNotEmpty() }?.let { ids -> EditDrafts(ids.mapTo(LinkedHashSet(), ::TaskId), baseTaskId?.let(::TaskId)) },
+                )
             is PersistedDelta.EmptyCells ->
                 EmptyCellsDelta(
                     treeBefore.toSnapshot(),
@@ -1567,6 +1582,7 @@ object SchedulerStateCodec {
                     TimerDomain.assignTimerIds(before.map { it.toTimerEntry() }).map(TimerDomain::healed),
                     TimerDomain.assignTimerIds(after.map { it.toTimerEntry() }).map(TimerDomain::healed),
                 )
+            is PersistedDelta.ElementLinks -> ElementLinksDelta(before.map { it.toElementLink() }, after.map { it.toElementLink() })
             is PersistedDelta.LifePlan -> LifePlanDelta(before.map { it.toLifePlanEntry() }, after.map { it.toLifePlanEntry() })
             is PersistedDelta.WorkplaceSetups ->
                 WorkplaceSetupsDelta(before.map { it.toWorkplaceSetup() }, after.map { it.toWorkplaceSetup() })
@@ -1726,6 +1742,7 @@ object SchedulerStateCodec {
             mode = CellEditMode.valueOf(mode),
             selectedAssignTaskId = selectedAssignTaskId?.let(::TaskId),
             newTaskDraftId = newTaskDraftId?.let(::TaskId),
+            draftTaskIds = draftTaskIds.map(::TaskId),
             treeBefore = treeBefore.toSnapshot(),
             renameTreeBefore = renameTreeBefore?.toSnapshot(),
         )
@@ -1775,6 +1792,8 @@ private data class PersistedState(
     val workplaceSetups: List<PersistedWorkplaceSetup> = emptyList(),
     /** New 2026-11-02: absent from every older payload, which has none. */
     val lifePlan: List<PersistedLifePlanEntry> = emptyList(),
+    /** New 2026-11-02: absent from every older payload, which has none. */
+    val elementLinks: List<PersistedElementLink> = emptyList(),
     // User rule 2026-10-03: a missing quota list decodes to empty (payloads written before quotas existed).
     val quotas: List<PersistedQuota> = emptyList(),
     // PRD §5: the relative-priority window's pinned cells; a missing list decodes to no pins (payloads
@@ -2334,6 +2353,14 @@ private fun PersistedQuota.toQuotaEntry(): QuotaEntry =
         lookTimes = lookTimes.map { org.example.project.scheduler.model.QuotaLookTime(it.dateEpochDay, it.daysFromToday, it.minuteOfDay) },
     )
 
+/** User rule 2026-11-02: one link between two elements. */
+@Serializable
+private data class PersistedElementLink(val id: String = "", val parent: String = "", val child: String = "", val rank: Double = 0.0)
+
+private fun org.example.project.scheduler.domain.ElementLink.toPersisted(): PersistedElementLink = PersistedElementLink(id, parent, child, rank)
+
+private fun PersistedElementLink.toElementLink(): org.example.project.scheduler.domain.ElementLink = org.example.project.scheduler.domain.ElementLink(id, parent, child, rank)
+
 /** User rule 2026-11-02: one row of the life plan. Its kind by name: one a later build added reads as a step. */
 @Serializable
 private data class PersistedLifePlanEntry(
@@ -2510,6 +2537,9 @@ private sealed interface PersistedDelta {
         val before: PersistedTreeSnapshot,
         val after: PersistedTreeSnapshot,
         val label: String,
+        /** New 2026-11-03 ([EditDrafts]): absent = a unit that made no task from a cell's Edit Mode. */
+        val draftTaskIds: List<String> = emptyList(),
+        val baseTaskId: String? = null,
     ) : PersistedDelta
 
     @Serializable
@@ -2662,6 +2692,14 @@ private sealed interface PersistedDelta {
     data class Quotas(
         val before: List<PersistedQuota>,
         val after: List<PersistedQuota>,
+    ) : PersistedDelta
+
+    /** New 2026-11-02: the links between elements; an older build cannot read it and skips the unit (`decodeUnit`). */
+    @Serializable
+    @SerialName("elementLinks")
+    data class ElementLinks(
+        val before: List<PersistedElementLink>,
+        val after: List<PersistedElementLink>,
     ) : PersistedDelta
 
     /** New 2026-11-02: the life plan; an older build cannot read it and skips the unit (`decodeUnit`). */
@@ -2897,6 +2935,8 @@ private data class PersistedEditSession(
     val mode: String,
     val selectedAssignTaskId: String? = null,
     val newTaskDraftId: String? = null,
+    /** New 2026-11-03: absent = the session made none we know of. */
+    val draftTaskIds: List<String> = emptyList(),
     val treeBefore: PersistedTreeSnapshot,
     val renameTreeBefore: PersistedTreeSnapshot? = null,
 )

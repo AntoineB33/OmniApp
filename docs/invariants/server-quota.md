@@ -38,11 +38,51 @@ block every 20, a minimum-time change every 10. The account is the release accou
 - **A failure prints the per-table, per-call and per-stream breakdown.** Fix the call that costs; do not raise the
   budget or thin the scenario to pass. Changing the scenario needs a reason about real use written next to it.
 
+## Near the limit, the server forgets — NOT BUILT YET
+
+User rules 2026-11-03: *"When there is a new row in the db, it is sent (with a debounce) to the server to be added there
+too. When a db is reaching its defined memory limit (lower for the free Supabase server), then the oldest rows are
+deleted."*; *"If memory become really close to the limit … then there should be restrictions for any other tables too.
+For example, in the task tree, a sub list with many task ids should be replaced by a row that says there are tasks there
+not rememberred. Those should be tasks that are not recently modified"*; and, of the requirement that every device can
+get the whole database from the server: *"Then modify this requirement."*
+
+**The server is not a complete copy of the account.** Near its limit it forgets, and a device that never held what it
+forgot cannot get it from there (a new device, a reinstall). That loss is accepted. The 10 % budget above is still the
+limit, and nothing here may exceed it.
+
+- **Each database has its limit**: the server's, which is the lower one (a share of the 10 % budget per account, so one
+  account's growth never forgets another's rows), and each device's own, which is larger.
+- **The restrictions tighten as the database fills, each table in turn**, never all at once and never at the edge: they
+  start at a threshold below the limit and work in batches down to a lower one, because Postgres reuses the space of a
+  deleted row rather than giving it back (the outage's mechanism).
+  1. **The debounce grows**, up to days near the limit. It saves traffic; it frees no space.
+  2. **The oldest history rows go first**: history units, past records and periods, the tasks no cell holds, logs. Oldest
+     by the time a row is about, not by when it was written.
+  3. **Then the other tables**: in the task tree, a sub-list of tasks nobody modified recently is replaced by ONE row
+     saying that tasks are there and not remembered. A recently modified task is never forgotten, so what a device is
+     working on reaches every other device whole.
+- **The server does the forgetting**, where the size and every account are seen (a scheduled job, like
+  `trim_claude_log_entries`), and `ServerQuotaTest` must read that bound off the migration.
+- **What the server forgot is not a deletion** (`sync-and-accounts.md` § *Conflicts are MERGED*): a device holding those
+  rows keeps them and does not push them back unless it edits them, and a device without them shows the "not remembered"
+  row. A device's own limit forgets on its own side the same way.
+- **What is forgotten, and how full each database is, is said on the Settings page** with the current usage of the
+  Supabase free tier and a refresh button (an asked request, never a poll).
+
 ## What keeps it there
 
 - **Nothing the app stores grows with editing, except through a bound.** Entity rows are rewritten in place (one row
   per entity); a tombstone lives a week; history is 1000 units per category; the pg_cron log a day. A new table that
   accumulates rows needs its bound, and the bound needs to be in the projection.
+- **The tasks a keystroke makes are rows only where the line was on them** (`task-tree.md`): one row per letter typed
+  on the task the line is on, while no others survive the session; none reach the server before it ends
+  (`sync-and-accounts.md`, no reconcile during an edit). Like every task with a record, they have no purge.
+- **The budget's measure was flattered by a bug until 2026-11-03**: two devices minted the same ids, and the merge
+  fused or lost the tasks they made, so fewer rows were left to project. With ids unique per device the heavy hour
+  leaves about four tasks no cell holds (a parent renamed in Change Task keeps its sub-tree; a task the line was on keeps
+  its time), and `ServerQuotaTest` is over the database budget until the server forgets (§ *Near the limit*). The longer
+  ids also weigh on the hour measured, which the projection then repeats for a year though it happens once per id.
 - **The calendar's hidden levels are rows like the panels they are pieces of, and bounded on the client**
   (`TimelineLevels.purged`: 90 days behind the line, 500 pieces; `calendar.md` § *tm_levels*). A piece is one small
   row, written when a block is placed over another and deleted when it is given back.
@@ -57,6 +97,7 @@ block every 20, a minimum-time change every 10. The account is the release accou
   goes in its own row, sized by what changed (`sync-and-accounts.md` § *Sync by rows*).
   So a long text the user writes is rows too: a life plan tab is one row per line (`LifePlanDomain.withText`), and typing
   in a line rewrites that line. A single line is still one row, however long it is typed.
+- **The links between elements grow by hand alone** (`ElementLink`, `sync-and-accounts.md`): one small row per link, made by a press and never by typing or by time, so they have no purge. A link to an element deleted stays, for an undo.
 - **A History Unit is a diff of what changed**, never a copy of the tree (`persistence.md` § *A History Unit is what
   changed*; `HistoryUnitSizeTest`: under 2 KB).
 - **Only `scheduler_head` is in the Realtime publication for sync**: one small message per push per connected device.

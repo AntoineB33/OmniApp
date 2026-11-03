@@ -555,6 +555,24 @@ object SearchDomain {
         }
     }
 
+    /** What a search bar's completion list offers ([Config.completion]). */
+    enum class Completion(val label: String) {
+        TaskTitles("task titles"),
+    }
+
+    /**
+     * User rule 2026-11-02: the options of the search bar's completion list: each once, never the text in the bar (a
+     * blank title completes nothing). The title suggestions' own order ([SchedulerDomain.titleSuggestions]).
+     */
+    fun completionOptions(state: SchedulerState, completion: Completion?, query: String): List<String> =
+        when (completion) {
+            null -> emptyList()
+            Completion.TaskTitles ->
+                SchedulerDomain.titleSuggestions(state, query.trim())
+                    .filter { it.isNotBlank() && !it.equals(query.trim(), ignoreCase = true) }
+                    .distinct()
+        }
+
     /**
      * The window's configuration: what is typed in the bar, which kinds are checked, and the per-kind
      * [Filters] the Configuration Search window edits. **Local-only view state** — kept on this device with the
@@ -642,11 +660,21 @@ object SearchDomain {
          * Its tab stands beside that window's and it closes with it; null for a window opened from anywhere else.
          */
         val openedFrom: String? = null,
+        /**
+         * User rule 2026-11-02: the element this window comes from, by key: the one whose blank field under its children
+         * opened it ([ElementTree.childSearchConfig]). "Add a parent" has a button that adds it.
+         */
+        val elementSource: String? = null,
+        /**
+         * User rule 2026-11-02: the search bar's **completion list** — what it offers, or null for none, the default
+         * ([Completion], [completionOptions]).
+         */
+        val completion: Completion? = null,
     ) {
         /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
         val readsWindows: Boolean
             get() = Kind.Window in kinds || Kind.Shortcut in kinds ||
-                added.any { it.startsWith(Kind.Window.name + "/") || it.startsWith(Kind.Shortcut.name + "/") }
+                (added + filters.includedElements).any { it.startsWith(Kind.Window.name + "/") || it.startsWith(Kind.Shortcut.name + "/") }
 
         /** JSON, every field optional, so a later build's extra filter is ignored rather than fatal. */
         fun encode(): String =
@@ -708,6 +736,8 @@ object SearchDomain {
                     notificationSources = NotificationSource.entries.filter { it in filters.notificationSources }.map { it.name },
                     calendarClickMillis = calendarClickMillis,
                     blocksOf = filters.blocksOf.sorted(),
+                    excludedElements = filters.excludedElements.sorted(),
+                    includedElements = filters.includedElements.sorted(),
                     placeStartMillis = placement.startMillis,
                     placeEndByDelta = placement.endByDelta,
                     placeStatedLengthMillis = placement.lengthMillis,
@@ -715,6 +745,8 @@ object SearchDomain {
                     placeEndMillis = placement.endMillis,
                     page = page,
                     openedFrom = openedFrom,
+                    elementSource = elementSource,
+                    completion = completion?.name,
                     claudeProject = filters.claudeProject,
                     claudeFromMillis = filters.claudeFrom,
                     claudeUntilMillis = filters.claudeUntil,
@@ -783,6 +815,8 @@ object SearchDomain {
                         notificationSources =
                             NotificationSource.entries.filterTo(HashSet()) { it.name in stored.notificationSources },
                         blocksOf = stored.blocksOf.toSet(),
+                        excludedElements = stored.excludedElements.toSet(),
+                        includedElements = stored.includedElements.toSet(),
                         claudeProject = stored.claudeProject,
                         claudeFrom = stored.claudeFromMillis,
                         claudeUntil = stored.claudeUntilMillis,
@@ -813,6 +847,8 @@ object SearchDomain {
                     ),
                     page = stored.page,
                     openedFrom = stored.openedFrom,
+                    elementSource = stored.elementSource,
+                    completion = Completion.entries.firstOrNull { it.name == stored.completion },
                 )
             }
 
@@ -1086,6 +1122,16 @@ object SearchDomain {
          */
         val blocksOf: Set<String> = emptySet(),
         /**
+         * User rule 2026-11-02: the elements kept out of the list, by key: what a Search window opened to find a child
+         * starts with, its parent ([ElementTree.childSearchConfig]).
+         */
+        val excludedElements: Set<String> = emptySet(),
+        /**
+         * User rule 2026-11-02: the elements always in the list, by key: **this overrides every other way of narrowing it**,
+         * the filters, [excludedElements], the checked kinds and the search text ([results]).
+         */
+        val includedElements: Set<String> = emptySet(),
+        /**
          * The Claude Code logs' filters (user rule 2026-10-18), one for the three kinds: only the entries of this project
          * (null = any), and only those written in `[claudeFrom, claudeUntil]` (a null bound asks nothing on its side).
          */
@@ -1178,6 +1224,8 @@ object SearchDomain {
                 Setting.PeriodBoxesFrom -> periodBoxesFrom != null
                 Setting.PeriodBoxesUntil -> periodBoxesUntil != null
                 Setting.BlockElements -> blocksOf.isNotEmpty()
+                Setting.ExcludedElements -> excludedElements.isNotEmpty()
+                Setting.IncludedElements -> includedElements.isNotEmpty()
                 Setting.NotificationSourceSetting -> notificationSources.isNotEmpty()
                 Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject -> claudeProject != null
                 Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom -> claudeFrom != null
@@ -1339,11 +1387,16 @@ object SearchDomain {
          * Configuration Search window's own Reset, which clears that window's search.
          */
         ResetSearch(null, "Reset"),
+        /** The search bar's completion list ([Config.completion]). */
+        CompletionList(null, "Completion list"),
         SortResults(null, "Sort by", sorts = true),
         /** The calendar filter ([Filters.calendarAddOn]): about every row, so in the General section. */
         CalendarAdd(null, "Can be added to the calendar at"),
         /** The "is on the calendar at" filter ([Filters.calendarAtOn]): the calendar's "edit…". */
         CalendarAt(null, "Is on the calendar at"),
+        /** The elements kept out of the list ([Filters.excludedElements]) and those always in it ([Filters.includedElements]). */
+        ExcludedElements(null, "Excluded elements"),
+        IncludedElements(null, "Included elements"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -1699,6 +1752,9 @@ object SearchDomain {
         val notificationSources: List<String> = emptyList(),
         /** New 2026-10-05 (the calendar blocks, "Add to the calendar"'s start and end): absent = every block, nothing said. */
         val blocksOf: List<String> = emptyList(),
+        /** New 2026-11-02: absent = no element kept out, none always in. */
+        val excludedElements: List<String> = emptyList(),
+        val includedElements: List<String> = emptyList(),
         val placeStartMillis: Long? = null,
         val placeEndByDelta: Boolean = true,
         val placeEndMillis: Long? = null,
@@ -1712,6 +1768,10 @@ object SearchDomain {
         val page: String = "",
         /** New 2026-10-18: absent = opened from no Search window. */
         val openedFrom: String? = null,
+        /** New 2026-11-02: absent = the window comes from no element. */
+        val elementSource: String? = null,
+        /** New 2026-11-02: absent = no completion list. */
+        val completion: String? = null,
         val claudeProject: String? = null,
         val claudeFromMillis: Long? = null,
         val claudeUntilMillis: Long? = null,
@@ -2430,6 +2490,16 @@ object SearchDomain {
                     val there = calendarElementsAt(state, at, timeZone, layerKindsAt)
                     rows.filter { keyOf(it) in there }
                 }
+                .let { rows ->
+                    // User rule 2026-11-02: last, since it overrides all of the above. An included element stands in the
+                    // list whatever kept it out; one the search does not find goes after those it does ([matchRank]).
+                    val excluded = filters.excludedElements
+                    val included = filters.includedElements
+                    if (excluded.isEmpty() && included.isEmpty()) return@let rows
+                    val kept = rows.filterNot { keyOf(it) in excluded && keyOf(it) !in included }
+                    val listed = kept.mapTo(HashSet(), ::keyOf)
+                    kept + resolve(state, included.filterNot { it in listed }.sorted(), allPaths, windows, schedulerRuns, claudeLogs)
+                }
                 // Stable: ties keep the kind order and each kind's own order.
                 .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
         if (sorts == DEFAULT_SORTS) return base
@@ -3030,6 +3100,14 @@ object SearchDomain {
          * elements as rows of the added elements list — open them, take them off it ([actionGroups]).
          */
         OpenEach(null, "Open or remove from the list"),
+        /**
+         * User rule 2026-11-02: the added elements' parents and categories ([ElementTree]): a selector of elements, and
+         * beside it a button adding the element the window comes from ([Config.elementSource]).
+         */
+        ElementAddParent(null, "Add a parent"),
+        ElementRemoveParent(null, "Remove a parent"),
+        ElementAddCategory(null, "Add a category"),
+        ElementRemoveCategory(null, "Remove a category"),
         /** The calendar's "add…" (user rule 2026-10-01): every added element that can go there, at the filter's instant. */
         PlaceOnCalendar(null, "Add to the calendar"),
         /**
@@ -3368,8 +3446,12 @@ object SearchDomain {
                 // A timer's place on the calendar is the moment it ends, which its run states and moves (user rule
                 // 2026-10-12): with nothing but timers added there is no block to list.
                 val onlyTimers = added.all { it.kind == Kind.Timer }
+                // A creation row is no element, and tasks alone have their own category actions.
+                val elements = added.any { ElementTree.isElement(it.kind) }
+                val onlyTasks = added.all { it.kind == Kind.Task }
                 actions.filter {
-                    (onCalendar || it !in CALENDAR_ACTIONS) && !(onlyTimers && it == AddedAction.CalendarBlocks)
+                    (onCalendar || it !in CALENDAR_ACTIONS) && !(onlyTimers && it == AddedAction.CalendarBlocks) &&
+                        (elements || it !in ELEMENT_ACTIONS) && !(onlyTasks && it in ELEMENT_CATEGORY_ACTIONS)
                 }.takeIf { it.isNotEmpty() }?.let { kind to it }
             } else if (added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
                 // The lowest countdown is of SEVERAL timers, the highest count of several chronos: one alone has its own run.
@@ -3389,6 +3471,10 @@ object SearchDomain {
                 actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS }.takeIf { it.isNotEmpty() }?.let { kind to it }
             }
         }
+
+    /** The added elements' parents and categories: nothing a list without an element offers ([actionsFor]). */
+    val ELEMENT_CATEGORY_ACTIONS: Set<AddedAction> = setOf(AddedAction.ElementAddCategory, AddedAction.ElementRemoveCategory)
+    val ELEMENT_ACTIONS: Set<AddedAction> = ELEMENT_CATEGORY_ACTIONS + setOf(AddedAction.ElementAddParent, AddedAction.ElementRemoveParent)
 
     /**
      * **One group of the actions section** (user rule 2026-10-10): the added elements its actions act on ([members])
@@ -4067,6 +4153,9 @@ object SearchDomain {
     /** One action on the added elements, with its value: what [addedIntents] turns into the app's own intents. */
     sealed interface AddedCommand {
         data class Category(val categoryId: CategoryId, val carried: Boolean) : AddedCommand
+
+        /** User rule 2026-11-02: the element [parent] made a parent of every added element ([on]), or no longer one. */
+        data class ElementParent(val parent: String, val on: Boolean) : AddedCommand
 
         data class MinimumTime(val minutes: Int) : AddedCommand
 
@@ -5365,6 +5454,7 @@ object SearchDomain {
             is AddedCommand.Category ->
                 if (taskIds.isEmpty()) emptyList()
                 else listOf(SchedulerIntent.SetTasksCategory(taskIds, command.categoryId, command.carried))
+            is AddedCommand.ElementParent -> ElementTree.parentIntents(state, added.map(::keyOf), command.parent, command.on)
             is AddedCommand.MinimumTime ->
                 if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksMinimumTime(taskIds, command.minutes))
             is AddedCommand.AlarmsOn -> {

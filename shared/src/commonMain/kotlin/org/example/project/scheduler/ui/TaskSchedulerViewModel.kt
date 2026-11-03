@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.example.project.perf.Perf
@@ -293,8 +295,34 @@ class TaskSchedulerViewModel(
         // that emits moments after startup (or in a test) then can't be dropped by the replay-0 SharedFlow for
         // lack of a subscriber. Emissions still resume on [saveScope]'s dispatcher.
         saveScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            pushRequests.debounce(AUTO_PUSH_DEBOUNCE_MILLIS).collect { engine.reconcile() }
+            pushRequests.debounce(AUTO_PUSH_DEBOUNCE_MILLIS).collect { reconcileUnlessEditing() }
         }
+        // The reconcile an edit session held back runs the moment the session ends.
+        saveScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            _state.map { it.editSession == null }.distinctUntilChanged().collect { idle ->
+                if (idle && reconcileOwed) {
+                    reconcileOwed = false
+                    engine.reconcile()
+                }
+            }
+        }
+    }
+
+    /**
+     * `sync-and-accounts.md` § *An edit session is local until it ends* (2026-11-03): while a cell is in Edit Mode, no
+     * reconcile — neither a push, which would send the tasks each keystroke makes, nor a pull, which ended the session
+     * and left a half-typed letter's task in the cell. It is owed, and runs once the session ends.
+     */
+    @kotlin.concurrent.Volatile
+    private var reconcileOwed = false
+
+    private suspend fun reconcileUnlessEditing() {
+        val engine = syncEngine ?: return
+        if (_state.value.editSession != null) {
+            reconcileOwed = true
+            return
+        }
+        engine.reconcile()
     }
 
     /** Points the Realtime snapshot subscription at the current account (or disconnects it when signed out). */
@@ -516,7 +544,7 @@ class TaskSchedulerViewModel(
     }
 
     /** The manual sync trigger (fallback / force-now). Auto-push + Realtime auto-pull also reconcile on their own. */
-    fun syncNow() = saveScope.launch { syncEngine?.reconcile() }
+    fun syncNow() = saveScope.launch { reconcileUnlessEditing() }
 
     /** The Claude Code logs the account keeps ([SchedulerSyncEngine.syncClaudeLogs]); null when sync is disabled, signed out or offline. */
     suspend fun syncClaudeLogs(batches: List<List<org.example.project.scheduler.sync.ClaudeLogRow>>, cursor: Long, pull: Boolean = true) =
@@ -582,7 +610,12 @@ class TaskSchedulerViewModel(
         // calendar display switches, WindowNav/Selection history) is local-only and must never be adopted
         // from another device — carry the current local values across the pull. (syncFingerprint likewise
         // neutralizes them, so pushing them never happens in the first place.)
-        val prepared = prepareLoadedState(decoded.withLocalViewStateFrom(_state.value))
+        val local = _state.value
+        val pulled = prepareLoadedState(decoded.withLocalViewStateFrom(local))
+        // A reconcile already on its way when the user began typing: the edit session is this device's, and it goes on.
+        val prepared =
+            local.editSession?.takeIf { it.cellId in pulled.cells }?.let { pulled.copy(editSession = it) }
+                ?: pulled.copy(editSession = null)
         _state.value = prepared
         store?.save(SchedulerStateCodec.encodeSnapshot(prepared))
         // Local state now equals the remote we just pulled — reset the sync baseline so the next tick-only

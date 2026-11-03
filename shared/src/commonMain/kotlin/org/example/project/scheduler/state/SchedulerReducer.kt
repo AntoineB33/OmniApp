@@ -630,6 +630,9 @@ object SchedulerReducer {
             is SchedulerIntent.SetLifePlan ->
                 if (state.lifePlan == intent.entries) state
                 else commitDelta(state, LifePlanDelta(state.lifePlan, intent.entries, intent.editKey))
+            is SchedulerIntent.SetElementLinks ->
+                if (state.elementLinks == intent.entries) state
+                else commitDelta(state, ElementLinksDelta(state.elementLinks, intent.entries))
             is SchedulerIntent.SetWorkplaceSetups ->
                 if (state.workplaceSetups == intent.entries) state
                 else commitDelta(state, WorkplaceSetupsDelta(state.workplaceSetups, intent.entries, intent.editKey))
@@ -1103,8 +1106,8 @@ object SchedulerReducer {
         if (text == session.draftText) return state
         // PRD §4 default selection: while typing in Change Task mode the id menu re-resolves to the first
         // eligible existing task whose title matches the text (reuse it), or "New task" when none matches.
-        // Switching to reuse drops the in-progress "New task" draft id; a run of non-matching keystrokes
-        // keeps the same draft so a fresh task isn't spun up on every keystroke.
+        // User rule 2026-11-03: **every keystroke that names nothing is a new task**, so the calendar reads A, AB,
+        // ABC; what debounces is the save and the push, never this. A blank text names nothing to make.
         val firstEligible =
             if (session.mode == CellEditMode.ChangeTask) {
                 SchedulerDomain.eligibleAssignTaskIds(state, session.cellId, text).firstOrNull()
@@ -1120,13 +1123,14 @@ object SchedulerReducer {
                         selectedAssignTaskId =
                             if (session.mode == CellEditMode.ChangeTask) firstEligible else session.selectedAssignTaskId,
                         newTaskDraftId =
-                            if (reuseExisting) null else session.newTaskDraftId,
+                            if (reuseExisting || (session.mode == CellEditMode.ChangeTask && text.isNotBlank())) null
+                            else session.newTaskDraftId,
                     ),
             )
         val committed = commitEditText(withDraft, text)
-        // Typing switched to reusing an existing task: drop the now cell-less "New task" draft (and any
-        // panels a scheduling tick gave it), mirroring PickTaskFromMenu (PRD §4).
-        return if (reuseExisting) discardDraftTask(committed, session.newTaskDraftId) else committed
+        // Typing switched to reusing an existing task: the now cell-less "New task" draft leaves, what it held on
+        // the timeline going to the task reused, mirroring PickTaskFromMenu (PRD §4).
+        return if (reuseExisting) discardDraftTask(committed, session.newTaskDraftId, firstEligible) else committed
     }
 
     private fun commitEditText(base: SchedulerState, text: String): SchedulerState {
@@ -1201,21 +1205,22 @@ object SchedulerReducer {
         // Reusing an existing task abandons the "New task" draft created while typing. If a scheduling
         // tick had meanwhile given that draft a calendar panel, [purgeOrphanTasks] would keep the now
         // cell-less draft alive through it, leaving a stray task with the same title (PRD §4: picking a
-        // suggestion must not create a new task id). Discard the draft and its transient panels.
-        return discardDraftTask(committed, session.newTaskDraftId)
+        // suggestion must not create a new task id). The draft leaves; its panels are the picked task's now.
+        return discardDraftTask(committed, session.newTaskDraftId, taskId)
     }
 
     /**
      * Remove an abandoned "New task" draft [draftId] (an editing artifact) once it is no longer pointed at
-     * by any cell: drop the auto panels a scheduling tick may have given it, then purge the task. A no-op
+     * by any cell: what it holds on the timeline is [heir]'s from now on, then the task is purged. A no-op
      * when [draftId] is null or the task is still referenced by a cell.
      */
-    private fun discardDraftTask(state: SchedulerState, draftId: TaskId?): SchedulerState {
+    private fun discardDraftTask(state: SchedulerState, draftId: TaskId?, heir: TaskId): SchedulerState {
         if (draftId == null) return state
         if (state.cells.values.any { it.taskId == draftId }) return state
-        val panels = state.panels.filterNot { it.taskId == draftId }
-        val pruned = if (panels.size != state.panels.size) state.copy(panels = panels) else state
-        return SchedulerDomain.purgeOrphanTasks(pruned)
+        val title = state.tasks[heir]?.title.orEmpty()
+        return SchedulerDomain.purgeOrphanTasks(
+            state.copy(panels = state.panels.map { if (it.taskId == draftId) it.copy(taskId = heir, title = title) else it }),
+        )
     }
 
     private fun reduceSelectCreateAssignTask(state: SchedulerState): SchedulerState {
@@ -1241,10 +1246,13 @@ object SchedulerReducer {
         val session = state.editSession ?: return state
         // A canceled edit reverts to the pre-session tree and leaves no trace: the ephemeral Edit
         // Mode history is discarded and no "rest" unit is recorded (PRD §4 Cancel, §5 categories).
-        return state.applyTree(session.treeBefore).copy(
-            editSession = null,
-            histories = state.histories.copy(edit = SchedulerHistory()),
-        )
+        // User rule 2026-11-03: the calendar is rewritten too: the time on what was typed is the cell's task's again.
+        val restored =
+            state.applyTree(session.treeBefore).copy(
+                editSession = null,
+                histories = state.histories.copy(edit = SchedulerHistory()),
+            )
+        return session.drafts?.let { withTimeGivenBack(state, restored, it) } ?: restored
     }
 
     private fun reduceNavigateSelection(
@@ -1960,7 +1968,13 @@ object SchedulerReducer {
         val after = seeded.captureTree()
         val committed =
             if (after != before) {
-                commitDelta(seeded, TreeMutationDelta(before = before, after = after, label = "Edit"))
+                commitDelta(
+                    seeded,
+                    TreeMutationDelta(
+                        before = before, after = after, label = "Edit",
+                        drafts = session?.drafts?.let { it.copy(drafts = it.drafts.filterTo(LinkedHashSet()) { id -> id in seeded.tasks }) },
+                    ),
+                )
             } else {
                 seeded
             }
@@ -5039,6 +5053,7 @@ private fun applyChangeTaskNewDraft(
     text: String,
 ): SchedulerState {
     val cellId = session.cellId
+    val minted = session.newTaskDraftId == null
     val (draftTaskId, afterAlloc) =
         session.newTaskDraftId?.let { it to state }
             ?: state.allocateTaskId().let { (id, next) -> id to next }
@@ -5047,7 +5062,52 @@ private fun applyChangeTaskNewDraft(
         working = applyAssignTaskId(working, cellId, draftTaskId)
     }
     working = applySetCellTitle(working, cellId, text, forceTaskId = draftTaskId)
-    return working.copy(editSession = session.copy(newTaskDraftId = draftTaskId))
+    return working.copy(
+        editSession =
+            session.copy(
+                newTaskDraftId = draftTaskId,
+                draftTaskIds = if (minted || draftTaskId !in session.draftTaskIds) session.draftTaskIds + draftTaskId else session.draftTaskIds,
+            ),
+    )
+}
+
+/**
+ * User rule 2026-11-03: **a cell's edit undone rewrites the calendar**: A, AB, ABC reads A alone again, whenever it is
+ * undone. Every panel and record of [EditDrafts.drafts], as they stand in [live], is the base task's in [restored] (the
+ * state with the tree put back), or leaves with the drafts where the cell held none. A draft a cell holds by now stays.
+ */
+internal fun withTimeGivenBack(live: SchedulerState, restored: SchedulerState, edit: EditDrafts): SchedulerState {
+    val held = restored.cells.values.mapNotNullTo(HashSet()) { it.taskId }
+    val gone = edit.drafts.filterTo(HashSet()) { it !in held }
+    if (gone.isEmpty()) return restored
+    val base = edit.base?.let { restored.tasks[it] }
+    val panels =
+        restored.panels.mapNotNull { panel ->
+            when {
+                panel.taskId !in gone -> panel
+                base == null -> null
+                else -> panel.copy(taskId = base.id, title = base.title)
+            }
+        }
+    val spent = if (base == null) emptyList() else gone.flatMap { live.tasks[it]?.record.orEmpty() }
+    val tasks =
+        restored.tasks.filterKeys { it !in gone }.let { kept ->
+            if (base == null || spent.isEmpty()) {
+                kept
+            } else {
+                val joined = ArrayList<TaskTimeRange>()
+                for (range in (base.record + spent).sortedBy { it.startEpochMillis }) {
+                    val last = joined.lastOrNull()
+                    if (last != null && range.startEpochMillis <= last.endEpochMillis) {
+                        joined[joined.lastIndex] = TaskTimeRange(last.startEpochMillis, maxOf(last.endEpochMillis, range.endEpochMillis))
+                    } else {
+                        joined += range
+                    }
+                }
+                kept + (base.id to base.copy(record = joined))
+            }
+        }
+    return SchedulerDomain.purgeOrphanTasks(restored.copy(tasks = tasks, panels = SchedulerDomain.mergeSameTaskPanels(panels)))
 }
 
 private fun assignTaskIdDelta(
@@ -6978,8 +7038,10 @@ private fun applySetCellTitle(
 
     // PRD §4: reassigning this cell to a different task (e.g. typing a new title in Change Task mode spins up
     // a fresh draft) leaves the cell's *previous* task behind. Drop its now-stale occurrence and, when no
-    // cell points at it anymore, its ephemeral (auto, non-pinned) scheduler panels — a task typed only to
-    // fill this cell is just an editing leftover, so without a real binding [purgeOrphanTasks] removes it.
+    // cell points at it anymore, the (auto, non-pinned) scheduler panels still ahead of the line — a task typed
+    // only to fill this cell is just an editing leftover, so with nothing behind the line
+    // [purgeOrphanTasks] removes it. What is behind the line stays (`scheduler.md` § *frozen past*, user rule
+    // 2026-11-03: the calendar reads A, AB, ABC), and the run the line is in goes on under the new task at once.
     // Pinned/manual panels and recorded periods are real user data and still keep it alive (a genuinely
     // deleted scheduled task whose history is preserved, PRD §9).
     // A RENAME RENAMES WHAT THE SCHEDULE ALREADY SHOWS, at the keystroke that renames the task.
@@ -7003,8 +7065,20 @@ private fun applySetCellTitle(
             )
         }
         if (result.cells.values.none { it.taskId == vacatedTaskId }) {
-            val trimmed = result.panels.filterNot { it.taskId == vacatedTaskId && it.auto && !it.pinned }
-            if (trimmed.size != result.panels.size) result = result.copy(panels = trimmed)
+            val nowMillis = SchedulerReducer.clock.nowMillis()
+            val trimmed =
+                result.panels.flatMap { panel ->
+                    when {
+                        panel.taskId != vacatedTaskId || !panel.auto || panel.pinned -> listOf(panel)
+                        panel.endEpochMillis <= nowMillis -> listOf(panel)
+                        panel.startEpochMillis >= nowMillis -> emptyList()
+                        else -> listOf(
+                            panel.copy(endEpochMillis = nowMillis),
+                            panel.copy(id = panel.id + "/" + taskId.value, taskId = taskId, title = title, startEpochMillis = nowMillis),
+                        )
+                    }
+                }
+            if (trimmed != result.panels) result = result.copy(panels = trimmed)
         }
     }
 
@@ -7224,14 +7298,18 @@ internal data class ToggleExpandDelta(
 internal data class TreeMutationDelta(
     val diff: TreeDiff,
     override val label: String = "Tree change",
+    /** A cell's edit that made tasks: undoing it gives the time on them back ([withTimeGivenBack]). Redo leaves it there. */
+    val drafts: EditDrafts? = null,
 ) : Delta {
     /** Built from the whole tree before and after the change; only what differs is kept ([TreeDiff]). */
-    constructor(before: TreeSnapshot, after: TreeSnapshot, label: String = "Tree change") : this(TreeDiff.of(before, after), label)
+    constructor(before: TreeSnapshot, after: TreeSnapshot, label: String = "Tree change", drafts: EditDrafts? = null) :
+        this(TreeDiff.of(before, after), label, drafts)
 
     override val details: List<String>
         get() = treeDiffLines(diff)
 
-    override fun undo(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = false)
+    override fun undo(state: SchedulerState): SchedulerState =
+        diff.applyTo(state, forward = false).let { restored -> drafts?.let { withTimeGivenBack(state, restored, it) } ?: restored }
 
     override fun redo(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = true)
 
@@ -7562,6 +7640,31 @@ internal data class QuotasDelta(
 
     override fun commit(state: SchedulerState): SchedulerState =
         state.copy(quotas = changes.applyToList(state.quotas, forward = true, exact = true) { it.id })
+}
+
+/** User rule 2026-11-02: a change to the **links between elements**: [ChronosDelta]'s rule, the rows whole. */
+internal data class ElementLinksDelta(
+    val changes: EntryChanges<String, org.example.project.scheduler.domain.ElementLink>,
+) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.domain.ElementLink>,
+        after: List<org.example.project.scheduler.domain.ElementLink>,
+    ) : this(EntryChanges.ofList(before, after) { it.id })
+
+    override val label: String
+        get() = "Parents and children"
+
+    override val details: List<String>
+        get() = changes.touched.map { id -> if (id in changes.after) "linked: $id" else "unlinked: $id" }
+
+    override fun undo(state: SchedulerState): SchedulerState =
+        state.copy(elementLinks = changes.applyToList(state.elementLinks, forward = false) { it.id })
+
+    override fun redo(state: SchedulerState): SchedulerState =
+        state.copy(elementLinks = changes.applyToList(state.elementLinks, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(elementLinks = changes.applyToList(state.elementLinks, forward = true, exact = true) { it.id })
 }
 
 /**

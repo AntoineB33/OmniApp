@@ -1939,7 +1939,11 @@ class SchedulerReducerTest {
         // PRD §4: editing a cell and changing its text to a new task spins up a fresh draft and leaves the
         // cell's previous task behind. That previous task, kept alive only by an ephemeral auto panel (a
         // scheduling tick) with no cell, is an editing leftover — it must be purged along with its auto
-        // panel, not linger as a ghost task/calendar block.
+        // panel, not linger as a ghost task/calendar block. The panel is AHEAD of the line here: what is behind it
+        // stays (user rule 2026-11-03, `EditKeystrokeTasksTest`).
+        val clock = SchedulerReducer.clock
+        SchedulerReducer.clock = object : org.example.project.time.AppClock { override fun nowMillis() = 0L }
+        try {
         var s = SchedulerState.empty()
         val cellId = s.lists[s.rootListId]!!.cellIds.first()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Alpha"))
@@ -1958,6 +1962,9 @@ class SchedulerReducerTest {
             s.panels.any { it.taskId == originalTaskId },
             "the abandoned previous task's auto panel must be dropped",
         )
+        } finally {
+            SchedulerReducer.clock = clock
+        }
     }
 
     @Test

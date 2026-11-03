@@ -28,14 +28,28 @@ class WorkplaceRuns(
     fun canApply(setup: WorkplaceSetup): Boolean = WorkplaceDomain.canApply(setup, here)
 
     /** Applies [setup] where it can be applied; [onFailed] runs off the caller's thread, the error kept for [errorOf]. */
-    fun apply(setup: WorkplaceSetup, onFailed: () -> Unit = {}) {
-        if (!canApply(setup) || isRunning(setup.id)) return
-        errors.remove(setup.id)
-        running[setup.id] = Unit
-        run(setup) { error ->
-            if (error != null) errors[setup.id] = error
-            running.remove(setup.id)
-            if (error != null) onFailed()
+    fun apply(setup: WorkplaceSetup, onFailed: () -> Unit = {}) = applyAll(listOf(setup), onFailed)
+
+    /**
+     * Applies [setups], a setup and its children ([org.example.project.scheduler.domain.ElementTree.workplaceFamily]), one
+     * after the other: each takes the foreground and the keyboard as it opens, so two at once would type into each other.
+     * One that fails does not stop the next.
+     */
+    fun applyAll(setups: List<WorkplaceSetup>, onFailed: () -> Unit = {}) {
+        val next = setups.filter { canApply(it) && !isRunning(it.id) }.distinctBy { it.id }
+        next.forEach {
+            errors.remove(it.id)
+            running[it.id] = Unit
         }
+        fun step(index: Int) {
+            val setup = next.getOrNull(index) ?: return
+            run(setup) { error ->
+                if (error != null) errors[setup.id] = error
+                running.remove(setup.id)
+                if (error != null) onFailed()
+                step(index + 1)
+            }
+        }
+        step(0)
     }
 }

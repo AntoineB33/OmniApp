@@ -112,10 +112,18 @@ changes state. Two debounces, and neither is a throttle — a burst of typing co
 trigger bumps `scheduler_head`, and each peer's `RealtimeSnapshotSubscriber` receives that change and pokes its own
 reconcile.
 
-**A mid-edit keystroke saves but does not push, and that is correct**: the edit session is local-only view
-state (it is not in the encoded snapshot at all), so the fingerprint does not move until the title is
-committed at `endEditSession`. Do not "fix" that by syncing the draft — a half-typed title is not an
-authoritative change, and peers must not see one.
+**An edit session is local until it ends: no reconcile runs while a cell is in Edit Mode** (2026-11-03,
+`TaskSchedulerViewModel.reconcileUnlessEditing`, `TwoDevicesEditTest`). A keystroke DOES change the tree (each one is a
+task, `task-tree.md`), so the fingerprint moves and the push is asked for — it is held, as is a pull a peer's push pokes,
+and the one reconcile they owe runs when the session ends. Before, the push sent each half-typed task, and a pull ended
+the session in the middle of a word: the letter's task stayed in the cell, on both devices, and the next keystrokes were
+lost. A pull already on its way when the typing began keeps the local session (`applyRemoteSnapshot`). Do not "fix" this
+by syncing the draft: a half-typed title is not an authoritative change, and peers must not see one.
+
+**An id is unique across the account's devices** (2026-11-03, `SchedulerState.mintedNumber`, `TwoDevicesEditTest`). Each
+counter is the device's own, so two devices minting at once handed out the same task, cell, list, panel, category or tree
+id, and the merge made two things one — or kept one and lost the other. A synced device tags what it mints with its own
+id (`task/user/12.3b941b56`); a build without sync keeps the bare number; ids minted before keep their shape.
 
 ### Conflicts are MERGED
 
@@ -127,6 +135,9 @@ server holds them after the last reconcile).
 - `Task.record` is **unioned**; panels/chores/alarms resolve as **whole objects**; id counters take the
   **max**; ordered lists merge membership then follow the remote's order.
 - **The result is repaired, not trusted** (`SnapshotMerge.repair` + `pruneDetachedTree`).
+- **A row the server forgot to stay under its limit is not a deletion** (user rule 2026-11-03, NOT BUILT YET;
+  `server-quota.md` § *Near the limit, the server forgets*): the device keeps it, and "deleted on one side" does not
+  apply to it. The server no longer holds the whole account.
 - **The merge is applied locally AND pushed** — as the rows it changed.
 - **History is not merged, it is shared**: every unit is its device's, and a pulled unit is added beside the local
   ones (`MergePeerHistory`).

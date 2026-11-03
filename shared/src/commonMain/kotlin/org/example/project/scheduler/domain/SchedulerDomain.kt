@@ -72,7 +72,8 @@ object SchedulerDomain {
      */
     fun isUserTaskId(taskId: TaskId): Boolean = USER_TASK_ID_PATTERN.matches(taskId.value)
 
-    private val USER_TASK_ID_PATTERN = Regex("""task/user/\d+""")
+    // The number, then the minting device's tag where a synced device minted it ([SchedulerState.mintedNumber]).
+    private val USER_TASK_ID_PATTERN = Regex("""task/user/\d+(\.[A-Za-z0-9]+)?""")
 
     fun isSelectableCell(state: SchedulerState, cellId: CellId): Boolean {
         val cell = state.cells[cellId] ?: return false
@@ -7628,6 +7629,21 @@ object SchedulerDomain {
     }
 
     /**
+     * Every task [cellId] may take, whatever its title: [canAssignTaskId] over the account, the sub-list and the ancestor
+     * path read once — what the cell's Edit Mode pop-up lists ([org.example.project.ui.CellEditPopupLayer]). The sub-tree
+     * walks are per task, so it is asked once a session, never per keystroke.
+     */
+    fun assignableTaskIds(state: SchedulerState, cellId: CellId): Set<TaskId> {
+        if (!isSelectableCell(state, cellId)) return emptySet()
+        val siblings = siblingTaskIds(state, cellId)
+        val collisionScope = assignCollisionScope(state, cellId)
+        return state.tasks.keys.filterTo(HashSet()) { candidate ->
+            !isRootTask(candidate) && candidate !in siblings &&
+                structuralSubtreeTaskIds(state, candidate, excludeCellId = cellId).none { it in collisionScope }
+        }
+    }
+
+    /**
      * PRD §5: the tasks a sub-list's **priority-weight table** may take as an **optional row** while its add
      * row shows [text] — the identity menu of that row, exactly as [eligibleAssignTaskIds] is the identity
      * menu of a cell of the tree.
@@ -8296,14 +8312,35 @@ object SchedulerDomain {
                     state.panels.mapNotNull { it.taskId } +
                     state.tasks.keys.filter { isDetachedParentTask(state, it, withCells) }
                 ).let { keptWithTheirSets(state.tasks, it) }
+        // User rule 2026-11-03: *"There should not be placeholder for things that are deleted"*. A task no cell holds
+        // keeps no sub-list of placeholders alone: the list and its empty cells go, and naming the task in a cell again
+        // makes a new one, as for any task without one. Its rows were sent to the server for nothing.
+        val emptyLists =
+            state.tasks.values.mapNotNull { task ->
+                task.childListId?.takeIf { task.id !in withCells && !isRootTask(task.id) }
+                    ?.let { id -> state.lists[id] }
+                    ?.takeIf { list -> list.cellIds.all { state.cells[it]?.taskId == null } }
+            }
+        val gone = emptyLists.mapTo(HashSet()) { it.id }
+        val goneCells = emptyLists.flatMapTo(HashSet()) { it.cellIds }
         val tasks =
             state.tasks
                 .filterKeys { it in referenced }
                 .mapValues { (_, task) ->
-                    task.copy(childTaskIds = task.childTaskIds.filter { it in referenced })
+                    task.copy(
+                        childTaskIds = task.childTaskIds.filter { it in referenced },
+                        childListId = task.childListId?.takeIf { it !in gone },
+                    )
                 }
         val titleToTaskIds = buildTitleIndex(tasks)
-        return state.copy(tasks = tasks, titleToTaskIds = titleToTaskIds)
+        if (gone.isEmpty()) return state.copy(tasks = tasks, titleToTaskIds = titleToTaskIds)
+        return state.copy(
+            tasks = tasks,
+            titleToTaskIds = titleToTaskIds,
+            lists = state.lists - gone,
+            cells = state.cells - goneCells,
+            expanded = state.expanded - goneCells,
+        )
     }
 
     /**

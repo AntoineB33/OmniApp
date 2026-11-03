@@ -5,6 +5,32 @@ Global rules that always apply: `CLAUDE.md`.
 
 ---
 
+### Every element is in one tree of parents and children
+
+`scheduler/domain/ElementTree.kt`, user rule 2026-11-02. **The one reading of "parent" and "child" between elements**: never a
+second copy of it on a kind of element.
+
+- **A category is a parent of what carries it.** So an element's categories are no list of their own, and "Add a category" is
+  "Add a parent" with the categories alone to pick. A task keeps `categoryIds` and its sub-list: `ElementTree.parentIntents`
+  routes a task under a task to `AddTaskPath` / `RemoveTaskPath` and a task under a category to `SetTasksCategory`, and every
+  other link is one `SetElementLinks`. Categories on another element count for no rule of priority.
+- **`ElementTree.canLink` is the one rule of what may be a child of what.** Nothing is its own parent, nor the parent of what
+  stands above it. A task has task children alone (the tree's `canAddUnder`), and may itself be a child of another kind of
+  element. Nothing is a child of a task cell category. A "creation" row is a command, no element. A new refusal goes there.
+- **Every row of the Search window but a "creation" row has an arrow** (`ElementChildren`, a task's row keeps `SearchSubtree`,
+  whose blank cell is typed into). Under it stand the element's children, each with its arrow and a ✕ taking it out of this
+  parent, then a blank field. **A double-click on the blank field opens a Search window coming from the element**
+  (`SearchRowOpeners.onOpenChildSearch`, `Config.elementSource`), linked to the window it was asked from. "Add a parent" has an
+  element selector and, beside it, a button adding that element. The open rows are kept with the window's sections
+  (`SearchSplits.expandedElements`), by surface and path.
+- **That window starts with its parent excluded** (`Filters.excludedElements`). "Excluded elements" and "Included elements"
+  are filters of the "Every element" group, about any element. **An included element is in the list whatever would keep it
+  out**: every other filter, an exclusion, an unchecked kind, the search text. So `results` asks it last, and adds the rows
+  no kind listed. Each is a check-box drop-down listing the account's elements as it is scrolled (`ElementsDropDown`), what is
+  checked and not reached yet at its head.
+- **What a link DOES is the kind's.** Applying a workplace setup applies what stands under it (`workplaceFamily`), one setup at
+  a time since each takes the keyboard. No other kind acts on its children yet.
+
 ### The task-tree timeline
 
 - A dated tree is a **keyframe**; between two, the scheduler follows a linear blend, not the tree on screen.
@@ -275,6 +301,40 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
 
 ### The selection and Edit Mode belong to the TREE, not to the pointer
 
+- **In Change Task, every keystroke that names nothing is a NEW task** (user rule 2026-11-03: *"It must be one per
+  keystroke. The bouncing is for when it is sent to the server."*; `reduceUpdateEditText`, `EditKeystrokeTasksTest`). A, then
+  AB, then ABC are three ids, so with the line on the cell the calendar reads A, AB, ABC. Rename stays one id. A blank text
+  makes none.
+  - **The task the cell leaves keeps what is behind the line; the run the line is in goes on under the new task on that
+    keystroke** (`applySetCellTitle`), with no wait for a plan. What is ahead of the line leaves with it.
+  - **Nothing behind the line, nothing kept**: on a cell the line is not on, each letter's task is purged by the next, so
+    a row reaches the server only for a stretch of the timeline (`server-quota.md`).
+  - **Escape, and Ctrl+Z after Enter, rewrite it as the first task alone, whenever pressed**: `EditDrafts`,
+    `withTimeGivenBack`. Time cannot live in the tree diff, it keeps passing after Enter, so the unit names the tasks and
+    the base, and undo moves whatever they hold by then, records included. Redo leaves it on the base. A cell that held
+    nothing has nothing to give it to, and it leaves with them.
+  - **Reusing a task** (a typed title, a picked row) ends the last draft: what it held is the reused task's
+    (`discardDraftTask`), never a stray task of the same title. The drafts before it keep theirs.
+  - The session stays local until it ends (`sync-and-accounts.md`), and the save and the push stay debounced.
+
+- **A cell in Edit Mode shows a rectangle, over every window, and no menu under the row** (user rule 2026-11-02;
+  `ui/CellEditPopup.kt`, `CellEditPopupRulesTest`, `CellEditPopupTest`). It stands below the cell, else above, else on its
+  left, else on its right, each only where it fits whole (`cellEditPopupOffset`). One switch, "switch task" on (the
+  default) or "rename" off, the session's Mode through `cellEditModeOptions`; none on a cell being created. Under it, a
+  Search window (`SearchPicker`) with no head, no added elements and no actions, nor what serves them: the kinds,
+  Reset and "All configurations", and no row opens a sub-tree.
+  - **The bar IS the draft**, both ways: there is one text. The caret stays in the cell, and the bar is entered by a press;
+    its own focus-on-open would lose the first letters typed (below).
+  - **It is a layer of the content area, never a `Popup`**: a non-focusable one cannot be typed in, a focusable one eats the
+    outside press Forced Exit needs. So the rectangle is an `outsidePressPart` of the cell's edit, and gives the frame
+    focus back to the cell's window, which the content area's own press observer drops.
+  - **It is the one drawing for all three trees**: `state`/`onIntent` are the drawn tree's, the rows the account's
+    (`namingSource`), the list `SchedulerDomain.assignableTaskIds` (`canAssignTaskId`'s question, read once a session).
+  - **One click on a result is `PickTaskFromMenu` then `ExitEdit(Stay)`**, taken on the Initial pass (`pickOnClick`), so
+    nothing inside the row answers it. A right-click still opens the row's menu. In Rename no row acts: the field is
+    naming the cell's own task. The "New task" row is `changeTaskMenuEntries`' answer, as before, above the results: the
+    only way to a second task of a title. Enter on a result picks it; Escape cancels the edit from anywhere in it.
+
 - **A finger's Shift+click is the selection's two DOTS** (user rule 2026-10-04, `TaskTreeView`,
   `SelectionHandlesTouchTest`): while the last press in the tree was a finger's, the rows drawn selected (the one
   highlight funnel, `shouldShowSelectionHighlight`) wear a dot on the first one's top-left corner and the last one's
@@ -303,7 +363,7 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   (`ExitEdit(Stay)`, PRD §4 *Forced Exit*, user spec 2026-09-30 — it reversed "a click elsewhere keeps the
   rename open"). Decided by the ONE root press observer (`TransientMenuHost`, `ui/PopupWindows.kt`): `TaskRow`
   registers its edit with `rememberOutsidePressEditor` and marks the title field and the inline menu block with
-  `outsidePressPart`; what draws in a `Popup` (the mode drop-down, an id row's menu) never reaches the observer
+  `outsidePressPart`, and the rectangle above; what draws in a `Popup` (an id row's menu) never reaches the observer
   and so is inside by construction. The press is never consumed, so a press on another cell commits here and
   selects there. Never a per-surface outside-click handler, and never `CancelEdit` — a stray click must not
   throw the draft away. A field whose edit mode is its FOCUS (the task-tree name field with its menus, every
@@ -318,8 +378,8 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   flag each surface has to remember to pass on. Losing focus on its own (a chord moving focus, no press) never
   ends the session — only a press outside does (above).
 - **A Mode pick hands the caret back to the field — every pick, the current mode included**
-  (`cellEditModeOptions`, which ends each option in `onModePicked`). The drop-down is a focusable popup, so it
-  took the focus, and the state cannot give it back: re-picking the current mode is a reducer no-op. So the
+  (`cellEditModeOptions`, which ends each option in `onModePicked`). The switch took the focus,
+  and the state cannot give it back: re-picking the current mode is a reducer no-op. So the
   pick bumps a counter that is a key of the cell's ONE focus effect (the `LocalTreeKeyboardOwned` one above),
   which waits a frame for the popup to leave and requests focus. Do not add a second `requestFocus` call
   site for it — it would skip the `keyboardOwned` gate.
@@ -808,9 +868,15 @@ suggestions before it was ever entered.
   raises and focuses the tree WINDOW before revealing the cell.
 - **Every row's selection is the tree's** — the outline (`taskCellOutline`), no fill — and moving it scrolls the
   list only when it would leave what is shown, by just enough to bring it to the nearer edge.
+- **A press anywhere but on a row takes the selection away**, in the result list and in the added elements (anomaly
+  2026-11-03: *"When the user clicks elsewhere, the selected element should stop being selected."*). The rows are the
+  parts of one outside-press edit (`rememberOutsidePressEditor`); a row's own menu is a `Popup`, so it is inside. Until a
+  row is selected again, none is — not the first one the list otherwise falls back to (`deselected`). The task tree keeps
+  its own rule: there, only a press on another cell moves the selection.
 - **A double-click on a result row never opens a window** (user rule 2026-10-01): on a task row's title it enters
   Edit Mode (the tree's rule), on any other row it ADDS the element to the added elements (`addKeys`) — a "creation"
-  row excepted, which is a command and still makes its element.
+  row and a workplace setup excepted, which are commands: a creation row makes its element, a workplace setup is
+  applied and that is all (anomaly 2026-11-03: applying went through `showCreated`, the "New" path, and added it).
 - **The row menu's "add and remove the others"** (`ADD_REPLACING_LABEL`, beside "add" in both menus — the task cell's
   `TaskCellMenuActions.onAddReplacing` and `ItemResultRow`'s): the selected rows become the WHOLE added list, every
   element added before leaving it (`addSelected(replacing = true)`).
@@ -1238,12 +1304,11 @@ suggestions before it was ever entered.
   (anomaly 2026-10-21, as the task tree's and the calendar's): a drag of it brings the section back at the size the
   drag gives it, from where the line stands, in the same gesture. Only a line between two retracted sections is a
   plain divider. `SearchSectionsTest`. The actions section has no "All
-  configurations" button any more — every action is listed in it. Every result row has a check box (Compose-only, like the selection),
-  and so does every task cell of an expanded row's sub-tree (`TaskTreeView`'s `rowLeading`): one box per TASK
-  key (`SearchDomain.taskKey`), so a task's cell and its own row show the same box. **TWO ways to add, never one
-  falling back on the other** (user rule 2026-10-01): the **Add** button adds the CHECKED rows listed now — the result
-  rows, then the expanded rows' sub-tree tasks — else it is greyed; a row's right-click menu **"add"** adds the
-  SELECTED rows, in the list's order. The result rows are selected with `ClickSelection` (the window bar's tabs' rule:
+  configurations" button any more — every action is listed in it. **ONE way to add: a row's right-click menu "add"**,
+  on the SELECTED rows, in the list's order, and **Ctrl+A in the list selects every row** (user rule 2026-11-03: *"Remove
+  the check boxes on the search result list, and "Select all" and "add" button, as they are redundant with right-click
+  and ctrl+a."*; `SearchSelectAllTest`). No row and no sub-tree cell has a check box, and the search section has no
+  "Select all" or "Add" — they were the second way of 2026-10-01. The result rows are selected with `ClickSelection` (the window bar's tabs' rule:
   a click selects one row, Ctrl+click adds or takes one, Shift+click the range from the anchor); the selected row (the
   thick outline, the state's, walked by `Alt+←`) is the last one clicked, the others take the thin outline; the
   multi-selection is Compose-only and the keys (or any one-row selection) drop it. **A right-click selects its row

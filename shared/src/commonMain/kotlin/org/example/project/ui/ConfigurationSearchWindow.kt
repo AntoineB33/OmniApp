@@ -400,6 +400,9 @@ private fun SettingEditor(
             val reset = SearchDomain.resetConfig(config, openedConfig)
             ResetButton(enabled = reset != config) { onChange(reset) }
         }
+        // "any" is no list: it does not appear by default (user rule 2026-11-02).
+        SearchDomain.Setting.CompletionList ->
+            EnumPicker(SearchDomain.Completion.entries, config.completion, { it.label }) { onChange(config.copy(completion = it)) }
         // The calendar filter: its three states (user rule 2026-10-07 — what can be added without removing anything
         // where the user right-clicked, what can be added, or no filter), the instant, and — only for a window the
         // calendar's "add…" opened — the button that puts the instant back on that right-click.
@@ -468,6 +471,10 @@ private fun SettingEditor(
                 )
                 if (f.blocksOf.isNotEmpty()) FrameButton("✕") { filters(f.copy(blocksOf = emptySet())) }
             }
+        SearchDomain.Setting.ExcludedElements ->
+            ElementsDropDown(state, f.excludedElements, windows) { filters(f.copy(excludedElements = it)) }
+        SearchDomain.Setting.IncludedElements ->
+            ElementsDropDown(state, f.includedElements, windows) { filters(f.copy(includedElements = it)) }
         SearchDomain.Setting.CategoryHasRules ->
             Choices(SearchDomain.Tri.entries, f.categoryHasRules, { it.label }) { filters(f.copy(categoryHasRules = it)) }
         SearchDomain.Setting.PeriodOriginSetting ->
@@ -858,6 +865,40 @@ private fun changedKindsFace(kinds: Set<SearchDomain.Kind>): String =
  * a draft that names nothing is dropped as the editor closes, like a weight-table row's. A task is drawn in its own
  * colour, like every named task. The chosen element's key is drawn beside it.
  */
+/**
+ * User rule 2026-11-02: **a check-box drop-down of the account's elements** ([ElementTree.pickable]). An account has thousands:
+ * they are listed as the list is scrolled ([CheckBoxDropDown]'s `onNearEnd`), and one [checked] and not reached yet heads the
+ * list, so what is checked can always be unchecked. An element gone stands there under its key.
+ */
+@Composable
+private fun ElementsDropDown(
+    state: SchedulerState,
+    checked: Set<String>,
+    windows: List<SearchDomain.WindowEntry>,
+    onChange: (Set<String>) -> Unit,
+) {
+    val elements =
+        remember(state.tasks, state.categories, state.periodKinds, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.taskTrees, state.workplaceSetups) {
+            org.example.project.scheduler.domain.ElementTree.pickable(state)
+        }
+    val names = remember(elements) { elements.toMap() }
+    var shown by remember { mutableStateOf(ELEMENTS_LISTED_AT_ONCE) }
+    val reached = elements.take(shown).map { it.first }
+    fun nameOf(key: String) = names[key] ?: SearchDomain.changedElementTitle(state, key, windows)
+    val options = checked.filterNot { it in reached }.sortedBy(::nameOf) + reached
+    CheckBoxDropDown(
+        options = options,
+        checked = checked,
+        face = if (checked.isEmpty()) "none" else checked.map(::nameOf).sorted().joinToString(", "),
+        label = ::nameOf,
+        onChange = onChange,
+        onNearEnd = { if (shown < elements.size) shown += ELEMENTS_LISTED_AT_ONCE },
+    )
+}
+
+/** How many elements [ElementsDropDown] adds to its list at a time. */
+private const val ELEMENTS_LISTED_AT_ONCE: Int = 100
+
 @Composable
 private fun ChangedElementField(
     state: SchedulerState,

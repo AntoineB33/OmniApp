@@ -11313,7 +11313,7 @@ internal fun EditMenuSectionLabel(text: String) {
  *    right-click, exactly as a tree row's menu never doubles as a selection.
  */
 @Composable
-private fun EditMenuRow(
+internal fun EditMenuRow(
     label: String,
     selected: Boolean = false,
     focusPreserving: Boolean = false,
@@ -11543,7 +11543,7 @@ private fun EditMenuSectionRow(row: EditMenuItem, focusPreserving: Boolean) {
 /**
  * PRD §14: the reminder adapter over [EditModeMenuBlock] — used by the reminders manager
  * ([ChoresManagerWindow]), the "add reminder" window ([ReminderEditWindow]) and the "constrained in" picker
- * ([ReminderConstraintEditWindow]), the reminder counterpart of the task cell's `EditModeMenus`. It renders a
+ * ([ReminderConstraintEditWindow]), the reminder counterpart of what a task cell's Edit Mode names a task with. It renders a
  * **Mode** selector ([ReminderEditMode]), then — in [ReminderEditMode.Change] only, and only when at least one
  * existing reminder matches — a **Reminders** id menu led by a "new" row, and finally a **Title suggestions**
  * menu shown in both modes. Selection/picking semantics are supplied by the caller.

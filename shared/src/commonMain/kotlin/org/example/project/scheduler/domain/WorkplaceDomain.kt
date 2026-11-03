@@ -154,17 +154,23 @@ object WorkplaceDomain {
 
     /**
      * **The PowerShell that does [steps] on Windows 11.** Windows has no command for a tab of the file explorer, so a
-     * window is opened on its first path and each other tab is typed into it: Ctrl+T, the address bar, the path. Before
-     * every keystroke the script asks whether that window is still the one in front, and stops if not: the keys of a
-     * window that lost the foreground would go to whatever took it. So what is typed into comes first: a window opened
-     * before it would take the foreground it needs.
+     * window is opened on its first path and each other tab is made in it with Ctrl+T. Before every keystroke the script
+     * asks whether that window is still the one in front, and stops if not: the keys of a window that lost the foreground
+     * would go to whatever took it. So what is typed into comes first: a window opened before it would take the
+     * foreground it needs.
+     *
+     * **The new tab is NAVIGATED, never typed into** (anomaly 2026-11-03: a tab opened on `…\UI\examples` had its up
+     * arrow lead to "Accueil" — Home, where Ctrl+T opens — instead of `…\UI`): it is found among the shell's windows
+     * (each tab is one, on the window's handle) as the one showing Home, and asked to go to the path itself. The typed
+     * address bar is what is left where no such tab is found.
      */
     fun windows11Script(steps: List<WorkplaceStep>): String =
         buildString {
             append(WINDOWS_11_PRELUDE)
             for (step in steps.sortedBy { !it.app.tabbed }) {
                 val first = step.paths.firstOrNull() ?: continue
-                val typed = { paths: List<String> -> paths.joinToString(", ") { powerShellQuoted(sendKeysText(it)) } }
+                // The paths as they are: the script navigates to them, and escapes them itself where it has to type them.
+                val typed = { paths: List<String> -> paths.joinToString(", ") { powerShellQuoted(it) } }
                 if (step.app == WorkplaceApp.VsCode) {
                     append("Open-VsCode ").append(powerShellQuoted(first)).append("\n")
                 } else if (step.app == WorkplaceApp.ClaudeCode) {
@@ -264,12 +270,27 @@ object WorkplaceDomain {
         |    ${'$'}start.WorkingDirectory = ${'$'}folder
         |    [void][System.Diagnostics.Process]::Start(${'$'}start)
         |}
+        |function Get-SendKeysText([string]${'$'}text) {
+        |    [regex]::Replace(${'$'}text, '[+^%~(){}\[\]]', { '{' + ${'$'}args[0].Value + '}' })
+        |}
+        |function Get-HomeTab([long]${'$'}window) {
+        |    @(${'$'}shell.Windows()) | Where-Object {
+        |        ${'$'}_.FullName -like '*explorer.exe' -and [long]${'$'}_.HWND -eq ${'$'}window -and
+        |            ${'$'}(try { ${'$'}_.Document.Folder.Self.Path } catch { '' }) -like '::*'
+        |    } | Select-Object -Last 1
+        |}
         |function Add-Tabs([long]${'$'}window, [string[]]${'$'}paths) {
         |    foreach (${'$'}path in ${'$'}paths) {
         |        Send-Keys ${'$'}window '^t' 700
-        |        Send-Keys ${'$'}window '^l' 300
-        |        Send-Keys ${'$'}window ${'$'}path 150
-        |        Send-Keys ${'$'}window '{ENTER}' 500
+        |        ${'$'}tab = Get-HomeTab ${'$'}window
+        |        if (${'$'}tab) {
+        |            ${'$'}tab.Navigate2(${'$'}path)
+        |            Start-Sleep -Milliseconds 500
+        |        } else {
+        |            Send-Keys ${'$'}window '^l' 300
+        |            Send-Keys ${'$'}window (Get-SendKeysText ${'$'}path) 150
+        |            Send-Keys ${'$'}window '{ENTER}' 500
+        |        }
         |    }
         |}
         |

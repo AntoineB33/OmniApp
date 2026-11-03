@@ -895,6 +895,9 @@ data class SchedulerState(
 
     /** User rule 2026-11-02: the life plan, one row per step, tab and line of a tab; persisted and synced like [chronos]. */
     val lifePlan: List<org.example.project.scheduler.domain.LifePlanEntry> = emptyList(),
+
+    /** User rule 2026-11-02: which element is a parent of which, a category of what it is carried by; synced like [chronos]. */
+    val elementLinks: List<org.example.project.scheduler.domain.ElementLink> = emptyList(),
     /**
      * User rule 2026-10-03: the account's **quotas** ([org.example.project.scheduler.model.QuotaEntry]). Authoritative,
      * persisted and synced like [chronos]; a quota's progression is derived and never stored.
@@ -1527,12 +1530,12 @@ data class SchedulerState(
     }
 
     fun allocateTaskTreeId(): Pair<TaskTreeId, SchedulerState> {
-        val id = TaskTreeId("tree/$nextTaskTreeCounter")
+        val id = TaskTreeId("tree/" + mintedNumber(nextTaskTreeCounter))
         return id to copy(nextTaskTreeCounter = nextTaskTreeCounter + 1)
     }
 
     fun allocateTaskId(): Pair<TaskId, SchedulerState> {
-        val id = TaskId("task/user/$nextTaskCounter")
+        val id = TaskId("task/user/" + mintedNumber(nextTaskCounter))
         return id to copy(nextTaskCounter = nextTaskCounter + 1)
     }
 
@@ -1542,12 +1545,15 @@ data class SchedulerState(
      * next allocation would hand the same id to a different task. A no-op for an id of another shape.
      */
     fun reserveTaskId(taskId: TaskId): SchedulerState {
-        val suffix = taskId.value.substringAfterLast('/').toIntOrNull() ?: return this
+        val minted = taskId.value.substringAfterLast('/')
+        // Only this device's own numbers come out of its counter ([mintedNumber]).
+        if (minted.substringAfter(MINTED_TAG_SEPARATOR, "") != deviceIdTag()) return this
+        val suffix = minted.substringBefore(MINTED_TAG_SEPARATOR).toIntOrNull() ?: return this
         return if (suffix < nextTaskCounter) this else copy(nextTaskCounter = suffix + 1)
     }
 
     fun allocateCellId(listId: CellListId): Pair<CellId, SchedulerState> {
-        val id = CellId("cell/${listId.value}/$nextCellCounter")
+        val id = CellId("cell/${listId.value}/" + mintedNumber(nextCellCounter))
         return id to copy(nextCellCounter = nextCellCounter + 1)
     }
 
@@ -1556,7 +1562,7 @@ data class SchedulerState(
      * category by id, so handing a fresh category an id a deleted one wore would silently re-attach both.
      */
     fun allocateCategoryId(): Pair<CategoryId, SchedulerState> {
-        val id = CategoryId("category/user/$nextCategoryCounter")
+        val id = CategoryId("category/user/" + mintedNumber(nextCategoryCounter))
         return id to copy(nextCategoryCounter = nextCategoryCounter + 1)
     }
 
@@ -1564,11 +1570,27 @@ data class SchedulerState(
     fun categoryById(id: CategoryId): Category? = categories.firstOrNull { it.id == id }
 
     fun allocatePanelId(): Pair<String, SchedulerState> {
-        val id = "panel/$nextPanelCounter"
+        val id = "panel/" + mintedNumber(nextPanelCounter)
         return id to copy(nextPanelCounter = nextPanelCounter + 1)
     }
 
     companion object {
+        /** Between a minted number and the device that minted it ([mintedNumber]). */
+        const val MINTED_TAG_SEPARATOR: Char = '.'
+
+        /**
+         * Sync-and-accounts 2026-11-03: **an id is unique across the account's devices.** Each counter is the device's
+         * own, so two devices minting at once handed out the same id, and the merge fused two different tasks (or
+         * cells, panels, categories, trees) into one. A synced device tags what it mints with its own id; a build
+         * without sync keeps the bare number. Ids minted before stay as they are.
+         */
+        fun mintedNumber(counter: Int): String = deviceIdTag().let { tag -> if (tag.isEmpty()) "$counter" else "$counter$MINTED_TAG_SEPARATOR$tag" }
+
+        /** The device's tag in the ids it mints: the first 8 characters of its sync id, none without sync. */
+        fun deviceIdTag(): String =
+            SchedulerReducer.deviceId().takeIf { it != SchedulerReducer.LOCAL_DEVICE_ID }
+                ?.filter { it.isLetterOrDigit() }?.take(8).orEmpty()
+
         /**
          * Cap on [notificationLog]: a **rolling tail** — the app keeps the most RECENT this-many notifications
          * and drops the oldest (see [NotificationLogEntry]). A running view of what the app has lately decided

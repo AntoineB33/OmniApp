@@ -728,6 +728,28 @@ private fun AddedActionBlocks(
         // User rule 2026-10-11: the blocks themselves, picked from a check-box list and edited in place
         // ([CalendarBlocksEditor]) — it was a button opening another Search window on them.
         SearchDomain.AddedAction.CalendarBlocks -> CalendarBlocksEditor(state, added, config, onConfigChange, handlers, run, nowMillis)
+        SearchDomain.AddedAction.ElementAddParent -> ElementParentEditor(state, added, config, run)
+        SearchDomain.AddedAction.ElementRemoveParent -> {
+            val children = added.map(SearchDomain::keyOf)
+            val categories = state.categories.mapTo(HashSet()) { org.example.project.scheduler.domain.ElementTree.categoryKey(it.id) }
+            val parents = children.flatMap { org.example.project.scheduler.domain.ElementTree.parentsOf(state, it) }.distinct().filterNot { it in categories }
+            ElementChooser("search/element-remove-parent", SearchDomain.resolve(state, parents, { emptyMap() }).map { SearchDomain.keyOf(it) to it.name }) {
+                run(SearchDomain.AddedCommand.ElementParent(it, on = false))
+            }
+        }
+        SearchDomain.AddedAction.ElementAddCategory ->
+            ElementChooser(
+                "search/element-add-category",
+                state.categories.filter { it.kind == org.example.project.scheduler.model.CategoryKind.TaskId }.sortedBy { it.title.lowercase() }
+                    .map { org.example.project.scheduler.domain.ElementTree.categoryKey(it.id) to it.title },
+            ) { run(SearchDomain.AddedCommand.ElementParent(it, on = true)) }
+        SearchDomain.AddedAction.ElementRemoveCategory -> {
+            val carried = added.flatMapTo(HashSet()) { org.example.project.scheduler.domain.ElementTree.parentsOf(state, SearchDomain.keyOf(it)) }
+            ElementChooser(
+                "search/element-remove-category",
+                state.categories.map { org.example.project.scheduler.domain.ElementTree.categoryKey(it.id) to it.title }.filter { it.first in carried }.sortedBy { it.second.lowercase() },
+            ) { run(SearchDomain.AddedCommand.ElementParent(it, on = false)) }
+        }
         SearchDomain.AddedAction.TaskAddCategory ->
             CategoryChooser(
                 cellId = "search/task-add-category",
@@ -977,7 +999,10 @@ private fun AddedActionBlocks(
             )
         }
         SearchDomain.AddedAction.WorkplaceWindows -> WorkplaceWindowsEditor(state, added, run)
-        SearchDomain.AddedAction.WorkplaceApply -> WorkplaceApplyButton(SearchDomain.addedWorkplaceSetups(state, added), handlers.workplaceRuns)
+        SearchDomain.AddedAction.WorkplaceApply ->
+            WorkplaceApplyButton(SearchDomain.addedWorkplaceSetups(state, added), handlers.workplaceRuns) {
+                org.example.project.scheduler.domain.ElementTree.workplaceFamily(state, it.id)
+            }
         SearchDomain.AddedAction.ClaudeSoundsVolume ->
             ClaudeSoundsVolumeSlider(
                 handlers.claudeSoundsVolume(), handlers.onSetClaudeSoundsVolume, action.label,
@@ -2257,6 +2282,59 @@ private fun CategoryChooser(cellId: String, options: List<Pair<CategoryId, Strin
     )
 }
 
+/** Picks one of [options] (key to name), as [CategoryChooser] does a category. */
+@Composable
+private fun ElementChooser(cellId: String, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
+    if (options.isEmpty()) {
+        NoteText("None.")
+        return
+    }
+    fun matching(draft: String) = options.filter { (_, title) -> draft.isBlank() || title.contains(draft.trim(), ignoreCase = true) }.take(MAX_CHOOSER_ROWS)
+    NamingCell(
+        cellId = org.example.project.scheduler.model.CellId(cellId),
+        shown = "",
+        identityLabel = "Elements",
+        identity = { draft -> matching(draft).map { (key, title) -> NamingRow(key, title) } },
+        suggestions = { draft -> matching(draft).map { it.second }.filter { !it.equals(draft.trim(), ignoreCase = true) } },
+        onPick = { key -> if (options.any { it.first == key }) onPick(key) },
+    )
+}
+
+/** How many elements a selector lists: what is typed narrows the rest. */
+private const val MAX_CHOOSER_ROWS: Int = 50
+
+/**
+ * User rule 2026-11-02, "Add a parent": the selector, of what can be a parent of an added element ([ElementTree.canLink]), and
+ * beside it the button adding the element this Search window comes from ([SearchDomain.Config.elementSource]).
+ */
+@Composable
+private fun ElementParentEditor(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    config: SearchDomain.Config,
+    run: (SearchDomain.AddedCommand) -> Unit,
+) {
+    val tree = org.example.project.scheduler.domain.ElementTree
+    val children = added.map(SearchDomain::keyOf)
+    val below = remember(children, state.elementLinks, state.lists, state.tasks) { children.associateWith { tree.descendantsOf(state, it) } }
+    fun allowed(parent: String) = children.any { tree.canLink(state, parent, it, below.getValue(it)) }
+    val options = remember(below, state.categories, state.periodKinds, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.taskTrees, state.workplaceSetups) { tree.pickable(state).filter { allowed(it.first) } }
+    val source = config.elementSource
+    val sourceName = remember(source, state.tasks, state.timers, state.alarms, state.chronos, state.workplaceSetups) {
+        source?.let { SearchDomain.resolve(state, listOf(it), { emptyMap() }).singleOrNull()?.name }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.weight(1f)) {
+            ElementChooser("search/element-add-parent", options) { run(SearchDomain.AddedCommand.ElementParent(it, on = true)) }
+        }
+        if (source != null && sourceName != null) {
+            FrameButton("Add " + sourceName, enabled = allowed(source)) {
+                run(SearchDomain.AddedCommand.ElementParent(source, on = true))
+            }
+        }
+    }
+}
+
 /**
  * A framed text button — the look of the Search window's "⚙ All configurations" — greyed and inert while
  * [enabled] is false.
@@ -2387,12 +2465,13 @@ private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDoma
  * and types into them, a tab at a time, while the keyboard is left alone: what went wrong is said under it.
  */
 @Composable
-private fun WorkplaceApplyButton(setups: List<org.example.project.scheduler.domain.WorkplaceSetup>, runs: WorkplaceRuns) {
-    val can = setups.filter { runs.canApply(it) }
+private fun WorkplaceApplyButton(setups: List<org.example.project.scheduler.domain.WorkplaceSetup>, runs: WorkplaceRuns, family: (org.example.project.scheduler.domain.WorkplaceSetup) -> List<org.example.project.scheduler.domain.WorkplaceSetup>) {
+    // Applying one applies what stands under it (user rule 2026-11-02): it can be applied for them alone.
+    val can = setups.flatMap(family).distinctBy { it.id }.filter { runs.canApply(it) }
     val running = setups.any { runs.isRunning(it.id) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         FrameButton(if (running) "Opening…" else "Apply", enabled = can.isNotEmpty() && !running) {
-            can.forEach { runs.apply(it) }
+            runs.applyAll(can)
         }
         val error = setups.firstNotNullOfOrNull { runs.errorOf(it.id) }
         val other = setups.firstOrNull { it.os != runs.here }

@@ -945,6 +945,9 @@ sealed interface SchedulerIntent {
         val editKey: String? = null,
     ) : SchedulerIntent
 
+    /** User rule 2026-11-02: the links between elements as they now stand, one History Unit ([org.example.project.scheduler.domain.ElementTree]). */
+    data class SetElementLinks(val entries: List<org.example.project.scheduler.domain.ElementLink>) : SchedulerIntent
+
     data class SetChronos(
         val entries: List<org.example.project.scheduler.model.ChronoEntry>,
         val editKey: String? = null,

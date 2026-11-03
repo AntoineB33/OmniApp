@@ -603,7 +603,7 @@ class TaskCellCopyTest {
         val pastedChildren = s.lists[s.tasks[aTask]!!.childListId!!]!!.cellIds.mapNotNull { s.cells[it]?.taskId }
         assertEquals(listOf(a1Task), pastedChildren)
         // The counter must be walked past a resurrected id, or the next new task would collide with it.
-        assertTrue(s.nextTaskCounter > aTask.value.substringAfterLast('/').toInt())
+        assertTrue(s.nextTaskCounter > aTask.value.substringAfterLast('/').substringBefore('.').toInt())
     }
 
     @Test

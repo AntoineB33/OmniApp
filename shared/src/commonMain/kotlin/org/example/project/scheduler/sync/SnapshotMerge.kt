@@ -161,6 +161,7 @@ object SnapshotMerge {
                 lifePlan = org.example.project.scheduler.domain.LifePlanDomain.healed(
                     mergeKeyedList(base.lifePlan, local.lifePlan, remote.lifePlan, { it.id }) { b, l, r -> pick(b, l, r) },
                 ),
+                elementLinks = mergeKeyedList(base.elementLinks, local.elementLinks, remote.elementLinks, { it.id }) { b, l, r -> pick(b, l, r) },
                 chronos = chronos.map(org.example.project.scheduler.domain.ChronoDomain::healed),
                 quotas = quotas.map(org.example.project.scheduler.domain.QuotaDomain::healed),
                 automaticSchedule = pick(base.automaticSchedule, local.automaticSchedule, remote.automaticSchedule),

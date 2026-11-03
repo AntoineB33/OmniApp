@@ -103,7 +103,7 @@ class WorkplaceSetupTest {
     @Test
     fun a_window_opens_on_its_first_path_and_the_others_are_typed_as_tabs() {
         val script = WorkplaceDomain.windows11Script(setup)
-        assertTrue("Open-ExplorerWindow 'C:\\code' @('D:\\docs {(}old{)}')" in script, script)
+        assertTrue("Open-ExplorerWindow 'C:\\code' @('D:\\docs (old)')" in script, script)
         assertEquals(1, Regex("""Open-ExplorerWindow '""").findAll(script).count())
         // Two windows, a blank tab and an empty window left out.
         val two = setup.copy(windows = listOf(WorkplaceWindow(listOf("A:\\", " ")), WorkplaceWindow(listOf("")), WorkplaceWindow(listOf("B:\\"))))
@@ -174,8 +174,22 @@ class WorkplaceSetupTest {
     @Test
     fun an_existing_window_takes_its_tabs_typed_and_opens_nothing() {
         val script = WorkplaceDomain.windows11Script(listOf(WorkplaceStep(7, listOf("D:\\docs (old)"))))
-        assertTrue("Add-ExplorerTabs 7 @('D:\\docs {(}old{)}')" in script, script)
+        assertTrue("Add-ExplorerTabs 7 @('D:\\docs (old)')" in script, script)
         assertFalse("\nOpen-ExplorerWindow '" in script)
+    }
+
+    /**
+     * Anomaly 2026-11-03: a tab typed into from Home kept Home above it — its up arrow led to "Accueil", not to the
+     * folder's parent. The new tab is navigated to the path; typing is what is left where no Home tab is found, and the
+     * keys are escaped there, never in the path navigated to.
+     */
+    @Test
+    fun a_new_tab_is_navigated_to_its_path_not_typed_into() {
+        val script = WorkplaceDomain.windows11Script(listOf(WorkplaceStep(7, listOf("D:\\docs (old)"))))
+        val tabs = script.substringAfter("function Add-Tabs").substringBefore("\n}\n")
+        assertTrue(tabs.indexOf("Navigate2(") in 0 until tabs.indexOf("'^l'"), tabs)
+        assertTrue("Get-SendKeysText" in tabs.substringAfter("'^l'"), tabs)
+        assertTrue("-like '::*'" in script.substringAfter("function Get-HomeTab"), "the tab Ctrl+T opened, on Home")
     }
 
     @Test

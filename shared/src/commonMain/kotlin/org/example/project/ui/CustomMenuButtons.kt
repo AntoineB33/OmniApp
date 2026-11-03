@@ -325,6 +325,8 @@ data class WindowSections(
     val hidden: List<Boolean> = emptyList(),
     val expanded: List<String> = emptyList(),
     val expandedAdded: List<String> = emptyList(),
+    /** The element rows that are open, of both lists ([SearchSplits.expandedElements]), absent from what an older build wrote. */
+    val expandedElements: List<String> = emptyList(),
 )
 
 /** The list of [CustomMenuButton]s, in menu order, and the few things done to it. Pure. */

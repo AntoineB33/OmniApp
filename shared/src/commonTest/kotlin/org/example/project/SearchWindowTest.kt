@@ -792,9 +792,12 @@ class SearchWindowTest {
                 SearchDomain.Setting.SearchText,
                 SearchDomain.Setting.Types,
                 SearchDomain.Setting.ResetSearch,
+                SearchDomain.Setting.CompletionList,
                 // The calendar filter (2026-10-01): about every row, so a general setting.
                 SearchDomain.Setting.CalendarAdd,
                 SearchDomain.Setting.CalendarAt,
+                SearchDomain.Setting.ExcludedElements,
+                SearchDomain.Setting.IncludedElements,
                 SearchDomain.Setting.SortResults,
             ),
             sections.first().second,

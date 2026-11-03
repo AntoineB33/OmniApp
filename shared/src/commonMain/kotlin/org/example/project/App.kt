@@ -1250,6 +1250,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Every right-click MENU registers here: the host keeps at most one open and closes it on the first
         // press outside it. Windows do not — nothing takes a window away any more (see `PopupWindows.kt`).
         val transientMenus = remember { TransientMenuHost() }
+        val cellEditPopups = remember { org.example.project.ui.CellEditPopupHost() }
         // The window bar's tab names (user rule 2026-10-01): loaded once, keeping only the windows that come back —
         // a row the user closed since is not visible — and written whenever a button names a tab.
         remember(placementStore) {
@@ -1321,6 +1322,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 kept.splits[0], kept.splits[1],
                                 kept.hidden.getOrNull(0) ?: false, kept.hidden.getOrNull(1) ?: false, kept.hidden.getOrNull(2) ?: false,
                                 expandedResults = kept.expanded.toSet(), expandedAdded = kept.expandedAdded.toSet(),
+                                expandedElements = kept.expandedElements.toSet(),
                             )
                     }
                 }
@@ -1332,7 +1334,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     searchSplits.mapValues { (_, s) ->
                         org.example.project.ui.WindowSections(
                             listOf(s.left, s.topRight), listOf(s.searchHidden, s.actionsHidden, s.addedHidden),
-                            s.expandedResults.sorted(), s.expandedAdded.sorted(),
+                            s.expandedResults.sorted(), s.expandedAdded.sorted(), s.expandedElements.sorted(),
                         )
                     }
                 val calendar =
@@ -2663,12 +2665,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val workplaceRuns = remember { org.example.project.ui.WorkplaceRuns() }
         fun applyWorkplaceSetup(id: String) {
             val setup = vm.state.value.workplaceSetups.firstOrNull { it.id == id } ?: return
-            val asked = searchAsk[0]
-            val show = {
-                if (asked == null) showCreated(SearchDomain.Kind.WorkplaceSetup, id)
-                else askedFrom(asked)() { showCreated(SearchDomain.Kind.WorkplaceSetup, id) }
-            }
-            if (workplaceRuns.canApply(setup)) workplaceRuns.apply(setup) { engineScope.launch { show() } } else show()
+            // A setup applies what stands under it (user rule 2026-11-02). Applying is all it does: it adds the setup
+            // to no window's added elements (anomaly 2026-11-03: a double-click on its row did, through `showCreated`,
+            // the "New" path).
+            val family = org.example.project.scheduler.domain.ElementTree.workplaceFamily(vm.state.value, setup.id)
+            if (family.any(workplaceRuns::canApply)) workplaceRuns.applyAll(family) {}
         }
         fun createElement(kind: SearchDomain.Kind, from: SearchDomain.Result? = null) {
             org.example.project.scheduler.platform.Diagnostics.log("new element asked: " + kind.name + " from " + searchSource())
@@ -4061,6 +4062,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             org.example.project.ui.LocalPatternExceptionDispatch provides patternExceptionDispatch,
             org.example.project.ui.LocalHeldCalendarRecords provides heldCalendarRecords,
             LocalTransientMenuHost provides transientMenus,
+            org.example.project.ui.LocalCellEditPopupHost provides cellEditPopups,
             LocalWindowFrameHost provides windowFrames,
             LocalHeadObstacle provides menuToggleBounds,
             LocalWindowChromeMemory provides windowChromeMemory,
@@ -5424,6 +5426,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onOpenWindow = ::showWindow,
                             onCreate = { createElement(it) },
                             onApplyWorkplaceSetup = { applyWorkplaceSetup(it) },
+                            onOpenChildSearch = { parent ->
+                                val from = searchSource()?.let(::searchConfigOf)?.page.orEmpty()
+                                openLinkedSearch(org.example.project.scheduler.domain.ElementTree.childSearchConfig(parent, from))
+                            },
                         )
                     // What the actions on the added elements open or draw — the cell menu's handlers, and the Alarms
                     // window's and the reminder editor's components embedded over the same callbacks.
@@ -5560,6 +5566,31 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onRaise = { focusWindow(FloatingWindow.Search) },
                             modifier = Modifier
                                 .align(Alignment.Center),
+                        )
+                    }
+
+                    // User rule 2026-11-02: the rectangle of a task cell in Edit Mode, over every window: this Search
+                    // window reduced to its search section, over the account's own state.
+                    org.example.project.ui.CellEditPopupLayer(
+                        host = cellEditPopups,
+                        modifier = Modifier.zIndex(Float.MAX_VALUE),
+                    ) { config, onConfigChange, picker, popupModifier ->
+                        val account = cellEditPopups.request?.namingSource ?: schedulerState
+                        SearchWindow(
+                            state = account,
+                            openers = searchRowOpeners,
+                            onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
+                            onGoToTaskTree = { taskId, at -> goToTaskTreeAt(taskId, account.tasks[taskId]?.title.orEmpty(), at) },
+                            onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                            actionHandlers = addedActionHandlers,
+                            onIntent = vm::dispatch,
+                            nowMillis = clock::nowMillis,
+                            onDismiss = {},
+                            config = config,
+                            onConfigChange = onConfigChange,
+                            onOpenConfigurations = {},
+                            picker = picker,
+                            modifier = popupModifier,
                         )
                     }
 
