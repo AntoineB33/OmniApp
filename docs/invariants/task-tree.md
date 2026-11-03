@@ -325,8 +325,11 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   default) or "rename" off, the session's Mode through `cellEditModeOptions`; none on a cell being created. Under it, a
   Search window (`SearchPicker`) with no head, no added elements and no actions, nor what serves them: the kinds,
   Reset and "All configurations", and no row opens a sub-tree.
-  - **The bar IS the draft**, both ways: there is one text. The caret stays in the cell, and the bar is entered by a press;
-    its own focus-on-open would lose the first letters typed (below).
+  - **The bar IS the task cell** (user rule 2026-11-04; it was a second field holding the draft until then): the Search
+    window draws no bar of its own in a picker, so its completion list comes first, under the switch. The cell has the
+    bar's cross (`SearchBarCross`, the same code), just after its title's column — inside the column it wrapped or
+    covered a title as wide as the column; it empties the draft and the caret stays in the cell. The caret never leaves
+    the cell on its own: a focus-on-open would lose the first letters typed (below).
   - **It is a layer of the content area, never a `Popup`**: a non-focusable one cannot be typed in, a focusable one eats the
     outside press Forced Exit needs. So the rectangle is an `outsidePressPart` of the cell's edit, and gives the frame
     focus back to the cell's window, which the content area's own press observer drops.

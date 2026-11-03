@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The task cell is the search bar of its Edit Mode rectangle — 2026-11-04
+
+User rule: in the rectangle of a task cell in Edit Mode (the Search window with a `SearchPicker`: no head, no actions, no added elements), the search bar is the cell. The window drew a second field holding the draft; it draws none in a picker now, so the completion list comes first, under the "switch task" switch, and the cell has the bar's cross (`SearchBarCross`), just after its title's column: it empties the draft, the caret staying in the cell. Client rebuild only. Checked on the desktop app (virtual screen).
+
 ### Each page's Search button offers that page's types alone; every menu control is a Search action — 2026-11-04
 
 User rule: a configuration of the Search window, "Only this page's types" (`Config.pageTypesOnly`), on in what each page's Search button opens and in a configuration reset to nothing: the type selector offers the window's page's kinds alone (the logs page's prompts, answers and reasoning chains; the settings page's app settings and workplace setups), and the window searches the checked ones among them, keeping what it holds of the others for when it is off. Off in a configuration the app builds for one element or kind, and absent from one stored before (decoded off: it searches as it did). The window's title names a page's few kinds ("all prompts, answers and reasoning chains"). User rule: every item of the lateral menu is a window or an action of the Search window — the 13 controls that had none (Online, Look away now, Switch task, Sleep / Work, I'm away, Auto schedule, Reminders, Screen breaks, Display, Time limit after a change, Minimum time weight, Supabase free tier, Memory limits) are each an app setting with that one action, drawn by the menu's own code (`LocalMenuControlHost`). Client rebuild only. `FeaturePagesTest`, `MenuControlsAreActionsTest`; checked on the desktop app (virtual screen).

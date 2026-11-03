@@ -858,6 +858,9 @@ fun SearchWindow(
             // --- The configuration ------------------------------------------------------------------
             // Leaves the bar on a press outside it ([leaveFocusOnOutsidePress]): the completion list is part of it.
             val barEditor = rememberFocusOutsidePressEditor(fieldFocused)
+            // User rule 2026-11-04: a picker's bar IS the task cell being edited (its cross included, the same
+            // `SearchBarCross`): no second bar here, so the completion list comes first, under the cell's switch.
+            if (picker == null)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),

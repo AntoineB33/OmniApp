@@ -3255,10 +3255,28 @@ internal fun TaskRow(
                         }
                     }
                 }
+                // User rule 2026-11-04: the cell IS the search bar of its rectangle's Search window ([editPopup]), so it
+                // has the bar's cross — the same code, the bar's rule: it empties the draft, and the caret stays in the
+                // cell. Just after the title's column, at the cell's right: inside the column it wrapped or covered a
+                // title as wide as the column.
+                val editTitleAndCross: @Composable () -> Unit =
+                    if (editPopup == null) editTitle
+                    else {
+                        {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                editTitle()
+                                org.example.project.ui.SearchBarCross(textFieldValue.text) {
+                                    textFieldValue = TextFieldValue("")
+                                    onTextChange("")
+                                    fieldRefocusRequests++
+                                }
+                            }
+                        }
+                    }
                 if (afterTitle != null) {
-                    TitleThenSection(editTitle, afterTitle, afterTitleMinWidth)
+                    TitleThenSection(editTitleAndCross, afterTitle, afterTitleMinWidth)
                 } else {
-                    editTitle()
+                    editTitleAndCross()
                     Spacer(Modifier.weight(1f))
                 }
             } else {
