@@ -99,7 +99,8 @@ limit, and nothing here may exceed it.
   rows keeps them and does not push them back unless it edits them, and a device without them shows the "not remembered"
   row. A device's own limit forgets on its own side the same way.
 - **What is forgotten, and how full each database is, is said on the Settings page** with the current usage of the
-  Supabase free tier and a refresh button (an asked request, never a poll). BUILT 2026-11-03: the settings page's menu
+  Supabase free tier and a refresh button (an asked request, never a poll; sent even while the device works offline,
+  user rule 2026-11-04, `sync-and-accounts.md` § *Working offline*). BUILT 2026-11-03: the settings page's menu
   holds `MenuControl.SupabaseUsage` and `MenuControl.MemoryLimits` (`ServerBudget`, `ServerUsageSettingsTest`,
   `ProjectUsageRefreshTest`).
   - **The database is the server's own measure** (`project_usage`, migration 20261103000000): the project's size and this

@@ -158,6 +158,10 @@ without overwriting the choice (`account3-deploy-windows-offline.bat` installs a
 - **Nothing leaves the device.** `RemoteSnapshotClient.offline` refuses every request with
   `WorkingOfflineException` before it is sent — that is the hard gate — and the engine does not even ask: no
   reconcile, no guest account, no sign-in, no presence / break rows, no Realtime auth, so no socket.
+  **But a press that asks the server a question** (user rule 2026-11-04: *"The refresh button should work even if the
+  app is set offline"*): the Settings page's Refresh is sent inside `AskedByUser`, the gate's one way past, with the
+  token refresh it may need — once per press, and nothing else with it (`ProjectUsageRefreshTest`). Sync never runs
+  inside it.
 - **Edits keep being saved and marked `dirty`**; nothing is lost and nothing is queued beside the dirty flag.
 - **Going online reconnects exactly as a launch does** (`TaskSchedulerViewModel.connect`): a restored session
   reconciles, which pushes the offline edits merged with what the peers did; no session runs the launch's sign-in

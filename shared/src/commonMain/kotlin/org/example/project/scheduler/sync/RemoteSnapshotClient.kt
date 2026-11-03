@@ -59,6 +59,17 @@ class SupabaseException(val status: Int, message: String) : Exception("Supabase 
 class WorkingOfflineException : IllegalStateException("working offline: the request was not sent")
 
 /**
+ * User rule 2026-11-04: *"The refresh button should work even if the app is set offline."* The ONE way past
+ * [RemoteSnapshotClient.offline]: a request made inside `withContext(AskedByUser)` is sent while the device works
+ * offline, and so is the token refresh it may need. Only a press of the user's that asks the server a question wraps a
+ * call in it (the Settings page's Refresh, [SchedulerSyncEngine.fetchProjectUsage]); sync never does.
+ */
+object AskedByUser : kotlin.coroutines.AbstractCoroutineContextElement(AskedByUserKey)
+
+/** The key [AskedByUser] is found under in a coroutine's context. */
+object AskedByUserKey : kotlin.coroutines.CoroutineContext.Key<AskedByUser>
+
+/**
  * One completed Supabase HTTP call — the raw material for the History window's **Supabase usage** column, a
  * per-device diagnostic of the account's draw-down on the Supabase **free-plan** limits. Every call this
  * client makes consumes egress **bandwidth** (request + response bytes); auth calls also count toward Monthly
@@ -112,8 +123,9 @@ class RemoteSnapshotClient(
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * While true, EVERY request is refused before it leaves the device ([WorkingOfflineException]). This is the hard
-     * guarantee of working offline: the sync engine also stops asking, but no caller can get past this one.
+     * While true, EVERY request is refused before it leaves the device ([WorkingOfflineException]), but one the user
+     * asked for by a press ([AskedByUser]). This is the hard guarantee of working offline: the sync engine also stops
+     * asking, but no other caller can get past this one.
      */
     @kotlin.concurrent.Volatile
     var offline: Boolean = false
@@ -136,7 +148,7 @@ class RemoteSnapshotClient(
         // One interception point over the whole client covers every endpoint below (auth + PostgREST), so the
         // usage log stays complete even as new calls are added. Reading Content-Length does not consume the body.
         http.plugin(HttpSend).intercept { request ->
-            if (offline) throw WorkingOfflineException()
+            if (offline && kotlin.coroutines.coroutineContext[AskedByUserKey] == null) throw WorkingOfflineException()
             val requestBytes = (request.body as? OutgoingContent)?.contentLength ?: 0L
             val path = request.url.build().encodedPath
             val call = execute(request)

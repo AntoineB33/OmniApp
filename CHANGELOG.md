@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Settings page's Refresh works while the device works offline — 2026-11-04
+
+User rule: the refresh button works even if the app is set offline. The press's call (`project_usage`), and the token refresh it may need, go out inside `AskedByUser`, the one way past `RemoteSnapshotClient.offline`; nothing else leaves the device. Client rebuild only. `ProjectUsageRefreshTest`.
+
 ### The heavy year back under a tenth of the free tier — 2026-11-04, not deployed
 
 Measured by `ServerQuotaTest`: the database 45.0 MB a year (was 91.0), egress 499.4 MB a month (was 513.7). `forget_old_history` (new migration 20261104000000, same daily job) also forgets the sub-tree of a task no cell holds — its sub-list, the cells in it, the tasks held only there, on down — which no row of the tree reaches: the sub-trees renamed parents keep were most of what the tree grew by. The predicate is `ForgottenRows.coveredKeys` on the devices and the fake, spelled the same in SQL. The device tag in minted ids is 4 base-36 characters hashed from the sync id (was its first 8 characters); older ids keep theirs. A device's active-session pull leaves out its own rows (`device_id=neq.`), which it threw away. The projection counts a calendar block ending within a day as history, caps history's growth at what the table gained, and bounds `screen_break_rule` by `publish_break_rules`' whole replacement, read off the migration. The visible tree's cold sub-lists are not forgotten: the visible tree does not grow in the heavy year. Deploy: `scripts\deploy-supabase.bat` (the migration), and a client rebuild. `ForgottenHistoryTest`.

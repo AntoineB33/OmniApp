@@ -858,12 +858,14 @@ open class SchedulerSyncEngine(
     }
 
     /**
-     * The project's usage as the server measures it, or null offline, signed out or on a failure (said in the log): what
-     * the Settings page's refresh button asks. Never called on a timer.
+     * The project's usage as the server measures it, or null signed out or on a failure (said in the log): what the
+     * Settings page's refresh button asks. Never called on a timer. Asked even while the device works offline (user
+     * rule 2026-11-04): a press is the user asking, so the call, and the token refresh it may need, go out
+     * [AskedByUser] — and nothing else does.
      */
     suspend fun fetchProjectUsage(nowMillis: Long): org.example.project.scheduler.domain.ProjectUsage? {
-        val current = onlineSession() ?: return null
-        return runCatching { withAuth(current) { client.fetchProjectUsage(it) } }
+        val current = session ?: return null
+        return runCatching { kotlinx.coroutines.withContext(AskedByUser) { withAuth(current) { client.fetchProjectUsage(it) } } }
             .onFailure { Diagnostics.log("project usage FAILED: ${it.message}") }
             .getOrNull()
             ?.let { (database, account) -> org.example.project.scheduler.domain.ProjectUsage(database, account, nowMillis) }
