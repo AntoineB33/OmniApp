@@ -791,6 +791,8 @@ class SearchWindowTest {
             listOf(
                 SearchDomain.Setting.SearchText,
                 SearchDomain.Setting.Types,
+                // User rule 2026-11-04: the page's types alone, beside the type selector.
+                SearchDomain.Setting.PageTypes,
                 SearchDomain.Setting.ResetSearch,
                 SearchDomain.Setting.CompletionList,
                 // The calendar filter (2026-10-01): about every row, so a general setting.

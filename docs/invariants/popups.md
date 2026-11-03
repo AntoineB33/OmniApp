@@ -141,9 +141,15 @@ means.
   - **A control is drawn in the menu by the code that draws it where it lives** (`MenuControlItem`, fed by `App`'s
     `MenuControlHost`): never a second look for the menu. A new control is one entry of `MenuControl`, one branch
     there, and a `MenuAddable` round it where it lives.
+  - **Every control is an action of the Search window** (user rule 2026-11-04: *"Every button that can appear in the
+    left-side menu are links to actions that can be found in the action section of the Search window"*): each
+    `MenuControl` is the action of an app setting (`ACTION_MENU_CONTROLS`), found by its name once that setting is
+    added. The 13 that had no action until then (Online, Look away now, the Supabase usage…) are each a setting
+    (`AppSettingEntry`) with that ONE action (`APP_SETTING_CONTROL_ACTIONS`), drawn by `MenuControlItem` there too
+    (`LocalMenuControlHost`, provided over every window). A new control needs its action (`MenuControlsAreActionsTest`).
   - **What the menu held is what it starts as** (`CustomMenuButtons.DEFAULTS`: the Search button, the three sound
     switches together, Mute, Voice, Notifications (brought together once in a menu stored before), Task tree, Calendar, Life plan, Look
-    away now, Switch task, Sleep / Work, I'm away, Online). A list stored before is given those
+    away now, Switch task, Sleep / Work, I'm away; Online is the settings page's since 2026-11-04). A list stored before is given those
     ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
   - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename, Global,
     Remove, Customize, Reset. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of

@@ -342,9 +342,10 @@ class ClaudeLogsTest {
         // A logs window reset to nothing is still the logs page's: a window never changes page.
         val reset = SearchDomain.resetConfig(config, opened = null)
         assertEquals(SearchDomain.CLAUDE_LOGS_PAGE, reset.page)
-        // …and every kind is checked, as on the scheduler's page: it is the same window.
+        // …and every kind is checked, as on the scheduler's page: it is the same window — but only the page's types are
+        // offered and searched (user rule 2026-11-04, `Config.pageTypesOnly`), and the title names them.
         assertEquals(SearchDomain.Kind.entries.toSet(), reset.kinds)
-        assertEquals("everything", SearchDomain.windowTitle(reset))
+        assertEquals("all prompts, answers and reasoning chains", SearchDomain.windowTitle(reset))
         assertEquals("all prompts, answers and reasoning chains", SearchDomain.windowTitle(SearchDomain.claudeLogsConfig()))
         assertEquals("everything", SearchDomain.windowTitle(SearchDomain.CLEARED_CONFIG))
     }

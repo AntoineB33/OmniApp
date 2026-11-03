@@ -559,8 +559,12 @@ private fun MicroGroupTitle(text: String, nested: Boolean = false) {
     )
 }
 
-/** The actions that ARE a control of the app the menu already knows ([MenuControl]): added as that control. */
-private val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
+/**
+ * The actions that ARE a control of the app the menu already knows ([MenuControl]): added as that control. User rule
+ * 2026-11-04: **every control of the menu is one of them** — each item of the menu is a window, or an action found in
+ * the Search window's action section (`MenuControlsAreActionsTest`).
+ */
+internal val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
     mapOf(
         SearchDomain.AddedAction.VoiceSwitch to MenuControl.Voice,
         SearchDomain.AddedAction.NotificationsSwitch to MenuControl.Notifications,
@@ -569,6 +573,19 @@ private val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
         SearchDomain.AddedAction.ClaudeLogsDirectory to MenuControl.ClaudeLogsDirectory,
         SearchDomain.AddedAction.ClaudeSoundsVolume to MenuControl.ClaudeSoundsVolume,
         SearchDomain.AddedAction.MuteSwitch to MenuControl.MuteAll,
+        SearchDomain.AddedAction.LookAwayNowControl to MenuControl.LookAwayNow,
+        SearchDomain.AddedAction.SwitchTaskControl to MenuControl.SwitchTask,
+        SearchDomain.AddedAction.SleepWorkControl to MenuControl.SleepWork,
+        SearchDomain.AddedAction.AwayControl to MenuControl.Away,
+        SearchDomain.AddedAction.OnlineControl to MenuControl.Online,
+        SearchDomain.AddedAction.AutoScheduleControl to MenuControl.AutoSchedule,
+        SearchDomain.AddedAction.RemindersControl to MenuControl.Reminders,
+        SearchDomain.AddedAction.ScreenBreaksControl to MenuControl.ScreenBreaks,
+        SearchDomain.AddedAction.CalendarDisplayControl to MenuControl.CalendarDisplay,
+        SearchDomain.AddedAction.PlanTimeLimitControl to MenuControl.PlanTimeLimit,
+        SearchDomain.AddedAction.MinimumTimeWeightControl to MenuControl.MinimumTimeWeight,
+        SearchDomain.AddedAction.SupabaseUsageControl to MenuControl.SupabaseUsage,
+        SearchDomain.AddedAction.MemoryLimitsControl to MenuControl.MemoryLimits,
     )
 
 /**
@@ -701,6 +718,17 @@ private fun AddedActionBlocks(
     fun idsOf(kind: SearchDomain.Kind) =
         added.filterIsInstance<SearchDomain.ItemResult>().filter { it.kind == kind }.mapTo(HashSet()) { it.id }
     when (action) {
+        // User rule 2026-11-04: a control of the lateral menu, as its setting's action — drawn by the menu's own code.
+        SearchDomain.AddedAction.LookAwayNowControl, SearchDomain.AddedAction.SwitchTaskControl,
+        SearchDomain.AddedAction.SleepWorkControl, SearchDomain.AddedAction.AwayControl, SearchDomain.AddedAction.OnlineControl,
+        SearchDomain.AddedAction.AutoScheduleControl, SearchDomain.AddedAction.RemindersControl,
+        SearchDomain.AddedAction.ScreenBreaksControl, SearchDomain.AddedAction.CalendarDisplayControl,
+        SearchDomain.AddedAction.PlanTimeLimitControl, SearchDomain.AddedAction.MinimumTimeWeightControl,
+        SearchDomain.AddedAction.SupabaseUsageControl, SearchDomain.AddedAction.MemoryLimitsControl,
+        ->
+            ACTION_MENU_CONTROLS[action]?.let { control ->
+                LocalMenuControlHost.current?.let { host -> MenuControlItem(control, null, host) }
+            }
         // User rule 2026-10-13: the two buttons about the group's elements as rows of the list, in ONE micro group —
         // the first of every group of elements ([SearchDomain.actionGroups]).
         SearchDomain.AddedAction.OpenEach ->

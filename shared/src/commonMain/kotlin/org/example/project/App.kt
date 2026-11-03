@@ -1507,7 +1507,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The logs are read once they are wanted: on their page, or by a Search window that checks one of their kinds, on
         // any page (user rule 2026-10-31: the window is the same on both). Off the composition, which a keystroke must not redo.
         LaunchedEffect(Unit) {
-            androidx.compose.runtime.snapshotFlow { searchConfigs.values.any { config -> SearchDomain.CLAUDE_KINDS.any { it in config.kinds } } }
+            androidx.compose.runtime.snapshotFlow { searchConfigs.values.any { config -> SearchDomain.CLAUDE_KINDS.any { it in config.searchedKinds } } }
                 .first { it }
             claudeLogsWanted = true
         }
@@ -4313,6 +4313,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
                 // The content area is clipped so the floating calendar window can overlap the tree
                 // but never spill onto the lateral menu (PRD §7).
+                // User rule 2026-11-04: the menu's controls are the Search window's actions too, drawn by the same code
+                // ([org.example.project.ui.LocalMenuControlHost]) — so every window can draw them.
+                CompositionLocalProvider(org.example.project.ui.LocalMenuControlHost provides menuControlHost) {
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -5917,6 +5920,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 .zIndex(Float.MAX_VALUE),
                         )
                     }
+                }
                 }
             }
 

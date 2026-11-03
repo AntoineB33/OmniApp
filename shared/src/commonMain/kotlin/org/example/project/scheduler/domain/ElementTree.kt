@@ -194,6 +194,8 @@ object ElementTree {
             kinds = kind?.let(::setOf) ?: config.kinds,
             filters = config.filters.copy(excludedElements = setOf(parent)),
             elementSource = parent,
+            // A kind the page does not hold (a workplace setup's children on the Task Scheduler page) is offered all the same.
+            pageTypesOnly = config.pageTypesOnly && (kind == null || kind in config.offeredKinds),
         )
     }
 }

@@ -1801,6 +1801,13 @@ fun LateralMenu(
 }
 
 /**
+ * User rule 2026-11-04: the lateral menu's [MenuControlHost], for the Search window's actions that ARE a control of the
+ * menu (`SearchDomain.APP_SETTING_CONTROL_ACTIONS`): drawn by [MenuControlItem] there too, so the action and the menu's
+ * item are one drawing. `App` provides it over every window; null elsewhere (a test, a preview), where they draw nothing.
+ */
+val LocalMenuControlHost = androidx.compose.runtime.compositionLocalOf<MenuControlHost?> { null }
+
+/**
  * What the controls of the app that can stand in the lateral menu ([MenuControl]) read and do — `App`'s, handed to
  * [MenuControlItem]. One holder, so a new control is one more field here and not one more parameter down three
  * composables.

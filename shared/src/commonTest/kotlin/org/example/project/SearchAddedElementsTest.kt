@@ -1095,7 +1095,10 @@ class SearchAddedElementsTest {
     @Test
     fun the_sound_setting_is_an_app_setting_element_whose_action_is_the_global_volume() {
         var s = account()
-        val rows = SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "")
+        // User rule 2026-11-04: every control of the menu is an app setting too (`MenuControlsAreActionsTest`); the
+        // settings that were before it, here.
+        val controls = SearchDomain.APP_SETTING_CONTROL_ACTIONS.values.mapTo(HashSet()) { it.name }
+        val rows = SearchDomain.itemResults(s, SearchDomain.Kind.AppSetting, "").filter { it.id !in controls }
         // User rule 2026-10-08: the default voice and notification switches "must then be present in an app setting
         // element" — beside the sound setting, each saying where it stands.
         assertEquals(
@@ -1125,7 +1128,7 @@ class SearchAddedElementsTest {
             listOf(
                 SearchDomain.AddedAction.SoundVolume, SearchDomain.AddedAction.VoiceSwitch, SearchDomain.AddedAction.NotificationsSwitch,
                 SearchDomain.AddedAction.ClaudeLogsDirectory, SearchDomain.AddedAction.MuteSwitch, SearchDomain.AddedAction.ClaudeSoundsVolume,
-            ),
+            ) + SearchDomain.APP_SETTING_CONTROL_ACTIONS.keys,
             SearchDomain.addedActions("", setOf(SearchDomain.Kind.AppSetting)).single { it.first == SearchDomain.Kind.AppSetting }.second,
         )
         // The slider's write: clamped, and one Undo/Redo unit however far it is dragged.
@@ -1222,7 +1225,8 @@ class SearchAddedElementsTest {
         val all = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), setOf(SearchDomain.Kind.Alarm))
         assertEquals(listOf(null, SearchDomain.Kind.Alarm), all.map { it.first })
         assertEquals(
-            listOf(SearchDomain.AddedAction.TaskMinimumTime),
+            // …and the menu's "Minimum time weight", an app setting's action since 2026-11-04.
+            listOf(SearchDomain.AddedAction.TaskMinimumTime, SearchDomain.AddedAction.MinimumTimeWeightControl),
             SearchDomain.addedActions("minimum", SearchDomain.Kind.entries.toSet()).flatMap { it.second },
         )
     }

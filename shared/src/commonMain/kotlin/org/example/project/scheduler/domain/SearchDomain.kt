@@ -224,12 +224,13 @@ object SearchDomain {
     fun pageDefaultConfig(page: String): Config =
         when (page) {
             CLAUDE_LOGS_PAGE -> claudeLogsConfig()
-            SETTINGS_PAGE -> Config(kinds = SETTINGS_KINDS.toSet(), page = SETTINGS_PAGE)
-            else -> Config()
+            SETTINGS_PAGE -> Config(kinds = SETTINGS_KINDS.toSet(), page = SETTINGS_PAGE, pageTypesOnly = true)
+            // User rule 2026-11-04: each page's button opens on its own types alone ([Config.pageTypesOnly]).
+            else -> Config(pageTypesOnly = true)
         }
 
     /** The configuration a Search window of the Claude Code logs page opens with: every kind of the logs, newest first. */
-    fun claudeLogsConfig(): Config = Config(kinds = CLAUDE_KINDS.toSet(), page = CLAUDE_LOGS_PAGE, sorts = CLAUDE_SORTS)
+    fun claudeLogsConfig(): Config = Config(kinds = CLAUDE_KINDS.toSet(), page = CLAUDE_LOGS_PAGE, sorts = CLAUDE_SORTS, pageTypesOnly = true)
 
     /**
      * The logs' entries newest first, whatever their kind: a log is read back from its end. ONE method (user rule
@@ -419,15 +420,17 @@ object SearchDomain {
      */
     fun windowTitle(config: Config): String {
         if (isNotificationsWindow(config)) return NOTIFICATIONS_WINDOW_TITLE
-        val offered = Kind.entries
-        val kinds = offered.filter { it in config.kinds }
-        val left = offered.filter { it !in config.kinds }
+        // Of the kinds the window offers (user rule 2026-11-04, [Config.pageTypesOnly]): a page's few kinds all checked
+        // are named ("all prompts, answers and reasoning chains"), never "everything".
+        val offered = config.offeredKinds
+        val kinds = offered.filter { it in config.searchedKinds }
+        val left = offered.filter { it !in config.searchedKinds }
         fun list(names: List<String>): String =
             if (names.size == 1) names.single() else names.dropLast(1).joinToString(", ") + " and " + names.last()
         val what =
             when {
                 kinds.isEmpty() -> return "nothing"
-                left.isEmpty() -> "everything"
+                left.isEmpty() && kinds.size > 3 -> "everything"
                 left.size <= 2 && kinds.size > 3 -> "everything but " + list(left.map { it.plural })
                 kinds.size <= 3 -> list(kinds.map { it.plural })
                 else -> kinds.take(2).joinToString(", ") { it.plural } + " and ${kinds.size - 2} more kinds"
@@ -475,8 +478,11 @@ object SearchDomain {
     val CLEARED_CONFIG: Config
         get() = clearedConfig("")
 
-    /** [CLEARED_CONFIG] of a window on the page [page]: every kind checked, and nothing else. */
-    fun clearedConfig(page: String): Config = Config(kinds = Kind.entries.toSet(), page = page)
+    /**
+     * [CLEARED_CONFIG] of a window on the page [page]: every kind checked, and nothing else — but the page's types alone
+     * offered (user rule 2026-11-04, [Config.pageTypesOnly]), as its Search button opens.
+     */
+    fun clearedConfig(page: String): Config = Config(kinds = Kind.entries.toSet(), page = page, pageTypesOnly = true)
 
     /**
      * What the Search window's **Reset** puts in the place of [current]: the configuration the window [opened] with
@@ -670,7 +676,23 @@ object SearchDomain {
          * ([Completion], [completionOptions]).
          */
         val completion: Completion? = null,
+        /**
+         * User rule 2026-11-04: **only this page's types** — while on, the type selector offers the kinds of the window's
+         * [page] alone ([FeaturePage.kinds]: the logs page's prompts, answers and reasoning chains) and the window searches
+         * the checked ones among them ([searchedKinds]); [kinds] keeps what it holds of the others, back when it is off.
+         * On in what each page's Search button opens ([pageDefaultConfig], [clearedConfig]); off in a configuration the
+         * app builds for one element or kind, and in one stored before it existed, which then search as they did.
+         */
+        val pageTypesOnly: Boolean = false,
     ) {
+        /** The kinds the type selector offers: the page's while [pageTypesOnly], else every kind. */
+        val offeredKinds: List<Kind>
+            get() = if (pageTypesOnly) FEATURE_PAGES.firstOrNull { it.id == page }?.kinds?.let { k -> Kind.entries.filter { it in k } } ?: Kind.entries else Kind.entries
+
+        /** The kinds the window searches: the checked ones among those offered ([pageTypesOnly]). */
+        val searchedKinds: Set<Kind>
+            get() = if (pageTypesOnly) offeredKinds.filterTo(HashSet()) { it in kinds } else kinds
+
         /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
         val readsWindows: Boolean
             get() = Kind.Window in kinds || Kind.Shortcut in kinds ||
@@ -747,6 +769,7 @@ object SearchDomain {
                     openedFrom = openedFrom,
                     elementSource = elementSource,
                     completion = completion?.name,
+                    pageTypesOnly = pageTypesOnly,
                     claudeProject = filters.claudeProject,
                     claudeFromMillis = filters.claudeFrom,
                     claudeUntilMillis = filters.claudeUntil,
@@ -849,6 +872,7 @@ object SearchDomain {
                     openedFrom = stored.openedFrom,
                     elementSource = stored.elementSource,
                     completion = Completion.entries.firstOrNull { it.name == stored.completion },
+                    pageTypesOnly = stored.pageTypesOnly,
                 )
             }
 
@@ -1323,8 +1347,8 @@ object SearchDomain {
      */
     fun defaultSortsOf(config: Config): List<SortMethod>? {
         if (config.query.isNotBlank() || config.filters.activeCount > 0) return null
-        if (config.kinds.isNotEmpty() && config.kinds.all { it in CLAUDE_KINDS }) return CLAUDE_SORTS
-        val kind = config.kinds.singleOrNull() ?: return null
+        if (config.searchedKinds.isNotEmpty() && config.searchedKinds.all { it in CLAUDE_KINDS }) return CLAUDE_SORTS
+        val kind = config.searchedKinds.singleOrNull() ?: return null
         return CREATION_FIRST_SORTS.takeIf { kind in CREATABLE }
     }
 
@@ -1381,6 +1405,8 @@ object SearchDomain {
     enum class Setting(val section: Kind?, val label: String, val sorts: Boolean = false) {
         SearchText(null, "Search text"),
         Types(null, "Types"),
+        /** User rule 2026-11-04: the type selector offers the page's types alone ([Config.pageTypesOnly]). */
+        PageTypes(null, "Only this page's types"),
         /**
          * The Search window's own Reset ([resetConfig]): back to the configuration it opened with, else the whole
          * configuration cancelled. Listed here because every configuration of the Search window is — and it is not the
@@ -1625,7 +1651,7 @@ object SearchDomain {
     ): Map<Kind, Int> =
         // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
         results(
-            state, config.kinds, config.query, { emptyMap() }, config.filters, windows = windows, nowMillis = nowMillis,
+            state, config.searchedKinds, config.query, { emptyMap() }, config.filters, windows = windows, nowMillis = nowMillis,
             layerKindsAt = layerKindsAt, schedulerRuns = schedulerRuns, placement = config.placement,
             // Read only where the end is: the calendar filter's "without removing anything".
             placementOwnLength = if (config.filters.calendarAddKeeping) {
@@ -1634,7 +1660,7 @@ object SearchDomain {
                 null
             },
             claudeLogs = claudeLogs,
-        ).groupingBy { checkedKindOf(it, config.kinds) }.eachCount()
+        ).groupingBy { checkedKindOf(it, config.searchedKinds) }.eachCount()
 
     /**
      * The checked kind [row] is listed for: its own — but a creation row listed for the kind it makes, the creation kind
@@ -1655,8 +1681,8 @@ object SearchDomain {
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
     ): Set<Kind> =
         // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
-        results(state, config.kinds, config.query, { emptyMap() }, config.filters, windows = windows, claudeLogs = claudeLogs)
-            .mapTo(HashSet()) { checkedKindOf(it, config.kinds) }
+        results(state, config.searchedKinds, config.query, { emptyMap() }, config.filters, windows = windows, claudeLogs = claudeLogs)
+            .mapTo(HashSet()) { checkedKindOf(it, config.searchedKinds) }
 
     /** The stored form of a [Config] — strings, so an unknown value decodes to its default. */
     @Serializable
@@ -1772,6 +1798,8 @@ object SearchDomain {
         val elementSource: String? = null,
         /** New 2026-11-02: absent = no completion list. */
         val completion: String? = null,
+        /** New 2026-11-04: absent = every type offered, as before the switch ([Config.pageTypesOnly]). */
+        val pageTypesOnly: Boolean = false,
         val claudeProject: String? = null,
         val claudeFromMillis: Long? = null,
         val claudeUntilMillis: Long? = null,
@@ -2756,11 +2784,62 @@ object SearchDomain {
         Mute("Mute all sound"),
         /** User rule 2026-11-01: how loud Claude Code's own sounds are, this device's. */
         ClaudeSounds("Claude Code sounds"),
+        // User rule 2026-11-04: *"Every button that can appear in the left-side menu are links to actions that can be found
+        // in the action section of the Search window."* Each control of the menu is a setting here, with ONE action, its
+        // control ([APP_SETTING_CONTROL_ACTIONS]); the menu's item and that action are drawn by the same code.
+        LookAwayNow("Look away now"),
+        SwitchTask("Switch task"),
+        SleepWork("Sleep / Work"),
+        Away("I'm away"),
+        Online("Online"),
+        AutoSchedule("Auto schedule"),
+        Reminders("Reminders"),
+        ScreenBreaks("Screen breaks"),
+        CalendarDisplay("Calendar display"),
+        PlanTimeLimit("Time limit after a change"),
+        MinimumTimeWeight("Minimum time weight"),
+        SupabaseUsage("Supabase free tier"),
+        MemoryLimits("Memory limits"),
+    }
+
+    /**
+     * The settings whose one action is a control of the lateral menu, drawn by the menu's own code (user rule 2026-11-04):
+     * listed in the action section only where their setting is added.
+     */
+    val APP_SETTING_CONTROL_ACTIONS: Map<AddedAction, AppSettingEntry> by lazy {
+        mapOf(
+            AddedAction.LookAwayNowControl to AppSettingEntry.LookAwayNow,
+            AddedAction.SwitchTaskControl to AppSettingEntry.SwitchTask,
+            AddedAction.SleepWorkControl to AppSettingEntry.SleepWork,
+            AddedAction.AwayControl to AppSettingEntry.Away,
+            AddedAction.OnlineControl to AppSettingEntry.Online,
+            AddedAction.AutoScheduleControl to AppSettingEntry.AutoSchedule,
+            AddedAction.RemindersControl to AppSettingEntry.Reminders,
+            AddedAction.ScreenBreaksControl to AppSettingEntry.ScreenBreaks,
+            AddedAction.CalendarDisplayControl to AppSettingEntry.CalendarDisplay,
+            AddedAction.PlanTimeLimitControl to AppSettingEntry.PlanTimeLimit,
+            AddedAction.MinimumTimeWeightControl to AppSettingEntry.MinimumTimeWeight,
+            AddedAction.SupabaseUsageControl to AppSettingEntry.SupabaseUsage,
+            AddedAction.MemoryLimitsControl to AppSettingEntry.MemoryLimits,
+        )
     }
 
     /** What an [AppSettingEntry]'s row says beside its name: where the setting stands. */
     private fun appSettingDetail(state: SchedulerState, setting: AppSettingEntry, claudeLogs: ClaudeLogCatalog): String =
         when (setting) {
+            AppSettingEntry.LookAwayNow -> "starts the look-away break now"
+            AppSettingEntry.SwitchTask -> "the task the line is on"
+            AppSettingEntry.SleepWork -> "sleeping or working"
+            AppSettingEntry.Away -> "this device's I'm away"
+            AppSettingEntry.Online -> "online or working offline, and the account"
+            AppSettingEntry.AutoSchedule -> if (state.automaticSchedule) "on" else "off"
+            AppSettingEntry.Reminders -> if (state.showReminders) "shown" else "hidden"
+            AppSettingEntry.ScreenBreaks -> if (state.showScreenBreaks) "shown" else "hidden"
+            AppSettingEntry.CalendarDisplay -> "how the calendar is drawn"
+            AppSettingEntry.PlanTimeLimit -> "how long a re-plan may take"
+            AppSettingEntry.MinimumTimeWeight -> "the minimum times' weight in the score"
+            AppSettingEntry.SupabaseUsage -> "the server's usage, read on Refresh"
+            AppSettingEntry.MemoryLimits -> "the project database's and this device's"
             AppSettingEntry.ClaudeLogs -> claudeLogs.directory.ifBlank { "no directory" }
             AppSettingEntry.Mute -> if (state.soundMuted) "muted on this device" else "sound on"
             AppSettingEntry.ClaudeSounds -> "how loud Claude Code is on this device"
@@ -3333,6 +3412,22 @@ object SearchDomain {
 
         /** The volume of Claude Code's own sounds ([AppSettingEntry.ClaudeSounds]). */
         ClaudeSoundsVolume(Kind.AppSetting, "Claude Code sounds volume"),
+
+        // User rule 2026-11-04: each control of the lateral menu, the one action of its setting
+        // ([APP_SETTING_CONTROL_ACTIONS]), drawn by the menu's own code.
+        LookAwayNowControl(Kind.AppSetting, "Look away now"),
+        SwitchTaskControl(Kind.AppSetting, "Switch task"),
+        SleepWorkControl(Kind.AppSetting, "Sleep / Work"),
+        AwayControl(Kind.AppSetting, "I'm away"),
+        OnlineControl(Kind.AppSetting, "Online"),
+        AutoScheduleControl(Kind.AppSetting, "Auto schedule"),
+        RemindersControl(Kind.AppSetting, "Reminders"),
+        ScreenBreaksControl(Kind.AppSetting, "Screen breaks"),
+        CalendarDisplayControl(Kind.AppSetting, "Display"),
+        PlanTimeLimitControl(Kind.AppSetting, "Time limit after a change"),
+        MinimumTimeWeightControl(Kind.AppSetting, "Minimum time weight"),
+        SupabaseUsageControl(Kind.AppSetting, "Supabase free tier"),
+        MemoryLimitsControl(Kind.AppSetting, "Memory limits"),
     }
 
     /** The actions that show a Claude Code log entry, each one block per added entry. */
@@ -3463,7 +3558,9 @@ object SearchDomain {
                     kind to actions.filter {
                         (severalTimers || it != AddedAction.TimerLowestCountdown) &&
                             (severalChronos || it != AddedAction.ChronoHighestCount) &&
-                            (sleepAdded || it != AddedAction.PeriodSleepSchedule)
+                            (sleepAdded || it != AddedAction.PeriodSleepSchedule) &&
+                            // A menu control's action is its setting's alone: listed where that setting is added.
+                            APP_SETTING_CONTROL_ACTIONS[it]?.let { setting -> appSettingAdded(added, setting) } != false
                     }
                 )
                     .takeIf { it.second.isNotEmpty() }

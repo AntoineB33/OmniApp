@@ -24,6 +24,35 @@ class FeaturePagesTest {
         assertEquals(CustomMenuButtons.PAGES, OmniPage.entries.map { it.searchPage })
     }
 
+    /**
+     * User rule 2026-11-04: each page's Search button opens with "Only this page's types" on — the logs page's type
+     * selector holds its prompts, answers and reasoning chains alone, and so on for every page.
+     */
+    @Test
+    fun each_pages_search_button_offers_that_pages_types_alone() {
+        for (page in SearchDomain.FEATURE_PAGES) {
+            val config = SearchDomain.pageDefaultConfig(page.id)
+            assertTrue(config.pageTypesOnly, page.label)
+            assertEquals(Kind.entries.filter { it in page.kinds }, config.offeredKinds, page.label)
+            assertTrue(config.searchedKinds.all { it in page.kinds }, page.label)
+            // The whole configuration cancelled (Reset twice) keeps it on, every type of the page checked.
+            val cleared = SearchDomain.resetConfig(config.copy(query = "x"), null)
+            assertTrue(cleared.pageTypesOnly && cleared.searchedKinds == page.kinds.toSet(), page.label)
+        }
+        val logs = SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE)
+        assertEquals(listOf(Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning), logs.offeredKinds)
+        // Off: every type is offered, and what the window held of the others is searched again.
+        val scheduler = SearchDomain.pageDefaultConfig("").copy(kinds = setOf(Kind.Task, Kind.ClaudePrompt))
+        assertEquals(setOf(Kind.Task), scheduler.searchedKinds)
+        assertEquals(setOf(Kind.Task, Kind.ClaudePrompt), scheduler.copy(pageTypesOnly = false).searchedKinds)
+        assertEquals(Kind.entries, scheduler.copy(pageTypesOnly = false).offeredKinds)
+        // Kept through a round trip, and a configuration stored before the switch searches as it did.
+        assertEquals(scheduler, SearchDomain.Config.decode(scheduler.encode()))
+        val before = SearchDomain.Config(kinds = setOf(Kind.Task, Kind.ClaudePrompt)).encode()
+        assertFalse("pageTypesOnly\":true" in before, "test premise: a payload with the switch off")
+        assertEquals(setOf(Kind.Task, Kind.ClaudePrompt), SearchDomain.Config.decode(before.replace(",\"pageTypesOnly\":false", ""))?.searchedKinds)
+    }
+
     @Test
     fun only_the_logs_page_offers_only_its_three_kinds() {
         val own = SearchDomain.ConfigurationSearch(pages = setOf(SearchDomain.CLAUDE_LOGS_PAGE))

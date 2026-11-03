@@ -428,7 +428,8 @@ fun SearchWindow(
 ) {
     val frame = if (picker == null) rememberWindowFrameState("Search", initialOffset, initialSize) else null
     val query = config.query
-    val kinds = config.kinds
+    // User rule 2026-11-04: the kinds searched are the checked ones among those offered ([SearchDomain.Config.searchedKinds]).
+    val kinds = config.searchedKinds
     val filters = config.filters
     val sorts = config.sorts
     // Which copy of the window this is: its selection is its own (PRD §5, `Alt+←` walks it back).
@@ -886,8 +887,10 @@ fun SearchWindow(
                 )
                 if (picker == null) {
                 KindsDropDown(
-                    kinds = kinds,
+                    kinds = config.kinds,
                     onKindsChange = { onConfigChange(config.copy(kinds = it)) },
+                    // Only this page's types while the switch is on: the others' checks are kept ([KindsDropDown]).
+                    options = config.offeredKinds,
                     deploy = deployKinds,
                     onDeployed = onKindsDeployed,
                 )

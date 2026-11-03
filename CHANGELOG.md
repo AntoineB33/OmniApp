@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Each page's Search button offers that page's types alone; every menu control is a Search action — 2026-11-04
+
+User rule: a configuration of the Search window, "Only this page's types" (`Config.pageTypesOnly`), on in what each page's Search button opens and in a configuration reset to nothing: the type selector offers the window's page's kinds alone (the logs page's prompts, answers and reasoning chains; the settings page's app settings and workplace setups), and the window searches the checked ones among them, keeping what it holds of the others for when it is off. Off in a configuration the app builds for one element or kind, and absent from one stored before (decoded off: it searches as it did). The window's title names a page's few kinds ("all prompts, answers and reasoning chains"). User rule: every item of the lateral menu is a window or an action of the Search window — the 13 controls that had none (Online, Look away now, Switch task, Sleep / Work, I'm away, Auto schedule, Reminders, Screen breaks, Display, Time limit after a change, Minimum time weight, Supabase free tier, Memory limits) are each an app setting with that one action, drawn by the menu's own code (`LocalMenuControlHost`). Client rebuild only. `FeaturePagesTest`, `MenuControlsAreActionsTest`; checked on the desktop app (virtual screen).
+
 ### The online button moved to the settings page's menu — 2026-11-04
 
 Anomaly: a Reset of the Task Scheduler's menu put the online button back, as it was still one of that menu's defaults beside the settings page's. It is now the settings page's alone: a Reset of the Task Scheduler's menu leaves it out, and one of the settings page's brings it. A Task Scheduler menu stored before keeps it until the user resets or removes it. Client rebuild only. `ServerUsageSettingsTest`.
