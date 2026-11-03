@@ -401,7 +401,8 @@ object CustomMenuButtons {
             CustomMenuButton("d-calendar", "Calendar", "Calendar"),
             LIFE_PLAN,
         ) + listOf(
-            MenuControl.LookAwayNow, MenuControl.SwitchTask, MenuControl.SleepWork, MenuControl.Away, MenuControl.Online,
+            // The online button moved to the settings page's menu (user rule 2026-11-04, [SETTINGS_ONLINE]).
+            MenuControl.LookAwayNow, MenuControl.SwitchTask, MenuControl.SleepWork, MenuControl.Away,
         ).map { CustomMenuButton("d-" + it.name, "", "", control = it.name) }
 
     /**
@@ -432,8 +433,9 @@ object CustomMenuButtons {
     }
 
     /**
-     * User rule 2026-11-04: the settings page's menu holds the online / offline button by default, just above the
-     * Supabase free tier's usage it bears on (whose Refresh is sent even offline). The scheduler's menu has the same item.
+     * User rule 2026-11-04: the online / offline button is a default of the settings page's menu, just above the Supabase
+     * free tier's usage it bears on (whose Refresh is sent even offline) — and no longer of the Task Scheduler's: a Reset
+     * there leaves it out. A Task Scheduler menu stored before keeps it until the user resets or removes it.
      */
     val SETTINGS_ONLINE: CustomMenuButton by lazy { CustomMenuButton("d-" + MenuControl.Online.name, "", "", control = MenuControl.Online.name) }
 
@@ -620,7 +622,6 @@ object CustomMenuButtons {
         val usage = SERVER_USAGE.filter { item -> item in defaults && together0.none { it.id == item.id } }
         val together1 = if (stored.usageSeeded) together0 else together0 + usage
         // ...and, on the settings page, the online button, ONCE: just above the usage where it stands, else at the bottom.
-        // (The scheduler's menu has the same item among its defaults: a list of it the user took it out of keeps it out.)
         val together =
             if (stored.onlineSeeded || defaults != SETTINGS_DEFAULTS || together1.any { it.control == MenuControl.Online.name }) together1
             else {

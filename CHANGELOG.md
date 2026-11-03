@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The online button moved to the settings page's menu — 2026-11-04
+
+Anomaly: a Reset of the Task Scheduler's menu put the online button back, as it was still one of that menu's defaults beside the settings page's. It is now the settings page's alone: a Reset of the Task Scheduler's menu leaves it out, and one of the settings page's brings it. A Task Scheduler menu stored before keeps it until the user resets or removes it. Client rebuild only. `ServerUsageSettingsTest`.
+
 ### A window comes to the page it is asked from — 2026-11-04
 
 Anomaly: the Online window, opened on the Task Scheduler page, did not open when asked for from the settings page's menu: every window but a Search window was the Task Scheduler's, so it was brought back on a page not shown. A window no page owns is now on the page a button last opened or brought it back from (`windowsAskedOn`), a copy on its original's. The memory limits' note no longer says nothing is forgotten (the project's limit is `forget_old_history`'s), and the usage reads "not read yet, budget 50 MB" before a read. Client rebuild only. Checked on the desktop app (virtual screen).

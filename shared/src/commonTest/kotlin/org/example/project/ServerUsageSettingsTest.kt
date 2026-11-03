@@ -93,9 +93,23 @@ class ServerUsageSettingsTest {
         // Removed by the user afterwards: it stays removed.
         val removed = decoded.filterNot { it.control == MenuControl.Online.name }
         assertTrue(CustomMenuButtons.decode(CustomMenuButtons.encode(removed), defaults).none { it.control == MenuControl.Online.name })
-        // The scheduler's menu, which holds the same item, is not given it back once the user took it out.
-        val scheduler = CustomMenuButtons.DEFAULTS.filterNot { it.control == MenuControl.Online.name }
-        val schedulerStored = CustomMenuButtons.encode(scheduler).replace(""","onlineSeeded":true""", "")
+        // The Task Scheduler's menu is never given it: a list of it stored before the flag stays as it was.
+        val schedulerStored = CustomMenuButtons.encode(CustomMenuButtons.DEFAULTS).replace(""","onlineSeeded":true""", "")
         assertTrue(CustomMenuButtons.decode(schedulerStored, CustomMenuButtons.DEFAULTS).none { it.control == MenuControl.Online.name })
+    }
+
+    /**
+     * Anomaly 2026-11-04: the online button MOVED to the settings page's menu, so a Reset of the Task Scheduler's menu
+     * leaves it out — it put it back while it was among that menu's defaults too.
+     */
+    @Test
+    fun a_reset_of_the_task_schedulers_menu_leaves_the_online_button_out_and_the_settings_reset_has_it() {
+        assertTrue(CustomMenuButtons.DEFAULTS.none { it.control == MenuControl.Online.name })
+        val stored = CustomMenuButtons.DEFAULTS + CustomMenuButtons.SETTINGS_ONLINE
+        val lists = CustomMenuButtons.PAGES.associateWith { page -> if (page == "") stored else CustomMenuButtons.defaultsOf(page) }
+        val reset = CustomMenuButtons.withPageReset(lists, "")
+        assertTrue(reset.getValue("").none { it.control == MenuControl.Online.name }, "gone from the Task Scheduler's menu")
+        val settings = CustomMenuButtons.withPageReset(reset, org.example.project.scheduler.domain.SearchDomain.SETTINGS_PAGE)
+        assertTrue(settings.getValue(org.example.project.scheduler.domain.SearchDomain.SETTINGS_PAGE).any { it.control == MenuControl.Online.name })
     }
 }
