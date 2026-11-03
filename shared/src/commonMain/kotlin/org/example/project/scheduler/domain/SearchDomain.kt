@@ -198,13 +198,15 @@ object SearchDomain {
     /**
      * **The feature pages, the one statement of them**: [id] is what a Search window's configuration and the lateral
      * menu's rows say ([Config.page]), [label] what the page selector and every other list of them read, [kinds] the
-     * elements that belong to it. The Task Scheduler's are all but the logs': a setting is also found there.
+     * elements that belong to it. The Task Scheduler's are all but the logs' and the settings page's (user rule
+     * 2026-11-04: *"'only this page's types' should not allow the settings element type except in the Settings page"*;
+     * a setting was the Task Scheduler's too until then).
      */
     data class FeaturePage(val id: String, val label: String, val kinds: List<Kind>)
 
     val FEATURE_PAGES: List<FeaturePage> by lazy {
         listOf(
-            FeaturePage("", "Task Scheduler", Kind.entries - CLAUDE_KINDS.toSet() - Kind.WorkplaceSetup),
+            FeaturePage("", "Task Scheduler", Kind.entries - CLAUDE_KINDS.toSet() - SETTINGS_KINDS.toSet()),
             FeaturePage(CLAUDE_LOGS_PAGE, "Claude Code logs", CLAUDE_KINDS),
             FeaturePage(SETTINGS_PAGE, "Settings", SETTINGS_KINDS),
         )
@@ -1368,6 +1370,39 @@ object SearchDomain {
         if (sameSearch && after.sortFollowsDefault == before.sortFollowsDefault) return after
         return withDefaultSort(after)
     }
+
+    /**
+     * User rule 2026-11-04: **a Search window's "configurations" are its search configurations** — what a button of the
+     * lateral menu (or any opener) compares to bring back the window that has them, else open a new one, and what its
+     * "Update" compares. The search as the window holds it once opened ([withDefaultSort]: a window of tasks alone sorts
+     * them newest first), and none of the window's own state: the added elements, the actions' bars and picks, where an
+     * action places, the window it was opened from or the element it comes from.
+     *
+     * Anomaly 2026-11-04: compared whole and as written, the Task Scheduler page's Search button never found the window it
+     * had opened — that window had taken its default sorting — and opened a new one at every press.
+     */
+    fun searchConfigurations(config: Config): Config =
+        withDefaultSort(config).copy(
+            sortFollowsDefault = false,
+            added = emptyList(),
+            actionQuery = "",
+            collapsedActionGroups = emptySet(),
+            actionSearch = "",
+            pickedBlocks = emptySet(),
+            pickedTimers = emptySet(),
+            compactTimers = false,
+            pickedChronos = emptySet(),
+            compactChronos = false,
+            resiliencePeriod = null,
+            calendarClickMillis = null,
+            placement = Placement(),
+            openedFrom = null,
+            elementSource = null,
+        )
+
+    /** Whether two Search windows' configurations, as stored, have the same [searchConfigurations]. */
+    fun sameSearchConfigurations(a: String?, b: String?): Boolean =
+        searchConfigurations(Config.decode(a) ?: Config()) == searchConfigurations(Config.decode(b) ?: Config())
 
     /** [config] with its default sorting ([defaultSortsOf]) while it follows it; as it is otherwise. A window opened is read through it. */
     fun withDefaultSort(config: Config): Config {

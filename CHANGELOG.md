@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A window button finds its window by its configurations; settings on the settings page alone; no "…" in the configurations — 2026-11-04
+
+Anomaly: the Task Scheduler page's Search button opened a new window at every press. A window button brings back the open window with the same configurations, and compared the whole stored configuration as written: the window had taken its default sorting on opening (tasks newest first), so it never matched. A Search window's configurations are its search configurations now (`SearchDomain.searchConfigurations`: the search as the window holds it, never its added elements or its actions' state), asked by both callers that compared — the bring-back and a ☆ button's "Update", which was offered for the same reason — through `App.sameWindowConfigurations`; every opener goes through it ("Search every element of the kind" had the same anomaly). User rule: "Only this page's types" offers the settings' type on the settings page alone — the Task Scheduler page's types are no longer the app settings. User rule: no text of the Search configurations window is cut by "…": its section titles, labels, faces and lists wrap. Client rebuild only. `FeaturePagesTest`; checked on the desktop app (virtual screen: three presses, one window).
+
 ### The task cell is the search bar of its Edit Mode rectangle — 2026-11-04
 
 User rule: in the rectangle of a task cell in Edit Mode (the Search window with a `SearchPicker`: no head, no actions, no added elements), the search bar is the cell. The window drew a second field holding the draft; it draws none in a picker now, so the completion list comes first, under the "switch task" switch, and the cell has the bar's cross (`SearchBarCross`), just after its title's column: it empties the draft, the caret staying in the cell. Client rebuild only. Checked on the desktop app (virtual screen).

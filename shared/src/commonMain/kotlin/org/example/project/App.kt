@@ -2039,6 +2039,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 FloatingWindow.Calendar -> CalendarNotifications.WindowConfig.decode(config).encode()
                 else -> null
             }
+        // User rule 2026-11-04: **whether two windows of [kind] have the same "configurations"** — what a window button
+        // brings back by, and what its "Update" compares. For a Search window, its search configurations
+        // ([SearchDomain.searchConfigurations]: the search as the window holds it, never its added elements or its
+        // actions' state); for the others, the configuration as the window would hold it. One answer for both callers:
+        // compared whole and as written, a Search window that took its default sorting on opening was never found
+        // again, and its button opened a new one at every press.
+        fun sameWindowConfigurations(kind: FloatingWindow, a: String?, b: String?): Boolean =
+            if (kind == FloatingWindow.Search) SearchDomain.sameSearchConfigurations(a, b)
+            else normalizedWindowConfig(kind, a) == normalizedWindowConfig(kind, b)
         // Bring the open window [id] of [kind] back: out of the window bar, to the front, into the focus.
         // User rule 2026-10-07: **the state a menu button keeps of its window** — where the window stands and the
         // lines between its sections ([org.example.project.ui.WindowLayout]); its configuration is [windowConfigOf].
@@ -2070,10 +2079,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun menuButtonCanUpdate(button: CustomMenuButton): Boolean {
             val frameId = menuButtonWindowOf(button) ?: return false
             val kind = lateralWindowOf(frameId)
+            val current = kind?.let { windowConfigOf(frameId) }
             return CustomMenuButtons.needsUpdate(
                 button,
                 savedConfig = kind?.let { normalizedWindowConfig(it, button.config) },
-                config = kind?.let { windowConfigOf(frameId) },
+                // The same configurations are no change ([sameWindowConfigurations]), however differently written.
+                config = if (kind != null && sameWindowConfigurations(kind, current, button.config)) normalizedWindowConfig(kind, button.config) else current,
                 layout = windowLayoutOf(frameId),
                 opened = menuButtonOpenedLayouts[button.id],
             )
@@ -2105,7 +2116,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
             val wanted = normalizedWindowConfig(kind, config)
             val open = listOfNotNull(kind.name.takeIf { isWindowOpen(kind) }) + windowCopies.filter { lateralWindowOf(it) == kind }
-            open.firstOrNull { windowConfigOf(it) == wanted }?.let { existing ->
+            open.firstOrNull { sameWindowConfigurations(kind, windowConfigOf(it), wanted) }?.let { existing ->
                 presentWindow(kind, existing)
                 return existing
             }

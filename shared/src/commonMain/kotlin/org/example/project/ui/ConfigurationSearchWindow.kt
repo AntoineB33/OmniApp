@@ -186,12 +186,14 @@ fun ConfigurationSearchWindow(
                     label = { it.label },
                     onChange = { checked -> onOwnChange(own.copy(pages = checked.mapTo(HashSet()) { it.id })) },
                     modifier = Modifier.weight(1f),
+                    faceWraps = true,
                 )
                 KindsDropDown(
                     kinds = own.kinds,
                     onKindsChange = { onOwnChange(own.copy(kinds = it)) },
                     modifier = Modifier.weight(1f),
                     options = own.offeredKinds,
+                    faceWraps = true,
                 )
             }
             // User rule 2026-10-11: one button — only the configurations that apply to at least one row of the
@@ -338,8 +340,7 @@ internal fun SectionTitle(text: String) {
         text = searchHighlighted(text),
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+        // User rule 2026-11-04: no text of the configurations is cut by "…": it wraps.
         modifier = Modifier.padding(top = 4.dp),
     )
 }
@@ -354,8 +355,7 @@ internal fun SettingRow(label: String, editor: @Composable () -> Unit) {
         Text(
             text = searchHighlighted(label),
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            // User rule 2026-11-04: wrapped in its column, never cut by "…" ("Only this page's types").
             modifier = Modifier.width(130.dp).padding(end = 6.dp),
         )
         Box(Modifier.weight(1f)) { editor() }
@@ -393,7 +393,7 @@ private fun SettingEditor(
             )
         // The Search window's own type selector — a field with a drop-down — not a second drawing of it.
         SearchDomain.Setting.Types ->
-            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = config.offeredKinds)
+            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = config.offeredKinds, faceWraps = true)
         // User rule 2026-11-04: on, the type selector offers the window's page's types alone ([SearchDomain.Config.pageTypesOnly]).
         SearchDomain.Setting.PageTypes ->
             androidx.compose.material3.Switch(checked = config.pageTypesOnly, onCheckedChange = { onChange(config.copy(pageTypesOnly = it)) })
@@ -468,8 +468,7 @@ private fun SettingEditor(
                     text = if (f.blocksOf.isEmpty()) "every element"
                     else f.blocksOf.map { SearchDomain.changedElementTitle(state, it, windows) }.sorted().joinToString(", "),
                     style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    // User rule 2026-11-04: wrapped, never cut by "…".
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 if (f.blocksOf.isNotEmpty()) FrameButton("✕") { filters(f.copy(blocksOf = emptySet())) }
@@ -545,6 +544,7 @@ private fun SettingEditor(
                 face = changedKindsFace(f.historyChangedKinds),
                 label = { it.label },
                 onChange = { filters(f.copy(historyChangedKinds = it)) },
+                faceWraps = true,
             )
         SearchDomain.Setting.NotificationSourceSetting ->
             CheckBoxDropDown(
@@ -555,6 +555,7 @@ private fun SettingEditor(
                     .filter { it in f.notificationSources }.joinToString(", ") { it.label },
                 label = { it.label },
                 onChange = { filters(f.copy(notificationSources = it)) },
+                faceWraps = true,
             )
         SearchDomain.Setting.HistoryChangedElementSetting ->
             ChangedElementField(state, f.historyChangedKinds, f.historyChangedElement, windows) {
@@ -616,8 +617,7 @@ private fun SortMethodPicker(
         Text(
             text = methods.filter(::inList).joinToString(", ") { it.key.label }.ifEmpty { "none" } + "  ▾",
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            // User rule 2026-11-04: wrapped, never cut by "…".
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
@@ -722,8 +722,7 @@ private fun SortMethodList(
                     Text(
                         text = "${index + 1}. ${method.label}",
                         style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        // User rule 2026-11-04: wrapped, never cut by "…".
                         modifier = Modifier.weight(1f),
                     )
                     ToggleChip(
@@ -792,8 +791,7 @@ private fun <T> EnumPicker(options: List<T>, selected: T?, label: (T) -> String,
         Text(
             text = (selected?.let(label) ?: "any") + "  ▾",
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            // User rule 2026-11-04: wrapped, never cut by "…".
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
@@ -896,6 +894,7 @@ private fun ElementsDropDown(
         label = ::nameOf,
         onChange = onChange,
         onNearEnd = { if (shown < elements.size) shown += ELEMENTS_LISTED_AT_ONCE },
+        faceWraps = true,
     )
 }
 

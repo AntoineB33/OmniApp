@@ -53,6 +53,42 @@ class FeaturePagesTest {
         assertEquals(setOf(Kind.Task, Kind.ClaudePrompt), SearchDomain.Config.decode(before.replace(",\"pageTypesOnly\":false", ""))?.searchedKinds)
     }
 
+    /** User rule 2026-11-04: "only this page's types" offers the settings' type on the settings page alone. */
+    @Test
+    fun the_settings_types_are_the_settings_pages_alone() {
+        for (kind in SearchDomain.SETTINGS_KINDS) {
+            assertEquals(listOf(SearchDomain.SETTINGS_PAGE), SearchDomain.FEATURE_PAGES.filter { kind in it.kinds }.map { it.id }, kind.label)
+        }
+        assertFalse(Kind.AppSetting in SearchDomain.pageDefaultConfig("").offeredKinds)
+        assertFalse(Kind.AppSetting in SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).offeredKinds)
+        assertTrue(Kind.AppSetting in SearchDomain.pageDefaultConfig(SearchDomain.SETTINGS_PAGE).offeredKinds)
+        // Every kind is some page's, and one page's only.
+        assertEquals(Kind.entries, Kind.entries.filter { k -> SearchDomain.FEATURE_PAGES.count { k in it.kinds } == 1 })
+    }
+
+    /**
+     * User rule 2026-11-04: a window's button brings back the window that has the same "configurations" — for a Search
+     * window its search configurations. Anomaly: the Task Scheduler page's Search button opened a new window at every
+     * press, its window having taken its default sorting (tasks newest first) on opening.
+     */
+    @Test
+    fun a_search_window_has_its_buttons_configurations_however_it_was_opened_and_used() {
+        for (page in SearchDomain.FEATURE_PAGES) {
+            val button = SearchDomain.pageDefaultConfig(page.id)
+            val opened = SearchDomain.withDefaultSort(button)
+            assertTrue(SearchDomain.sameSearchConfigurations(button.encode(), opened.encode()), page.label)
+        }
+        val button = SearchDomain.pageDefaultConfig("")
+        assertTrue(SearchDomain.withDefaultSort(button) != button, "test premise: the window's sorting is not the button's")
+        // What the window does with its elements and actions is not its search.
+        val used = SearchDomain.withDefaultSort(button).copy(added = listOf("Task/task/1"), actionQuery = "min", openedFrom = "Search#2")
+        assertTrue(SearchDomain.sameSearchConfigurations(button.encode(), used.encode()))
+        // A search of its own is another window.
+        assertFalse(SearchDomain.sameSearchConfigurations(button.encode(), button.copy(query = "work").encode()))
+        assertFalse(SearchDomain.sameSearchConfigurations(button.encode(), button.copy(kinds = setOf(Kind.Alarm)).encode()))
+        assertFalse(SearchDomain.sameSearchConfigurations(button.encode(), button.copy(pageTypesOnly = false).encode()))
+    }
+
     @Test
     fun only_the_logs_page_offers_only_its_three_kinds() {
         val own = SearchDomain.ConfigurationSearch(pages = setOf(SearchDomain.CLAUDE_LOGS_PAGE))

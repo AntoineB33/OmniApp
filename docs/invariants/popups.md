@@ -737,9 +737,14 @@ It lives in the host because the host already sees the only two events that deci
   window under its neighbours for one frame.
 - **A window button of the lateral menu asks for ONE exact window, and never closes one** (user rules,
   2026-09-26; `App.openNewWindow`): its kind with the kind's default configuration — a ☆ button's: the one it
-  saved. **When that exact window is open** (same kind, same configuration — `normalizedWindowConfig`, so a
+  saved. **When that exact window is open** (same kind, same "configurations" — `sameWindowConfigurations`, so a
   missing configuration and the default one are the same; any window of a kind that has none) it is brought
-  back and focused (out of the bar included). Otherwise a NEW window opens: the original when it is not open,
+  back and focused (out of the bar included). **A Search window's "configurations" are its search configurations**
+  (user rule 2026-11-04, `SearchDomain.searchConfigurations`): the search as the window holds it once opened (its
+  default sorting taken), never its added elements, its actions' bars and picks, or the window it was opened from.
+  Anomaly 2026-11-04: compared whole and as written, the Task Scheduler page's Search button never found its window,
+  which had sorted its tasks newest first on opening, and opened a new one at every press; a ☆ button's "Update" was
+  offered for the same reason. Both callers ask the one funnel. Otherwise a NEW window opens: the original when it is not open,
   else a copy (`Search#2`) cascaded off it. So a Search window whose query was typed into is no longer "the"
   Search button's, and the button opens a fresh one. It is never drawn as "open" (no blue) — the window bar
   says what is open. The **task tree and the calendar** exist once (*Not duplicable*). A ☆ button of a

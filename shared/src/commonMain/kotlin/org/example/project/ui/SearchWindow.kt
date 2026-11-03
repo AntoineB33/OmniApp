@@ -1680,6 +1680,8 @@ internal fun KindsDropDown(
     onDeployed: () -> Unit = {},
     /** The kinds listed; the checks of the others stay as they are. */
     options: List<SearchDomain.Kind> = SearchDomain.Kind.entries,
+    /** The face wraps instead of being cut by "…" ([CheckBoxDropDown]'s `faceWraps`). */
+    faceWraps: Boolean = false,
 ) {
     CheckBoxDropDown(
         options = options,
@@ -1690,6 +1692,7 @@ internal fun KindsDropDown(
         modifier = modifier,
         deploy = deploy,
         onDeployed = onDeployed,
+        faceWraps = faceWraps,
     )
 }
 
@@ -1719,6 +1722,11 @@ internal fun <T> CheckBoxDropDown(
      * more must show as the user scrolls down in it"*. Null: the list is whole.
      */
     onNearEnd: (() -> Unit)? = null,
+    /**
+     * User rule 2026-11-04: the face wraps instead of being cut by "…" — in the Search configurations window. The
+     * Search window's own header keeps it one line, one task cell tall (`popups.md`).
+     */
+    faceWraps: Boolean = false,
 ) {
     var open by remember { mutableStateOf(false) }
     val range = rememberCheckRange<T>()
@@ -1743,8 +1751,8 @@ internal fun <T> CheckBoxDropDown(
         Text(
             text = "$face  ▾",
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            maxLines = if (faceWraps) Int.MAX_VALUE else 1,
+            overflow = if (faceWraps) TextOverflow.Clip else TextOverflow.Ellipsis,
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
