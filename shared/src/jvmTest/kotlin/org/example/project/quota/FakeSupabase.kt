@@ -227,6 +227,51 @@ class FakeSupabase(
     private var lastCronMillis: Long? = null
 
     /** pg_cron's `pause-cue-tick` runs once a minute whatever the clients do; its log row is the server's own growth. */
+    /**
+     * `forget_old_history` (migration 20261103010000), as the daily job runs it: when the live rows of the three row tables
+     * reach 90 % of [limitBytes], the oldest HISTORY rows of `scheduler_entity` (a task no cell holds, a block ended before
+     * [untilMillis]) are deleted, oldest first, with no tombstone, down to 70 %; each account that lost rows gets ONE row of
+     * kind `forgotten` in their place. The 30 days untouched are the caller's [untilMillis] here: the fake keeps no
+     * update time. Returns how many rows were forgotten.
+     */
+    fun forgetOldHistory(limitBytes: Long, untilMillis: Long): Int {
+        val entity = table("scheduler_entity")
+        val used = listOf("scheduler_entity", "history_unit", "claude_log_entry").sumOf { tables[it]?.liveBytes ?: 0L }
+        if (used < limitBytes * 9 / 10) return 0
+        var toFree = used - limitBytes * 7 / 10
+        fun history(row: JsonObject): Boolean {
+            if (row["deleted"]?.let(::scalar) == "true") return false
+            val payload = row["payload"]?.let(::scalar)?.let { runCatching { json.parseToJsonElement(it) as? JsonObject }.getOrNull() } ?: return false
+            return when (row["kind"]?.let(::scalar)) {
+                "tasks" -> (payload["occurrences"] as? JsonArray).isNullOrEmpty()
+                "panels" -> ((payload["end"] as? JsonPrimitive)?.content?.toLongOrNull() ?: Long.MAX_VALUE) < untilMillis
+                else -> false
+            }
+        }
+        val chosen = entity.rows.values.filter(::history).sortedBy { it["revision"]?.let(::scalar)?.toLongOrNull() ?: 0L }
+            .takeWhile { row -> (toFree > 0).also { toFree -= entity.rowBytes(row) } }
+        val keys = chosen.map { Triple(it["user_id"]?.let(::scalar), it["kind"]?.let(::scalar), it["entity_id"]?.let(::scalar)) }.toSet()
+        entity.delete({ Triple(it["user_id"]?.let(::scalar), it["kind"]?.let(::scalar), it["entity_id"]?.let(::scalar)) in keys }, null)
+        for ((user, rows) in chosen.groupBy { it["user_id"]?.let(::scalar) }) {
+            val old = entity.rows.values.firstOrNull {
+                it["user_id"]?.let(::scalar) == user && it["kind"]?.let(::scalar) == "forgotten"
+            }?.get("payload")?.let(::scalar)?.let { runCatching { json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
+            val before = { field: String -> (old?.get(field) as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L }
+            entity.upsert(
+                buildJsonObject {
+                    put("user_id", user)
+                    put("kind", "forgotten")
+                    put("entity_id", "history")
+                    put("payload", "{\"untilMillis\":$untilMillis,\"rows\":${before("rows") + rows.size},\"bytes\":${before("bytes") + rows.sumOf(entity::rowBytes)}}")
+                    put("deleted", false)
+                    put("device_id", "server")
+                },
+                user,
+            )
+        }
+        return chosen.size
+    }
+
     fun runCronUntil(nowMillis: Long) {
         var last = lastCronMillis ?: nowMillis
         val log = table("cron.job_run_details")
@@ -536,6 +581,13 @@ class FakeSupabase(
                 HttpStatusCode.OK to "false"
             }
             "away_spans" -> HttpStatusCode.OK to "[]"
+            // Migration 20261103000000: what the database holds, and the calling account's rows in its three row tables.
+            "project_usage" -> {
+                val account = listOf("scheduler_entity", "history_unit", "claude_log_entry").sumOf { name ->
+                    tables[name]?.let { t -> t.rows.values.filter { it["user_id"]?.let(::scalar) == user }.sumOf(t::rowBytes) } ?: 0L
+                }
+                HttpStatusCode.OK to "{\"database_bytes\":${tables.values.sumOf { it.diskBytes }},\"account_bytes\":$account}"
+            }
             else -> HttpStatusCode.OK to ""
         }
     }

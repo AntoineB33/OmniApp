@@ -72,6 +72,7 @@ class ServerQuotaTest {
         val requestsBefore = HashMap(server.requestsByCall)
         val realtimeBefore = HashMap(server.realtimeByStream)
         val entitiesBefore = entityKinds(server)
+        val historyBefore = historyBytes(server, t0 + testScheduler.currentTime)
         val tombstonesBefore = tombstoneBytes(server)
         val desktopUser = HeavyUser(desktop, editsPerMinute = 1, seed = 1)
         val phoneUser = HeavyUser(phone, editsPerMinute = 1, seed = 7)
@@ -93,6 +94,7 @@ class ServerQuotaTest {
             }
         }
         val after = Meters.of(server)
+        val historyAfter = historyBytes(server, t0 + testScheduler.currentTime)
 
         // ----- projection -------------------------------------------------------------------------------------
         val q = FreeTierQuota
@@ -151,6 +153,22 @@ class ServerQuotaTest {
         )
         report.append("  largest request body ${mb(server.largestRequestBodyBytes)}, largest realtime message ${mb(server.largestRealtimeMessageBytes)}\n")
 
+        // `forget_old_history` (migration 20261103010000, scheduled daily by pause-cue-setup.sql): the HISTORY rows' growth
+        // is forgotten past 90 % of the limit — only that part, and only into the room the rest leaves. Everything else
+        // still grows as measured: when the rest alone is over, the history's trim cannot save the budget.
+        if (forgetsOldHistory()) {
+            val historyProjected =
+                (historyAfter - historyBefore).coerceAtLeast(0) * q.ACTIVE_HOURS_PER_DAY.toLong() * q.DAYS_PROJECTED * q.ACCOUNTS
+            val rest = (database - historyProjected).coerceAtLeast(0)
+            val room = (q.budget(q.DATABASE_BYTES) * 9 / 10 - rest).coerceAtLeast(0)
+            database = rest + minOf(historyProjected, room)
+            report.append(
+                "  history a year %s, kept %s: forgotten past 90 %% of the limit (the rest: %s)\n".format(
+                    mb(historyProjected), mb(minOf(historyProjected, room)), mb(rest),
+                ),
+            )
+        }
+
         val failures = ArrayList<String>()
         fun check(what: String, value: Long, limit: Long, unit: (Long) -> String = { it.toString() }) {
             val budget = q.budget(limit)
@@ -177,6 +195,26 @@ class ServerQuotaTest {
     }
 
     /** How long `pause-cue-setup.sql` keeps pg_cron's run log, read off its purge job; null when it never purges. */
+    /** The history rows' bytes in `scheduler_entity` (what `forget_old_history` may forget: [ForgottenRows.covers]). */
+    private fun historyBytes(server: FakeSupabase, nowMillis: Long): Long {
+        val table = server.table("scheduler_entity")
+        val marker = org.example.project.scheduler.sync.ForgottenRows.Marker(untilMillis = nowMillis)
+        return table.rows.values.filter { row ->
+            val kind = (row["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@filter false
+            val payload = (row["payload"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            row["deleted"]?.toString() != "true" &&
+                org.example.project.scheduler.sync.ForgottenRows.covers(org.example.project.scheduler.sync.EntityRows.Key(kind, ""), payload, marker)
+        }.sumOf(table::rowBytes)
+    }
+
+    /** Whether the migrations hold `forget_old_history` AND pause-cue-setup.sql schedules it: otherwise nothing forgets. */
+    private fun forgetsOldHistory(): Boolean {
+        val root = generateSequence(java.io.File("").absoluteFile) { it.parentFile }.firstOrNull { java.io.File(it, "supabase/migrations").isDirectory } ?: return false
+        val migrations = java.io.File(root, "supabase/migrations").listFiles().orEmpty().joinToString("\n") { it.readText() }
+        val setup = java.io.File(root, "supabase/pause-cue-setup.sql").takeIf { it.isFile }?.readText().orEmpty()
+        return "function public.forget_old_history()" in migrations && "select public.forget_old_history()" in setup
+    }
+
     private fun cronLogRetentionMillis(): Long? {
         val sql = generateSequence(java.io.File("").absoluteFile) { it.parentFile }
             .map { java.io.File(it, "supabase/pause-cue-setup.sql") }.firstOrNull { it.isFile }?.readText() ?: return null

@@ -695,6 +695,15 @@ object SchedulerReducer {
                         if (weight == it.minimumTimeWeight) it else it.copy(minimumTimeWeight = weight)
                     }
                 }
+            is SchedulerIntent.SetDatabaseLimits ->
+                settingsUnit(state, "Memory limits", coalesceKey = "setting/memory-limits") {
+                    it.copy(
+                        serverDatabaseLimitBytes =
+                            intent.serverBytes?.let(org.example.project.scheduler.domain.ServerBudget::serverLimitOf) ?: it.serverDatabaseLimitBytes,
+                        deviceDatabaseLimitBytes =
+                            intent.deviceBytes?.let(org.example.project.scheduler.domain.ServerBudget::deviceLimitOf) ?: it.deviceDatabaseLimitBytes,
+                    ).let { next -> if (next == it) it else next }
+                }
             is SchedulerIntent.SetSoundMuted ->
                 settingsUnit(state, if (intent.muted) "Sound off" else "Sound on") {
                     if (it.soundMuted == intent.muted) it else it.copy(soundMuted = intent.muted)

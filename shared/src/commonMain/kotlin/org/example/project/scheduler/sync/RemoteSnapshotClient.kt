@@ -662,6 +662,22 @@ class RemoteSnapshotClient(
             .filter { it.endEpochMillis > it.startEpochMillis }
     }
 
+    /**
+     * The project's database size and this account's share of it (`project_usage`, migration 20261103000000): what the
+     * Settings page shows. One small call, made only when the user asks for it (`server-quota.md`).
+     */
+    suspend fun fetchProjectUsage(session: SupabaseSession): Pair<Long, Long> {
+        val response =
+            http.post("${config.restUrl}/rpc/project_usage") {
+                authHeaders(session)
+                contentType(ContentType.Application.Json)
+                setBody("{}")
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        val row = json.decodeFromString<ProjectUsageRow>(response.bodyAsText())
+        return row.databaseBytes to row.accountBytes
+    }
+
     fun close() = http.close()
 
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders(session: SupabaseSession) {
@@ -816,6 +832,13 @@ private data class BreakRuleRow(
     @SerialName("k") val kind: String,
     @SerialName("s") val startMs: Long,
     @SerialName("e") val endMs: Long,
+)
+
+/** The answer of the `project_usage` RPC. */
+@Serializable
+private data class ProjectUsageRow(
+    @SerialName("database_bytes") val databaseBytes: Long = 0L,
+    @SerialName("account_bytes") val accountBytes: Long = 0L,
 )
 
 /** Arguments of the `away_spans` RPC — the window a waking app is asking about. */

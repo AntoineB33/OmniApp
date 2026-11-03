@@ -57,7 +57,7 @@ class QuotaScenario(private val test: TestScope, val server: FakeSupabase, val t
                     it.saveSyncMeta(SyncMeta(deviceId = id, accessToken = token, refreshToken = token, userId = userId, email = "$userId@quota"))
                 }
         val realtime = FakeRealtime(id)
-        val sync = SchedulerSyncEngine(RemoteSnapshotClient(config, HttpClient(server.engine(kotlinx.coroutines.test.StandardTestDispatcher(test.testScheduler)))), store, activeSessionStore = store)
+        val sync = SchedulerSyncEngine(RemoteSnapshotClient(config, HttpClient(server.engine(kotlinx.coroutines.test.StandardTestDispatcher(test.testScheduler)))), store, activeSessionStore = store, clock = { t0.value + test.testScheduler.currentTime })
         val vm =
             TaskSchedulerViewModel(
                 initial = initial,
@@ -175,6 +175,19 @@ class QuotaScenario(private val test: TestScope, val server: FakeSupabase, val t
          * the release account's shape (224 tasks, 434 cells, 219 lists, 2026-09-17).
          */
         fun account(topLevel: Int = 20, children: Int = 10): SchedulerState {
+            // Minted by a synced device, as every id of an account in use is since 2026-11-03 (`SchedulerState.mintedNumber`):
+            // built with bare ids, the hour measured would lengthen every id it renames, a one-off the year then repeats.
+            val previous = SchedulerReducer.deviceId
+            SchedulerReducer.deviceId = { "desktop" }
+            try {
+                // The tree alone: the history of building it is no device's, so no hour of the scenario sends it.
+                return built(topLevel, children).copy(histories = SchedulerState.empty().histories)
+            } finally {
+                SchedulerReducer.deviceId = previous
+            }
+        }
+
+        private fun built(topLevel: Int, children: Int): SchedulerState {
             var s = SchedulerState.empty()
             repeat(topLevel) { i ->
                 val root = s.lists[s.rootListId]!!

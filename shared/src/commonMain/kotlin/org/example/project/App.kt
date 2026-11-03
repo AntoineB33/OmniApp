@@ -1477,6 +1477,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         val syncStateValue = vm.syncState?.collectAsState()?.value
         val accountValue = vm.account?.collectAsState()?.value
+        // User rule 2026-11-03: the project usage the Settings page shows, as last read by its refresh button.
+        val projectUsageValue = vm.projectUsage.collectAsState().value
+        val projectUsageFailedValue = vm.projectUsageFailed.collectAsState().value
         val offlineValue = vm.offline?.collectAsState()?.value
         // PRD §4: the task tree's window. OPEN on a first run (nothing kept yet), as it was left after that.
         var taskTreeWindowOpen by remember {
@@ -4173,6 +4176,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             vm.dispatch(inMenu(SchedulerIntent.SetCalendarDayMode(it == org.example.project.ui.CalendarDisplayMode.Day)))
                         },
                         onSetPlanTimeLimit = { vm.dispatch(inMenu(SchedulerIntent.SetPlanCalculationLimit(it))) },
+                        projectUsage = projectUsageValue,
+                        projectUsageFailed = projectUsageFailedValue,
+                        onRefreshProjectUsage = { vm.refreshProjectUsage() },
+                        // Read when the log changes, never per tick (`display-hot-path.md`): it is a call's doing, not time's.
+                        deviceMonthUsage = remember(schedulerState.supabaseUsageLog) {
+                            org.example.project.scheduler.domain.deviceMonthUsage(schedulerState.supabaseUsageLog, clock.nowMillis(), tz)
+                        },
+                        onSetDatabaseLimits = { server, device -> vm.dispatch(inMenu(SchedulerIntent.SetDatabaseLimits(server, device))) },
                         onSetMinimumTimeWeight = { vm.dispatch(inMenu(SchedulerIntent.SetMinimumTimeWeight(it))) },
                         onSetSleepSchedule = { vm.dispatch(inMenu(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong()))) },
                         onSetSoundVolume = { vm.dispatch(inMenu(SchedulerIntent.SetSoundVolume(it))) },

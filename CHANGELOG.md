@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Near its limit the server forgets its oldest history, one row standing for it — 2026-11-03, not deployed
+
+User rules: a database near its limit deletes its oldest rows, replaced by a single row saying they are not saved there any more. `forget_old_history` (migration 20261103010000, daily in pause-cue-setup.sql) deletes the oldest history rows untouched for 30 days, from 90 % of the limit down to 70 %, measured on the live rows, and writes one `forgotten` row per account. A device keeps what it covers on a full read and never sends it back (`ForgottenRows`, `SchedulerSyncEngine`). `ServerQuotaTest` bounds only the history's growth; its account is built with tagged ids and no history of its own, which removed two artefacts of the measure. Still over: the database 75.2 MB a year without the history, egress 520.3 MB a month. Deploy: `scripts\deploy-supabase.bat` (migration and schedule), and a client rebuild. `ForgottenHistoryTest`.
+
+### The Supabase free tier's usage and the memory limits on the Settings page — 2026-11-03
+
+User rule: the settings page's menu shows the usage of the free tier with a Refresh button, and fields for the memory limits; the app never uses more than a tenth of any quota on any project. The database's size is the server's own measure (new RPC `project_usage`, migration 20261103000000), read on a press of Refresh only; egress is this device's logged calls this month, a lower bound; Realtime and Edge Function counts are not visible from the app. The project database's limit (`serverDatabaseLimitBytes`) is an account setting, synced, clamped to the tenth; this device's (`deviceDatabaseLimitBytes`) is local. Neither is applied yet: the server's trimming is not built. Absent from an older payload: the defaults; a stored menu of the settings page gets both items once. Deploy: `scripts\deploy-supabase.bat` for the migration, and a client rebuild. `ServerUsageSettingsTest`, `ProjectUsageRefreshTest`.
+
 ### No check boxes in the Search window's results — 2026-11-03
 
 User rule: the result rows' and sub-tree cells' check boxes, "Select all" and "Add" are gone, redundant with the row menu's "add" on the selected rows. Ctrl+A in the result list, which did nothing, now selects every row. An element's children are indented as before the check boxes' room was added. Client rebuild only. `SearchSelectAllTest`.

@@ -66,6 +66,9 @@ select cron.schedule('purge-cron-run-log', '17 3 * * *', $$ delete from cron.job
 -- Entity tombstones older than a week (migration 20260917000000): every rename writes one, and a device that has not
 -- pulled for six days reads the account's live rows in full instead of trusting them.
 select cron.schedule('purge-scheduler-tombstones', '23 3 * * *', $$ select public.purge_scheduler_tombstones() $$);
+-- Near the limit, the oldest history is forgotten, ONE row standing for it (migration 20261103010000;
+-- docs/invariants/server-quota.md). A no-op while the database holds less than 90 % of its limit.
+select cron.schedule('forget-old-history', '41 3 * * *', $$ select public.forget_old_history() $$);
 -- cron.schedule upserts by jobname, so re-running is safe; to change `t_b`, edit the schedule here and re-run
 -- scripts/deploy-supabase.bat. (`t_a` and the break lengths/messages are per-account rows changed over HTTP —
 -- see docs/PAUSE_CUE_DELIVERY.md — no redeploy needed.)

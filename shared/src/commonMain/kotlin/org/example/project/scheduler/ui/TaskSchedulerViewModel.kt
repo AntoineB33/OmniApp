@@ -546,6 +546,23 @@ class TaskSchedulerViewModel(
     /** The manual sync trigger (fallback / force-now). Auto-push + Realtime auto-pull also reconcile on their own. */
     fun syncNow() = saveScope.launch { reconcileUnlessEditing() }
 
+    /**
+     * User rule 2026-11-03: the project's usage on the Settings page, as last read — null until the refresh button is
+     * pressed. In memory only: a reading of the server, never state. [projectUsageFailed]: the last press got nothing
+     * (offline, signed out, or the server's function not deployed).
+     */
+    private val _projectUsage = MutableStateFlow<org.example.project.scheduler.domain.ProjectUsage?>(null)
+    val projectUsage: StateFlow<org.example.project.scheduler.domain.ProjectUsage?> = _projectUsage.asStateFlow()
+    private val _projectUsageFailed = MutableStateFlow(false)
+    val projectUsageFailed: StateFlow<Boolean> = _projectUsageFailed.asStateFlow()
+
+    /** The refresh button: ONE call to the server per press (`server-quota.md`: no timer-driven request). */
+    fun refreshProjectUsage() = saveScope.launch {
+        val read = syncEngine?.fetchProjectUsage(SchedulerReducer.clock.nowMillis())
+        if (read != null) _projectUsage.value = read
+        _projectUsageFailed.value = read == null
+    }
+
     /** The Claude Code logs the account keeps ([SchedulerSyncEngine.syncClaudeLogs]); null when sync is disabled, signed out or offline. */
     suspend fun syncClaudeLogs(batches: List<List<org.example.project.scheduler.sync.ClaudeLogRow>>, cursor: Long, pull: Boolean = true) =
         syncEngine?.syncClaudeLogs(batches, cursor, pull)

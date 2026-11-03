@@ -135,9 +135,13 @@ server holds them after the last reconcile).
 - `Task.record` is **unioned**; panels/chores/alarms resolve as **whole objects**; id counters take the
   **max**; ordered lists merge membership then follow the remote's order.
 - **The result is repaired, not trusted** (`SnapshotMerge.repair` + `pruneDetachedTree`).
-- **A row the server forgot to stay under its limit is not a deletion** (user rule 2026-11-03, NOT BUILT YET;
-  `server-quota.md` § *Near the limit, the server forgets*): the device keeps it, and "deleted on one side" does not
-  apply to it. The server no longer holds the whole account.
+- **A row the server forgot to stay under its limit is not a deletion** (user rule 2026-11-03; `server-quota.md` §
+  *Near the limit, the server forgets*; `ForgottenRows`, `ForgottenHistoryTest`): the server deletes it with no tombstone,
+  so an incremental pull never hears of it, and writes ONE row of kind `forgotten` saying what it no longer holds. That row
+  is never state: a device keeps it apart (`RowBase.forgotten`) and never pushes nor deletes it. On a FULL read (a cursor
+  older than six days), a row the device knew on the server, missing and covered by it, is read as still there: kept,
+  and not sent back. The server no longer holds the whole account: a device that never held a forgotten row cannot get
+  it. Known edge: an old row really deleted elsewhere while this device was away six days stays here.
 - **The merge is applied locally AND pushed** — as the rows it changed.
 - **History is not merged, it is shared**: every unit is its device's, and a pulled unit is added beside the local
   ones (`MergePeerHistory`).

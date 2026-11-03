@@ -1186,6 +1186,12 @@ sealed interface SchedulerIntent {
     data class SetMinimumTimeWeight(val weight: Double) : SchedulerIntent
 
     /**
+     * User rule 2026-11-03: the memory limits of the Settings page — the project database's (an account setting, synced,
+     * clamped to a tenth of the free tier) and this device's (this device's setting). A null leaves that one as it is.
+     */
+    data class SetDatabaseLimits(val serverBytes: Long? = null, val deviceBytes: Long? = null) : SchedulerIntent
+
+    /**
      * User rule 2026-10-04: the scheduler engine's time limit after a change, in seconds
      * ([SchedulerState.planCalculationLimitSeconds]) — this device's own setting: persisted, never synced, one History Unit.
      */

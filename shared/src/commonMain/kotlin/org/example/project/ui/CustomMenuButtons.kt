@@ -150,6 +150,12 @@ enum class MenuControl(val title: String) {
     ClaudeSoundsVolume("Claude Code sounds"),
     /** User rule 2026-10-18: every sound of the app off on this device — in every page's menu by default. */
     MuteAll("Mute all sound"),
+
+    /** User rule 2026-11-03: the Supabase free tier's usage, with a refresh button — the settings page's menu has it. */
+    SupabaseUsage("Supabase free tier"),
+
+    /** User rule 2026-11-03: the memory limits, the project database's and this device's — the settings page's menu has it. */
+    MemoryLimits("Memory limits"),
     ;
 
     companion object {
@@ -353,6 +359,8 @@ object CustomMenuButtons {
         val soundsTogether: Boolean = false,
         /** Whether a list of the scheduler's menu was already given the Life plan button ([LIFE_PLAN]), ONCE. */
         val lifePlanSeeded: Boolean = false,
+        /** Whether a list of the settings page's menu was already given the usage and the memory limits ([SERVER_USAGE]), ONCE. */
+        val usageSeeded: Boolean = false,
     )
 
     /**
@@ -416,7 +424,13 @@ object CustomMenuButtons {
     val SETTINGS_DEFAULTS: List<CustomMenuButton> by lazy {
         listOf(GLOBAL_SEARCH, GLOBAL_MUTE) +
             listOf(MenuControl.Voice, MenuControl.Notifications, MenuControl.SoundVolume)
-                .map { CustomMenuButton("d-" + it.name, "", "", control = it.name) }
+                .map { CustomMenuButton("d-" + it.name, "", "", control = it.name) } +
+            SERVER_USAGE
+    }
+
+    /** User rule 2026-11-03: the settings page's usage of the Supabase free tier and its memory limits, at its bottom. */
+    val SERVER_USAGE: List<CustomMenuButton> by lazy {
+        listOf(MenuControl.SupabaseUsage, MenuControl.MemoryLimits).map { CustomMenuButton("d-" + it.name, "", "", control = it.name) }
     }
 
     /** The feature pages that have a menu, by the name a Search configuration gives them (blank: the Task Scheduler). */
@@ -453,7 +467,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, lifePlanSeeded = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, lifePlanSeeded = true, usageSeeded = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -592,7 +606,10 @@ object CustomMenuButtons {
         val withSounds =
             if (stored.claudeSoundsSeeded || CLAUDE_SOUNDS !in defaults || withMute.any { it.id == CLAUDE_SOUNDS.id }) withMute
             else withMute + CLAUDE_SOUNDS
-        val together = if (stored.soundsTogether) withSounds else withSoundsTogether(withSounds)
+        val together0 = if (stored.soundsTogether) withSounds else withSoundsTogether(withSounds)
+        // ...and, on the page they are defaults of, the usage and the memory limits, ONCE, at the bottom.
+        val usage = SERVER_USAGE.filter { item -> item in defaults && together0.none { it.id == item.id } }
+        val together = if (stored.usageSeeded) together0 else together0 + usage
         // ...and, on the page it is a default of, the Life plan button, ONCE: under the Calendar button, where it stands.
         if (stored.lifePlanSeeded || LIFE_PLAN !in defaults || together.any { it.id == LIFE_PLAN.id }) return together
         val calendar = together.indexOfFirst { it.id == "d-calendar" }

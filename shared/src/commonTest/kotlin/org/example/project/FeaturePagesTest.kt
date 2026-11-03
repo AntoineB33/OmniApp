@@ -80,7 +80,11 @@ class FeaturePagesTest {
         assertEquals("LateralMenu/AppSettings", CustomMenuButtons.placementIdOf(SearchDomain.SETTINGS_PAGE))
         assertEquals(listOf(CustomMenuButtons.GLOBAL_SEARCH, CustomMenuButtons.GLOBAL_MUTE), menu.take(2))
         assertEquals(
-            listOf(MenuControl.Voice.name, MenuControl.Notifications.name, MenuControl.SoundVolume.name),
+            // The free tier's usage and the memory limits last (user rule 2026-11-03).
+            listOf(
+                MenuControl.Voice.name, MenuControl.Notifications.name, MenuControl.SoundVolume.name,
+                MenuControl.SupabaseUsage.name, MenuControl.MemoryLimits.name,
+            ),
             menu.drop(2).map { it.control },
         )
         // Every page's own Reset goes back to its own list.

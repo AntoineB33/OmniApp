@@ -835,6 +835,14 @@ data class SchedulerState(
      */
     val minimumTimeWeight: Double = DEFAULT_MINIMUM_TIME_WEIGHT,
     /**
+     * `server-quota.md` § *Near the limit, the server forgets* (user rule 2026-11-03): the most the project's database may
+     * hold, set on the Settings page — never above a tenth of the free tier's ([ServerBudget.serverLimitOf]). An account
+     * setting: persisted and synced. Not applied until the server forgets.
+     */
+    val serverDatabaseLimitBytes: Long = org.example.project.scheduler.domain.ServerBudget.databaseBudgetBytes,
+    /** The same, for this device's own database ([ServerBudget.deviceLimitOf]). This device's setting: persisted, never synced. */
+    val deviceDatabaseLimitBytes: Long = org.example.project.scheduler.domain.ServerBudget.DEFAULT_DEVICE_LIMIT_BYTES,
+    /**
      * PRD §7 the window the user is currently focused on — any window of the app, the task tree included.
      * Every history chord is relative to it (PRD §5/§6), each unit is stamped with it, and it gates which
      * surface catches letter typing (PRD §8). Persisted with the rest of the app state.
@@ -1334,6 +1342,7 @@ data class SchedulerState(
             selection = other.selection,
             showScreenBreaks = other.showScreenBreaks,
             planCalculationLimitSeconds = other.planCalculationLimitSeconds,
+            deviceDatabaseLimitBytes = other.deviceDatabaseLimitBytes,
             soundMuted = other.soundMuted,
             periodCrossings = other.periodCrossings,
             showReminders = other.showReminders,
@@ -1356,6 +1365,7 @@ data class SchedulerState(
             selection = SchedulerSelection(),
             showScreenBreaks = false,
             planCalculationLimitSeconds = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+            deviceDatabaseLimitBytes = org.example.project.scheduler.domain.ServerBudget.DEFAULT_DEVICE_LIMIT_BYTES,
             soundMuted = false,
             periodCrossings = emptyMap(),
             showReminders = true,

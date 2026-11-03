@@ -462,7 +462,16 @@ open class SchedulerSyncEngine(
          * the server applied it, so the next reconcile writes each of them again as this device then holds it.
          */
         val pending: List<List<String>> = emptyList(),
+        /**
+         * The server's row standing for the history it forgot ([ForgottenRows]), as last pulled — never part of the
+         * state. Absent from a base written before 2026-11-03: nothing forgotten.
+         */
+        val forgotten: String? = null,
     )
+
+    /** The history the server forgot for this account, as last pulled ([ForgottenRows]); null when nothing was. */
+    private val _forgotten = kotlinx.coroutines.flow.MutableStateFlow<ForgottenRows.Marker?>(null)
+    val forgotten: kotlinx.coroutines.flow.StateFlow<ForgottenRows.Marker?> = _forgotten
 
     private fun rowBase(m: SyncMeta): RowBase =
         m.baseSnapshot?.let { text -> runCatching { json.decodeFromString<RowBase>(text) }.getOrNull() } ?: RowBase()
@@ -508,6 +517,7 @@ open class SchedulerSyncEngine(
         val m = meta()
         val me = m.deviceId
         var base = rowBase(m)
+        if (_forgotten.value == null) _forgotten.value = ForgottenRows.marker(base.forgotten)
 
         val now = clock()
         // A cursor older than the tombstones the server still keeps cannot be trusted to have seen every deletion.
@@ -529,10 +539,27 @@ open class SchedulerSyncEngine(
         if (pulled.isNotEmpty() || full) {
             // A full read IS the server's rows; an incremental one is the base with what changed applied.
             val remoteRows = if (full) LinkedHashMap() else LinkedHashMap(baseRows)
+            var forgotten = base.forgotten
             for (row in pulled) {
                 val key = EntityRows.Key(row.kind, row.entityId)
+                // The server's summary of what it forgot: kept apart, never state, so never pushed nor deleted here.
+                if (ForgottenRows.isMarker(key)) {
+                    if (!row.deleted) forgotten = row.payload
+                    continue
+                }
                 if (row.deleted || row.payload == null) remoteRows.remove(key) else remoteRows[key] = row.payload
             }
+            // User rule 2026-11-03: what the server forgot is not deleted. A row this device knew on the server, missing
+            // from a full read and covered by the summary, is still there as far as this device is concerned: kept, and
+            // not sent back. (An incremental read never hears of it: the server forgets without a tombstone.)
+            val marker = ForgottenRows.marker(forgotten)
+            if (full && marker != null) {
+                for ((key, value) in baseRows) {
+                    if (key !in remoteRows && ForgottenRows.covers(key, value, marker)) remoteRows[key] = value
+                }
+            }
+            _forgotten.value = marker
+            base = base.copy(forgotten = forgotten)
             val remotePayload = EntityRows.join(remoteRows)
             val merged =
                 if (local == baseRows || baseRows.isEmpty() && !m.dirty) remotePayload
@@ -826,6 +853,18 @@ open class SchedulerSyncEngine(
         }
         if (pushed.isNotEmpty() || pulled.isNotEmpty()) Diagnostics.log("claude logs: pushed ${pushed.size}, pulled ${pulled.size}")
         return ClaudeLogSync(current.userId, pushed, pulled, at)
+    }
+
+    /**
+     * The project's usage as the server measures it, or null offline, signed out or on a failure (said in the log): what
+     * the Settings page's refresh button asks. Never called on a timer.
+     */
+    suspend fun fetchProjectUsage(nowMillis: Long): org.example.project.scheduler.domain.ProjectUsage? {
+        val current = onlineSession() ?: return null
+        return runCatching { withAuth(current) { client.fetchProjectUsage(it) } }
+            .onFailure { Diagnostics.log("project usage FAILED: ${it.message}") }
+            .getOrNull()
+            ?.let { (database, account) -> org.example.project.scheduler.domain.ProjectUsage(database, account, nowMillis) }
     }
 
     override suspend fun fetchAwaySpans(fromMillis: Long, toMillis: Long): List<TaskTimeRange> {

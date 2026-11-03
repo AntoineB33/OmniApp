@@ -575,6 +575,8 @@ object SchedulerStateCodec {
             automaticSchedule = automaticSchedule,
             soundVolume = soundVolume,
             minimumTimeWeight = minimumTimeWeight,
+            serverDatabaseLimitBytes = serverDatabaseLimitBytes,
+            deviceDatabaseLimitBytes = deviceDatabaseLimitBytes,
             chores = chores.map { it.toPersisted() },
             alarms = alarms.map { it.toPersisted() },
             // PRD §18 Timers: the run state rides along with the settings — `endsAtMillis` is an absolute
@@ -1282,6 +1284,9 @@ object SchedulerStateCodec {
             soundVolume = soundVolume,
             // Healed on the way in: a value out of its bounds (or not a number) is not a balance.
             minimumTimeWeight = org.example.project.scheduler.state.minimumTimeWeightOf(minimumTimeWeight),
+            // Healed on the way in, as the field clamps it: never above a tenth of the free tier.
+            serverDatabaseLimitBytes = org.example.project.scheduler.domain.ServerBudget.serverLimitOf(serverDatabaseLimitBytes),
+            deviceDatabaseLimitBytes = org.example.project.scheduler.domain.ServerBudget.deviceLimitOf(deviceDatabaseLimitBytes),
             chores = SchedulerDomain.assignReminderIds(
                 chores.map { it.toChoreEntry() },
             ),
@@ -1780,6 +1785,9 @@ private data class PersistedState(
     val soundVolume: Double = 1.0,
     // The balance of the score's two criteria: the default for a payload written before the setting existed (2026-10-06).
     val minimumTimeWeight: Double = org.example.project.scheduler.state.DEFAULT_MINIMUM_TIME_WEIGHT,
+    // The memory limits (2026-11-03): the tenth of the free tier and the device default for a payload written before them.
+    val serverDatabaseLimitBytes: Long = org.example.project.scheduler.domain.ServerBudget.databaseBudgetBytes,
+    val deviceDatabaseLimitBytes: Long = org.example.project.scheduler.domain.ServerBudget.DEFAULT_DEVICE_LIMIT_BYTES,
     // PRD §14: a missing chores list decodes to empty (payloads written before the chores manager existed).
     val chores: List<PersistedChoreEntry> = emptyList(),
     // PRD §18: a missing alarm list decodes to empty (payloads written before the Alarms window existed).
@@ -3421,7 +3429,7 @@ internal object SettingEntries {
 
     /** The entries that are local-only view state: the fields [SchedulerState.withLocalViewStateNeutralized] resets. */
     val LOCAL_ONLY: Set<String> =
-        setOf("showScreenBreaks", "showReminders", "calendarDayMode", "planCalculationLimitSeconds", "soundMuted")
+        setOf("showScreenBreaks", "showReminders", "calendarDayMode", "planCalculationLimitSeconds", "soundMuted", "deviceDatabaseLimitBytes")
 
     private fun pair(prefix: String, a: String, b: String): String = "$prefix|$a|$b"
 
@@ -3430,6 +3438,8 @@ internal object SettingEntries {
             put("automaticSchedule", s.automaticSchedule.toString())
             put("soundVolume", s.soundVolume.toString())
             put("minimumTimeWeight", s.minimumTimeWeight.toString())
+            put("serverDatabaseLimitBytes", s.serverDatabaseLimitBytes.toString())
+            put("deviceDatabaseLimitBytes", s.deviceDatabaseLimitBytes.toString())
             put("soundMuted", s.soundMuted.toString())
             put("planCalculationLimitSeconds", s.planCalculationLimitSeconds.toString())
             put("showScreenBreaks", s.showScreenBreaks.toString())
@@ -3507,6 +3517,10 @@ internal object SettingEntries {
             "automaticSchedule" -> s.copy(automaticSchedule = value.toBoolean())
             "soundVolume" -> s.copy(soundVolume = value.toDouble())
             "minimumTimeWeight" -> s.copy(minimumTimeWeight = value.toDouble())
+            "serverDatabaseLimitBytes" ->
+                s.copy(serverDatabaseLimitBytes = org.example.project.scheduler.domain.ServerBudget.serverLimitOf(value.toLong()))
+            "deviceDatabaseLimitBytes" ->
+                s.copy(deviceDatabaseLimitBytes = org.example.project.scheduler.domain.ServerBudget.deviceLimitOf(value.toLong()))
             "soundMuted" -> s.copy(soundMuted = value.toBoolean())
             "planCalculationLimitSeconds" -> s.copy(planCalculationLimitSeconds = value.toInt())
             "showScreenBreaks" -> s.copy(showScreenBreaks = value.toBoolean())

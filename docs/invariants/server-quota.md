@@ -38,7 +38,7 @@ block every 20, a minimum-time change every 10. The account is the release accou
 - **A failure prints the per-table, per-call and per-stream breakdown.** Fix the call that costs; do not raise the
   budget or thin the scenario to pass. Changing the scenario needs a reason about real use written next to it.
 
-## Near the limit, the server forgets — NOT BUILT YET
+## Near the limit, the server forgets — HISTORY BUILT 2026-11-03, NOT DEPLOYED; THE TREE'S SUB-LISTS NOT BUILT
 
 User rules 2026-11-03: *"When there is a new row in the db, it is sent (with a debounce) to the server to be added there
 too. When a db is reaching its defined memory limit (lower for the free Supabase server), then the oldest rows are
@@ -64,11 +64,34 @@ limit, and nothing here may exceed it.
      working on reaches every other device whole.
 - **The server does the forgetting**, where the size and every account are seen (a scheduled job, like
   `trim_claude_log_entries`), and `ServerQuotaTest` must read that bound off the migration.
+  BUILT for history (2026-11-03): `forget_old_history` (migration 20261103010000, daily in pause-cue-setup.sql). It reads
+  the LIVE rows, never `pg_database_size`, which a delete does not shrink: read off the file, it would forget another
+  batch each day until no history was left. From 90 % of the limit (the tenth, or an account's lower setting) down to
+  70 %, oldest first, rows untouched for 30 days: a task no cell holds, a block ended before the cut. Deleted with no
+  tombstone, and each account gets ONE row of kind `forgotten` (`ForgottenRows`) in their place, as the user asked:
+  *"instead of deleting them, they are replaced by a single row saying that they are not saved in this db anymore."*
+  `ForgottenHistoryTest`. `ServerQuotaTest` projects it honestly: only the history's growth is bounded, into the room
+  the rest leaves.
+- **Measured 2026-11-03, the heavy year is over the budget WITHOUT its history**: 75.2 MB (`scheduler_entity` 52.3,
+  `history_unit` 22.9 at its 1000-unit bound, `screen_break_rule` 16.4), the history 21.8 MB more; egress 520.3 MB a
+  month, over since the ids carry the device's tag. So the history's trim alone cannot hold the tenth. The test account
+  is built with tagged ids and no history of its own: built bare, the hour measured lengthened every id it renamed, a
+  one-off the year then repeated.
 - **What the server forgot is not a deletion** (`sync-and-accounts.md` § *Conflicts are MERGED*): a device holding those
   rows keeps them and does not push them back unless it edits them, and a device without them shows the "not remembered"
   row. A device's own limit forgets on its own side the same way.
 - **What is forgotten, and how full each database is, is said on the Settings page** with the current usage of the
-  Supabase free tier and a refresh button (an asked request, never a poll).
+  Supabase free tier and a refresh button (an asked request, never a poll). BUILT 2026-11-03: the settings page's menu
+  holds `MenuControl.SupabaseUsage` and `MenuControl.MemoryLimits` (`ServerBudget`, `ServerUsageSettingsTest`,
+  `ProjectUsageRefreshTest`).
+  - **The database is the server's own measure** (`project_usage`, migration 20261103000000): the project's size and this
+    account's rows, one call per press of Refresh. **Egress is what this device's logged calls drew this month**, a lower
+    bound (the log keeps its newest calls, other devices draw too). Realtime messages and Edge Function calls are not
+    visible from the app, and the panel says so.
+  - **The limits are ONE figure for the project** (user rule 2026-11-03: *"the app must not exceeds 10% of any usage
+    limits on any project"*): the project database's limit is an account setting, synced, clamped to a tenth of the
+    free tier however it is typed or stored (`ServerBudget.serverLimitOf`); this device's is its own (`LOCAL_ONLY`).
+    Until the trimming is built they bound nothing, and the fields say so.
 
 ## What keeps it there
 

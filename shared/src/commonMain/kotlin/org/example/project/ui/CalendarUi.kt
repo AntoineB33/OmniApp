@@ -1837,6 +1837,14 @@ class MenuControlHost(
     /** How loud Claude Code's own sounds are, null where nothing here sets it, and the change. */
     val claudeSoundsVolume: Double? = null,
     val onSetClaudeSoundsVolume: (Double) -> Unit = {},
+    /** User rule 2026-11-03: the project's usage as last read (null: never), whether the last read failed, and the button. */
+    val projectUsage: org.example.project.scheduler.domain.ProjectUsage? = null,
+    val projectUsageFailed: Boolean = false,
+    val onRefreshProjectUsage: () -> Unit = {},
+    /** What this device's logged calls drew this month: the egress the app can see. */
+    val deviceMonthUsage: org.example.project.scheduler.domain.DeviceMonthUsage? = null,
+    /** The memory limits changed: the project database's, this device's (null: unchanged). */
+    val onSetDatabaseLimits: (serverBytes: Long?, deviceBytes: Long?) -> Unit = { _, _ -> },
 )
 
 /**
@@ -1926,6 +1934,8 @@ internal fun MenuControlItem(control: MenuControl, title: String?, host: MenuCon
         }
         MenuControl.ClaudeSoundsVolume ->
             ClaudeSoundsVolumeSlider(host.claudeSoundsVolume, host.onSetClaudeSoundsVolume, title ?: control.title)
+        MenuControl.SupabaseUsage -> SupabaseUsagePanel(title ?: control.title, host)
+        MenuControl.MemoryLimits -> MemoryLimitsFields(title ?: control.title, host)
         // The Claude Code logs' directory: the logs' app setting's own field.
         MenuControl.ClaudeLogsDirectory ->
             Column {
@@ -1933,6 +1943,96 @@ internal fun MenuControlItem(control: MenuControl, title: String?, host: MenuCon
                 ClaudeLogsDirectoryField(host.claudeLogs, host.onSetClaudeLogsDirectory, host.onRefreshClaudeLogs)
             }
     }
+}
+
+/** A size in megabytes, as the free tier's limits are written. */
+private fun megabytes(bytes: Long): String {
+    val mb = bytes / 1_000_000.0
+    return if (mb >= 10) "${mb.roundToInt()} MB" else "${(mb * 10).roundToInt() / 10.0} MB"
+}
+
+/**
+ * User rule 2026-11-03: **the Supabase free tier's usage, on the Settings page's menu, with a refresh button.** The
+ * database is the server's own measure (`project_usage`), read on a press of the button and never on a timer; the egress
+ * is what this device's logged calls drew this month, a lower bound (other devices draw on the project too); Realtime
+ * messages and Edge Function calls are not visible from the app. Each beside the tenth of the free tier the app keeps to
+ * ([ServerBudget]).
+ */
+@Composable
+private fun SupabaseUsagePanel(title: String, host: MenuControlHost) {
+    val budget = org.example.project.scheduler.domain.ServerBudget
+    val usage = host.projectUsage
+    val small = MaterialTheme.typography.bodySmall
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, style = MaterialTheme.typography.labelMedium)
+        Text(
+            "Database: " + (usage?.let { megabytes(it.databaseBytes) } ?: "not read") + " of " +
+                megabytes(budget.databaseBudgetBytes) + " (a tenth of " + megabytes(budget.DATABASE_BYTES) + ")",
+            style = small,
+        )
+        if (usage != null) Text("This account: " + megabytes(usage.accountBytes), style = small, color = muted)
+        host.deviceMonthUsage?.let { month ->
+            Text(
+                "Egress this month, this device: at least " + megabytes(month.bytes) + " of " +
+                    megabytes(budget.budget(budget.EGRESS_BYTES_PER_MONTH)) + " (" + month.calls + " calls)",
+                style = small,
+            )
+        }
+        Text("Realtime messages and Edge Function calls: not visible from the app", style = small, color = muted)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            FrameButton("Refresh", onClick = host.onRefreshProjectUsage)
+            val said =
+                when {
+                    host.projectUsageFailed -> "not read: offline, signed out, or not deployed"
+                    usage != null -> "read at " + kotlin.time.Instant.fromEpochMilliseconds(usage.readAtMillis)
+                        .toLocalDateTime(TimeZone.currentSystemDefault()).time.let { t ->
+                            t.hour.toString().padStart(2, '0') + ":" + t.minute.toString().padStart(2, '0')
+                        }
+                    else -> ""
+                }
+            if (said.isNotEmpty()) Text(said, style = small, color = muted)
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-03: **the memory limits**, in megabytes: the project database's — never above a tenth of the free
+ * tier, whatever is typed ([ServerBudget.serverLimitOf]) — and this device's. Written on each number typed. Not applied
+ * yet: nothing forgets until the server's trimming is built (`server-quota.md` § *Near the limit*), and the fields say so.
+ */
+@Composable
+private fun MemoryLimitsFields(title: String, host: MenuControlHost) {
+    val budget = org.example.project.scheduler.domain.ServerBudget
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.labelMedium)
+        MegabyteField("Project database (at most " + megabytes(budget.databaseBudgetBytes) + ")", host.state.serverDatabaseLimitBytes) {
+            host.onSetDatabaseLimits(it, null)
+        }
+        MegabyteField("This device", host.state.deviceDatabaseLimitBytes) { host.onSetDatabaseLimits(null, it) }
+        Text(
+            "Not applied yet: nothing is forgotten until the server's trimming exists.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** A size in whole megabytes; each number typed is written, and the field shows what the setting kept (a clamp included). */
+@Composable
+private fun MegabyteField(label: String, bytes: Long, onSet: (Long) -> Unit) {
+    var draft by remember(bytes) { mutableStateOf((bytes / 1_000_000L).toString()) }
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { typed ->
+            draft = typed.filter { it.isDigit() }.take(7)
+            draft.toLongOrNull()?.let { onSet(it * 1_000_000L) }
+        },
+        label = { Text(label) },
+        singleLine = true,
+        suffix = { Text("MB") },
+        modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
+    )
 }
 
 /**
