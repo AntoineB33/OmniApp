@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A window comes to the page it is asked from — 2026-11-04
+
+Anomaly: the Online window, opened on the Task Scheduler page, did not open when asked for from the settings page's menu: every window but a Search window was the Task Scheduler's, so it was brought back on a page not shown. A window no page owns is now on the page a button last opened or brought it back from (`windowsAskedOn`), a copy on its original's. The memory limits' note no longer says nothing is forgotten (the project's limit is `forget_old_history`'s), and the usage reads "not read yet, budget 50 MB" before a read. Client rebuild only. Checked on the desktop app (virtual screen).
+
 ### Refresh says why it read nothing; the online button in the settings page's menu — 2026-11-04
 
 "not read: offline, signed out, or not deployed" was one sentence for three causes: a press now says which (`ProjectUsageMiss`): no account signed in on this device, the server without `project_usage` (a 404: migration 20261103000000 not deployed, with the script to run), or no answer. User rule: the online / offline button is in the settings page's menu by default, just above the free tier's usage; a menu stored before gets it once (`onlineSeeded`), and one the user takes it out of keeps it out. Client rebuild only; the usage itself needs `scripts\deploy-supabase.bat` once. `ProjectUsageRefreshTest`, `ServerUsageSettingsTest`, `FeaturePagesTest`.

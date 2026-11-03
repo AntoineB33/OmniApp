@@ -1967,7 +1967,7 @@ private fun SupabaseUsagePanel(title: String, host: MenuControlHost) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(title, style = MaterialTheme.typography.labelMedium)
         Text(
-            "Database: " + (usage?.let { megabytes(it.databaseBytes) } ?: "not read") + " of " +
+            "Database: " + (usage?.let { megabytes(it.databaseBytes) + " of " } ?: "not read yet, budget ") +
                 megabytes(budget.databaseBudgetBytes) + " (a tenth of " + megabytes(budget.DATABASE_BYTES) + ")",
             style = small,
         )
@@ -1998,8 +1998,9 @@ private fun SupabaseUsagePanel(title: String, host: MenuControlHost) {
 
 /**
  * User rule 2026-11-03: **the memory limits**, in megabytes: the project database's — never above a tenth of the free
- * tier, whatever is typed ([ServerBudget.serverLimitOf]) — and this device's. Written on each number typed. Not applied
- * yet: nothing forgets until the server's trimming is built (`server-quota.md` § *Near the limit*), and the fields say so.
+ * tier, whatever is typed ([ServerBudget.serverLimitOf]) — and this device's. Written on each number typed. The project's
+ * is the limit `forget_old_history` forgets from (`server-quota.md` § *Near the limit*); this device's bounds nothing yet,
+ * and the note under the fields says both.
  */
 @Composable
 private fun MemoryLimitsFields(title: String, host: MenuControlHost) {
@@ -2011,7 +2012,8 @@ private fun MemoryLimitsFields(title: String, host: MenuControlHost) {
         }
         MegabyteField("This device", host.state.deviceDatabaseLimitBytes) { host.onSetDatabaseLimits(null, it) }
         Text(
-            "Not applied yet: nothing is forgotten until the server's trimming exists.",
+            // `server-quota.md` § *Near the limit, the server forgets*: the project's limit is read by `forget_old_history`.
+            "From 90 % of the project's limit, the server forgets its oldest history, once a day. This device's limit is not applied yet.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

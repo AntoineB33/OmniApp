@@ -111,7 +111,8 @@ limit, and nothing here may exceed it.
   - **The limits are ONE figure for the project** (user rule 2026-11-03: *"the app must not exceeds 10% of any usage
     limits on any project"*): the project database's limit is an account setting, synced, clamped to a tenth of the
     free tier however it is typed or stored (`ServerBudget.serverLimitOf`); this device's is its own (`LOCAL_ONLY`).
-    Until the trimming is built they bound nothing, and the fields say so.
+    The project's is the limit `forget_old_history` forgets from (90 % down to 70 %); this device's bounds nothing yet.
+    The note under the fields says both.
 
 ## What keeps it there
 

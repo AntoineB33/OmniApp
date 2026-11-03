@@ -648,6 +648,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val menuButtonWindows = remember { androidx.compose.runtime.mutableStateMapOf<String, String>() }
         val menuButtonOpenedLayouts = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowLayout>() }
         val searchSplits = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.SearchSplits>() }
+        // Anomaly 2026-11-04: the Online window, opened on the Task Scheduler page, was asked for again from the settings
+        // page's menu — and only brought back where it was, on a page not shown, so nothing opened. A window no page owns
+        // (any but a Search window and its configurations windows, whose page is their configuration's) is on the page
+        // it was last ASKED from (`openNewWindow`), a copy on its original's; until then, the Task Scheduler's.
+        // Compose-only: a launch puts them back on the Task Scheduler page.
+        val windowsAskedOn = remember { androidx.compose.runtime.mutableStateMapOf<String, OmniPage>() }
         // A calendar copy's sections, by frame id: the original's are [calendarConfigurationWidth], [calendarSectionsHidden].
         val calendarCopySections = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowSections>() }
         var calendarConfigurationWidth by remember { mutableStateOf<Float?>(null) }
@@ -1739,6 +1745,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             calendarConfigs.remove(id)
             calendarConfigs[fromId]?.let { calendarConfigs[id] = it }
             lifePlanViews[fromId]?.let { lifePlanViews[id] = it }
+            windowsAskedOn[fromId]?.let { windowsAskedOn[id] = it }
             windowCopies.add(id)
             windowFrames.focus(id)
         }
@@ -2089,7 +2096,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Returns the frame id of the window it opened or brought back.
         // [atBack]: the app opens it at the back, under the other windows and not focused (user rule 2026-10-18,
         // [WindowFrameHost.openAtBack]) — the notifications pair.
-        fun openNewWindow(kind: FloatingWindow, config: String? = null, asCopy: Boolean = false, atBack: Boolean = false): String {
+        fun openWindowOnItsPage(kind: FloatingWindow, config: String? = null, asCopy: Boolean = false, atBack: Boolean = false): String {
             if (kind == FloatingWindow.TaskTree || kind == FloatingWindow.TimeSim || (kind == FloatingWindow.Calendar && config == null)) {
                 if (!isWindowOpen(kind)) setWindowOpen(kind, true)
                 focusWindow(kind)
@@ -2134,6 +2141,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
             return id
         }
+        // What every window button does ([openWindowOnItsPage]), on the page it is pressed on: a window no page owns
+        // comes to that page ([windowsAskedOn]) — opened, or brought back from the page it was left on.
+        fun openNewWindow(kind: FloatingWindow, config: String? = null, asCopy: Boolean = false, atBack: Boolean = false): String {
+            val asked = page
+            val id = openWindowOnItsPage(kind, config, asCopy, atBack)
+            if (kind != FloatingWindow.Search && kind != FloatingWindow.ConfigSearch && kind != FloatingWindow.AddedConfig) windowsAskedOn[id] = asked
+            return id
+        }
         // The Search window a configurations window ([FloatingWindow.ConfigSearch], [FloatingWindow.AddedConfig])
         // lists and edits: the one it was opened from — or the original, once that copy is closed.
         fun configTargetOf(configId: String): String =
@@ -2164,7 +2179,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             else when (lateralWindowOf(frameId)) {
                 FloatingWindow.Search -> pageOfSearch(searchConfigOf(frameId).page)
                 FloatingWindow.ConfigSearch, FloatingWindow.AddedConfig -> pageOfSearch(searchConfigOf(configTargetOf(frameId)).page)
-                else -> OmniPage.TaskScheduler
+                else -> windowsAskedOn[frameId] ?: OmniPage.TaskScheduler
             }
         }
         // **EACH Search window has its own configurations window** (anomaly 2026-10-06: two Search windows' buttons

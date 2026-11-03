@@ -417,6 +417,11 @@ means.
   (`WindowFrameHost.tabOrder`, the `TabOrder` row) is read before the order of opening: a new window stands at the end, a
   closed one leaves it, and a change of page keeps it. One History Unit, undone from any window. **Ctrl+Tab walks the bar's
   order**, which is no longer the order of opening.
+- **A window no page owns comes to the page it is asked from** (anomaly 2026-11-04: the Online window, open on the Task
+  Scheduler page, was asked for from the settings page's menu and only brought back where it was — on a page not shown).
+  A Search window and its configurations windows are on their configuration's page; every other window is on the page a
+  button last opened or brought it back from (`App`'s `windowsAskedOn`, read by `windowPageOf`), a copy on its original's,
+  the Task Scheduler's until then. Compose-only: a launch puts them back on the Task Scheduler page.
 - **A window set GLOBAL stands, and has its tab, on every feature page** (user rule 2026-10-18; the window bar menu's
   "global", over the selected tabs; `App`'s `globalWindows`, the `GlobalWindows` row): a lateral-menu window (and its
   copies) or the task tree — a per-object window is drawn on its own page only, since it would otherwise be composed
