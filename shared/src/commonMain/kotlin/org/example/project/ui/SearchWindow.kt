@@ -852,13 +852,13 @@ fun SearchWindow(
                     modifier = Modifier.togglesSection { searchCollapsed = true },
                 )
             }
-            // User rule 2026-10-07: the search header is as compact as the actions section ([CompactFields]: the bar,
-            // the drop-down and the buttons one task cell tall, two rows) and narrows the way it does
-            // ([keepsWidthAbove]): laid out at [COMPACT_SECTION_MIN_WIDTH] at least and cut at the section's edge —
-            // hidden, never squeezed or wrapped.
+            // User rule 2026-10-07: the search header is as compact as the actions section ([CompactFields]: the bar
+            // one task cell tall). Since 2026-11-04 it is the bar and the configurations arrow alone, and it takes the
+            // section's own width: laid out wider and cut at the edge (`keepsWidthAbove`), the arrow at its right was
+            // cut off in a window of usual size — the bar narrows instead, and the arrow stays in view.
             CompactFields {
             Column(
-                modifier = Modifier.fillMaxWidth().keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
             ) {
             // --- The configuration ------------------------------------------------------------------
