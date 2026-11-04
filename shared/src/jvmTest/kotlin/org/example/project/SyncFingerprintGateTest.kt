@@ -29,6 +29,7 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.AfterTest
 
 /**
  * CLAUDE.md reconstructibility rule / the "known deviation" fix: the ViewModel must sync the
@@ -39,6 +40,15 @@ import kotlin.test.assertNotEquals
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SyncFingerprintGateTest {
+    // A view model built with a sync engine points the global `SchedulerReducer.deviceId` at that engine's device: put it
+    // back, or every test after this one in the JVM mints device-tagged ids (`SchedulerState.mintedNumber`).
+    private val previousDeviceId = SchedulerReducer.deviceId
+
+    @AfterTest
+    fun restoreDeviceId() {
+        SchedulerReducer.deviceId = previousDeviceId
+    }
+
     private fun fp(state: SchedulerState) = SchedulerStateCodec.syncFingerprint(state)
 
     // ---- The projection itself: derived panels are invisible, authoritative data is not ----

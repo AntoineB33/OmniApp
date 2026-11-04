@@ -25,6 +25,8 @@ import org.example.project.scheduler.sync.SupabaseConfig
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.AfterTest
+import org.example.project.scheduler.state.SchedulerReducer
 
 /**
  * PRD §5 bidirectional auto-sync WIRING at the [TaskSchedulerViewModel] level (the reconcile push/pull/conflict
@@ -42,6 +44,15 @@ import kotlin.test.assertEquals
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class BidirectionalSyncTest {
+    // A view model built with a sync engine points the global `SchedulerReducer.deviceId` at that engine's device: put it
+    // back, or every test after this one in the JVM mints device-tagged ids (`SchedulerState.mintedNumber`).
+    private val previousDeviceId = SchedulerReducer.deviceId
+
+    @AfterTest
+    fun restoreDeviceId() {
+        SchedulerReducer.deviceId = previousDeviceId
+    }
+
     private val json = Json { ignoreUnknownKeys = true }
     private val config = SupabaseConfig("https://test.supabase.co", "anon-key")
 

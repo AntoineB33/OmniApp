@@ -27,12 +27,23 @@ import org.example.project.scheduler.sync.SyncState
 import org.example.project.scheduler.sync.WorkingOfflineException
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
+import kotlin.test.AfterTest
+import org.example.project.scheduler.state.SchedulerReducer
 
 /**
  * `docs/invariants/sync-and-accounts.md` § *Working offline* (user request, 2026-09-17, while the Supabase project was
  * down): **a device switched offline sends nothing at all, keeps its edits, and pushes them when it goes online.**
  */
 class OfflineModeTest {
+    // A view model built with a sync engine points the global `SchedulerReducer.deviceId` at that engine's device: put it
+    // back, or every test after this one in the JVM mints device-tagged ids (`SchedulerState.mintedNumber`).
+    private val previousDeviceId = SchedulerReducer.deviceId
+
+    @AfterTest
+    fun restoreDeviceId() {
+        SchedulerReducer.deviceId = previousDeviceId
+    }
+
     private val config = SupabaseConfig("https://offline.supabase.co", "anon")
 
     private fun store() = SqlDelightSchedulerStore(SchedulerDatabase(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, Properties(), SchedulerDatabase.Schema)))

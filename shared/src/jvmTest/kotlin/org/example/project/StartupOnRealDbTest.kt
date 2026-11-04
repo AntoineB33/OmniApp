@@ -30,6 +30,8 @@ import org.example.project.scheduler.sync.SupabaseConfig
 import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 import org.example.project.time.SystemAppClock
+import kotlin.test.AfterTest
+import org.example.project.scheduler.state.SchedulerReducer
 
 /**
  * **Does the app start on a real account?** — the desktop's start-up, minus its window, on a COPY of a real database.
@@ -48,6 +50,15 @@ import org.example.project.time.SystemAppClock
  * the release app's DB and log are never opened. Not covered: Compose's own composition and drawing of the calendar.
  */
 class StartupOnRealDbTest {
+    // A view model built with a sync engine points the global `SchedulerReducer.deviceId` at that engine's device: put it
+    // back, or every test after this one in the JVM mints device-tagged ids (`SchedulerState.mintedNumber`).
+    private val previousDeviceId = SchedulerReducer.deviceId
+
+    @AfterTest
+    fun restoreDeviceId() {
+        SchedulerReducer.deviceId = previousDeviceId
+    }
+
     @Test
     fun the_app_starts_on_a_real_database_without_holding_the_ui_thread() {
         val dir = System.getProperty("omniapp.startupCheckDir")?.let(::File) ?: return

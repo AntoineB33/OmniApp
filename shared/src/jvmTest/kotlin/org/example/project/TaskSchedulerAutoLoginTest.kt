@@ -21,6 +21,8 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.AfterTest
+import org.example.project.scheduler.state.SchedulerReducer
 
 /**
  * The per-account `/scripts` launch the app with credentials so it opens already signed in — skipping the
@@ -36,6 +38,15 @@ import kotlin.test.assertNull
  * and await the observable result rather than virtual-time stepping a launched-then-suspended HTTP call.
  */
 class TaskSchedulerAutoLoginTest {
+    // A view model built with a sync engine points the global `SchedulerReducer.deviceId` at that engine's device: put it
+    // back, or every test after this one in the JVM mints device-tagged ids (`SchedulerState.mintedNumber`).
+    private val previousDeviceId = SchedulerReducer.deviceId
+
+    @AfterTest
+    fun restoreDeviceId() {
+        SchedulerReducer.deviceId = previousDeviceId
+    }
+
     private val json = Json { ignoreUnknownKeys = true }
     private val config = SupabaseConfig("https://test.supabase.co", "anon-key")
 
