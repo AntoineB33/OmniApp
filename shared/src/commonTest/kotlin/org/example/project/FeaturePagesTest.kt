@@ -150,6 +150,8 @@ class FeaturePagesTest {
             listOf(
                 MenuControl.Voice.name, MenuControl.Notifications.name, MenuControl.SoundVolume.name,
                 MenuControl.Online.name, MenuControl.SupabaseUsage.name, MenuControl.MemoryLimits.name,
+                // The server this device syncs with, last (user rule 2026-11-04, docs/SERVER_SETUP.md).
+                MenuControl.Server.name,
             ),
             menu.drop(2).map { it.control },
         )

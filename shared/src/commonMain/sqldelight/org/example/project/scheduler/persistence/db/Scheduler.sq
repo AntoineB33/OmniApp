@@ -242,6 +242,14 @@ CREATE TABLE claude_log_sync (
     pulled_revision INTEGER NOT NULL
 );
 
+-- The Supabase project this DEVICE syncs with (docs/SERVER_SETUP.md): its address and public key. LOCAL-ONLY,
+-- device-level, one row (id always 0). No row = the server built into the app. Added in migration 19.sqm.
+CREATE TABLE server_choice (
+    id INTEGER NOT NULL PRIMARY KEY,
+    base_url TEXT NOT NULL,
+    anon_key TEXT NOT NULL
+);
+
 selectAppState:
 SELECT payload FROM app_state WHERE account_id = ?;
 
@@ -359,6 +367,15 @@ SELECT offline FROM network_mode WHERE id = 0;
 
 upsertNetworkMode:
 INSERT OR REPLACE INTO network_mode(id, offline) VALUES (0, ?);
+
+selectServerChoice:
+SELECT base_url, anon_key FROM server_choice WHERE id = 0;
+
+upsertServerChoice:
+INSERT OR REPLACE INTO server_choice(id, base_url, anon_key) VALUES (0, ?, ?);
+
+deleteServerChoice:
+DELETE FROM server_choice WHERE id = 0;
 
 selectScreenBreakHistory:
 SELECT start_ms, label, end_ms, by_hand FROM screen_break_history ORDER BY start_ms;

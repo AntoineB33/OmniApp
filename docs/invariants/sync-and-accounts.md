@@ -147,6 +147,22 @@ server holds them after the last reconcile).
 - **History is not merged, it is shared**: every unit is its device's, and a pulled unit is added beside the local
   ones (`MergePeerHistory`).
 
+### The server a device syncs with
+
+User rule 2026-11-04: OmniApp is shared with a few technical people, **each on a free Supabase project of their own**
+(`docs/SERVER_SETUP.md`). A device syncs with the project chosen on its Settings page (**Server**: its address and
+public key, `server_choice`, 19.sqm, local-only and device-level), else with the one built into the app
+(`SupabaseConfig.chosen`, read once when the client is built — `App`, and the phone's `SchedulerHolder`).
+
+- **A choice takes effect at the next start.** An account lives on the server it was made on: choosing another drops
+  this one's session (`SchedulerSyncEngine.serverChosen`, the local data stays) and cuts the client off
+  (`RemoteSnapshotClient.offline`) — no sync, no guest account, no sign-in, no Refresh reaches the old server until the
+  restart, and going online does not reopen it (`ServerChoiceTest`).
+- **The app says when its server is behind**: `server_version` (migration 20261104010000, granted to `anon`) returns the
+  latest migration the project applied, asked once per connect (a launch online, going back online), never on a timer;
+  below `ServerVersion.REQUIRED_SERVER_MIGRATION` — kept the newest migration's by `ServerVersionTest` — or a 404, the
+  Settings page says to run `scripts\deploy-supabase.bat`.
+
 ### Working offline
 
 A device can be switched to work **completely offline** (the **Work offline** switch of the **Online** window,

@@ -123,14 +123,63 @@ open class SchedulerSyncEngine(
      */
     fun setOffline(value: Boolean) {
         networkModeStore?.saveOfflineChoice(value)
-        client.offline = value
+        // A server chosen for the next start keeps this one cut off ([serverChosen]), online or not.
+        client.offline = value || _serverChangePending.value
         _offline.value = value
         _state.value = if (value) SyncState.Offline else if (session != null) SyncState.Idle else SyncState.SignedOut
         Diagnostics.log(if (value) "working offline: nothing is sent or received" else "back online")
     }
 
-    // The session to use for a request, or null while signed out OR offline.
-    private fun onlineSession(): SupabaseSession? = session?.takeIf { !_offline.value }
+    /** The Supabase project this launch talks to ([SupabaseConfig.chosen], read when the app started). */
+    val server: SupabaseConfig get() = client.config
+
+    private val _serverChangePending = MutableStateFlow(false)
+
+    /**
+     * User rule 2026-11-04 (docs/SERVER_SETUP.md): true once another server was chosen on the Settings page — it is
+     * this device's from the next start, and until then nothing more reaches this one.
+     */
+    val serverChangePending: StateFlow<Boolean> = _serverChangePending.asStateFlow()
+
+    /**
+     * Another Supabase project chosen for this device ([config]), taking effect at the next start: an account lives on
+     * the server it was made on, so this one's session is dropped now ([signOut]: the local data stays), and the client
+     * is cut off (`RemoteSnapshotClient.offline`, the hard gate) so no guest account or sync reaches the old server
+     * before the restart. Choosing the server this launch already talks to, before any change, is nothing.
+     */
+    fun serverChosen(config: SupabaseConfig) {
+        if (_serverChangePending.value || config == client.config) return
+        signOut()
+        client.offline = true
+        _serverChangePending.value = true
+        Diagnostics.log("server chosen for the next start: ${config.baseUrl}")
+    }
+
+    private val _serverVersion = MutableStateFlow<org.example.project.scheduler.domain.ServerVersion>(org.example.project.scheduler.domain.ServerVersion.Unknown)
+
+    /** Whether the server has every migration this build needs, as last asked ([checkServerVersion]). */
+    val serverVersion: StateFlow<org.example.project.scheduler.domain.ServerVersion> = _serverVersion.asStateFlow()
+
+    /**
+     * User rule 2026-11-04 (docs/SERVER_SETUP.md): asks the server for the latest migration it applied — once per start
+     * and when the device goes back online, never on a timer. A server without `server_version` (a 404) is behind too;
+     * no answer leaves it unknown. Nothing is asked offline, or while another server awaits the restart.
+     */
+    suspend fun checkServerVersion() {
+        if (_offline.value || _serverChangePending.value) return
+        _serverVersion.value =
+            runCatching { client.fetchServerVersion() }.fold(
+                onSuccess = { org.example.project.scheduler.domain.ServerVersion.of(it) },
+                onFailure = {
+                    Diagnostics.log("server version FAILED: ${it.message}")
+                    if ((it as? SupabaseException)?.status == 404) org.example.project.scheduler.domain.ServerVersion.Behind("")
+                    else org.example.project.scheduler.domain.ServerVersion.Unknown
+                },
+            )
+    }
+
+    // The session to use for a request, or null while signed out OR offline (or a new server awaits the restart).
+    private fun onlineSession(): SupabaseSession? = session?.takeIf { !_offline.value && !_serverChangePending.value }
 
     // Late-bound by the owner (the ViewModel) to break the engine<->ViewModel construction cycle:
     // [localSnapshot] reads the current state to push, [applyRemote] installs a pulled one.
@@ -227,7 +276,7 @@ open class SchedulerSyncEngine(
      */
     suspend fun ensureAccount(): Boolean {
         if (session != null) return true
-        if (_offline.value) return false
+        if (_offline.value || _serverChangePending.value) return false
         return try {
             authenticate(email = null) { client.signUpGuest() }
             true
@@ -286,7 +335,8 @@ open class SchedulerSyncEngine(
         email: String?,
         call: suspend () -> SupabaseSession,
     ) = mutex.withLock {
-        if (_offline.value) throw WorkingOfflineException()
+        // A sign-in while another server awaits the restart would land on the old one ([serverChosen]).
+        if (_offline.value || _serverChangePending.value) throw WorkingOfflineException()
         _state.value = SyncState.Syncing
         try {
             val s = call()
@@ -864,6 +914,7 @@ open class SchedulerSyncEngine(
      * [AskedByUser] — and nothing else does.
      */
     suspend fun fetchProjectUsage(nowMillis: Long): org.example.project.scheduler.domain.ProjectUsageAnswer {
+        if (_serverChangePending.value) return org.example.project.scheduler.domain.ProjectUsageMiss.ServerChanged
         val current = session ?: return org.example.project.scheduler.domain.ProjectUsageMiss.SignedOut
         return runCatching { kotlinx.coroutines.withContext(AskedByUser) { withAuth(current) { client.fetchProjectUsage(it) } } }
             .fold(

@@ -1848,6 +1848,15 @@ class MenuControlHost(
     val projectUsage: org.example.project.scheduler.domain.ProjectUsage? = null,
     val projectUsageMiss: org.example.project.scheduler.domain.ProjectUsageMiss? = null,
     val onRefreshProjectUsage: () -> Unit = {},
+    /**
+     * User rule 2026-11-04 (docs/SERVER_SETUP.md): the Supabase project chosen on this device (null: the built-in one),
+     * whether it awaits a restart, and the choice — null for the built-in project.
+     */
+    val serverChoice: org.example.project.scheduler.sync.SupabaseConfig? = null,
+    val serverChangePending: Boolean = false,
+    /** Whether the server has every migration this build needs (null: no sync on this build). */
+    val serverVersion: org.example.project.scheduler.domain.ServerVersion? = null,
+    val onChooseServer: (org.example.project.scheduler.sync.SupabaseConfig?) -> Unit = {},
     /** What this device's logged calls drew this month: the egress the app can see. */
     val deviceMonthUsage: org.example.project.scheduler.domain.DeviceMonthUsage? = null,
     /** The memory limits changed: the project database's, this device's (null: unchanged). */
@@ -1943,6 +1952,7 @@ internal fun MenuControlItem(control: MenuControl, title: String?, host: MenuCon
             ClaudeSoundsVolumeSlider(host.claudeSoundsVolume, host.onSetClaudeSoundsVolume, title ?: control.title)
         MenuControl.SupabaseUsage -> SupabaseUsagePanel(title ?: control.title, host)
         MenuControl.MemoryLimits -> MemoryLimitsFields(title ?: control.title, host)
+        MenuControl.Server -> ServerChoiceFields(title ?: control.title, host)
         // The Claude Code logs' directory: the logs' app setting's own field.
         MenuControl.ClaudeLogsDirectory ->
             Column {
@@ -1999,6 +2009,66 @@ private fun SupabaseUsagePanel(title: String, host: MenuControlHost) {
                     else -> ""
                 }
             if (said.isNotEmpty()) Text(said, style = small, color = muted)
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-04 (docs/SERVER_SETUP.md): **the Supabase project this device syncs with** — its address and public
+ * key, as the project's dashboard gives them, or the one built into the app. "Use this server" keeps what is typed for
+ * the next start, when it is a project's ([SupabaseConfig.typed]); "Built-in server" goes back. Until the restart the
+ * device sends nothing (`SchedulerSyncEngine.serverChosen`), and the fields say so.
+ */
+@Composable
+private fun ServerChoiceFields(title: String, host: MenuControlHost) {
+    val chosen = host.serverChoice
+    var url by remember(chosen) { mutableStateOf(chosen?.baseUrl.orEmpty()) }
+    var key by remember(chosen) { mutableStateOf(chosen?.anonKey.orEmpty()) }
+    val typed = org.example.project.scheduler.sync.SupabaseConfig.typed(url, key)
+    val small = MaterialTheme.typography.bodySmall
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.labelMedium)
+        Text(
+            if (chosen == null) "The server built into the app" else "Your server: " + chosen.baseUrl,
+            style = small,
+        )
+        // User rule 2026-11-04: an update that brings a migration needs it deployed on the server.
+        when (val version = host.serverVersion) {
+            org.example.project.scheduler.domain.ServerVersion.UpToDate -> Text("It has everything this version of the app needs.", style = small, color = muted)
+            is org.example.project.scheduler.domain.ServerVersion.Behind ->
+                Text(
+                    "It needs an update: run scripts\\deploy-supabase.bat against it (it has " +
+                        version.has.ifBlank { "no version" } + ", the app needs " +
+                        org.example.project.scheduler.domain.ServerVersion.REQUIRED_SERVER_MIGRATION + ").",
+                    style = small,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            else -> {}
+        }
+        OutlinedTextField(
+            value = url,
+            onValueChange = { url = it },
+            label = { Text("Project URL (https://….supabase.co)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
+        )
+        OutlinedTextField(
+            value = key,
+            onValueChange = { key = it },
+            label = { Text("Public (anon) key") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
+        )
+        // One under the other: the menu is narrow, and two side by side cut the second off.
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            FrameButton("Use this server", enabled = typed != null && typed != chosen) { host.onChooseServer(typed) }
+            FrameButton("Built-in server", enabled = chosen != null) { host.onChooseServer(null) }
+        }
+        when {
+            host.serverChangePending -> Text("Restart the app to use it: until then nothing is sent.", style = small)
+            url.isNotBlank() && typed == null -> Text("An https:// address and a key are needed.", style = small, color = muted)
+            else -> Text("See docs/SERVER_SETUP.md to make a server of your own.", style = small, color = muted)
         }
     }
 }

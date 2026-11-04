@@ -81,6 +81,19 @@ class ServerUsageSettingsTest {
         assertTrue(CustomMenuButtons.decode(CustomMenuButtons.encode(removed), defaults).none { it.control == MenuControl.MemoryLimits.name })
     }
 
+    /** User rule 2026-11-04: the server's fields are in the settings page's menu by default, given ONCE to one stored before. */
+    @Test
+    fun a_settings_menu_stored_before_gets_the_server_fields_once_at_its_bottom() {
+        val defaults = CustomMenuButtons.SETTINGS_DEFAULTS
+        val before = defaults.filterNot { it.control == MenuControl.Server.name }
+        val stored = CustomMenuButtons.encode(before).replace(""","serverSeeded":true""", "")
+        assertFalse("serverSeeded" in stored, "test premise: a list written before the flag")
+        assertEquals(defaults, CustomMenuButtons.decode(stored, defaults))
+        val removed = defaults.filterNot { it.control == MenuControl.Server.name }
+        assertTrue(CustomMenuButtons.decode(CustomMenuButtons.encode(removed), defaults).none { it.control == MenuControl.Server.name })
+        assertTrue(CustomMenuButtons.DEFAULTS.none { it.control == MenuControl.Server.name }, "the settings page's alone")
+    }
+
     /** User rule 2026-11-04: the online / offline button is in the settings page's menu by default, given ONCE to one stored before. */
     @Test
     fun a_settings_menu_stored_before_gets_the_online_button_once_above_the_usage() {

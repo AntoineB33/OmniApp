@@ -694,6 +694,22 @@ class RemoteSnapshotClient(
         return row.databaseBytes to row.accountBytes
     }
 
+    /**
+     * The latest migration the project applied (`server_version`, migration 20261104010000), as its timestamp —
+     * `20261104010000` — or blank for none. Public: asked with the anon key alone, before any account (docs/SERVER_SETUP.md).
+     */
+    suspend fun fetchServerVersion(): String {
+        val response =
+            http.post("${config.restUrl}/rpc/server_version") {
+                header("apikey", config.anonKey)
+                header("Authorization", "Bearer ${config.anonKey}")
+                contentType(ContentType.Application.Json)
+                setBody("{}")
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString<String>(response.bodyAsText())
+    }
+
     fun close() = http.close()
 
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders(session: SupabaseSession) {

@@ -224,6 +224,9 @@ class TaskSchedulerViewModel(
      * in with the startup credentials, or create the guest account.
      */
     private fun connect(engine: SchedulerSyncEngine) {
+        // User rule 2026-11-04 (docs/SERVER_SETUP.md): does this server have what this build needs? Once per connect —
+        // a launch online, or going back online — never on a timer.
+        saveScope.launch { engine.checkServerVersion() }
         // Non-interactive launch (per-account `/scripts`): when no session was restored and startup
         // credentials were supplied, sign in to that account — that is how the scripts open the app
         // already on account 1/2/3 instead of on a guest account. Otherwise PRD §5 applies: the app is
@@ -555,6 +558,28 @@ class TaskSchedulerViewModel(
     val projectUsage: StateFlow<org.example.project.scheduler.domain.ProjectUsage?> = _projectUsage.asStateFlow()
     private val _projectUsageMiss = MutableStateFlow<org.example.project.scheduler.domain.ProjectUsageMiss?>(null)
     val projectUsageMiss: StateFlow<org.example.project.scheduler.domain.ProjectUsageMiss?> = _projectUsageMiss.asStateFlow()
+
+    /**
+     * User rule 2026-11-04 (docs/SERVER_SETUP.md): the Supabase project chosen on this device's Settings page, null for
+     * the one built into the app — what the next start talks to. Local-only ([ServerChoiceStore]).
+     */
+    private val _serverChoice =
+        MutableStateFlow((store as? org.example.project.scheduler.persistence.ServerChoiceStore)?.loadServerChoice())
+    val serverChoice: StateFlow<org.example.project.scheduler.sync.SupabaseConfig?> = _serverChoice.asStateFlow()
+
+    /** Whether the server has every migration this build needs ([SchedulerSyncEngine.checkServerVersion]). */
+    val serverVersion: StateFlow<org.example.project.scheduler.domain.ServerVersion>? get() = syncEngine?.serverVersion
+
+    /** Whether the server chosen is not yet the one this launch talks to: the app must restart. */
+    val serverChangePending: StateFlow<Boolean>? get() = syncEngine?.serverChangePending
+
+    /** [config] chosen for this device (null: the built-in project), from the next start ([SchedulerSyncEngine.serverChosen]). */
+    fun chooseServer(config: org.example.project.scheduler.sync.SupabaseConfig?) {
+        val choiceStore = store as? org.example.project.scheduler.persistence.ServerChoiceStore ?: return
+        choiceStore.saveServerChoice(config)
+        _serverChoice.value = config
+        syncEngine?.serverChosen(config ?: org.example.project.scheduler.sync.SupabaseConfig.DEFAULT)
+    }
 
     /** The refresh button: ONE call to the server per press (`server-quota.md`: no timer-driven request). */
     fun refreshProjectUsage() = saveScope.launch {

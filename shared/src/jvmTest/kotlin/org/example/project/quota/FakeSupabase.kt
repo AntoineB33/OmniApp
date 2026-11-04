@@ -398,6 +398,8 @@ class FakeSupabase(
 
     private fun route(request: HttpRequestData, path: String, body: String): Pair<HttpStatusCode, String> {
         if (path.startsWith("/auth/v1")) return auth(request, path, body)
+        // Granted to `anon` (migration 20261104010000): asked with the project's public key alone, before any account.
+        if (path == "/rest/v1/rpc/server_version") return rpc("server_version", "", body)
         val user =
             request.headers["Authorization"]?.removePrefix("Bearer ")?.let(userByToken::get)
                 ?: return HttpStatusCode.Unauthorized to """{"message":"JWT expired"}"""
@@ -526,6 +528,18 @@ class FakeSupabase(
     /** The functions this project does not have (a migration not deployed): PostgREST answers them 404, PGRST202. */
     val undeployed: MutableSet<String> = HashSet()
 
+    /**
+     * The latest migration this project applied (`server_version`, migration 20261104010000): by default the newest of
+     * `supabase/migrations`, as a project `deploy-supabase.bat` was run against.
+     */
+    var serverVersion: String = newestMigration()
+
+    private fun newestMigration(): String {
+        val root = generateSequence(java.io.File("").absoluteFile) { it.parentFile }.firstOrNull { java.io.File(it, "supabase/migrations").isDirectory }
+            ?: return ""
+        return java.io.File(root, "supabase/migrations").listFiles().orEmpty().map { it.name.substringBefore('_') }.maxOrNull().orEmpty()
+    }
+
     private fun rpc(name: String, user: String, body: String): Pair<HttpStatusCode, String> {
         if (name in undeployed) {
             return HttpStatusCode.NotFound to """{"code":"PGRST202","message":"Could not find the function public.$name without parameters in the schema cache"}"""
@@ -533,6 +547,7 @@ class FakeSupabase(
         val args = runCatching { json.parseToJsonElement(body).jsonObject }.getOrElse { JsonObject(emptyMap()) }
         fun str(k: String) = args[k]?.let(::scalar)
         return when (name) {
+            "server_version" -> HttpStatusCode.OK to "\"$serverVersion\""
             "publish_presence" -> {
                 table("device_heartbeat").upsert(
                     buildJsonObject {

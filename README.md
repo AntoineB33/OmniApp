@@ -63,7 +63,7 @@ To **build and run** OmniApp you need:
 | **iOS** | macOS with Xcode | Open `iosApp/` in Xcode. |
 | **Web** | A modern browser | Wasm target for current browsers, JS target for older ones. |
 
-**No Supabase account is needed to run the app.** A public project is built in, and the app is offline-first — it opens and works with no network at all. You only need your own Supabase project if you want to run the sync server yourself or use the development account scripts; see [Cross-device sync](#cross-device-sync-optional).
+**No Supabase account is needed to run the app.** It is offline-first: it opens and works with no network at all. To sync your devices and use every feature, run your **own free Supabase project** and choose it on the Settings page (**Server**): [`docs/SERVER_SETUP.md`](docs/SERVER_SETUP.md) walks through it. The project built into the app is its author's.
 
 ### `local.properties`
 
@@ -199,7 +199,7 @@ Other lateral-menu windows: **Reminders**, **Alarms**, **Sleep** (wake time, goa
 
 Sign in with the same account on another device and both stay current automatically — pushes are debounced, pulls arrive over a live subscription, and simultaneous edits on two devices are merged rather than one clobbering the other. Pressing **Sync** is only a force-now fallback.
 
-Running the server half yourself requires your own Supabase project, the Supabase CLI (`supabase login` + `supabase link`), and `scripts/deploy-supabase.bat`. The project must have **email confirmation disabled** and **anonymous sign-ins enabled**. See [`docs/PAUSE_CUE_DELIVERY.md`](docs/PAUSE_CUE_DELIVERY.md) for the full runbook, including Firebase/APNs setup for the phone push cue.
+The server half is your own free Supabase project, set up once and chosen on the Settings page (**Server**): follow [`docs/SERVER_SETUP.md`](docs/SERVER_SETUP.md). The app says on that page when an update needs `scripts/deploy-supabase.bat` run against it. [`docs/PAUSE_CUE_DELIVERY.md`](docs/PAUSE_CUE_DELIVERY.md) covers the Firebase/APNs setup for the phone push cue.
 
 ---
 
@@ -272,6 +272,7 @@ Helpers in `scripts/internal/` are **not run by hand**: `account_db_admin.py` (c
 | [`CLAUDE.md`](CLAUDE.md) | The active invariants — what you must not break. Read before changing the scheduler, the sync engine or anything persisted. |
 | [`docs/adr/`](docs/adr/README.md) | Architecture decision records: *why* each invariant exists, what was tried first, and the post-mortems behind it. |
 | [`CHANGELOG.md`](CHANGELOG.md) | Dated log of what changed when, including every Supabase and SQLite migration. |
+| [`docs/SERVER_SETUP.md`](docs/SERVER_SETUP.md) | Your own free Supabase server, step by step, and how to point the app at it. |
 | [`docs/SCRIPTS.md`](docs/SCRIPTS.md) | The `scripts/` entry points: state dirs, fast-break variants, deploy gotchas. |
 | [`docs/PAUSE_CUE_DELIVERY.md`](docs/PAUSE_CUE_DELIVERY.md) | Runbook for the cross-device break-cue push chain. |
 | [`docs/MANUAL_TESTING.md`](docs/MANUAL_TESTING.md) | Manual test procedures for what unit tests can't cover. |

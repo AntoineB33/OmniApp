@@ -630,7 +630,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             remember(store) {
                 (store as? SyncMetaStore)?.let {
                     SchedulerSyncEngine(
-                        RemoteSnapshotClient(),
+                        // The server this device chose on its Settings page, else the built-in one (docs/SERVER_SETUP.md).
+                        RemoteSnapshotClient(config = org.example.project.scheduler.sync.SupabaseConfig.chosen(store)),
                         it,
                         activeSessionStore = store as? ActiveSessionStore,
                         networkModeStore = store as? org.example.project.scheduler.persistence.NetworkModeStore,
@@ -1561,6 +1562,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // User rule 2026-11-03: the project usage the Settings page shows, as last read by its refresh button.
         val projectUsageValue = vm.projectUsage.collectAsState().value
         val projectUsageMissValue = vm.projectUsageMiss.collectAsState().value
+        val serverChoiceValue = vm.serverChoice.collectAsState().value
+        val serverChangePendingValue = vm.serverChangePending?.collectAsState()?.value == true
+        val serverVersionValue = vm.serverVersion?.collectAsState()?.value
         val offlineValue = vm.offline?.collectAsState()?.value
         // PRD §4: the task tree's window. OPEN on a first run (nothing kept yet), as it was left after that.
         var taskTreeWindowOpen by remember {
@@ -4286,6 +4290,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         projectUsage = projectUsageValue,
                         projectUsageMiss = projectUsageMissValue,
                         onRefreshProjectUsage = { vm.refreshProjectUsage() },
+                        // User rule 2026-11-04: the server this device syncs with (docs/SERVER_SETUP.md).
+                        serverChoice = serverChoiceValue,
+                        serverChangePending = serverChangePendingValue,
+                        serverVersion = serverVersionValue,
+                        onChooseServer = { vm.chooseServer(it) },
                         // Read when the log changes, never per tick (`display-hot-path.md`): it is a call's doing, not time's.
                         deviceMonthUsage = remember(schedulerState.supabaseUsageLog) {
                             org.example.project.scheduler.domain.deviceMonthUsage(schedulerState.supabaseUsageLog, clock.nowMillis(), tz)

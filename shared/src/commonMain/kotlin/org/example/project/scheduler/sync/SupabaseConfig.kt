@@ -30,6 +30,25 @@ data class SupabaseConfig(
     val functionsUrl: String get() = "${baseUrl.trimEnd('/')}/functions/v1"
 
     companion object {
+        /**
+         * User rule 2026-11-04 (docs/SERVER_SETUP.md): **the project this device syncs with** — the one chosen on its
+         * Settings page ([ServerChoiceStore]), else the one built into the app ([DEFAULT]). Read once, when the client is
+         * built: a choice made later takes effect at the next start.
+         */
+        fun chosen(store: Any?): SupabaseConfig =
+            (store as? org.example.project.scheduler.persistence.ServerChoiceStore)?.loadServerChoice() ?: DEFAULT
+
+        /**
+         * The project at [baseUrl] with [anonKey], as typed on the Settings page — trimmed, the address without its
+         * trailing slash — or null when it is no project's: an address that is not `https://`, or an empty key.
+         */
+        fun typed(baseUrl: String, anonKey: String): SupabaseConfig? {
+            val url = baseUrl.trim().trimEnd('/')
+            val key = anonKey.trim()
+            if (!url.startsWith("https://") || url.length <= "https://".length || key.isEmpty() || url.any(Char::isWhitespace)) return null
+            return SupabaseConfig(url, key)
+        }
+
         /** The OmniApp Supabase project. */
         val DEFAULT =
             SupabaseConfig(

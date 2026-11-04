@@ -110,7 +110,8 @@ if defined SUPABASE_SERVICE_ROLE_KEY (
   if errorlevel 1 (echo [x] pause-cue project setup failed.& goto :fail)
 ) else (
   echo [3/3] Skipping pause-cue project setup - SUPABASE_SERVICE_ROLE_KEY not set in accounts.env.
-  echo       ^(Only needed for the phone pause-end voice cue push; core sync works without it.^)
+  echo       ^(It also schedules the daily clean-up jobs that keep the database under its limit:
+  echo       set it - docs\SERVER_SETUP.md step 6.^)
 )
 
 echo.

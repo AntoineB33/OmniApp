@@ -2820,6 +2820,7 @@ object SearchDomain {
         MinimumTimeWeight("Minimum time weight"),
         SupabaseUsage("Supabase free tier"),
         MemoryLimits("Memory limits"),
+        Server("Server"),
     }
 
     /**
@@ -2841,6 +2842,7 @@ object SearchDomain {
             AddedAction.MinimumTimeWeightControl to AppSettingEntry.MinimumTimeWeight,
             AddedAction.SupabaseUsageControl to AppSettingEntry.SupabaseUsage,
             AddedAction.MemoryLimitsControl to AppSettingEntry.MemoryLimits,
+            AddedAction.ServerControl to AppSettingEntry.Server,
         )
     }
 
@@ -2860,6 +2862,7 @@ object SearchDomain {
             AppSettingEntry.MinimumTimeWeight -> "the minimum times' weight in the score"
             AppSettingEntry.SupabaseUsage -> "the server's usage, read on Refresh"
             AppSettingEntry.MemoryLimits -> "the project database's and this device's"
+            AppSettingEntry.Server -> "the Supabase project this device syncs with"
             AppSettingEntry.ClaudeLogs -> claudeLogs.directory.ifBlank { "no directory" }
             AppSettingEntry.Mute -> if (state.soundMuted) "muted on this device" else "sound on"
             AppSettingEntry.ClaudeSounds -> "how loud Claude Code is on this device"
@@ -3448,6 +3451,7 @@ object SearchDomain {
         MinimumTimeWeightControl(Kind.AppSetting, "Minimum time weight"),
         SupabaseUsageControl(Kind.AppSetting, "Supabase free tier"),
         MemoryLimitsControl(Kind.AppSetting, "Memory limits"),
+        ServerControl(Kind.AppSetting, "Server"),
     }
 
     /** The actions that show a Claude Code log entry, each one block per added entry. */

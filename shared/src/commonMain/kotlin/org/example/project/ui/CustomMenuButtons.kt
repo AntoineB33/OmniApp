@@ -156,6 +156,9 @@ enum class MenuControl(val title: String) {
 
     /** User rule 2026-11-03: the memory limits, the project database's and this device's — the settings page's menu has it. */
     MemoryLimits("Memory limits"),
+
+    /** User rule 2026-11-04: the Supabase project this device syncs with (docs/SERVER_SETUP.md) — the settings page's menu has it. */
+    Server("Server"),
     ;
 
     companion object {
@@ -363,6 +366,8 @@ object CustomMenuButtons {
         val usageSeeded: Boolean = false,
         /** Whether a list of the settings page's menu was already given the online button ([SETTINGS_ONLINE]), ONCE. */
         val onlineSeeded: Boolean = false,
+        /** Whether a list of the settings page's menu was already given the server's fields ([SETTINGS_SERVER]), ONCE. */
+        val serverSeeded: Boolean = false,
     )
 
     /**
@@ -429,8 +434,12 @@ object CustomMenuButtons {
             listOf(MenuControl.Voice, MenuControl.Notifications, MenuControl.SoundVolume)
                 .map { CustomMenuButton("d-" + it.name, "", "", control = it.name) } +
             SETTINGS_ONLINE +
-            SERVER_USAGE
+            SERVER_USAGE +
+            SETTINGS_SERVER
     }
+
+    /** User rule 2026-11-04: the server this device syncs with (docs/SERVER_SETUP.md), at the settings page's bottom. */
+    val SETTINGS_SERVER: CustomMenuButton by lazy { CustomMenuButton("d-" + MenuControl.Server.name, "", "", control = MenuControl.Server.name) }
 
     /**
      * User rule 2026-11-04: the online / offline button is a default of the settings page's menu, just above the Supabase
@@ -478,7 +487,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, lifePlanSeeded = true, usageSeeded = true, onlineSeeded = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, lifePlanSeeded = true, usageSeeded = true, onlineSeeded = true, serverSeeded = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -622,13 +631,17 @@ object CustomMenuButtons {
         val usage = SERVER_USAGE.filter { item -> item in defaults && together0.none { it.id == item.id } }
         val together1 = if (stored.usageSeeded) together0 else together0 + usage
         // ...and, on the settings page, the online button, ONCE: just above the usage where it stands, else at the bottom.
-        val together =
+        val together2 =
             if (stored.onlineSeeded || defaults != SETTINGS_DEFAULTS || together1.any { it.control == MenuControl.Online.name }) together1
             else {
                 val usageAt = together1.indexOfFirst { it.control == MenuControl.SupabaseUsage.name }
                 if (usageAt < 0) together1 + SETTINGS_ONLINE
                 else together1.toMutableList().also { it.add(usageAt, SETTINGS_ONLINE.copy(parent = together1[usageAt].parent)) }
             }
+        // ...and, on the settings page, the server's fields, ONCE, at the bottom (user rule 2026-11-04).
+        val together =
+            if (stored.serverSeeded || defaults != SETTINGS_DEFAULTS || together2.any { it.control == MenuControl.Server.name }) together2
+            else together2 + SETTINGS_SERVER
         // ...and, on the page it is a default of, the Life plan button, ONCE: under the Calendar button, where it stands.
         if (stored.lifePlanSeeded || LIFE_PLAN !in defaults || together.any { it.id == LIFE_PLAN.id }) return together
         val calendar = together.indexOfFirst { it.id == "d-calendar" }

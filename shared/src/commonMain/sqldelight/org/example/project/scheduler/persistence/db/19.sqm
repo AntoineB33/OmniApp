@@ -1,0 +1,12 @@
+-- Schema v19 -> v20: the Supabase project this DEVICE syncs with.
+--
+-- Added 2026-11-04 (user rule: OmniApp is shared with a few technical people, each on a free Supabase project of their
+-- own, docs/SERVER_SETUP.md): the project's address and its public (anon) key, chosen on the Settings page. LOCAL-ONLY,
+-- device-level, one row (id always 0), like network_mode. No row = the server built into the app. Nothing to carry
+-- over: an older build always used the built-in one.
+
+CREATE TABLE server_choice (
+    id INTEGER NOT NULL PRIMARY KEY,
+    base_url TEXT NOT NULL,
+    anon_key TEXT NOT NULL
+);

@@ -584,6 +584,7 @@ internal val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
         SearchDomain.AddedAction.MinimumTimeWeightControl to MenuControl.MinimumTimeWeight,
         SearchDomain.AddedAction.SupabaseUsageControl to MenuControl.SupabaseUsage,
         SearchDomain.AddedAction.MemoryLimitsControl to MenuControl.MemoryLimits,
+        SearchDomain.AddedAction.ServerControl to MenuControl.Server,
     )
 
 /**
@@ -722,6 +723,7 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.ScreenBreaksControl, SearchDomain.AddedAction.CalendarDisplayControl,
         SearchDomain.AddedAction.PlanTimeLimitControl, SearchDomain.AddedAction.MinimumTimeWeightControl,
         SearchDomain.AddedAction.SupabaseUsageControl, SearchDomain.AddedAction.MemoryLimitsControl,
+        SearchDomain.AddedAction.ServerControl,
         ->
             ACTION_MENU_CONTROLS[action]?.let { control ->
                 LocalMenuControlHost.current?.let { host -> MenuControlItem(control, null, host) }

@@ -12,3 +12,17 @@ interface NetworkModeStore {
 
     fun saveOfflineChoice(offline: Boolean)
 }
+
+/**
+ * User rule 2026-11-04 (docs/SERVER_SETUP.md): **the Supabase project this device syncs with**, chosen on its Settings
+ * page. Device-level and local-only, like [NetworkModeStore] — never synced (an account lives on ONE server), never a
+ * History Unit — in its own one-row table (`server_choice`, migration 19.sqm). A store without it (web's in-memory
+ * store) uses the built-in project.
+ */
+interface ServerChoiceStore {
+    /** The project chosen, or null for the one built into the app. */
+    fun loadServerChoice(): org.example.project.scheduler.sync.SupabaseConfig?
+
+    /** [config] chosen; null goes back to the built-in project. */
+    fun saveServerChoice(config: org.example.project.scheduler.sync.SupabaseConfig?)
+}

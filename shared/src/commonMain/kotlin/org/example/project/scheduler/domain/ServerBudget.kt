@@ -43,6 +43,34 @@ object ServerBudget {
  */
 data class ProjectUsage(val databaseBytes: Long, val accountBytes: Long, val readAtMillis: Long) : ProjectUsageAnswer
 
+/**
+ * User rule 2026-11-04 (docs/SERVER_SETUP.md): **whether the server this device syncs with has every migration this
+ * build needs** — each user runs their own Supabase project, and every update that brings a migration needs
+ * `scripts\deploy-supabase.bat` run against it. Asked once per start and when the device goes back online.
+ */
+sealed interface ServerVersion {
+    /** It has [REQUIRED_SERVER_MIGRATION] or later. */
+    data object UpToDate : ServerVersion
+
+    /** It is behind: its latest migration is [has] (blank: none the app can read). */
+    data class Behind(val has: String) : ServerVersion
+
+    /** It did not answer (offline, unreachable): nothing is known. */
+    data object Unknown : ServerVersion
+
+    companion object {
+        /**
+         * The latest migration this build needs, by its file's timestamp (`supabase/migrations/<it>_….sql`).
+         * `ServerVersionTest` keeps it the newest migration's.
+         */
+        const val REQUIRED_SERVER_MIGRATION: String = "20261104010000"
+
+        /** What the server's [latest] migration says of it. Timestamps of one length compare as text. */
+        fun of(latest: String): ServerVersion =
+            if (latest.isNotBlank() && latest >= REQUIRED_SERVER_MIGRATION) UpToDate else Behind(latest.trim())
+    }
+}
+
 /** What a press of the Settings page's Refresh got: the [ProjectUsage], or why it got none ([ProjectUsageMiss]). */
 sealed interface ProjectUsageAnswer
 
@@ -55,6 +83,9 @@ enum class ProjectUsageMiss(val said: String) : ProjectUsageAnswer {
     SignedOut("not read: no account is signed in on this device"),
     NotDeployed("not read: the server has no project_usage yet (scripts\\deploy-supabase.bat)"),
     Unreachable("not read: the server did not answer"),
+
+    /** Another server was chosen on this device: it is read from the next start (docs/SERVER_SETUP.md). */
+    ServerChanged("not read: restart the app to use the server chosen"),
 }
 
 /**

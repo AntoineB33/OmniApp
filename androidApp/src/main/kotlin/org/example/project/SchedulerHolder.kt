@@ -62,7 +62,8 @@ object SchedulerHolder {
         val store = createDefaultSchedulerStore()
         val syncEngine = (store as? SyncMetaStore)?.let {
             SchedulerSyncEngine(
-                RemoteSnapshotClient(),
+                // The server this device chose on its Settings page, else the built-in one (docs/SERVER_SETUP.md).
+                RemoteSnapshotClient(config = org.example.project.scheduler.sync.SupabaseConfig.chosen(store)),
                 it,
                 activeSessionStore = store as? ActiveSessionStore,
                 networkModeStore = store as? org.example.project.scheduler.persistence.NetworkModeStore,
