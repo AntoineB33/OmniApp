@@ -46,8 +46,12 @@ class MenuHoverTracker(private val scope: CoroutineScope, private val onLeft: ()
     }
 
     companion object {
-        /** Long enough to cross the seam between two parts, short enough to read as "it vanished as I left". */
-        const val GRACE_MILLIS: Long = 300
+        /**
+         * Long enough to cross the seam between two parts (the pointer leaves one and enters the next within a few
+         * milliseconds: they touch), short enough to read as "it vanished as I left" — 300 ms was seen to linger
+         * (anomaly 2026-11-04).
+         */
+        const val GRACE_MILLIS: Long = 80
     }
 }
 
