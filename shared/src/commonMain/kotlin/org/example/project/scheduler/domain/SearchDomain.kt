@@ -686,6 +686,12 @@ object SearchDomain {
          * app builds for one element or kind, and in one stored before it existed, which then search as they did.
          */
         val pageTypesOnly: Boolean = false,
+        /**
+         * User rule 2026-11-04: **when each configuration of the window was last changed**, by the user, in epoch ms —
+         * what the configurations tree's first node sorts by ([configurationTree], [withChanged]). Local-only like the
+         * rest; not the search ([searchConfigurations]), so two windows are the same whatever they changed when.
+         */
+        val settingsChangedAt: Map<Setting, Long> = emptyMap(),
     ) {
         /** The kinds the type selector offers: the page's while [pageTypesOnly], else every kind. */
         val offeredKinds: List<Kind>
@@ -772,6 +778,7 @@ object SearchDomain {
                     elementSource = elementSource,
                     completion = completion?.name,
                     pageTypesOnly = pageTypesOnly,
+                    settingsChangedAt = settingsChangedAt.mapKeys { it.key.name },
                     matchCase = filters.matchCase,
                     wholeWord = filters.wholeWord,
                     claudeProject = filters.claudeProject,
@@ -879,6 +886,7 @@ object SearchDomain {
                     elementSource = stored.elementSource,
                     completion = Completion.entries.firstOrNull { it.name == stored.completion },
                     pageTypesOnly = stored.pageTypesOnly,
+                    settingsChangedAt = stored.settingsChangedAt.mapNotNull { (name, at) -> Setting.entries.firstOrNull { it.name == name }?.let { it to at } }.toMap(),
                 )
             }
 
@@ -1414,6 +1422,7 @@ object SearchDomain {
             calendarClickMillis = null,
             placement = Placement(),
             openedFrom = null,
+            settingsChangedAt = emptyMap(),
             elementSource = null,
         )
 
@@ -1564,6 +1573,44 @@ object SearchDomain {
      * the filter that emptied its own type out of the results can still be turned back off. The general section
      * is about the whole search, so it is never cut by kind. An empty section is dropped.
      */
+    /** A node of the configurations tree ([configurationTree]). */
+    sealed interface ConfigurationNode {
+        val label: String
+    }
+
+    /** An end node: one configuration of the window, drawn as its control. */
+    data class ConfigurationLeaf(val setting: Setting) : ConfigurationNode {
+        override val label: String get() = setting.label
+    }
+
+    /** A category of configurations, which reveals [children] on hover. [id] is unique in the tree. */
+    data class ConfigurationCategory(val id: String, override val label: String, val children: List<ConfigurationNode>) : ConfigurationNode
+
+    /**
+     * User rule 2026-11-04: **the configurations tree** the arrow beside the Search window's bar opens. Its first node
+     * holds every configuration from the most to the least recently changed ([Config.settingsChangedAt]; the others
+     * after, in their order); then the configurations of every row ("General"), then each feature page's types, each
+     * type's configurations under it. Every configuration stands in it ([Setting.entries]): one with no section is
+     * General's, and every type is on a page ([FEATURE_PAGES]).
+     */
+    fun configurationTree(config: Config): List<ConfigurationNode> {
+        fun leaves(settings: List<Setting>) = settings.sortedBy { it.sorts }.map(::ConfigurationLeaf)
+        val recent = Setting.entries.sortedByDescending { config.settingsChangedAt[it] ?: Long.MIN_VALUE }.map(::ConfigurationLeaf)
+        val general = ConfigurationCategory("general", "General", leaves(Setting.entries.filter { it.section == null }))
+        val pages = FEATURE_PAGES.mapNotNull { page ->
+            val kinds = Kind.entries.filter { it in page.kinds }.mapNotNull { kind ->
+                leaves(Setting.entries.filter { it.section == kind }).takeIf { it.isNotEmpty() }
+                    ?.let { ConfigurationCategory("kind/" + kind.name, kind.label, it) }
+            }
+            kinds.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("page/" + page.id, page.label, it) }
+        }
+        return listOf(ConfigurationCategory("recent", "Recently changed", recent), general) + pages
+    }
+
+    /** [next], what [previous] became by a change of [settings] at [nowMillis]: their change times written ([Config.settingsChangedAt]). */
+    fun withChanged(previous: Config, next: Config, settings: Collection<Setting>, nowMillis: Long): Config =
+        if (next == previous) next else next.copy(settingsChangedAt = previous.settingsChangedAt + settings.associateWith { nowMillis })
+
     fun configurations(
         query: String,
         kinds: Set<Kind>,
@@ -1855,6 +1902,8 @@ object SearchDomain {
         val completion: String? = null,
         /** New 2026-11-04: absent = every type offered, as before the switch ([Config.pageTypesOnly]). */
         val pageTypesOnly: Boolean = false,
+        /** New 2026-11-04: absent = nothing known of when a configuration changed ([Config.settingsChangedAt]). */
+        val settingsChangedAt: Map<String, Long> = emptyMap(),
         /** New 2026-11-04: absent = the case ignored and any part of a word matched, as before ([Filters.matchCase]). */
         val matchCase: Boolean = false,
         val wholeWord: Boolean = false,

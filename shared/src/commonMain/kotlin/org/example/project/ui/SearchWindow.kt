@@ -878,16 +878,26 @@ fun SearchWindow(
                 WithTextMenuItems({
                     listOf(
                         TextMenuItem((if (currentConfig.filters.matchCase) "✓ " else "") + "Match case") {
-                            onConfigChange(currentConfig.copy(filters = currentConfig.filters.copy(matchCase = !currentConfig.filters.matchCase)))
+                            onConfigChange(
+                                SearchDomain.withChanged(
+                                    currentConfig, currentConfig.copy(filters = currentConfig.filters.copy(matchCase = !currentConfig.filters.matchCase)),
+                                    listOf(SearchDomain.Setting.MatchCase), nowMillis(),
+                                ),
+                            )
                         },
                         TextMenuItem((if (currentConfig.filters.wholeWord) "✓ " else "") + "Match whole word") {
-                            onConfigChange(currentConfig.copy(filters = currentConfig.filters.copy(wholeWord = !currentConfig.filters.wholeWord)))
+                            onConfigChange(
+                                SearchDomain.withChanged(
+                                    currentConfig, currentConfig.copy(filters = currentConfig.filters.copy(wholeWord = !currentConfig.filters.wholeWord)),
+                                    listOf(SearchDomain.Setting.WholeWord), nowMillis(),
+                                ),
+                            )
                         },
                     )
                 }) {
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { onConfigChange(config.copy(query = it)) },
+                    onValueChange = { onConfigChange(SearchDomain.withChanged(config, config.copy(query = it), listOf(SearchDomain.Setting.SearchText), nowMillis())) },
                     singleLine = true,
                     label = { Text("Search") },
                     trailingIcon = { SearchBarCross(query) { onConfigChange(config.copy(query = "")) } },
@@ -909,43 +919,13 @@ fun SearchWindow(
                 )
                 }
                 }
-                if (picker == null) {
-                KindsDropDown(
-                    kinds = config.kinds,
-                    onKindsChange = { onConfigChange(config.copy(kinds = it)) },
-                    // Only this page's types while the switch is on: the others' checks are kept ([KindsDropDown]).
-                    options = config.offeredKinds,
-                    deploy = deployKinds,
-                    onDeployed = onKindsDeployed,
-                )
-                // Back to the configuration the window opened with while it has changed since, else the whole
-                // configuration cancelled (`SearchDomain.resetConfig`).
-                val reset = SearchDomain.resetConfig(config, openedConfig)
-                ResetButton(enabled = reset != config) { onConfigChange(reset) }
-                }
+                // User rule 2026-11-04: the header is the bar alone, and at its right the arrow that opens the tree of
+                // every configuration (the types, Reset, the filters, the sorting — what the header's buttons were).
+                ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs)
             }
             val completionOptions =
                 remember(config.completion, query, state.titleToTaskIds) { SearchDomain.completionOptions(state, config.completion, query) }
             CompletionList(completionOptions, Modifier.outsidePressPart(barEditor)) { onConfigChange(config.copy(query = it)) }
-            if (picker == null)
-            // --- The way to every configuration ----------------------------------------------------------
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                // Every configuration of this window, in a window of its own — the filters per kind among them. The
-                // count says how many filters are narrowing the list right now, which nothing else here shows.
-                val active = filters.activeCount
-                Text(
-                    text = "⚙ All configurations" + if (active > 0) "  ·  $active filter" + (if (active == 1) "" else "s") + " on" else "",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    softWrap = false,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
-                        .clickable(onClick = onOpenConfigurations)
-                        .padding(horizontal = 8.dp, vertical = buttonVerticalPadding(6.dp)),
-                )
-            }
             }
             }
 

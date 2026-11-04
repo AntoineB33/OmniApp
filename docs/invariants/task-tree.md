@@ -324,7 +324,7 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   left, else on its right, each only where it fits whole (`cellEditPopupOffset`). One switch, "switch task" on (the
   default) or "rename" off, the session's Mode through `cellEditModeOptions`; none on a cell being created. Under it, a
   Search window (`SearchPicker`) with no head, no added elements and no actions, nor what serves them: the kinds,
-  Reset and "All configurations", and no row opens a sub-tree.
+  the configurations arrow, and no row opens a sub-tree.
   - **The bar IS the task cell** (user rule 2026-11-04; it was a second field holding the draft until then): the Search
     window draws no bar of its own in a picker, so its completion list comes first, under the switch. The cell has the
     bar's cross (`SearchBarCross`, the same code), just after its title's column — inside the column it wrapped or
@@ -1285,9 +1285,17 @@ suggestions before it was ever entered.
   `COMPACT_SECTION_MIN_WIDTH` at least and cut at the section's edge (`keepsWidthAbove`), and a button, a chip, a
   setting's name and an explanation (`NoteText`) are ONE line — a text that wraps makes the section taller as it
   is narrowed, which is the anomaly. **The search section's HEADER is one of them too** (user rule 2026-10-07): the
-  bar, the kinds' drop-down and Reset on one row; "All configurations", "Select all" and "Add" on the next (the
-  divider under them is gone); the section's padding is the actions section's. The result list under it is not: its
-  rows are the tree's.
+  section's padding is the actions section's. The result list under it is not: its rows are the tree's.
+- **The search section's header is the bar alone, and at its right a downward arrow** (user rule 2026-11-04, replacing
+  the kinds' drop-down, Reset and "All configurations"; `ConfigurationTreeArrow`, `SearchDomain.configurationTree`,
+  `ConfigurationTreeTest`). Hovered (pressed, without a pointer), it opens the **configurations tree** in a pop-up: a
+  column per level, a category revealing its children in the next column when hovered, an end node being the
+  configuration itself with its control (the configurations window's `SettingEditor`). Its root: **"Recently changed"**,
+  every configuration from the most to the least recently changed (`Config.settingsChangedAt`, local-only, no part of
+  the search; the never-changed after, in their order), then **General** (the configurations with no type), then each
+  feature page with its types under it, each type's configurations under that. **Every configuration is in it**: a
+  change made anywhere a configuration is set — the tree, the configurations window, the bar, its right-click menu — is
+  stamped with its time (`SearchDomain.withChanged`).
 
 #### The three sections
 

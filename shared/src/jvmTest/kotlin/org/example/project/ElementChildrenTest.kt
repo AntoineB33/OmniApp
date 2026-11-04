@@ -125,7 +125,8 @@ class ElementChildrenTest {
         try {
             repeat(4) { i -> onEdt { scene.render((i + 1) * 16_000_000L) } }
             var ms = 1000L
-            outer@ for (y in (130..200 step 12)) for (x in (20..190 step 10)) {
+            // Where the first row stands moves with the header (the bar alone since 2026-11-04).
+            outer@ for (y in (70..200 step 12)) for (x in (20..190 step 10)) {
                 val at = Offset(x.toFloat(), y.toFloat())
                 onEdt {
                     scene.sendPointerEvent(PointerEventType.Move, at, timeMillis = ms)

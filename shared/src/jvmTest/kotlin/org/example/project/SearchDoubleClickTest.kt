@@ -90,9 +90,8 @@ class SearchDoubleClickTest {
     @Test
     fun the_creation_row_makes_one_and_a_setup_applies() {
         // Each on its own row, whichever the list's order: the creation row is never taken for a setup.
-        assertEquals(
-            setOf(listOf("create WorkplaceSetup"), listOf("apply workplace-1")),
-            listOf(150f, 184f).map { doubleClickOn(it) }.toSet(),
-        )
+        // Down the list's first rows (where they stand moves with the header): each row does one thing alone.
+        val done = (90..240 step 10).map { doubleClickOn(it.toFloat()) }.filter { it.isNotEmpty() }.toSet()
+        assertEquals(setOf(listOf("create WorkplaceSetup"), listOf("apply workplace-1")), done)
     }
 }

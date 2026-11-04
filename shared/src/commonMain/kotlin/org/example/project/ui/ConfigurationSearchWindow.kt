@@ -218,8 +218,12 @@ fun ConfigurationSearchWindow(
             HorizontalDivider()
 
             // --- The result section: the sorting methods in force, then the configurations -------------
-            SortMethodList(config.sorts, SearchDomain.defaultSortApplied(config)?.let { applied -> { onConfigChange(applied) } }) {
-                onConfigChange(config.copy(sorts = it))
+            // User rule 2026-11-04: each change is stamped with its time, for the configurations tree's "Recently changed".
+            fun changed(settings: List<SearchDomain.Setting>): (SearchDomain.Config) -> Unit =
+                { next -> onConfigChange(SearchDomain.withChanged(config, next, settings, nowMillis())) }
+            val sortChanged = changed(listOf(SearchDomain.Setting.SortResults))
+            SortMethodList(config.sorts, SearchDomain.defaultSortApplied(config)?.let { applied -> { sortChanged(applied) } }) {
+                sortChanged(config.copy(sorts = it))
             }
             // User rule 2026-10-14: typing in the bar brings the list back to its top.
             val resultScroll = rememberScrollState()
@@ -244,10 +248,10 @@ fun ConfigurationSearchWindow(
                         if (collapsed) continue
                         // What every kind of the group has under one name: one field, written to all of them.
                         for (family in group.shared) {
-                            SettingRow(family.first().label) { SharedSettingEditor(family, config, onConfigChange, onPickOnCalendar, claudeLogs) }
+                            SettingRow(family.first().label) { SharedSettingEditor(family, config, changed(family), onPickOnCalendar, claudeLogs) }
                         }
                         for (setting in group.settings) {
-                            SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, onConfigChange, windows, onPickOnCalendar, claudeLogs) }
+                            SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, changed(listOf(setting)), windows, onPickOnCalendar, claudeLogs) }
                         }
                     }
                 }
@@ -362,7 +366,7 @@ internal fun SettingRow(label: String, editor: @Composable () -> Unit) {
 
 /** The control of one configuration — every one of them writes the Search window's [config]. */
 @Composable
-private fun SettingEditor(
+internal fun SettingEditor(
     state: SchedulerState,
     setting: SearchDomain.Setting,
     config: SearchDomain.Config,
