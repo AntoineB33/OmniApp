@@ -190,7 +190,10 @@ internal fun CellEditPopupLayer(
                         }
                     },
                 shape = RoundedCornerShape(8.dp),
-                tonalElevation = 3.dp,
+                // User rule 2026-11-04: it IS the Search window, so it is drawn on the windows' own background and
+                // border ([WindowFrame]'s): a tonal elevation tinted it, and it read as another thing.
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 shadowElevation = 8.dp,
             ) {
                 Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {

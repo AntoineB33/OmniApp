@@ -648,8 +648,14 @@ class WindowFrameHost {
     fun closeWindows(rows: List<Registration>) {
         val snapshot = rows.toList()
         closing += snapshot.map { it.id }
-        snapshot.forEach { it.onClose() }
+        grouped("Close windows") { snapshot.forEach { it.onClose() } }
     }
+
+    /**
+     * Anomaly 2026-11-04 (the bar's Reset undone window by window): **[block], one action on several windows, is ONE
+     * History Unit** — `App` gathers what it changes of their layouts ([closeWindows], [minimizeSelection], the bar's Reset).
+     */
+    var grouped: (label: String, block: () -> Unit) -> Unit = { _, block -> block() }
 
     /**
      * Where [id] sits in the stack, as a `zIndex`. A window not in it yet — one composing for the first
@@ -893,7 +899,7 @@ class WindowFrameHost {
      */
     fun minimizeSelection() {
         val selected = selectedEntries
-        selected.forEach { it.state.minimize() }
+        grouped("Minimize windows") { selected.forEach { it.state.minimize() } }
         if (selected.any { it.id == focusedId }) blur()
     }
 
@@ -903,9 +909,11 @@ class WindowFrameHost {
      */
     fun openSelection() {
         val selected = selectedEntries
-        for (entry in selected) {
-            entry.state.restore()
-            raise(entry.id)
+        grouped("Open windows") {
+            for (entry in selected) {
+                entry.state.restore()
+                raise(entry.id)
+            }
         }
         selected.lastOrNull()?.let { focus(it.id) }
     }
@@ -2242,8 +2250,12 @@ fun WindowBar(
                     .clip(RoundedCornerShape(8.dp))
                     // Every window closed at once ([WindowFrameHost.closeWindows]).
                     .clickable {
-                        host.closeWindows(host.registrations)
-                        onReset()
+                        // ONE History Unit (anomaly 2026-11-04): the closes and the page's windows put back, which
+                        // [onReset] may finish frames later ([WindowFrameHost.grouped]).
+                        host.grouped("Reset the windows") {
+                            host.closeWindows(host.registrations)
+                            onReset()
+                        }
                     }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )

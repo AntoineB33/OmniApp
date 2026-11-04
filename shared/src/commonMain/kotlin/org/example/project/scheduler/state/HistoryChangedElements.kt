@@ -38,6 +38,15 @@ object ExternalKeys {
 
     /** The order of the window bar's tabs. */
     const val TAB_ORDER: String = "tab-order"
+
+    /**
+     * Several windows' layouts changed by ONE action (user rule 2026-11-04: the window bar's Reset, a close that takes the
+     * windows opened from the window closed, the bar menu's close and minimize of a selection): one History Unit.
+     */
+    const val WINDOWS: String = "windows"
+
+    /** The keys of what the window bar changes: no window's, so undone from whichever window has the focus. */
+    val WINDOW_BAR: Set<String> = setOf(WINDOWS, TAB_ORDER, GLOBAL_WINDOWS)
 }
 
 /**

@@ -842,9 +842,16 @@ object CustomMenuButtons {
         }
     }
 
-    /** [buttons] with [id] renamed — a blank title keeps the one it had. */
+    /**
+     * User rule 2026-11-04: **only a window's button is renamed** — a control or an action of the menu is named after
+     * what it is (its action in the Search window, `MenuControlsAreActionsTest`). A folder, which is no button but the
+     * group the user named, keeps its name to give.
+     */
+    fun canRename(button: CustomMenuButton): Boolean = button.folder || (button.control == null && button.action == null)
+
+    /** [buttons] with [id] renamed — a blank title keeps the one it had, and an item that is no window's keeps its own ([canRename]). */
     fun renamed(buttons: List<CustomMenuButton>, id: String, title: String): List<CustomMenuButton> =
-        if (title.isBlank()) buttons else buttons.map { if (it.id == id) it.copy(title = title.trim()) else it }
+        if (title.isBlank()) buttons else buttons.map { if (it.id == id && canRename(it)) it.copy(title = title.trim()) else it }
 
     /** [buttons] without [id] and, a folder, what stands in it. */
     fun removed(buttons: List<CustomMenuButton>, id: String): List<CustomMenuButton> {
@@ -1078,11 +1085,14 @@ internal fun CustomMenuSection(
                                 if (!button.folder && canUpdate(button)) {
                                     DropdownMenuItem(text = { Text("Update") }, onClick = { menuOpen = false; onUpdate(button) })
                                 }
-                                DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onStartRename(button.id) })
+                                if (CustomMenuButtons.canRename(button)) {
+                                    DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onStartRename(button.id) })
+                                }
                                 // Checked while the item stands in the menu of every page. A folder is its items, each global or not.
+                                // User rule 2026-11-04: named "all pages" (it was "Global").
                                 if (!button.folder) {
                                     DropdownMenuItem(
-                                        text = { Text((if (button.global) "✓ " else "") + "Global") },
+                                        text = { Text((if (button.global) "✓ " else "") + "all pages") },
                                         onClick = { menuOpen = false; onSetGlobal(button.id, !button.global) },
                                     )
                                 }

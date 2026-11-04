@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.example.project.ui.CustomMenuButton
 import org.example.project.ui.CustomMenuButtons
@@ -77,12 +78,19 @@ class CustomMenuButtonsTest {
         // Already there: the same item, nothing added.
         assertEquals(list to id, CustomMenuButtons.addedControl(list, org.example.project.ui.MenuControl.AutoSchedule))
         assertEquals("d-Voice", CustomMenuButtons.addedControl(list, org.example.project.ui.MenuControl.Voice).second)
-        // Removed, it can be added back; renamed, it keeps the name it was given; and it survives its encoding.
+        // Removed, it can be added back; and it survives its encoding. User rule 2026-11-04: it is no window's button, so
+        // it is not renamed — it keeps the name of what it is.
         val back = CustomMenuButtons.addedControl(CustomMenuButtons.removed(list, "d-Voice"), org.example.project.ui.MenuControl.Voice).first
         assertEquals("Voice", back.last().control)
+        assertFalse(CustomMenuButtons.canRename(back.last()))
         val renamed = CustomMenuButtons.renamed(back, back.last().id, "Speak")
-        assertEquals("Speak", renamed.last().title)
+        assertEquals(back, renamed, "a control keeps its name")
         assertEquals(renamed, CustomMenuButtons.decode(CustomMenuButtons.encode(renamed)))
+        // A window's button and a folder are renamed.
+        assertTrue(CustomMenuButtons.canRename(CustomMenuButtons.GLOBAL_SEARCH))
+        assertTrue(CustomMenuButtons.DEFAULTS.filter { it.control == null && it.action == null }.all(CustomMenuButtons::canRename))
+        assertTrue(CustomMenuButtons.canRename(CustomMenuButton("f", "", "Mine", folder = true)))
+        assertFalse(CustomMenuButtons.canRename(CustomMenuButton("a", "", "Run", action = "TimerRun")))
     }
 
     @Test

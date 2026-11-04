@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### One action on several windows is one undo; menu renames; the edit rectangle on the windows' background — 2026-11-04
+
+Anomaly: Ctrl+Z after the window bar's Reset closed the calendar Reset had reopened instead of putting the windows back: each window's change was its own History Unit. One action on several windows is one unit now (`ViewHistoryRecorder.beginGroup`/`endGroup`, `ExternalKeys.WINDOWS`): the bar's Reset (held until the page's windows reopened frames later are written), the bar menu's close, minimize and open of a selection, and a close that takes the windows opened from the window closed (a Search window's configurations windows), which was the same anomaly. The window bar's units are app-wide, as the lateral menu's: stamped with the window the action itself moved the focus from, Ctrl+Z reached something else. User rules: a lateral-menu item that is no window's button is not renamed (`CustomMenuButtons.canRename`: a window's button or a folder); "Global" in its right-click menu reads "all pages". The Edit Mode rectangle, the Search window, is drawn on the windows' background and border (a tonal elevation tinted it). Client rebuild only. `CustomMenuButtonsTest`; checked on the desktop app (virtual screen: Reset, then Ctrl+Z, the three windows back).
+
 ### No text of the app is cut by "…" — 2026-11-04
 
 User rule, the whole app: the 43 texts cut by `TextOverflow.Ellipsis` wrap now (window titles, the window bar's tabs, which scroll and so were never cut, result and list rows, the type selector's face in the Search window's header too, the actions' hints, the calendar's, the sleep, alarm, task trees, categories and life plan windows' labels, a task's name chip by default). The "task to do now" notification writes the task's path whole: its start was dropped behind "…" past 48 characters (`shortenedPathLabel`, removed). The performance overlay, a developer's table, is left as it is. `NoTextCutByAnEllipsisTest` fails on any `TextOverflow.Ellipsis` in the app's sources. Client rebuild only.

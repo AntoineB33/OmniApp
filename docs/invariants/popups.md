@@ -151,8 +151,9 @@ means.
     switches together, Mute, Voice, Notifications (brought together once in a menu stored before), Task tree, Calendar, Life plan, Look
     away now, Switch task, Sleep / Work, I'm away; Online is the settings page's since 2026-11-04). A list stored before is given those
     ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
-  - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename, Global,
-    Remove, Customize, Reset. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of
+  - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename (a window's
+    button or a folder only — user rule 2026-11-04, `CustomMenuButtons.canRename`: a control or an action is named after
+    what it is), "all pages" (named "Global" until 2026-11-04), Remove, Customize, Reset. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of
     its own); a right-click beside the items offers Customize and Reset too, at the pointer, so an empty menu can be filled.
   - **"Reset" puts the menu of the page it is pressed on back to that page's defaults**
     (`CustomMenuButtons.withPageReset`, `GlobalItemsTest`), one History Unit, so one `Ctrl+Z` from ANY window brings it
@@ -462,6 +463,15 @@ means.
   stack only when it leaves composition, a frame later; a loop of plain closes handed the focus to a window of the
   same batch, and the state's focus then named a closed window, which `App` opens again (the Shift+Alt focus walk's
   effect) — both Reset and "close selection" left a window open (anomaly 2026-10-01, `TabSelectionTest`).
+- **One action on several windows is ONE History Unit, undone from any window** (anomaly 2026-11-04: Ctrl+Z after the
+  bar's Reset closed the calendar Reset had reopened, instead of putting the windows back). `App`'s `ViewHistoryRecorder`
+  gathers what changes windows' layouts between `beginGroup` and `endGroup` into one `ExternalKeys.WINDOWS` unit (a group
+  that changed one window records that window's own): the bar's Reset — held open until the page's windows, reopened
+  frames later, are written — `closeWindows` ("close selection", and a close taking the windows opened from it, grouped
+  with that close in `updatePlacementById`), "minimize selection" and "open selection" (`WindowFrameHost.grouped`, ended
+  a few frames late: a reduce writes its row from the frame it is drawn in). The window bar is no window: its units
+  (`ExternalKeys.WINDOW_BAR`) are app-wide, as the lateral menu's are — stamped with the window the focus was on, which
+  the action itself then moved, Ctrl+Z took back something else.
 - **The lateral menu's scrolled content ends a bar's height lower** (`LateralMenu`'s bottom padding, `+
   MINIMIZED_BAR_HEIGHT`), always — so scrolled to the end, its last button clears the bar drawn over it, and
   the menu does not jump as the bar comes and goes.

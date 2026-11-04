@@ -20,6 +20,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
 import androidx.compose.runtime.CompositionLocalProvider
+import kotlinx.serialization.builtins.nullable
+import kotlinx.serialization.builtins.serializer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.draw.clipToBounds
@@ -421,12 +423,68 @@ private class ViewHistoryRecorder {
         val after = layoutText(next)
         if (before == after) return
         if (previous.visible && !next.visible) focusAfterClose(id)
+        if (groupDepth > 0) {
+            // Within a group: the window's layout before the group's first change of it, and after its last.
+            val first = grouped[id]
+            grouped[id] = Triple(first?.first ?: before, after, first?.third ?: layoutChangeLabel(previous, next))
+            return
+        }
         record(WINDOW_KEY + id, before, after, layoutChangeLabel(previous, next))
+    }
+
+    // Anomaly 2026-11-04: the window bar's Reset closed every window and reopened the page's own, one History Unit per
+    // window — so Ctrl+Z took back the last of them (the calendar reopened: it closed) instead of the Reset. **One
+    // action on several windows is ONE unit**: what changes their layouts inside [beginGroup]/[endGroup] is gathered and
+    // recorded as one ([ExternalKeys.WINDOWS], app-wide); a group that changed one window records that window's own unit.
+    private var groupDepth: Int = 0
+    private var groupLabel: String = ""
+    private val grouped = LinkedHashMap<String, Triple<String?, String?, String>>()
+
+    fun beginGroup(label: String) {
+        if (groupDepth == 0) {
+            groupLabel = label
+            grouped.clear()
+        }
+        groupDepth++
+    }
+
+    fun endGroup() {
+        if (groupDepth == 0) return
+        groupDepth--
+        if (groupDepth > 0) return
+        val changes = grouped.filterValues { it.first != it.second }
+        grouped.clear()
+        when (changes.size) {
+            0 -> {}
+            1 -> changes.entries.single().let { (id, change) -> record(WINDOW_KEY + id, change.first, change.second, change.third) }
+            else ->
+                record(
+                    org.example.project.scheduler.state.ExternalKeys.WINDOWS,
+                    windowsText(changes.mapValues { it.value.first }),
+                    windowsText(changes.mapValues { it.value.second }),
+                    groupLabel,
+                )
+        }
     }
 }
 
+/** How [windowsText] writes several windows' layouts. */
+private val WINDOWS_SERIALIZER: kotlinx.serialization.KSerializer<Map<String, String?>> =
+    kotlinx.serialization.builtins.MapSerializer(String.serializer(), String.serializer().nullable)
+
+/** Several windows' layouts ([layoutText]) by frame id, as one [ExternalKeys.WINDOWS] value. */
+private fun windowsText(layouts: Map<String, String?>): String =
+    kotlinx.serialization.json.Json.encodeToString(WINDOWS_SERIALIZER, layouts)
+
+/** [windowsText]'s reverse; empty for nothing readable. */
+private fun windowsOf(text: String?): Map<String, String?> =
+    text?.let { runCatching { kotlinx.serialization.json.Json.decodeFromString(WINDOWS_SERIALIZER, it) }.getOrNull() }.orEmpty()
+
 /** The calendar's chrome after the window bar's Reset: maximized, not reduced (user rule 2026-10-01). */
 private val CALENDAR_RESET_CHROME: WindowChrome = WindowChrome(WindowFill.Both, minimized = false)
+
+/** How many frames a group of window changes stays open after its action ([WindowFrameHost.grouped]). */
+private const val GROUP_FRAMES: Int = 3
 
 /** How many frames a folder's click leaves between two of its buttons: what a window takes to register. */
 private const val FOLDER_CLICK_FRAMES: Int = 3
@@ -668,9 +726,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (next == previous && id in placements) return
             placements[id] = next
             placementStore?.savePlacement(id, next)
+            val closing = previous.visible && !next.visible && id !in VIEW_ROWS
+            // …and with them, ONE History Unit (anomaly 2026-11-04): the close, and the closes it takes with it.
+            if (closing) viewHistory.beginGroup("Close window")
             // A window that closes takes the windows opened from it with it (user rule 2026-10-06) — here, the one
             // write every close makes, and before the close hands the focus on (`onLayout`).
-            if (previous.visible && !next.visible && id !in VIEW_ROWS) {
+            if (closing) {
                 windowFrames.closeOpenedFrom(id)
                 windowFrames.windowClosed(id)
             }
@@ -685,6 +746,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 calendarCopySections.remove(id)
             }
             if (id !in VIEW_ROWS) viewHistory.onLayout(id, previous, next)
+            if (closing) viewHistory.endGroup()
             // A closed window is global no more: its frame id may be another window's tomorrow.
             if (previous.visible && !next.visible && globalWindows.remove(id)) {
                 updatePlacementById(CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID) {
@@ -1291,6 +1353,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 madeIn = org.example.project.scheduler.state.HistoryWindow.Menu,
             )
         }
+        // Anomaly 2026-11-04: one action on several windows is ONE History Unit ([ViewHistoryRecorder.beginGroup]). The
+        // group ends a few frames later: a reduce or a restore writes its window's row from the frame it is drawn in.
+        windowFrames.grouped = { label, block ->
+            viewHistory.beginGroup(label)
+            try {
+                block()
+            } finally {
+                engineScope.launch {
+                    repeat(GROUP_FRAMES) { withFrameNanos { } }
+                    viewHistory.endGroup()
+                }
+            }
+        }
         windowFrames.onRenamed = { id, before, after ->
             viewHistory.record(org.example.project.scheduler.state.ExternalKeys.WINDOW_TITLE + id, before, after, "Rename window")
         }
@@ -1759,6 +1834,35 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // An undone or redone change to what `App` keeps, put back — three-way: only while it is still as the unit
         // left it.
         var restoredSeq by remember { mutableStateOf(0L) }
+        // One window's layout put back — three-way: only while it is still [from] — opening or closing it as it must.
+        fun restoreWindowLayout(id: String, from: String?, toText: String?) {
+            val current = placements[id]?.let(::layoutText)
+            val to = toText?.let(::layoutOf)
+            if (current != from || to == null) return
+            updatePlacementById(id) {
+                it.copy(
+                    x = to.x, y = to.y, width = to.width, height = to.height, visible = to.visible,
+                    fillWidth = to.fillWidth, fillHeight = to.fillHeight, minimized = to.minimized,
+                )
+            }
+            val registration = windowFrames.registrations.firstOrNull { it.id == id }
+            val kind = lateralWindowOf(id)
+            when {
+                kind != null && id == kind.name -> setWindowOpen(kind, to.visible)
+                kind != null -> if (to.visible) { if (id !in windowCopies) windowCopies.add(id) } else closeWindowCopy(id)
+                !to.visible -> registration?.onClose()
+                registration == null ->
+                    placements[id]?.config?.let(ObjectWindowKey::decode)?.let { key ->
+                        openObjectWindow(key, id.substringAfter('#', "").toIntOrNull())
+                    }
+            }
+            if (to.visible) {
+                registration?.state?.applyLayout(
+                    Offset(to.x, to.y), Size(to.width, to.height),
+                    org.example.project.ui.WindowFill.of(to.fillWidth, to.fillHeight), to.minimized,
+                )
+            }
+        }
         LaunchedEffect(schedulerState.externalRestores) {
             for (restore in schedulerState.externalRestores) {
                 if (restore.seq <= restoredSeq) continue
@@ -1818,35 +1922,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 setSearchConfig(id, SearchDomain.Config.decode(restore.to) ?: SearchDomain.Config(), follow = false)
                             }
                         }
-                        restore.key.startsWith(WINDOW_KEY) -> {
-                            val id = restore.key.removePrefix(WINDOW_KEY)
-                            val current = placements[id]?.let(::layoutText)
-                            val to = restore.to?.let(::layoutOf)
-                            if (current == restore.from && to != null) {
-                                updatePlacementById(id) {
-                                    it.copy(
-                                        x = to.x, y = to.y, width = to.width, height = to.height, visible = to.visible,
-                                        fillWidth = to.fillWidth, fillHeight = to.fillHeight, minimized = to.minimized,
-                                    )
-                                }
-                                val registration = windowFrames.registrations.firstOrNull { it.id == id }
-                                val kind = lateralWindowOf(id)
-                                when {
-                                    kind != null && id == kind.name -> setWindowOpen(kind, to.visible)
-                                    kind != null -> if (to.visible) { if (id !in windowCopies) windowCopies.add(id) } else closeWindowCopy(id)
-                                    !to.visible -> registration?.onClose()
-                                    registration == null ->
-                                        placements[id]?.config?.let(ObjectWindowKey::decode)?.let { key ->
-                                            openObjectWindow(key, id.substringAfter('#', "").toIntOrNull())
-                                        }
-                                }
-                                if (to.visible) {
-                                    registration?.state?.applyLayout(
-                                        Offset(to.x, to.y), Size(to.width, to.height),
-                                        org.example.project.ui.WindowFill.of(to.fillWidth, to.fillHeight), to.minimized,
-                                    )
-                                }
-                            }
+                        restore.key.startsWith(WINDOW_KEY) ->
+                            restoreWindowLayout(restore.key.removePrefix(WINDOW_KEY), restore.from, restore.to)
+                        // Several windows changed by one action (the bar's Reset…): each put back, as one unit.
+                        restore.key == org.example.project.scheduler.state.ExternalKeys.WINDOWS -> {
+                            val from = windowsOf(restore.from)
+                            for ((id, to) in windowsOf(restore.to)) restoreWindowLayout(id, from[id], to)
                         }
                     }
                 }
@@ -5950,11 +6031,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // open and maximized. The task tree's placement goes back to a first run's too (centred, default
                 // size, maximized), for when it is next opened.
                 onReset = reset@{
+                    // The bar's group (one History Unit, anomaly 2026-11-04) is held until the page's windows, which
+                    // open frames later, are written too.
+                    viewHistory.beginGroup("Reset the windows")
                     // Another page's default layout: its windows closed, then one Search window on what it holds.
                     if (page != OmniPage.TaskScheduler) {
                         engineScope.launch {
                             repeat(2) { withFrameNanos { } }
                             openNewWindow(FloatingWindow.Search, SearchDomain.pageDefaultConfig(page.searchPage).encode())
+                            repeat(GROUP_FRAMES) { withFrameNanos { } }
+                            viewHistory.endGroup()
                         }
                         return@reset
                     }
@@ -5971,6 +6057,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         repeat(2) { withFrameNanos { } }
                         windowChromeMemory.save(FloatingWindow.Calendar.name, CALENDAR_RESET_CHROME)
                         openNewWindow(FloatingWindow.Calendar)
+                        repeat(GROUP_FRAMES) { withFrameNanos { } }
+                        viewHistory.endGroup()
                     }
                 },
                 onUndo = { vm.dispatch(SchedulerIntent.Undo) },
