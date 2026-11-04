@@ -394,6 +394,8 @@ fun SearchWindow(
     schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
     /** The app's clock — what a timer's or a chrono's run, started from the added elements' actions, is read at. */
     nowMillis: () -> Long = { 0L },
+    /** A box bound of the configurations tree picked by a click on the calendar ([SearchDomain.BoxBound]). */
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
     /** The Claude Code logs as last read (`App` reads them): the rows of the logs' kinds ([SearchDomain.CLAUDE_KINDS]). */
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
     onDismiss: () -> Unit,
@@ -921,7 +923,7 @@ fun SearchWindow(
                 }
                 // User rule 2026-11-04: the header is the bar alone, and at its right the arrow that opens the tree of
                 // every configuration (the types, Reset, the filters, the sorting — what the header's buttons were).
-                ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs)
+                ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar)
             }
             val completionOptions =
                 remember(config.completion, query, state.titleToTaskIds) { SearchDomain.completionOptions(state, config.completion, query) }

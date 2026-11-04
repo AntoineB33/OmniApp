@@ -58,6 +58,7 @@ internal fun ConfigurationTreeArrow(
     nowMillis: () -> Long,
     windows: List<SearchDomain.WindowEntry>,
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -72,7 +73,10 @@ internal fun ConfigurationTreeArrow(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
         AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
-            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs)
+            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs) { which ->
+                open = false
+                onPickOnCalendar(which)
+            }
         }
     }
 }
@@ -87,6 +91,7 @@ private fun ConfigurationTreeColumns(
     nowMillis: () -> Long,
     windows: List<SearchDomain.WindowEntry>,
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
 ) {
     val tree = remember(config.settingsChangedAt) { SearchDomain.configurationTree(config) }
     // The category hovered at each depth, by id.
@@ -138,7 +143,7 @@ private fun ConfigurationTreeColumns(
                                     SettingEditor(
                                         state, node.setting, config, openedConfig,
                                         { next -> onConfigChange(SearchDomain.withChanged(latestConfig, next, listOf(node.setting), nowMillis())) },
-                                        windows, claudeLogs = claudeLogs,
+                                        windows, onPickOnCalendar, claudeLogs,
                                     )
                                 }
                             }
@@ -152,5 +157,6 @@ private fun ConfigurationTreeColumns(
 }
 
 private val TREE_CATEGORY_COLUMN_WIDTH = 200.dp
-private val TREE_LEAF_COLUMN_WIDTH = 460.dp
+/** Wide enough for the widest control a configuration has (a box bound and its "Pick on the calendar"): none is cut. */
+private val TREE_LEAF_COLUMN_WIDTH = 600.dp
 private val TREE_COLUMN_MAX_HEIGHT = 480.dp

@@ -5643,10 +5643,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     androidx.compose.runtime.SideEffect {
                         menuActionContext.value = addedActionHandlers to { row -> searchRowOpeners.open(schedulerState, row) }
                     }
+                    // User rule 2026-10-11: a bound of the boxes' window of the Search window [target] picked by a click on
+                    // the calendar — the calendar takes the focus, the click is the instant, and [back] brings the asking
+                    // window back. The configurations window's, and the configurations tree's (2026-11-04).
+                    fun pickBoxBoundOnCalendar(target: String, back: () -> Unit): (SearchDomain.BoxBound) -> Unit = { which ->
+                        calendarElementDrag.instantPick = { millis: Long ->
+                            val current = searchConfigOf(target)
+                            setSearchConfig(target, current.copy(filters = SearchDomain.withBoxBound(current.filters, which, millis)))
+                            back()
+                        }
+                        if (!calendarOpen) calendarOpen = true
+                        focusWindow(FloatingWindow.Calendar)
+                    }
                     LateralWindow(FloatingWindow.Search, searchWindowOpen) {
                         val searchId = windowInstanceId(FloatingWindow.Search.name)
                         val searchConfig = searchConfigOf(searchId)
                         SearchWindow(
+                            // User rule 2026-11-04: the configurations tree's box bounds are picked on the calendar too.
+                            onPickOnCalendar = pickBoxBoundOnCalendar(searchId) { presentWindow(FloatingWindow.Search, searchId) },
                             state = schedulerState,
                             // What this window opens is linked to it (user rule 2026-10-18).
                             openers = searchRowOpeners.askedThrough(askedFrom(searchId)),
@@ -5795,15 +5809,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onDismiss = { configSearchWindowOpen = false },
                             // User rule 2026-10-11: a bound of the boxes' window picked by a click on the calendar —
                             // the calendar takes the focus, the click is the instant, and the focus comes back here.
-                            onPickOnCalendar = { which ->
-                                calendarElementDrag.instantPick = { millis ->
-                                    val current = searchConfigOf(target)
-                                    setSearchConfig(target, current.copy(filters = SearchDomain.withBoxBound(current.filters, which, millis)))
-                                    presentWindow(FloatingWindow.ConfigSearch, configId)
-                                }
-                                if (!calendarOpen) calendarOpen = true
-                                focusWindow(FloatingWindow.Calendar)
-                            },
+                            onPickOnCalendar = pickBoxBoundOnCalendar(target) { presentWindow(FloatingWindow.ConfigSearch, configId) },
                             // Always: the groups are ordered by the rows of the result list, the windows' included —
                             // read with what the Search window reads its own list with.
                             windows = searchWindowEntries(),
