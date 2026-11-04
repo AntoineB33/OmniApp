@@ -101,15 +101,29 @@ private fun ConfigurationTreeColumns(
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
 ) {
-    val tree = remember(config.settingsChangedAt) { SearchDomain.configurationTree(config) }
+    // The pop-ups are windows of their own: what they write reaches the Search window and comes back a frame or more
+    // later. Shown from the Search window's configuration alone, a field lost the letter typed before the echo (seen on
+    // screen: "ab" typed, "b" kept). So the tree shows its own copy, written at once, and an echo of one of its own
+    // writes is no news; anything else the window's configuration becomes is taken as it is.
+    val written = remember { ArrayDeque<SearchDomain.Config>() }
+    var shown by remember { mutableStateOf(config) }
+    remember(config) {
+        val echo = written.indexOf(config)
+        if (echo >= 0) repeat(echo + 1) { written.removeFirst() } else { written.clear(); shown = config }
+    }
+    val tree = remember(shown.settingsChangedAt) { SearchDomain.configurationTree(shown) }
     // The category revealing its children at each depth, by id.
     var path by remember { mutableStateOf(listOf<String>()) }
-    val latestConfig by rememberUpdatedState(config)
     val leaf: @Composable (SearchDomain.Setting) -> Unit = { setting ->
         SettingRow(setting.label) {
             SettingEditor(
-                state, setting, config, openedConfig,
-                { next -> onConfigChange(SearchDomain.withChanged(latestConfig, next, listOf(setting), nowMillis())) },
+                state, setting, shown, openedConfig,
+                { next ->
+                    val stamped = SearchDomain.withChanged(shown, next, listOf(setting), nowMillis())
+                    written.addLast(stamped)
+                    shown = stamped
+                    onConfigChange(stamped)
+                },
                 windows, onPickOnCalendar, claudeLogs,
             )
         }

@@ -337,10 +337,23 @@ internal object MenuWindows {
             type = AwtWindow.Type.POPUP
         }
 
-    fun take(owner: AwtWindow): ComposeDialog = spare.remove(owner)?.takeIf { it.isDisplayable } ?: make(owner)
+    fun take(owner: AwtWindow): ComposeDialog =
+        (spare.remove(owner)?.takeIf { it.isDisplayable } ?: make(owner)).also(::hideOwned)
+
+    /** Every window [window] owns, at any depth, hidden while it is still on screen: none comes back with it. */
+    private fun hideOwned(window: AwtWindow) {
+        for (owned in window.ownedWindows) {
+            hideOwned(owned)
+            if (owned.isVisible) owned.isVisible = false
+        }
+    }
 
     /** The menu closed: its content is let go, and the window is kept hidden for the next one — one per owner. */
     fun give(owner: AwtWindow, dialog: ComposeDialog) {
+        // Its own menus first (a menu opened in this menu, the configurations tree's next column): hidden WITH their
+        // owner, AWT shows them again when that window is next shown — reused for another menu, it brought back an
+        // empty grey window where the closed child had been (seen on screen, 2026-11-04).
+        hideOwned(dialog)
         dialog.isVisible = false
         dialog.setContent { }
         if (owner.isDisplayable && spare[owner] == null) spare[owner] = dialog else dialog.dispose()
