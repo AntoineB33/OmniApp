@@ -162,6 +162,12 @@ class CellEditPopupRulesTest {
         assertEquals(listOf(0..3, 9..12), SearchDomain.matchRanges("Pear and pear", "pear"))
         assertEquals(listOf(9..12), SearchDomain.matchRanges("Pear and pear", "pear", case.queryOptions))
         assertEquals(listOf(10..12), SearchDomain.matchRanges("Pearl and pea", "pea", word.queryOptions))
+        // Anomaly 2026-11-04: both on, "A at " highlighted the lone "A" of "A run takes…": the query is one phrase.
+        val both = plain.copy(matchCase = true, wholeWord = true).queryOptions
+        assertEquals(emptyList(), SearchDomain.matchRanges("A run takes the state of the line at c", "A at ", both))
+        assertEquals(listOf(9..12), SearchDomain.matchRanges("Look for A at noon", "A at ", both))
+        assertFalse(SearchDomain.matchesWith(SearchDomain.ItemResult(SearchDomain.Kind.Alarm, "a", "A run at", ""), "A at ", both))
+        assertTrue(SearchDomain.matchesWith(SearchDomain.ItemResult(SearchDomain.Kind.Alarm, "a", "Wake A at six", ""), "A at ", both))
         // Kept with the window's configuration, and absent (off) from one stored before them.
         val on = SearchDomain.Config(filters = plain.copy(matchCase = true, wholeWord = true))
         assertEquals(on, SearchDomain.Config.decode(on.encode()))

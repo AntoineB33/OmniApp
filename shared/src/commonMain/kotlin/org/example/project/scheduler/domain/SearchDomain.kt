@@ -3139,14 +3139,16 @@ object SearchDomain {
     /**
      * User rule 2026-11-04: whether [row], which the case-blind search found for [query], still answers it with the bar's
      * [match] filters ([Filters.matchCase], [Filters.wholeWord]), read as the task tree's find bar reads them
-     * ([TaskTreeSearch.ranges]): a name holds the whole query; a log entry's text holds each of its terms
-     * ([ClaudeLogSearch.rawTerms]), as it is searched.
+     * ([TaskTreeSearch.ranges]): **the query is ONE phrase** ([matchPhrase]), in a name as in a log entry's whole text —
+     * never its terms one by one (anomaly 2026-11-04: both on, "A at " listed and highlighted a log entry for a lone "A").
      */
     fun matchesWith(row: Result, query: String, match: TaskTreeSearch.Options, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): Boolean {
         val entry = (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.let { claudeLogs.find(it.id)?.second }
-        if (entry != null) return ClaudeLogSearch.rawTerms(query).all { TaskTreeSearch.ranges(entry.text, it, match).isNotEmpty() }
-        return TaskTreeSearch.ranges(row.name, query.trim(), match).isNotEmpty()
+        return TaskTreeSearch.ranges(entry?.text ?: row.name, matchPhrase(query), match).isNotEmpty()
     }
+
+    /** What the bar holds as the one phrase match case and whole word read ([matchesWith], [matchRanges]): trimmed, unquoted. */
+    fun matchPhrase(query: String): String = query.trim().removeSurrounding("\"").trim()
 
     internal fun matchRank(name: String, query: String): Int? {
         val q = query.trim().lowercase()
@@ -3167,7 +3169,7 @@ object SearchDomain {
     fun matchRanges(text: String, query: String, match: TaskTreeSearch.Options = TaskTreeSearch.Options()): List<IntRange> {
         if (text.isEmpty()) return emptyList()
         // User rule 2026-11-04: with the bar's match case or whole word on, only what matches with them is a hit.
-        if (match != TaskTreeSearch.Options()) return ClaudeLogSearch.rawTerms(query).flatMap { TaskTreeSearch.ranges(text, it, match) }.sortedBy { it.first }
+        if (match != TaskTreeSearch.Options()) return TaskTreeSearch.ranges(text, matchPhrase(query), match)
         val ranges = ArrayList<IntRange>()
         for (term in ClaudeLogSearch.rawTerms(query)) {
             var at = text.indexOf(term, ignoreCase = true)
