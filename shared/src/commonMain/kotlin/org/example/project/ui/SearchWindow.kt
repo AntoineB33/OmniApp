@@ -503,7 +503,7 @@ fun SearchWindow(
             addedRows.takeIf { filters.calendarAddKeeping },
             claudeLogs,
             picker?.eligible,
-            config.queryOptions,
+            config.filters.queryOptions,
         ) {
             val found =
                 SearchDomain.results(
@@ -511,7 +511,7 @@ fun SearchWindow(
                     schedulerRuns = schedulerRuns, placement = config.placement,
                     placementOwnLength = if (filters.calendarAddKeeping) SearchDomain.placementDefaultLength(state, addedRows) else null,
                     claudeLogs = claudeLogs,
-                    match = config.queryOptions,
+                    match = config.filters.queryOptions,
                 )
             if (picker != null) {
                 SearchDomain.pickerRows(state, found, picker.eligible, creation = picker.onNewTask != null)
@@ -877,11 +877,11 @@ fun SearchWindow(
                 Box(Modifier.weight(1f)) {
                 WithTextMenuItems({
                     listOf(
-                        TextMenuItem((if (currentConfig.matchCase) "✓ " else "") + "Match case") {
-                            onConfigChange(currentConfig.copy(matchCase = !currentConfig.matchCase))
+                        TextMenuItem((if (currentConfig.filters.matchCase) "✓ " else "") + "Match case") {
+                            onConfigChange(currentConfig.copy(filters = currentConfig.filters.copy(matchCase = !currentConfig.filters.matchCase)))
                         },
-                        TextMenuItem((if (currentConfig.wholeWord) "✓ " else "") + "Match whole word") {
-                            onConfigChange(currentConfig.copy(wholeWord = !currentConfig.wholeWord))
+                        TextMenuItem((if (currentConfig.filters.wholeWord) "✓ " else "") + "Match whole word") {
+                            onConfigChange(currentConfig.copy(filters = currentConfig.filters.copy(wholeWord = !currentConfig.filters.wholeWord)))
                         },
                     )
                 }) {
@@ -1287,6 +1287,8 @@ fun SearchWindow(
       }
       }
     }
+    // User rule 2026-11-04: with the bar's match case or whole word on, only what matches with them is highlighted.
+    androidx.compose.runtime.CompositionLocalProvider(LocalSearchMatch provides filters.queryOptions) {
     if (frame == null) {
         Column(modifier) { windowContent() }
     } else {
@@ -1304,6 +1306,7 @@ fun SearchWindow(
             claimsKeyboard = true,
             content = windowContent,
         )
+    }
     }
 }
 
@@ -2100,7 +2103,8 @@ private fun SearchTaskRow(
     val columnWidth = with(density) { titlePx.toDp() }.coerceIn(PRIORITY_COLUMN_MIN, PRIORITY_COLUMN_MAX)
     val columnPx = with(density) { columnWidth.toPx() }
     // The query's hits in the title, drawn the way the tree's Ctrl+F draws its own.
-    val hits = remember(result.title, query) { SearchDomain.matchRanges(result.title, query) }
+    val match = LocalSearchMatch.current
+    val hits = remember(result.title, query, match) { SearchDomain.matchRanges(result.title, query, match) }
 
     Column(Modifier.fillMaxWidth()) {
         // The cell IS the row: it takes the list's row height itself (no slot around it, whose bare band

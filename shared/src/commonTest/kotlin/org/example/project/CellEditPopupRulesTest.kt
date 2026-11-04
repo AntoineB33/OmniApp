@@ -135,25 +135,38 @@ class CellEditPopupRulesTest {
         assertTrue(SearchDomain.pickerRows(f.state, found, eligible, creation = false).none { it.kind == SearchDomain.Kind.Creation })
     }
 
-    /** User rule 2026-11-04: the search bar's right-click menu's match case and match whole word. */
+    /**
+     * User rule 2026-11-04: the search bar's match case and match whole word are FILTERS: an element that does not match
+     * with them is no result, and only what matches with them is highlighted.
+     */
     @Test
-    fun match_case_and_whole_word_narrow_what_the_bar_finds_and_are_kept() {
+    fun match_case_and_whole_word_are_filters_of_the_results_and_the_highlights() {
         val f = fixture()
-        fun titles(query: String, config: SearchDomain.Config) =
-            SearchDomain.results(f.state, setOf(SearchDomain.Kind.Task), query, match = config.queryOptions)
+        fun titles(query: String, filters: SearchDomain.Filters) =
+            SearchDomain.results(f.state, setOf(SearchDomain.Kind.Task), query, filters = filters, match = filters.queryOptions)
                 .filterIsInstance<SearchDomain.TaskResult>().map { it.title }.toSet()
-        val plain = SearchDomain.Config()
+        val plain = SearchDomain.Filters()
+        val case = plain.copy(matchCase = true)
+        val word = plain.copy(wholeWord = true)
         assertEquals(setOf("Pear"), titles("pear", plain))
-        assertEquals(emptySet(), titles("pear", plain.copy(matchCase = true)))
-        assertEquals(setOf("Pear"), titles("Pear", plain.copy(matchCase = true)))
-        assertEquals(setOf("Pear"), titles("pear", plain.copy(wholeWord = true)))
-        assertEquals(emptySet(), titles("pea", plain.copy(wholeWord = true)))
+        assertEquals(emptySet(), titles("pear", case))
+        assertEquals(setOf("Pear"), titles("Pear", case))
+        assertEquals(setOf("Pear"), titles("pear", word))
+        assertEquals(emptySet(), titles("pea", word))
         assertEquals(setOf("Pear"), titles("pea", plain))
+        // Filters: counted with the others, and listed among the filters that are on.
+        assertEquals(0, plain.activeCount)
+        assertEquals(2, plain.copy(matchCase = true, wholeWord = true).activeCount)
+        assertTrue(case.isOn(SearchDomain.Setting.MatchCase) && word.isOn(SearchDomain.Setting.WholeWord))
+        // Highlighted: only what matches with them.
+        assertEquals(listOf(0..3, 9..12), SearchDomain.matchRanges("Pear and pear", "pear"))
+        assertEquals(listOf(9..12), SearchDomain.matchRanges("Pear and pear", "pear", case.queryOptions))
+        assertEquals(listOf(10..12), SearchDomain.matchRanges("Pearl and pea", "pea", word.queryOptions))
         // Kept with the window's configuration, and absent (off) from one stored before them.
-        val on = plain.copy(matchCase = true, wholeWord = true)
+        val on = SearchDomain.Config(filters = plain.copy(matchCase = true, wholeWord = true))
         assertEquals(on, SearchDomain.Config.decode(on.encode()))
-        val older = plain.encode()
+        val older = SearchDomain.Config().encode()
         assertFalse("matchCase" in older || "wholeWord" in older, "off writes nothing: the shape before them")
-        assertEquals(plain, SearchDomain.Config.decode(older))
+        assertEquals(SearchDomain.Config(), SearchDomain.Config.decode(older))
     }
 }

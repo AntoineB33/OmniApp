@@ -392,6 +392,11 @@ private fun SettingEditor(
         // The Search window's own type selector — a field with a drop-down — not a second drawing of it.
         SearchDomain.Setting.Types ->
             KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = config.offeredKinds)
+        // User rule 2026-11-04: the search bar's two filters, also in its right-click menu.
+        SearchDomain.Setting.MatchCase ->
+            androidx.compose.material3.Switch(checked = f.matchCase, onCheckedChange = { filters(f.copy(matchCase = it)) })
+        SearchDomain.Setting.WholeWord ->
+            androidx.compose.material3.Switch(checked = f.wholeWord, onCheckedChange = { filters(f.copy(wholeWord = it)) })
         // User rule 2026-11-04: on, the type selector offers the window's page's types alone ([SearchDomain.Config.pageTypesOnly]).
         SearchDomain.Setting.PageTypes ->
             androidx.compose.material3.Switch(checked = config.pageTypesOnly, onCheckedChange = { onChange(config.copy(pageTypesOnly = it)) })

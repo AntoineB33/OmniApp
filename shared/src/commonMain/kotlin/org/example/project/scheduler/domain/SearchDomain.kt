@@ -686,17 +686,7 @@ object SearchDomain {
          * app builds for one element or kind, and in one stored before it existed, which then search as they did.
          */
         val pageTypesOnly: Boolean = false,
-        /**
-         * User rule 2026-11-04, the search bar's right-click menu: **what is typed matches with its case alone**
-         * ([matchCase]) **and as whole words alone** ([wholeWord]) — the task tree's find bar's two options
-         * ([TaskTreeSearch.Options], [queryOptions]). Off by default, and in a configuration stored before them.
-         */
-        val matchCase: Boolean = false,
-        val wholeWord: Boolean = false,
     ) {
-        /** The bar's two options ([matchCase], [wholeWord]) as the task tree's find bar holds them. */
-        val queryOptions: TaskTreeSearch.Options get() = TaskTreeSearch.Options(matchCase, wholeWord)
-
         /** The kinds the type selector offers: the page's while [pageTypesOnly], else every kind. */
         val offeredKinds: List<Kind>
             get() = if (pageTypesOnly) FEATURE_PAGES.firstOrNull { it.id == page }?.kinds?.let { k -> Kind.entries.filter { it in k } } ?: Kind.entries else Kind.entries
@@ -782,8 +772,8 @@ object SearchDomain {
                     elementSource = elementSource,
                     completion = completion?.name,
                     pageTypesOnly = pageTypesOnly,
-                    matchCase = matchCase,
-                    wholeWord = wholeWord,
+                    matchCase = filters.matchCase,
+                    wholeWord = filters.wholeWord,
                     claudeProject = filters.claudeProject,
                     claudeFromMillis = filters.claudeFrom,
                     claudeUntilMillis = filters.claudeUntil,
@@ -844,6 +834,8 @@ object SearchDomain {
                         periodBoxesFrom = stored.periodBoxesFromMillis ?: dayStart(stored.periodBoxesFrom),
                         periodBoxesUntil = stored.periodBoxesUntilMillis ?: dayEnd(stored.periodBoxesUntil),
                         calendarAddOn = stored.calendarAddOn,
+                        matchCase = stored.matchCase,
+                        wholeWord = stored.wholeWord,
                         calendarAddAtMillis = stored.calendarAddAtMillis,
                         calendarAddKeeping = stored.calendarAddKeeping,
                         calendarAtOn = stored.calendarAtOn,
@@ -887,8 +879,6 @@ object SearchDomain {
                     elementSource = stored.elementSource,
                     completion = Completion.entries.firstOrNull { it.name == stored.completion },
                     pageTypesOnly = stored.pageTypesOnly,
-                    matchCase = stored.matchCase,
-                    wholeWord = stored.wholeWord,
                 )
             }
 
@@ -1131,6 +1121,14 @@ object SearchDomain {
          * keeps only what can be put on the calendar at [calendarAddAtMillis] ([calendarAddable]). Its switch is
          * [calendarAddOn]; the position is kept while it is off, so turning it back on finds it.
          */
+        /**
+         * User rule 2026-11-04, the search bar's right-click menu: **only what the bar holds with its case**
+         * ([matchCase]) **and as whole words** ([wholeWord]) — the task tree's find bar's two options, read the same
+         * way ([queryOptions], [matchesWith]); filters, so an element that does not match is no result, and only what
+         * matches is highlighted ([matchRanges]). Off by default, and in a configuration stored before them.
+         */
+        val matchCase: Boolean = false,
+        val wholeWord: Boolean = false,
         val calendarAddOn: Boolean = false,
         val calendarAddAtMillis: Long? = null,
         /**
@@ -1219,6 +1217,9 @@ object SearchDomain {
             get() = taskOnCalendar != Tri.Any || taskBoxesFrom != null || taskBoxesUntil != null ||
                 periodOnCalendar != Tri.Any || periodBoxesFrom != null || periodBoxesUntil != null
 
+        /** The search bar's two filters ([matchCase], [wholeWord]) as the task tree's find bar holds them. */
+        val queryOptions: TaskTreeSearch.Options get() = TaskTreeSearch.Options(matchCase, wholeWord)
+
         /** How many filters are set to something other than "any" — the Search window's button shows it. */
         val activeCount: Int
             // A filter of the three Claude kinds is one filter, listed once per kind.
@@ -1231,6 +1232,8 @@ object SearchDomain {
          */
         fun isOn(setting: Setting): Boolean =
             when (setting) {
+                Setting.MatchCase -> matchCase
+                Setting.WholeWord -> wholeWord
                 Setting.CalendarAdd -> calendarAddAt != null
                 Setting.CalendarAt -> calendarAt != null
                 Setting.TaskInTree -> taskInTree != Tri.Any
@@ -1453,6 +1456,9 @@ object SearchDomain {
      */
     enum class Setting(val section: Kind?, val label: String, val sorts: Boolean = false) {
         SearchText(null, "Search text"),
+        /** User rule 2026-11-04: filters on what the bar holds ([Filters.matchCase], [Filters.wholeWord]). */
+        MatchCase(null, "Match case"),
+        WholeWord(null, "Match whole word"),
         Types(null, "Types"),
         /** User rule 2026-11-04: the type selector offers the page's types alone ([Config.pageTypesOnly]). */
         PageTypes(null, "Only this page's types"),
@@ -1849,7 +1855,7 @@ object SearchDomain {
         val completion: String? = null,
         /** New 2026-11-04: absent = every type offered, as before the switch ([Config.pageTypesOnly]). */
         val pageTypesOnly: Boolean = false,
-        /** New 2026-11-04: absent = the case ignored and any part of a word matched, as before ([Config.matchCase]). */
+        /** New 2026-11-04: absent = the case ignored and any part of a word matched, as before ([Filters.matchCase]). */
         val matchCase: Boolean = false,
         val wholeWord: Boolean = false,
         val claudeProject: String? = null,
@@ -2515,7 +2521,7 @@ object SearchDomain {
         placementOwnLength: Long? = null,
         /** The Claude Code logs as last read, for the logs' kinds ([CLAUDE_KINDS]) — `App` reads them. */
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
-        /** The search bar's match case and whole word ([Config.queryOptions]). */
+        /** The search bar's match case and whole word ([Filters.queryOptions]). */
         match: TaskTreeSearch.Options = TaskTreeSearch.Options(),
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
@@ -3132,7 +3138,7 @@ object SearchDomain {
      */
     /**
      * User rule 2026-11-04: whether [row], which the case-blind search found for [query], still answers it with the bar's
-     * [match] options ([Config.matchCase], [Config.wholeWord]), read as the task tree's find bar reads them
+     * [match] filters ([Filters.matchCase], [Filters.wholeWord]), read as the task tree's find bar reads them
      * ([TaskTreeSearch.ranges]): a name holds the whole query; a log entry's text holds each of its terms
      * ([ClaudeLogSearch.rawTerms]), as it is searched.
      */
@@ -3158,8 +3164,10 @@ object SearchDomain {
      * **Where a search bar's [query] stands in [text]** (user rule 2026-11-02), the one answer of every highlight: each
      * hit of each of its terms — words, or "quoted phrases" ([ClaudeLogSearch.rawTerms]) — case aside.
      */
-    fun matchRanges(text: String, query: String): List<IntRange> {
+    fun matchRanges(text: String, query: String, match: TaskTreeSearch.Options = TaskTreeSearch.Options()): List<IntRange> {
         if (text.isEmpty()) return emptyList()
+        // User rule 2026-11-04: with the bar's match case or whole word on, only what matches with them is a hit.
+        if (match != TaskTreeSearch.Options()) return ClaudeLogSearch.rawTerms(query).flatMap { TaskTreeSearch.ranges(text, it, match) }.sortedBy { it.first }
         val ranges = ArrayList<IntRange>()
         for (term in ClaudeLogSearch.rawTerms(query)) {
             var at = text.indexOf(term, ignoreCase = true)
