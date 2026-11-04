@@ -1292,7 +1292,13 @@ suggestions before it was ever entered.
   end node being the configuration itself with its control (the configurations window's `SettingEditor`). **A category
   hovered reveals its children in a pop-up of their own**, hung from its row at its left, else its right, else below,
   else above (`MenuSide.SUBMENU`) — over its grandparents' pop-ups if that is where the room is: **no pop-up moves or
-  changes size when a child opens** (user rule 2026-11-04; it was one window of columns, which grew and moved). Its root: **"Recently changed"**,
+  changes size when a child opens** (user rule 2026-11-04; it was one window of columns, which grew and moved).
+  **It vanishes once the pointer has left the arrow, the pop-up and all of its descendants** (user rule 2026-11-04,
+  `MenuHoverTracker`, `MenuHoverTrackerTest`): each part reports the pointer entering and leaving it (`reportsHover`),
+  a menu opened from inside one included (the desktop's menu surface reports to `LocalMenuHover`, so a drop-down of a
+  configuration's control holds it), and a part gone with the pointer over it counts as left. A grace of
+  `GRACE_MILLIS` covers the crossing from one part to the next; it is one wait per leaving, never a poll. Opened by a
+  press, where there is no hover, it closes as a menu does. Its root: **"Recently changed"**,
   every configuration from the most to the least recently changed (`Config.settingsChangedAt`, local-only, no part of
   the search; the never-changed after, in their order), then **General** (the configurations with no type), then each
   feature page with its types under it, each type's configurations under that. **Every configuration is in it**: a

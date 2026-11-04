@@ -299,7 +299,8 @@ private fun MenuSurface(
 ) {
     // Never taller than the screen it is on: past that the menu scrolls, as material's does.
     val tallest = remember(owner) { (workAreaAt(ScreenPoint(owner.x, owner.y))?.height ?: 2000).dp }
-    Box(Modifier.wrapContentSize(align = Alignment.TopStart, unbounded = true).onSizeChanged(onWanted)) {
+    // A menu opened inside a hover pop-up is one of its descendants ([LocalMenuHover]): the pointer over it holds the pop-up.
+    Box(Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true).onSizeChanged(onWanted)) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainer,
             contentColor = MaterialTheme.colorScheme.onSurface,

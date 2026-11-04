@@ -321,6 +321,8 @@ means.
     never the active window, which may be a sibling menu about to close. The sides it tries are its call site's
     (`LocalMenuSides`, `menuSpot`'s `sides`; the configurations tree's children: left, right, below, above), a menu's
     own content being given back the default.
+  - **A hover pop-up vanishes once the pointer has left it and all of its descendants** (`MenuHoverTracker`,
+    `LocalMenuHover`: the configurations tree's), the menus opened inside it being its descendants.
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
 - **A right-click on a window's HEAD opens its menu, at the pointer** (user rule 2026-10-15: *"The user can modify
   the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove from

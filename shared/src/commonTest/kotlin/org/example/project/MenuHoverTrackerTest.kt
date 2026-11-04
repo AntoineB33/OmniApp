@@ -1,0 +1,67 @@
+package org.example.project
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.example.project.ui.MenuHoverTracker
+
+/**
+ * User rule 2026-11-04: *"When the user hovers out of the pop-up window and of its descendants, it must vanish."* —
+ * [MenuHoverTracker], what the configurations tree's arrow, pop-ups and the menus opened inside them report to.
+ */
+class MenuHoverTrackerTest {
+    private val grace = MenuHoverTracker.GRACE_MILLIS
+
+    @Test
+    fun it_vanishes_once_the_pointer_has_left_every_part() = runTest {
+        var left = 0
+        val tracker = MenuHoverTracker(this) { left++ }
+        val arrow = Any()
+        val root = Any()
+        val child = Any()
+        // Arrow → root → child: each crossing leaves one part before entering the next.
+        tracker.enter(arrow)
+        tracker.exit(arrow)
+        advanceTimeBy(grace / 3)
+        tracker.enter(root)
+        tracker.exit(root)
+        tracker.enter(child)
+        advanceTimeBy(grace * 2)
+        runCurrent()
+        assertEquals(0, left, "held all along, a seam apart")
+        // Out of the child, over nothing.
+        tracker.exit(child)
+        advanceTimeBy(grace - 1)
+        runCurrent()
+        assertEquals(0, left, "within the grace")
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(1, left, "vanished")
+    }
+
+    @Test
+    fun a_part_over_which_the_pointer_still_is_holds_it_and_a_part_gone_counts_as_left() = runTest {
+        var left = 0
+        val tracker = MenuHoverTracker(this) { left++ }
+        val root = Any()
+        val child = Any()
+        tracker.enter(root)
+        tracker.enter(child)
+        tracker.exit(root)
+        advanceTimeBy(grace * 3)
+        runCurrent()
+        assertEquals(0, left, "the child still holds the pointer")
+        // The child pop-up closed with the pointer on it (its parent's category changed): it is left.
+        tracker.exit(child)
+        advanceTimeBy(grace + 1)
+        runCurrent()
+        assertEquals(1, left)
+        // An exit of a part never entered changes nothing.
+        tracker.exit(Any())
+        advanceTimeBy(grace * 3)
+        runCurrent()
+        assertEquals(1, left)
+    }
+}

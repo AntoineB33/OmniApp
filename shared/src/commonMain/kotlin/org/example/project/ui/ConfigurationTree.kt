@@ -65,6 +65,8 @@ internal fun ConfigurationTreeArrow(
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
 ) {
     var open by remember { mutableStateOf(false) }
+    // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
+    val hover = rememberMenuHoverTracker { open = false }
     Box {
         Text(
             "▾",
@@ -72,15 +74,18 @@ internal fun ConfigurationTreeArrow(
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier
                 .clip(RoundedCornerShape(6.dp))
+                .reportsHover(hover)
                 .onHoverEnter { open = true }
                 .clickable { open = !open }
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
+        androidx.compose.runtime.CompositionLocalProvider(LocalMenuHover provides hover) {
         AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
             ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs) { which ->
                 open = false
                 onPickOnCalendar(which)
             }
+        }
         }
     }
 }
@@ -145,6 +150,7 @@ private fun TreeColumn(
     val leaves = nodes.all { it is SearchDomain.ConfigurationLeaf }
     Column(
         Modifier
+            .reportsHover(LocalMenuHover.current)
             .width(if (leaves) TREE_LEAF_COLUMN_WIDTH else TREE_CATEGORY_COLUMN_WIDTH)
             .heightIn(max = TREE_COLUMN_MAX_HEIGHT)
             .verticalScroll(rememberScrollState())
