@@ -318,7 +318,10 @@ means.
     it — no `diagnostics.log` line, no event; the `hs_err_pid*.log` is in the folder the app was started from. A dev
     run can still try a layer type: `-Pcompose.layers.type=…` (`desktopApp/build.gradle.kts`).
   - **A menu opened inside a menu hangs from THAT menu's window** (`LocalMenuWindow`, provided by the menu's surface),
-    never the active window, which may be a sibling menu about to close. The sides it tries are its call site's
+    never the active window, which may be a sibling menu about to close. **A menu opened in the app's window hangs from
+    that window** (`LocalAppWindow`, given by the desktop's `main`; anomaly 2026-11-04: after the configurations tree
+    vanished on a hover out, the active window was one of its hidden menus, and the next tree opened elsewhere at every
+    try). A focusable menu closed while it holds the keyboard gives it back to the nearest window still on screen. The sides it tries are its call site's
     (`LocalMenuSides`, `menuSpot`'s `sides`; the configurations tree's children: left, right, below, above), a menu's
     own content being given back the default.
   - **A hover pop-up vanishes once the pointer has left it and all of its descendants** (`MenuHoverTracker`,

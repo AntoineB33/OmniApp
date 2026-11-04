@@ -92,8 +92,12 @@ actual fun AppDropdownMenu(
     // window at all, as the render tests do — the menu is material's, drawn in the scene: it must still open.
     // A menu opened inside a menu hangs from THAT menu's window (user rule 2026-11-04, the configurations tree's columns):
     // the active window may be a sibling menu about to close, and the anchor is in the window that draws it.
+    // And a menu opened in an app window hangs from THAT window, never from the active one (anomaly 2026-11-04: once the
+    // configurations tree had vanished on a hover out, the active window was one of its hidden menu windows, and the
+    // next tree opened from wherever that one had stood — elsewhere at every try).
     val inMenu = LocalMenuWindow.current
-    val owner = remember { if (MENUS_ARE_WINDOWS) inMenu ?: owningWindow() else null }
+    val here = LocalAppWindow.current
+    val owner = remember { if (MENUS_ARE_WINDOWS) inMenu ?: here ?: owningWindow() else null }
     if (owner == null) {
         androidx.compose.material3.DropdownMenu(true, onDismissRequest, modifier, offset, properties = properties, content = content)
         return
@@ -102,6 +106,12 @@ actual fun AppDropdownMenu(
 }
 
 private val MENUS_ARE_WINDOWS: Boolean = System.getProperty("omniapp.menuWindows") != "false"
+
+/**
+ * The app window a composable is drawn in — what its menus hang from — given by the desktop's `main`; null where nothing
+ * gives it (a test window), and the active window is asked instead.
+ */
+val LocalAppWindow = androidx.compose.runtime.staticCompositionLocalOf<AwtWindow?> { null }
 
 /** The menu window a composable is drawn in, null outside one ([MenuSurface] provides it). */
 private val LocalMenuWindow = androidx.compose.runtime.staticCompositionLocalOf<AwtWindow?> { null }
@@ -285,7 +295,11 @@ private class MenuSession(
         dialog = null
         owner.removeWindowListener(ownerListener)
         window.removeWindowFocusListener(focusListener)
+        // A menu closed while it holds the keyboard (a hover pop-up vanishing, which no press outside ended) gives it back
+        // to the nearest window still on screen: hidden with the keyboard, it left none of the app's windows active.
+        val hadFocus = focusable && window.isActive
         MenuWindows.give(owner, window)
+        if (hadFocus) generateSequence(owner) { it.owner }.firstOrNull { it.isShowing }?.toFront()
     }
 }
 

@@ -95,6 +95,8 @@ fun main() {
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalAppInFocus provides rememberAppInFocus(),
                 LocalAppKeyFallback provides keyFallback,
+                // The window its menus hang from: never the active window, which may be a menu just hidden.
+                org.example.project.ui.LocalAppWindow provides awtWindow,
                 org.example.project.ui.LocalInputActivity provides org.example.project.scheduler.platform.InputActivityRecorder,
                 // A text field's own right-click menu is a window of its own, as every menu of the app is on the
                 // desktop (`AppDropdownMenu.jvm.kt`): over another application's always-on-top window.
