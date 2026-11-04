@@ -1288,9 +1288,11 @@ suggestions before it was ever entered.
   section's padding is the actions section's. The result list under it is not: its rows are the tree's.
 - **The search section's header is the bar alone, and at its right a downward arrow** (user rule 2026-11-04, replacing
   the kinds' drop-down, Reset and "All configurations"; `ConfigurationTreeArrow`, `SearchDomain.configurationTree`,
-  `ConfigurationTreeTest`). Hovered (pressed, without a pointer), it opens the **configurations tree** in a pop-up: a
-  column per level, a category revealing its children in the next column when hovered, an end node being the
-  configuration itself with its control (the configurations window's `SettingEditor`). Its root: **"Recently changed"**,
+  `ConfigurationTreeTest`). Hovered (pressed, without a pointer), it opens the **configurations tree** in a pop-up, an
+  end node being the configuration itself with its control (the configurations window's `SettingEditor`). **A category
+  hovered reveals its children in a pop-up of their own**, hung from its row at its left, else its right, else below,
+  else above (`MenuSide.SUBMENU`) — over its grandparents' pop-ups if that is where the room is: **no pop-up moves or
+  changes size when a child opens** (user rule 2026-11-04; it was one window of columns, which grew and moved). Its root: **"Recently changed"**,
   every configuration from the most to the least recently changed (`Config.settingsChangedAt`, local-only, no part of
   the search; the never-changed after, in their order), then **General** (the configurations with no type), then each
   feature page with its types under it, each type's configurations under that. **Every configuration is in it**: a

@@ -90,7 +90,10 @@ actual fun AppDropdownMenu(
     if (!expanded) return
     // The window the menu is opened in: the one the user is acting in. Where there is none — a scene rendered with no
     // window at all, as the render tests do — the menu is material's, drawn in the scene: it must still open.
-    val owner = remember { if (MENUS_ARE_WINDOWS) owningWindow() else null }
+    // A menu opened inside a menu hangs from THAT menu's window (user rule 2026-11-04, the configurations tree's columns):
+    // the active window may be a sibling menu about to close, and the anchor is in the window that draws it.
+    val inMenu = LocalMenuWindow.current
+    val owner = remember { if (MENUS_ARE_WINDOWS) inMenu ?: owningWindow() else null }
     if (owner == null) {
         androidx.compose.material3.DropdownMenu(true, onDismissRequest, modifier, offset, properties = properties, content = content)
         return
@@ -99,6 +102,9 @@ actual fun AppDropdownMenu(
 }
 
 private val MENUS_ARE_WINDOWS: Boolean = System.getProperty("omniapp.menuWindows") != "false"
+
+/** The menu window a composable is drawn in, null outside one ([MenuSurface] provides it). */
+private val LocalMenuWindow = androidx.compose.runtime.staticCompositionLocalOf<AwtWindow?> { null }
 
 /**
  * A dev run's switch (`-Pomniapp.menusAtPointer=true`): every menu opens at the pointer, as the Search window's rows
@@ -135,7 +141,8 @@ private fun HangingMenu(
     val locals = rememberUpdatedState(currentCompositionLocalContext)
     // The same menu, wherever it is opened from (every row of a list): what its last size is remembered under.
     val site = currentCompositeKeyHash
-    val session = remember(owner) { MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals) }
+    val sides = LocalMenuSides.current
+    val session = remember(owner) { MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals, sides) }
     DisposableEffect(session) { onDispose { session.close() } }
     // The pointer is read ONCE, as the menu opens — where the right-click was. Read at every layout of the anchor (a
     // row's hover, a scroll, a recomposition of the list), it sent the open menu after the hand moving to it (anomaly
@@ -178,6 +185,8 @@ private class MenuSession(
     private val modifier: State<Modifier>,
     private val content: State<@Composable ColumnScope.() -> Unit>,
     private val locals: State<CompositionLocalContext>,
+    /** The sides of its anchor the menu tries, in order ([LocalMenuSides]). */
+    private val sides: List<MenuSide> = MenuSide.DEFAULT,
 ) {
     private var anchor: Rect? = null
     private var offsetPx = Offset.Zero
@@ -230,7 +239,12 @@ private class MenuSession(
                     false
                 }
             },
-        ) { MenuSurface(owner, modifier.value, content.value, ::fit) }
+        ) {
+            // Inside, a menu opened is this window's, and opens by the default sides unless its call site says otherwise.
+            androidx.compose.runtime.CompositionLocalProvider(LocalMenuWindow provides window, LocalMenuSides provides MenuSide.DEFAULT) {
+                MenuSurface(owner, modifier.value, content.value, ::fit)
+            }
+        }
         // `popups.md`: a menu leaves on the first press outside it. A press in the app is the root observer's to see;
         // a press in ANOTHER application is seen here, as the window the menu hangs from losing the foreground — or,
         // for a menu that holds the keyboard, as the menu losing it.
@@ -263,7 +277,7 @@ private class MenuSession(
         if (window.location != at) window.location = at
     }
 
-    private fun location(): Point = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0))
+    private fun location(): Point = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides)
 
     fun close() {
         closed = true
@@ -394,7 +408,7 @@ private fun pointerIn(owner: AwtWindow): Offset? =
  * anchor (the window bar's menu: the bar, at the pointer's x). The menu is a window of its own, so the room it has is
  * the SCREEN's, not the app window's: under a field near the bottom of a small window it still opens below.
  */
-private fun menuPlacement(owner: AwtWindow, anchor: Rect, offsetPx: Offset, size: Dimension): Point {
+private fun menuPlacement(owner: AwtWindow, anchor: Rect, offsetPx: Offset, size: Dimension, sides: List<MenuSide> = MenuSide.DEFAULT): Point {
     val pane = (owner as? RootPaneContainer)?.contentPane
     val origin = runCatching { (pane ?: owner).locationOnScreen }.getOrNull() ?: owner.location
     val scale = owner.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
@@ -407,6 +421,6 @@ private fun menuPlacement(owner: AwtWindow, anchor: Rect, offsetPx: Offset, size
     )
     val area = workAreaAt(ScreenPoint(on.left, on.top)) ?: workAreaAt(ScreenPoint(origin.x, origin.y))
         ?: return Point(on.left, on.bottom)
-    val spot = menuSpot(on, IntSize(size.width, size.height), IntRect(area.x, area.y, area.x + area.width, area.y + area.height))
+    val spot = menuSpot(on, IntSize(size.width, size.height), IntRect(area.x, area.y, area.x + area.width, area.y + area.height), sides)
     return Point(spot.x, spot.y)
 }

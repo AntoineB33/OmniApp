@@ -317,6 +317,10 @@ means.
     end, and the JVM dies in `skiko-windows-x64.dll` (`EXCEPTION_ACCESS_VIOLATION`). The release leaves no trace of
     it — no `diagnostics.log` line, no event; the `hs_err_pid*.log` is in the folder the app was started from. A dev
     run can still try a layer type: `-Pcompose.layers.type=…` (`desktopApp/build.gradle.kts`).
+  - **A menu opened inside a menu hangs from THAT menu's window** (`LocalMenuWindow`, provided by the menu's surface),
+    never the active window, which may be a sibling menu about to close. The sides it tries are its call site's
+    (`LocalMenuSides`, `menuSpot`'s `sides`; the configurations tree's children: left, right, below, above), a menu's
+    own content being given back the default.
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
 - **A right-click on a window's HEAD opens its menu, at the pointer** (user rule 2026-10-15: *"The user can modify
   the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove from

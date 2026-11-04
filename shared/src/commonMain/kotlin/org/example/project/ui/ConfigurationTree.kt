@@ -14,7 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,6 +22,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -34,10 +34,14 @@ import org.example.project.scheduler.state.SchedulerState
 
 /** [onEnter] each time the pointer comes over the element: a hover, which a finger never makes. */
 internal fun Modifier.onHoverEnter(onEnter: () -> Unit): Modifier =
-    pointerInput(Unit) {
-        awaitPointerEventScope {
-            while (true) {
-                if (awaitPointerEvent().type == PointerEventType.Enter) onEnter()
+    composed {
+        // Started once: it calls the latest [onEnter], which reads the path as it stands.
+        val latest by rememberUpdatedState(onEnter)
+        pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    if (awaitPointerEvent().type == PointerEventType.Enter) latest()
+                }
             }
         }
     }
@@ -81,7 +85,11 @@ internal fun ConfigurationTreeArrow(
     }
 }
 
-/** The tree's columns: the root, then the children of the category hovered in each column before. */
+/**
+ * The tree from its root: one pop-up per level. A category hovered shows its children in a pop-up of their own, hung from
+ * its row at its left, else its right, else below, else above ([MenuSide.SUBMENU]) — so a pop-up never changes size or
+ * moves when a child opens (user rule 2026-11-04), and a child may stand over its grandparents.
+ */
 @Composable
 private fun ConfigurationTreeColumns(
     state: SchedulerState,
@@ -94,65 +102,77 @@ private fun ConfigurationTreeColumns(
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
 ) {
     val tree = remember(config.settingsChangedAt) { SearchDomain.configurationTree(config) }
-    // The category hovered at each depth, by id.
+    // The category revealing its children at each depth, by id.
     var path by remember { mutableStateOf(listOf<String>()) }
     val latestConfig by rememberUpdatedState(config)
-    val columns = buildList {
-        add(tree)
-        var nodes = tree
-        for (id in path) {
-            val category = nodes.filterIsInstance<SearchDomain.ConfigurationCategory>().firstOrNull { it.id == id } ?: break
-            add(category.children)
-            nodes = category.children
+    val leaf: @Composable (SearchDomain.Setting) -> Unit = { setting ->
+        SettingRow(setting.label) {
+            SettingEditor(
+                state, setting, config, openedConfig,
+                { next -> onConfigChange(SearchDomain.withChanged(latestConfig, next, listOf(setting), nowMillis())) },
+                windows, onPickOnCalendar, claudeLogs,
+            )
         }
     }
     HighlightsSearch("") {
-    Row {
-        columns.forEachIndexed { depth, nodes ->
-            if (depth > 0) VerticalDivider(Modifier.heightIn(max = TREE_COLUMN_MAX_HEIGHT))
-            val leaves = nodes.all { it is SearchDomain.ConfigurationLeaf }
-            Column(
-                Modifier
-                    .width(if (leaves) TREE_LEAF_COLUMN_WIDTH else TREE_CATEGORY_COLUMN_WIDTH)
-                    .heightIn(max = TREE_COLUMN_MAX_HEIGHT)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 6.dp),
-            ) {
-                for (node in nodes) {
-                    when (node) {
-                        is SearchDomain.ConfigurationCategory -> {
-                            val reveal = { path = path.take(depth) + node.id }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (path.getOrNull(depth) == node.id) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-                                    .onHoverEnter(reveal)
-                                    .clickable(onClick = reveal)
-                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                            ) {
-                                Text(node.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                                Text("▸", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+        TreeColumn(tree, 0, path, { path = it }, leaf)
+    }
+}
+
+/** One level of the tree: its [nodes], and the pop-up of the one of them [path] says reveals its children. */
+@Composable
+private fun TreeColumn(
+    nodes: List<SearchDomain.ConfigurationNode>,
+    depth: Int,
+    path: List<String>,
+    onPathChange: (List<String>) -> Unit,
+    leaf: @Composable (SearchDomain.Setting) -> Unit,
+) {
+    val leaves = nodes.all { it is SearchDomain.ConfigurationLeaf }
+    Column(
+        Modifier
+            .width(if (leaves) TREE_LEAF_COLUMN_WIDTH else TREE_CATEGORY_COLUMN_WIDTH)
+            .heightIn(max = TREE_COLUMN_MAX_HEIGHT)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 6.dp),
+    ) {
+        for (node in nodes) {
+            when (node) {
+                is SearchDomain.ConfigurationCategory -> {
+                    val revealing = path.getOrNull(depth) == node.id
+                    val reveal = { if (!revealing) onPathChange(path.take(depth) + node.id) }
+                    Box {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (revealing) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                                .onHoverEnter(reveal)
+                                .clickable(onClick = reveal)
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                        ) {
+                            Text(node.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            Text("◂", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        is SearchDomain.ConfigurationLeaf -> {
-                            // An end node closes what a category hovered in this column opened.
-                            Box(Modifier.onHoverEnter { if (path.size > depth) path = path.take(depth) }) {
-                                SettingRow(node.label) {
-                                    SettingEditor(
-                                        state, node.setting, config, openedConfig,
-                                        { next -> onConfigChange(SearchDomain.withChanged(latestConfig, next, listOf(node.setting), nowMillis())) },
-                                        windows, onPickOnCalendar, claudeLogs,
-                                    )
+                        if (revealing) {
+                            androidx.compose.runtime.CompositionLocalProvider(LocalMenuSides provides MenuSide.SUBMENU) {
+                                AppDropdownMenu(
+                                    expanded = true,
+                                    onDismissRequest = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) },
+                                    properties = PopupProperties(focusable = true),
+                                ) {
+                                    TreeColumn(node.children, depth + 1, path, onPathChange, leaf)
                                 }
                             }
                         }
                     }
                 }
+                is SearchDomain.ConfigurationLeaf ->
+                    // An end node closes what a category hovered in this column opened.
+                    Box(Modifier.onHoverEnter { if (path.size > depth) onPathChange(path.take(depth)) }) { leaf(node.setting) }
             }
         }
-    }
     }
 }
 

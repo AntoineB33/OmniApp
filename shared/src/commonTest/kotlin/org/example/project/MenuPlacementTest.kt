@@ -5,6 +5,7 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import org.example.project.ui.MenuSide
 import org.example.project.ui.menuSpot
 
 /**
@@ -48,5 +49,18 @@ class MenuPlacementTest {
                 assertEquals(true, inside, "a click at ($x, $y) put the menu at $spot")
             }
         }
+    }
+    /**
+     * User rule 2026-11-04, the configurations tree: *"The new pop-up window appears on the left, or if not enough space on
+     * the right, then at the bottom, then at the top."*
+     */
+    @Test
+    fun a_categorys_children_open_at_its_left_else_its_right_else_below_else_above() {
+        val sub = MenuSide.SUBMENU
+        val row = IntRect(400, 100, 600, 130)
+        assertEquals(IntOffset(250, 100), menuSpot(row, menu, screen, sub), "at its left, tops aligned")
+        assertEquals(IntOffset(200, 100), menuSpot(IntRect(50, 100, 200, 130), menu, screen, sub), "no room at the left: at its right")
+        assertEquals(IntOffset(0, 130), menuSpot(IntRect(0, 100, 1000, 130), menu, screen, sub), "no room at either side: below")
+        assertEquals(IntOffset(0, 300), menuSpot(IntRect(0, 600, 1000, 630), menu, screen, sub), "nor below: above")
     }
 }
