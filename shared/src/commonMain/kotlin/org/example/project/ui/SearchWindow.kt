@@ -192,7 +192,10 @@ class SearchPicker(
     val eligible: Set<TaskId>,
     val canPick: Boolean,
     val onPick: (TaskId) -> Unit,
-    /** The cell's "New task" row, null where it has none ([SchedulerDomain.changeTaskMenuEntries]). */
+    /**
+     * What the creation row, first of the list, does at one click (user rule 2026-11-04): the cell's task id replaced
+     * by a new one of the same title. Null where the cell cannot change task (Rename): no creation row.
+     */
     val onNewTask: (() -> Unit)?,
 )
 
@@ -500,6 +503,7 @@ fun SearchWindow(
             addedRows.takeIf { filters.calendarAddKeeping },
             claudeLogs,
             picker?.eligible,
+            config.queryOptions,
         ) {
             val found =
                 SearchDomain.results(
@@ -507,9 +511,10 @@ fun SearchWindow(
                     schedulerRuns = schedulerRuns, placement = config.placement,
                     placementOwnLength = if (filters.calendarAddKeeping) SearchDomain.placementDefaultLength(state, addedRows) else null,
                     claudeLogs = claudeLogs,
+                    match = config.queryOptions,
                 )
             if (picker != null) {
-                found.filter { it is SearchDomain.TaskResult && it.taskId in picker.eligible }
+                SearchDomain.pickerRows(state, found, picker.eligible, creation = picker.onNewTask != null)
             } else {
                 // One kind checked and nothing of it found: its "creation" row stands in the list.
                 SearchDomain.withCreationWhenEmpty(state, found, kinds)
@@ -594,6 +599,7 @@ fun SearchWindow(
         val row = results.getOrNull(selected) ?: return
         if (picker == null) openers.open(state, row)
         else if (picker.canPick && row is SearchDomain.TaskResult) picker.onPick(row.taskId)
+        else if (row.kind == SearchDomain.Kind.Creation) picker.onNewTask?.invoke()
     }
     /** PRD §4 Edit Mode, stuck to Rename: [initial] is the draft to start from (a typed letter, or the title). */
     fun beginEdit(result: SearchDomain.TaskResult, initial: String) {
@@ -866,6 +872,19 @@ fun SearchWindow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // User rule 2026-11-04: the bar's right-click menu has match case and whole word, checked while on.
+                val currentConfig by rememberUpdatedState(config)
+                Box(Modifier.weight(1f)) {
+                WithTextMenuItems({
+                    listOf(
+                        TextMenuItem((if (currentConfig.matchCase) "✓ " else "") + "Match case") {
+                            onConfigChange(currentConfig.copy(matchCase = !currentConfig.matchCase))
+                        },
+                        TextMenuItem((if (currentConfig.wholeWord) "✓ " else "") + "Match whole word") {
+                            onConfigChange(currentConfig.copy(wholeWord = !currentConfig.wholeWord))
+                        },
+                    )
+                }) {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { onConfigChange(config.copy(query = it)) },
@@ -873,7 +892,7 @@ fun SearchWindow(
                     label = { Text("Search") },
                     trailingIcon = { SearchBarCross(query) { onConfigChange(config.copy(query = "")) } },
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .focusRequester(fieldFocus)
                         .onFocusChanged { fieldFocused = it.isFocused }
                         .outsidePressPart(barEditor)
@@ -888,6 +907,8 @@ fun SearchWindow(
                             true
                         },
                 )
+                }
+                }
                 if (picker == null) {
                 KindsDropDown(
                     kinds = config.kinds,
@@ -928,7 +949,6 @@ fun SearchWindow(
             }
             }
 
-            picker?.onNewTask?.let { EditMenuRow(label = "New task", onClick = it) }
             // --- The result list --------------------------------------------------------------------
             // Narrowed, the list is cut — laid out at the sections' least width, never squeezed row by row.
             Box(
@@ -1092,7 +1112,11 @@ fun SearchWindow(
                         itemsIndexed(results, key = { _, r -> resultKey(r) }) { index, result ->
                             when (result) {
                                 is SearchDomain.TaskResult -> taskRow(index, result, false)
-                                is SearchDomain.ItemResult -> Column(Modifier.fillMaxWidth().outsidePressPart(resultRows)) {
+                                // A picker's creation row makes the cell's new task at one click, as a task row picks.
+                                is SearchDomain.ItemResult -> Column(
+                                    Modifier.fillMaxWidth().outsidePressPart(resultRows)
+                                        .then(picker?.onNewTask?.let { make -> Modifier.pickOnClick(make) } ?: Modifier),
+                                ) {
                                     val elementKey = RESULT_SURFACE + resultKey(result)
                                     ItemResultRow(
                                         kindWidth = resultKindWidth,

@@ -337,8 +337,12 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
     (`namingSource`), the list `SchedulerDomain.assignableTaskIds` (`canAssignTaskId`'s question, read once a session).
   - **One click on a result is `PickTaskFromMenu` then `ExitEdit(Stay)`**, taken on the Initial pass (`pickOnClick`), so
     nothing inside the row answers it. A right-click still opens the row's menu. In Rename no row acts: the field is
-    naming the cell's own task. The "New task" row is `changeTaskMenuEntries`' answer, as before, above the results: the
-    only way to a second task of a title. Enter on a result picks it; Escape cancels the edit from anywhere in it.
+    naming the cell's own task. Enter on a result picks it; Escape cancels the edit from anywhere in it.
+  - **The list is task elements alone, sorted by title, the task kind's creation row first** (user rule 2026-11-04,
+    `SearchDomain.pickerRows`, `PICKER_SORTS`): the creation row stands there whenever the cell can change task, whatever
+    is typed, and one click on it is `SelectCreateAssignTask` then `ExitEdit(Stay)` — the cell's task id replaced by a
+    new one of the same title, the only way to a second task of a title. The separate "New task" row above the results
+    (`changeTaskMenuEntries`' answer) is gone.
 
 - **A finger's Shift+click is the selection's two DOTS** (user rule 2026-10-04, `TaskTreeView`,
   `SelectionHandlesTouchTest`): while the last press in the tree was a finger's, the rows drawn selected (the one

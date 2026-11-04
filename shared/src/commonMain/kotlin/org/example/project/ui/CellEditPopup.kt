@@ -142,13 +142,6 @@ internal fun CellEditPopupLayer(
     // Read once a session: the list's question does not change as the draft does, and it walks a sub-tree per task.
     val eligible = remember(cellId) { SchedulerDomain.assignableTaskIds(state, cellId) }
     val changing = session.mode == CellEditMode.ChangeTask
-    // The old menu's "New task" row: the same answer ([SchedulerDomain.changeTaskMenuEntries]), a row above the results.
-    val offersNewTask =
-        remember(cellId, session.draftText, changing, state.cells, state.lists) {
-            changing && SchedulerDomain.changeTaskMenuEntries(
-                state, cellId, session.draftText, excludeTaskId = session.newTaskDraftId, namingSource = request.namingSource,
-            ).isNotEmpty()
-        }
     val intent = request.onIntent
     val picker =
         SearchPicker(
@@ -158,7 +151,8 @@ internal fun CellEditPopupLayer(
                 intent(SchedulerIntent.PickTaskFromMenu(taskId))
                 intent(SchedulerIntent.ExitEdit(EditExitNavigation.Stay))
             },
-            onNewTask = if (offersNewTask) {
+            // User rule 2026-11-04: the creation row stands first whenever the cell can change task.
+            onNewTask = if (changing) {
                 {
                     intent(SchedulerIntent.SelectCreateAssignTask)
                     intent(SchedulerIntent.ExitEdit(EditExitNavigation.Stay))
@@ -172,6 +166,9 @@ internal fun CellEditPopupLayer(
             query = session.draftText,
             kinds = setOf(SearchDomain.Kind.Task),
             completion = SearchDomain.Completion.TaskTitles,
+            // User rule 2026-11-04: the tasks sorted by their title, the creation row before them ([SearchDomain.pickerRows]).
+            sorts = SearchDomain.PICKER_SORTS,
+            sortFollowsDefault = false,
         )
 
     Layout(

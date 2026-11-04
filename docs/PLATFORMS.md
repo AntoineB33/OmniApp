@@ -33,6 +33,7 @@ Two different questions, answered in two different places:
 | Move a calendar panel | Drag it | The menu's "move", then drag |
 | Resize a calendar panel | Drag its edge (resize cursor) | Through "edit…" |
 | Drag in the calendar grid | Moves/selects what is under it | Scrolls the grid |
+| A text field's own menu (cut, copy, paste, select all) and the items the app adds to it — the Search bar's match case and match whole word (`WithTextMenuItems`) | Right-click: the app's items after the field's own | The platform's text menu, which takes none of the app's items: the Search bar's two options are not reachable there yet |
 | Every other contextual menu (task-tree cell, priority-percentage column, weight-column header, Search rows, lateral-menu buttons, window bar) | Right-click | **Long-press** (`ui/TouchLongPress.kt`, through `contextMenuModifier`) |
 | Drag over the task tree | Drag-selects a range | **Scrolls** the tree; a tap selects |
 | Move tree cells | Double-click and drag | Double-tap and drag |

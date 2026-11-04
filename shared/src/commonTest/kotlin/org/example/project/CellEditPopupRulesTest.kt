@@ -113,4 +113,47 @@ class CellEditPopupRulesTest {
         val on = SearchDomain.Config(completion = SearchDomain.Completion.TaskTitles)
         assertEquals(SearchDomain.Completion.TaskTitles, SearchDomain.Config.decode(on.encode())!!.completion)
     }
+    /**
+     * User rule 2026-11-04: the Edit Mode's Search window lists task elements alone, sorted by their title, with the
+     * creation task element first — whatever is typed — and no "New task" row of its own.
+     */
+    @Test
+    fun the_list_is_the_creation_row_then_the_tasks_by_title() {
+        val f = fixture()
+        val eligible = SchedulerDomain.assignableTaskIds(f.state, f.apple)
+        val found = SearchDomain.results(f.state, setOf(SearchDomain.Kind.Task), "", sorts = SearchDomain.PICKER_SORTS)
+        val rows = SearchDomain.pickerRows(f.state, found, eligible, creation = true)
+        assertEquals(SearchDomain.Kind.Creation, rows.first().kind)
+        assertEquals(SearchDomain.Kind.Task.name, (rows.first() as SearchDomain.ItemResult).id)
+        val titles = rows.drop(1).map { it.name }
+        assertTrue(rows.drop(1).all { it is SearchDomain.TaskResult && it.taskId in eligible })
+        assertEquals(titles.sortedBy { it.lowercase() }, titles, "by title")
+        // Typed text the creation row's name does not hold: still first.
+        val typed = SearchDomain.results(f.state, setOf(SearchDomain.Kind.Task), "Ki", sorts = SearchDomain.PICKER_SORTS)
+        assertEquals(listOf("New task", "Kiwi"), SearchDomain.pickerRows(f.state, typed, eligible, creation = true).map { it.name })
+        // Rename: no creation row.
+        assertTrue(SearchDomain.pickerRows(f.state, found, eligible, creation = false).none { it.kind == SearchDomain.Kind.Creation })
+    }
+
+    /** User rule 2026-11-04: the search bar's right-click menu's match case and match whole word. */
+    @Test
+    fun match_case_and_whole_word_narrow_what_the_bar_finds_and_are_kept() {
+        val f = fixture()
+        fun titles(query: String, config: SearchDomain.Config) =
+            SearchDomain.results(f.state, setOf(SearchDomain.Kind.Task), query, match = config.queryOptions)
+                .filterIsInstance<SearchDomain.TaskResult>().map { it.title }.toSet()
+        val plain = SearchDomain.Config()
+        assertEquals(setOf("Pear"), titles("pear", plain))
+        assertEquals(emptySet(), titles("pear", plain.copy(matchCase = true)))
+        assertEquals(setOf("Pear"), titles("Pear", plain.copy(matchCase = true)))
+        assertEquals(setOf("Pear"), titles("pear", plain.copy(wholeWord = true)))
+        assertEquals(emptySet(), titles("pea", plain.copy(wholeWord = true)))
+        assertEquals(setOf("Pear"), titles("pea", plain))
+        // Kept with the window's configuration, and absent (off) from one stored before them.
+        val on = plain.copy(matchCase = true, wholeWord = true)
+        assertEquals(on, SearchDomain.Config.decode(on.encode()))
+        val older = plain.encode()
+        assertFalse("matchCase" in older || "wholeWord" in older, "off writes nothing: the shape before them")
+        assertEquals(plain, SearchDomain.Config.decode(older))
+    }
 }

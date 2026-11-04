@@ -686,7 +686,17 @@ object SearchDomain {
          * app builds for one element or kind, and in one stored before it existed, which then search as they did.
          */
         val pageTypesOnly: Boolean = false,
+        /**
+         * User rule 2026-11-04, the search bar's right-click menu: **what is typed matches with its case alone**
+         * ([matchCase]) **and as whole words alone** ([wholeWord]) — the task tree's find bar's two options
+         * ([TaskTreeSearch.Options], [queryOptions]). Off by default, and in a configuration stored before them.
+         */
+        val matchCase: Boolean = false,
+        val wholeWord: Boolean = false,
     ) {
+        /** The bar's two options ([matchCase], [wholeWord]) as the task tree's find bar holds them. */
+        val queryOptions: TaskTreeSearch.Options get() = TaskTreeSearch.Options(matchCase, wholeWord)
+
         /** The kinds the type selector offers: the page's while [pageTypesOnly], else every kind. */
         val offeredKinds: List<Kind>
             get() = if (pageTypesOnly) FEATURE_PAGES.firstOrNull { it.id == page }?.kinds?.let { k -> Kind.entries.filter { it in k } } ?: Kind.entries else Kind.entries
@@ -772,6 +782,8 @@ object SearchDomain {
                     elementSource = elementSource,
                     completion = completion?.name,
                     pageTypesOnly = pageTypesOnly,
+                    matchCase = matchCase,
+                    wholeWord = wholeWord,
                     claudeProject = filters.claudeProject,
                     claudeFromMillis = filters.claudeFrom,
                     claudeUntilMillis = filters.claudeUntil,
@@ -875,6 +887,8 @@ object SearchDomain {
                     elementSource = stored.elementSource,
                     completion = Completion.entries.firstOrNull { it.name == stored.completion },
                     pageTypesOnly = stored.pageTypesOnly,
+                    matchCase = stored.matchCase,
+                    wholeWord = stored.wholeWord,
                 )
             }
 
@@ -1835,6 +1849,9 @@ object SearchDomain {
         val completion: String? = null,
         /** New 2026-11-04: absent = every type offered, as before the switch ([Config.pageTypesOnly]). */
         val pageTypesOnly: Boolean = false,
+        /** New 2026-11-04: absent = the case ignored and any part of a word matched, as before ([Config.matchCase]). */
+        val matchCase: Boolean = false,
+        val wholeWord: Boolean = false,
         val claudeProject: String? = null,
         val claudeFromMillis: Long? = null,
         val claudeUntilMillis: Long? = null,
@@ -2498,6 +2515,8 @@ object SearchDomain {
         placementOwnLength: Long? = null,
         /** The Claude Code logs as last read, for the logs' kinds ([CLAUDE_KINDS]) — `App` reads them. */
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+        /** The search bar's match case and whole word ([Config.queryOptions]). */
+        match: TaskTreeSearch.Options = TaskTreeSearch.Options(),
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         val base =
@@ -2517,6 +2536,7 @@ object SearchDomain {
                     }
                 }
                 .let { rows -> rows + withCreatedKindRows(state, kinds, query, filters) }
+                .let { rows -> if (match == TaskTreeSearch.Options() || query.isBlank()) rows else rows.filter { matchesWith(it, query, match, claudeLogs) } }
                 .filter { passes(state, it, filters, calendar) }
                 .let { rows ->
                     // The blocks of the given elements: each block's element read once, not once per row.
@@ -2596,6 +2616,21 @@ object SearchDomain {
      * make (a history unit, a notification, a shortcut…) has none, and its list stays empty; so does a list of several
      * kinds, where there is no one thing to make.
      */
+    /** User rule 2026-11-04: a task cell's Edit Mode lists its tasks by title ([pickerRows]). */
+    val PICKER_SORTS: List<SortMethod> = listOf(SortMethod(null, SortKey.Name))
+
+    /**
+     * User rule 2026-11-04: **the list of the Search window a task cell's Edit Mode shows** (`SearchPicker`): the task
+     * elements of [found] the cell may take ([eligible]), in [found]'s order (by their title, [PICKER_SORTS]), and,
+     * where it can change task ([creation]), the task kind's creation row first, whatever is typed: its click gives the
+     * cell a new task of the same title, a task row's gives it that task.
+     */
+    fun pickerRows(state: SchedulerState, found: List<Result>, eligible: Set<TaskId>, creation: Boolean): List<Result> {
+        val tasks = found.filter { it is TaskResult && it.taskId in eligible }
+        if (!creation) return tasks
+        return itemResults(state, Kind.Creation, "").filter { it.id == Kind.Task.name } + tasks
+    }
+
     fun withCreationWhenEmpty(state: SchedulerState, rows: List<Result>, kinds: Set<Kind>): List<Result> {
         if (rows.isNotEmpty()) return rows
         val kind = kinds.singleOrNull()?.takeIf { it in CREATABLE } ?: return rows
@@ -3095,6 +3130,18 @@ object SearchDomain {
      * How well [name] answers [query]: 0 = the same name, 1 = starts with it, 2 = contains it, null = not a
      * result. Case-insensitive; a blank query lists everything, alphabetically.
      */
+    /**
+     * User rule 2026-11-04: whether [row], which the case-blind search found for [query], still answers it with the bar's
+     * [match] options ([Config.matchCase], [Config.wholeWord]), read as the task tree's find bar reads them
+     * ([TaskTreeSearch.ranges]): a name holds the whole query; a log entry's text holds each of its terms
+     * ([ClaudeLogSearch.rawTerms]), as it is searched.
+     */
+    fun matchesWith(row: Result, query: String, match: TaskTreeSearch.Options, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): Boolean {
+        val entry = (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.let { claudeLogs.find(it.id)?.second }
+        if (entry != null) return ClaudeLogSearch.rawTerms(query).all { TaskTreeSearch.ranges(entry.text, it, match).isNotEmpty() }
+        return TaskTreeSearch.ranges(row.name, query.trim(), match).isNotEmpty()
+    }
+
     internal fun matchRank(name: String, query: String): Int? {
         val q = query.trim().lowercase()
         if (q.isEmpty()) return 2

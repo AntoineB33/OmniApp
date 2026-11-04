@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Search bar's match case and whole word; the Edit Mode list starts with its creation row — 2026-11-04
+
+User rules: the Search window's bar has "Match case" and "Match whole word" in its right-click menu, after the field's own items, checked while on (`WithTextMenuItems`, a desktop seam: the other platforms' text menus take no item; `SearchDomain.matchesWith`, read as the task tree's find bar reads them, `TaskTreeSearch.ranges`). Kept in the window's configuration (`Config.matchCase`, `wholeWord`; absent = off, as before). A task cell's Edit Mode lists task elements alone, sorted by title, the task kind's creation row first whatever is typed (`SearchDomain.pickerRows`); one click on it gives the cell a new task id of the same title, on a task row that task. The "New task" row above the results is gone. `CellEditPopupRulesTest`, `CellEditPopupTest`. Client rebuild only.
+
 ### An all-pages window button opens on every page; Reset opens the menu's first window button — 2026-11-04
 
 Anomaly: "Gemini quota", set on all pages from the Task Scheduler, opened nothing on the Claude Code logs page: its Search window kept the scheduler's page, so it opened there. A global button's Search window opens on the page it is pressed on now (`CustomMenuButtons.globalSearchConfig`; its "Update" compares against that). User rule: the window bar's Reset opens the window of the first window button of the page's lateral menu (`CustomMenuButtons.firstWindowButton`), none if there is none — it opened the calendar, or another page's Search window. `GlobalItemsTest`. Client rebuild only.

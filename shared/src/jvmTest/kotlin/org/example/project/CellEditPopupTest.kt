@@ -141,7 +141,7 @@ class CellEditPopupTest {
         /** Clicks along the rectangle, which starts under the cell, at y 44, until [done]. */
         fun clickDownTheRectangle(done: () -> Boolean) = clickAlong((96..470 step 6).map { it.toFloat() }, done)
 
-        /** From the bottom: the results, which stand under the completion list and the "New task" row. */
+        /** From the bottom: the results, which stand under the completion list, the creation row first of them. */
         fun clickUpTheRectangle(done: () -> Boolean) = clickAlong((470 downTo 96 step 6).map { it.toFloat() }, done)
 
         private fun clickAlong(ys: List<Float>, done: () -> Boolean) {
@@ -175,6 +175,25 @@ class CellEditPopupTest {
             // The bar's text left the options and the other stayed: the list is still there, and still writes.
             h.clickDownTheRectangle { h.state.editSession?.draftText != "Pear" }
             assertEquals("Pear tart", assertNotNull(h.state.editSession).draftText)
+        } finally {
+            h.close()
+        }
+    }
+
+    /**
+     * User rule 2026-11-04: *"a single click on the element in the search result list: if a creation element, replaces
+     * the current task id with a new task id with the same task title"* — the creation row stands first of the list.
+     */
+    @Test
+    fun a_click_on_the_creation_row_gives_the_cell_a_new_task_of_the_same_title() {
+        val h = Harness("")
+        val before = h.state.cells[h.apple]!!.taskId
+        try {
+            h.clickDownTheRectangle { h.state.editSession == null }
+            assertNull(h.state.editSession)
+            val after = assertNotNull(h.state.cells[h.apple]!!.taskId)
+            kotlin.test.assertNotEquals(before, after, "a new task id")
+            assertEquals("Apple", h.state.tasks[after]!!.title)
         } finally {
             h.close()
         }
