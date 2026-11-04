@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### What the usage panel cannot read, it links to — 2026-11-04
+
+User rule: usage the app cannot give, it says where to see. Supabase's Management API was checked (its OpenAPI description, 2026-11-04): no egress, Realtime messages or Edge Function invocations over the billing period — only request counts by kind over a week at most — so the planned Edge Function would not have given them and was not built. The Settings page's usage panel names them and links, above Refresh, to the dashboard's Usage page (`ServerBudget.SUPABASE_USAGE_PAGE`, the address Supabase's docs use). Client rebuild only.
+
 ### Each user's own free server: the Server setting, the version check, the guide — 2026-11-04
 
 User rule: OmniApp is shared with a few technical people, each on a free Supabase project of their own. The Settings page's **Server** (a control and a Search action) keeps the project's address and public key on the device (SQLite `server_choice`, schema v19 → v20, migration 19.sqm; `SchedulerStoreTest.upgrades_pre_server_choice_v19_db_and_keeps_its_data`); both clients are built on it (`SupabaseConfig.chosen`), else on the built-in project. A choice takes effect at the next start: until then the device sends nothing, since an account lives on the server it was made on (`ServerChoiceTest`). New Supabase migration 20261104010000 `server_version` (the latest migration applied, public): asked once per connect, the Settings page says when the server needs `deploy-supabase.bat` (`ServerVersion.REQUIRED_SERVER_MIGRATION`, `ServerVersionTest`). `docs/SERVER_SETUP.md` is the step-by-step guide; `deploy-supabase.bat` no longer calls its step 3 phone-only (it schedules the clean-up jobs that keep the database under its limit). Deploy: `scripts\deploy-supabase.bat`, and a client rebuild.

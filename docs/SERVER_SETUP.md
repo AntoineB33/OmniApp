@@ -134,6 +134,9 @@ On the **Settings** page:
 - **Server** says "Your server: https://<ref>.supabase.co" and "It has everything this version of the app needs".
 - In **Supabase free tier**, press **Refresh**: it shows the database's size.
 
+The project's egress (all devices), Realtime messages and Edge Function calls are not readable by the app: the
+panel's link opens Supabase's Usage page, where you pick your project to see them.
+
 To use the same data on another device, sign in there with the same account (the **Online** window), after pointing
 that device at your server too.
 

@@ -1996,7 +1996,22 @@ private fun SupabaseUsagePanel(title: String, host: MenuControlHost) {
                 style = small,
             )
         }
-        Text("Realtime messages and Edge Function calls: not visible from the app", style = small, color = muted)
+        // User rule 2026-11-04: what the app cannot read, it says where to see. The Management API gives no egress, no
+        // Realtime messages and no Edge Function calls over the billing period (checked 2026-11-04: request counts by
+        // kind, over a week at most) — the project's Usage page shows them all, every device's egress included.
+        Text(
+            "The whole project's egress (every device), Realtime messages and Edge Function calls are not readable " +
+                "by the app. See them on Supabase's Usage page:",
+            style = small,
+            color = muted,
+        )
+        val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+        Text(
+            budget.SUPABASE_USAGE_PAGE + " ↗",
+            style = small.copy(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline),
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.clickable { runCatching { uriHandler.openUri(budget.SUPABASE_USAGE_PAGE) } },
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             FrameButton("Refresh", onClick = host.onRefreshProjectUsage)
             val said =

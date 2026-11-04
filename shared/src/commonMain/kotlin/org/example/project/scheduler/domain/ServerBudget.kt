@@ -15,6 +15,15 @@ import org.example.project.scheduler.state.SupabaseUsageEntry
 object ServerBudget {
     const val MB: Long = 1_000_000L
 
+    /**
+     * User rule 2026-11-04: **where to see what the app cannot read** — the whole project's egress, Realtime messages and
+     * Edge Function calls. Supabase's Management API gives none of them over the billing period (checked 2026-11-04:
+     * `usage.api-counts` counts requests by kind over a week at most), so no Edge Function could fetch them; the
+     * dashboard's Usage page shows them all. The address Supabase's own docs link to: `_` is the signed-in user's
+     * organization, and the page picks the project.
+     */
+    const val SUPABASE_USAGE_PAGE: String = "https://supabase.com/dashboard/org/_/usage"
+
     /** The share of a free-tier quota the app may use. A limit set lower is the user's; never higher. */
     const val FRACTION: Double = 0.10
 

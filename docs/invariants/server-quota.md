@@ -106,8 +106,10 @@ limit, and nothing here may exceed it.
   why, each cause in its own words (`ProjectUsageMiss`: signed out, `project_usage` not deployed — a 404 —, no answer).
   - **The database is the server's own measure** (`project_usage`, migration 20261103000000): the project's size and this
     account's rows, one call per press of Refresh. **Egress is what this device's logged calls drew this month**, a lower
-    bound (the log keeps its newest calls, other devices draw too). Realtime messages and Edge Function calls are not
-    visible from the app, and the panel says so.
+    bound (the log keeps its newest calls, other devices draw too). The whole project's egress, Realtime messages and
+    Edge Function calls are not readable by the app — the Management API gives none of them over the billing period
+    (checked 2026-11-04: request counts by kind over a week at most), so no Edge Function fetches them — and the panel
+    links to the dashboard's Usage page, which shows them all (user rule 2026-11-04, `ServerBudget.SUPABASE_USAGE_PAGE`).
   - **The limits are ONE figure for the project** (user rule 2026-11-03: *"the app must not exceeds 10% of any usage
     limits on any project"*): the project database's limit is an account setting, synced, clamped to a tenth of the
     free tier however it is typed or stored (`ServerBudget.serverLimitOf`); this device's is its own (`LOCAL_ONLY`).
