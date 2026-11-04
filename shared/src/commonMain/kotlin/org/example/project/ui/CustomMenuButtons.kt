@@ -905,6 +905,28 @@ object CustomMenuButtons {
      * configuration at the first start, and opened an alarm's search instead of each page's own): it is every page's,
      * and with none it opens the Search window of the page it is pressed on.
      */
+    /**
+     * **The configuration a GLOBAL button's Search window opens with on the page [page]** it is pressed on. A Search
+     * window is drawn on its configuration's page alone (`SearchDomain.Config.page`), so a configuration kept on another
+     * page would open a window there, out of sight (anomaly 2026-11-04: "Gemini quota", set on all pages from the Task
+     * Scheduler, opened nothing on the Claude Code logs page). It opens on this page, as it is otherwise. The global
+     * Search button ([GLOBAL_SEARCH]) opens each page's own Search window (user rule 2026-10-18) where it keeps none of
+     * this page's.
+     */
+    fun globalSearchConfig(button: CustomMenuButton, page: String): String {
+        val kept = SearchDomain.Config.decode(button.config)
+        if (kept?.page == page) return button.config!!
+        if (button.id == GLOBAL_SEARCH.id || kept == null) return SearchDomain.pageDefaultConfig(page).encode()
+        return kept.copy(page = page).encode()
+    }
+
+    /**
+     * User rule 2026-11-04: **the window the window bar's Reset opens: the first item of [buttons] (a page's menu, in
+     * its order) that is a window's button**, a folder's included; none, and Reset opens no window.
+     */
+    fun firstWindowButton(buttons: List<CustomMenuButton>): CustomMenuButton? =
+        buttons.firstOrNull { !it.folder && it.control == null && it.action == null && it.windowId.isNotBlank() }
+
     fun withConfigsFrozen(buttons: List<CustomMenuButton>, configOf: (windowId: String) -> String?): List<CustomMenuButton> =
         buttons.map { button ->
             if (button.config != null || button.global) button else configOf(button.windowId)?.let { button.copy(config = it) } ?: button

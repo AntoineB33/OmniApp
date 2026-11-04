@@ -161,6 +161,10 @@ means.
     pages lose nothing of their own: a global item the defaults do not hold goes back to the page it was made global
     from, as that page's own, or goes altogether when that is this page. The defaults' global items are the same item
     on every page, so one renamed or removed is restored on all of them.
+  - **A global item's Search window opens on the page it is pressed on** (anomaly 2026-11-04,
+    `CustomMenuButtons.globalSearchConfig`): a Search window is drawn on its configuration's page alone, so the
+    configuration a button kept on another page is opened with this page's; the global Search button opens the page's
+    own Search window where it keeps none of this page's.
   - **"Customize"** (`MenuCustomizer`, `LocalMenuCustomizer`, Compose-only — off at every start): while on, every
     control that can stand in the menu is OUTLINED where it lives, nothing is added to the menu to end it (user rule
     2026-11-01: the right-click menu alone does, as Stop customizing), and
@@ -475,11 +479,12 @@ means.
 - **The lateral menu's scrolled content ends a bar's height lower** (`LateralMenu`'s bottom padding, `+
   MINIMIZED_BAR_HEIGHT`), always — so scrolled to the end, its last button clears the bar drawn over it, and
   the menu does not jump as the bar comes and goes.
-- **Reset (it was "Close all") is the bar's, at its right corner, and it puts back the DEFAULT layout: only the
-  calendar, open and maximized** (user rule 2026-10-01) — every window closed (`closeWindows`), then, two frames
-  later (once the closes have taken the windows out of composition — reopened in the same frame the calendar would
-  keep its old frame), the calendar's chrome written as `CALENDAR_RESET_CHROME` and the calendar opened and focused
-  (`openNewWindow`). It
+- **Reset (it was "Close all") is the bar's, at its right corner, and it puts back the DEFAULT layout** (user rule
+  2026-10-01) — every window closed (`closeWindows`), then, two frames later (once the closes have taken the windows
+  out of composition — reopened in the same frame a window would keep its old frame), **the window of the first window
+  button of the page's lateral menu, opened as that button opens it** (user rule 2026-11-04,
+  `CustomMenuButtons.firstWindowButton`, a folder's items included; none, and no window opens; it was the calendar
+  alone, and another page's Search window). The calendar's chrome is still written as `CALENDAR_RESET_CHROME`. It
   replaced the lateral menu's "Close windows" (2026-09-24), which listed the lateral-menu windows by hand and
   so never closed a per-object window, a copy or a notice. **It also resets the task tree window's placement**
   (user rule, 2026-09-30; `WindowBar(onReset)` in `App`): offset and size back to zero and the chrome to

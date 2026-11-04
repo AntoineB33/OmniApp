@@ -2161,9 +2161,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             ?: (lateralWindowOf(window.id) != null && lateralWindowOf(window.id) == lateralWindowOf(button.windowId)))
                 }?.id
         // The button's "Update" is offered while the window it opened is open and is no longer what the button holds.
-        fun menuButtonCanUpdate(button: CustomMenuButton): Boolean {
-            val frameId = menuButtonWindowOf(button) ?: return false
+        fun menuButtonCanUpdate(pressed: CustomMenuButton): Boolean {
+            val frameId = menuButtonWindowOf(pressed) ?: return false
             val kind = lateralWindowOf(frameId)
+            // A global button's Search window is held against what it opened with on this page, its page included.
+            val button =
+                if (!pressed.global || kind != FloatingWindow.Search) pressed
+                else pressed.copy(config = CustomMenuButtons.globalSearchConfig(pressed, page.searchPage))
             val current = kind?.let { windowConfigOf(frameId) }
             return CustomMenuButtons.needsUpdate(
                 button,
@@ -2631,14 +2635,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // whichever window registers in the frames after the click and was not there before — a window only brought
         // back keeps its tab as it was.
         fun onMenuButtonClicked(pressed: CustomMenuButton) {
-            // A global Search button opens the Search window of the page it is pressed on (user rule 2026-10-18): the one
-            // it keeps where that is this page's, else this page's own.
+            // A global button's Search window opens on the page it is pressed on (user rule 2026-10-18, anomaly
+            // 2026-11-04): the global Search button's, that page's own where it keeps none of it.
             val button =
                 if (!pressed.global || lateralWindowOf(pressed.windowId) != FloatingWindow.Search) pressed
-                else pressed.copy(
-                    config = pressed.config?.takeIf { SearchDomain.Config.decode(it)?.page == page.searchPage }
-                        ?: SearchDomain.pageDefaultConfig(page.searchPage).encode(),
-                )
+                else pressed.copy(config = CustomMenuButtons.globalSearchConfig(pressed, page.searchPage))
             val before = windowFrames.registrations.mapTo(HashSet()) { it.id }
             val saved = CustomMenuButtons.decodeLayout(button.layout)
             var asked: String? = null
@@ -6037,18 +6038,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 isGlobal = { it in globalWindows },
                 canBeGlobal = { lateralWindowOf(it) != null },
                 onSetGlobal = { ids, on -> setWindowsGlobal(ids, on, record = true) },
-                // Reset is the DEFAULT layout (user rule 2026-10-01): every window closed, then the calendar alone,
-                // open and maximized. The task tree's placement goes back to a first run's too (centred, default
-                // size, maximized), for when it is next opened.
+                // Reset is the DEFAULT layout (user rule 2026-10-01): every window closed, then (user rule 2026-11-04)
+                // the window of the first window button of the page's lateral menu, as that button opens it — none,
+                // and no window opens. The task tree's and the calendar's placements go back to a first run's too
+                // (centred, default size, maximized), for when they are next opened.
                 onReset = reset@{
                     // The bar's group (one History Unit, anomaly 2026-11-04) is held until the page's windows, which
                     // open frames later, are written too.
                     viewHistory.beginGroup("Reset the windows")
-                    // Another page's default layout: its windows closed, then one Search window on what it holds.
+                    val first = CustomMenuButtons.firstWindowButton(menuButtons)
                     if (page != OmniPage.TaskScheduler) {
                         engineScope.launch {
                             repeat(2) { withFrameNanos { } }
-                            openNewWindow(FloatingWindow.Search, SearchDomain.pageDefaultConfig(page.searchPage).encode())
+                            first?.let(::onMenuButtonClicked)
                             repeat(GROUP_FRAMES) { withFrameNanos { } }
                             viewHistory.endGroup()
                         }
@@ -6066,7 +6068,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // never be seen.
                         repeat(2) { withFrameNanos { } }
                         windowChromeMemory.save(FloatingWindow.Calendar.name, CALENDAR_RESET_CHROME)
-                        openNewWindow(FloatingWindow.Calendar)
+                        first?.let(::onMenuButtonClicked)
                         repeat(GROUP_FRAMES) { withFrameNanos { } }
                         viewHistory.endGroup()
                     }

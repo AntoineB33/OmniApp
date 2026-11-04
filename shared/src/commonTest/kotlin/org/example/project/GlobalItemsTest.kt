@@ -161,4 +161,36 @@ class GlobalItemsTest {
         assertEquals(null, frozen[0].config)
         assertEquals("""{"kinds":["Alarm"]}""", frozen[1].config)
     }
+    /**
+     * Anomaly 2026-11-04: *"on the 'Gemini quota' button in 'Task Schedule', I select 'all pages', then I go to the Claude
+     * Code logs page, click on 'Gemini quota', but it doesn't open the window."* Its Search window kept the Task
+     * Scheduler's page, so it opened there, out of sight.
+     */
+    @Test
+    fun a_global_buttons_search_window_opens_on_the_page_it_is_pressed_on() {
+        val kept = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Quota), added = listOf("Quota/quota-1"))
+        val gemini = CustomMenuButton("g1", "Search#3", "Gemini quota", config = kept.encode(), global = true, homePage = "")
+        val onLogs = SearchDomain.Config.decode(CustomMenuButtons.globalSearchConfig(gemini, claude))!!
+        assertEquals(kept.copy(page = claude), onLogs, "the same search and elements, on the logs page")
+        assertEquals(gemini.config, CustomMenuButtons.globalSearchConfig(gemini, ""), "on its own page, as it is")
+        // The global Search button opens each page's own Search window.
+        val search = CustomMenuButtons.GLOBAL_SEARCH
+        assertEquals(SearchDomain.pageDefaultConfig(claude).encode(), CustomMenuButtons.globalSearchConfig(search, claude))
+        assertEquals(
+            SearchDomain.pageDefaultConfig(claude).encode(),
+            CustomMenuButtons.globalSearchConfig(search.copy(config = kept.encode()), claude),
+        )
+    }
+
+    /** User rule 2026-11-04: the window bar's Reset opens the first window button of the page's menu; none, no window. */
+    @Test
+    fun reset_opens_the_first_window_button_of_the_menu() {
+        val folder = CustomMenuButton("f1", "", "Folder", folder = true)
+        val inFolder = CustomMenuButton("b3", "Search", "timers Search", parent = "f1")
+        val controls = listOf(CustomMenuButtons.GLOBAL_MUTE, CustomMenuButton("d-Voice", "", "", control = "Voice"))
+        assertEquals("b3", CustomMenuButtons.firstWindowButton(controls + folder + inFolder)?.id, "a folder's item counts")
+        assertEquals("g-search", CustomMenuButtons.firstWindowButton(CustomMenuButtons.DEFAULTS)?.id)
+        assertEquals(null, CustomMenuButtons.firstWindowButton(controls + folder))
+        assertEquals(null, CustomMenuButtons.firstWindowButton(emptyList()))
+    }
 }

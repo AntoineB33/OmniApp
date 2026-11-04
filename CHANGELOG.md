@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An all-pages window button opens on every page; Reset opens the menu's first window button — 2026-11-04
+
+Anomaly: "Gemini quota", set on all pages from the Task Scheduler, opened nothing on the Claude Code logs page: its Search window kept the scheduler's page, so it opened there. A global button's Search window opens on the page it is pressed on now (`CustomMenuButtons.globalSearchConfig`; its "Update" compares against that). User rule: the window bar's Reset opens the window of the first window button of the page's lateral menu (`CustomMenuButtons.firstWindowButton`), none if there is none — it opened the calendar, or another page's Search window. `GlobalItemsTest`. Client rebuild only.
+
 ### A workplace setup says "running"; a new file explorer window opens maximized — 2026-11-04
 
 User rules: a workplace setup's row says "running" while it is being applied, as a timer's does (`SearchDomain.shownDetail`, over the in-memory `WorkplaceRuns` through `LocalWorkplaceRuns`: a run is never state). Each file explorer window of a setup has a "Maximized when opened" switch, on by default (`WorkplaceWindow.maximized`, persisted only when off, absent = on): a window the setup opens is maximized before its tabs are made; tabs added to a window already open leave it as it is. `WorkplaceSetupTest`. Client rebuild only.
