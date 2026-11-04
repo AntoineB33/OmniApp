@@ -1806,8 +1806,6 @@ private fun WindowHead(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
                 modifier = titleModifier,
             )
         }
@@ -2396,8 +2394,6 @@ private fun MinimizedChip(
                 text = host.tabTitleOf(row),
                 style = MaterialTheme.typography.labelLarge,
                 fontStyle = if (reduced) FontStyle.Italic else FontStyle.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Box(
                 modifier = Modifier.size(20.dp).clip(CircleShape).clickable { row.onClose() },

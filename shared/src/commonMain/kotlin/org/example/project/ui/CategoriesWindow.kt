@@ -176,8 +176,6 @@ private fun CategoryRow(row: CategoryRules.OverviewRow, onEdit: () -> Unit) {
                 text = row.category.title,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = rowSummary(row),

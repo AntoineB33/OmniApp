@@ -56,8 +56,9 @@ internal fun TaskTitleLabel(
     modifier: Modifier = Modifier,
     style: TextStyle = MaterialTheme.typography.bodySmall,
     textColor: Color = LocalContentColor.current,
-    maxLines: Int = 1,
-    overflow: TextOverflow = TextOverflow.Ellipsis,
+    // User rule 2026-11-04: no text of the app is cut by "…" — a name too long for its room wraps.
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
     softWrap: Boolean = true,
 ) {
     Text(

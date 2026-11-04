@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### No text of the app is cut by "…" — 2026-11-04
+
+User rule, the whole app: the 43 texts cut by `TextOverflow.Ellipsis` wrap now (window titles, the window bar's tabs, which scroll and so were never cut, result and list rows, the type selector's face in the Search window's header too, the actions' hints, the calendar's, the sleep, alarm, task trees, categories and life plan windows' labels, a task's name chip by default). The "task to do now" notification writes the task's path whole: its start was dropped behind "…" past 48 characters (`shortenedPathLabel`, removed). The performance overlay, a developer's table, is left as it is. `NoTextCutByAnEllipsisTest` fails on any `TextOverflow.Ellipsis` in the app's sources. Client rebuild only.
+
 ### A window button finds its window by its configurations; settings on the settings page alone; no "…" in the configurations — 2026-11-04
 
 Anomaly: the Task Scheduler page's Search button opened a new window at every press. A window button brings back the open window with the same configurations, and compared the whole stored configuration as written: the window had taken its default sorting on opening (tasks newest first), so it never matched. A Search window's configurations are its search configurations now (`SearchDomain.searchConfigurations`: the search as the window holds it, never its added elements or its actions' state), asked by both callers that compared — the bring-back and a ☆ button's "Update", which was offered for the same reason — through `App.sameWindowConfigurations`; every opener goes through it ("Search every element of the kind" had the same anomaly). User rule: "Only this page's types" offers the settings' type on the settings page alone — the Task Scheduler page's types are no longer the app settings. User rule: no text of the Search configurations window is cut by "…": its section titles, labels, faces and lists wrap. Client rebuild only. `FeaturePagesTest`; checked on the desktop app (virtual screen: three presses, one window).

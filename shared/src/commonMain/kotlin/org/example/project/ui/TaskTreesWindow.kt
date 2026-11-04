@@ -252,8 +252,6 @@ private fun TaskTreeTimeline(
                 Text(
                     text = entry.title.ifBlank { SchedulerDomain.UNTITLED_LABEL },
                     style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = formatTreeDate(entry.dateMillis, timeZone),
@@ -289,8 +287,6 @@ private fun TaskTreeRow(
         Text(
             text = entry.title.ifBlank { SchedulerDomain.UNTITLED_LABEL },
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
         if (active) {

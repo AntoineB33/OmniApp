@@ -102,6 +102,11 @@ class SearchWindowTest {
         val s = tree()
         assertEquals("Pie\nApple", SchedulerDomain.taskSwitchNotificationMessage(s, taskWithTitle(s, "Pie"), 0L) { "" })
         assertEquals("Apple", SchedulerDomain.taskSwitchNotificationMessage(s, taskWithTitle(s, "Apple"), 0L) { "" })
+        // User rule 2026-11-04: no text of the app is cut by "…" — a long path is written whole (its start was dropped
+        // behind one past 48 characters until then).
+        val long = "The orchard on the hill behind the old house, where the apples grow"
+        val renamed = r(s, SchedulerIntent.RenameTask(taskWithTitle(s, "Apple"), long))
+        assertEquals("Pie\n$long", SchedulerDomain.taskSwitchNotificationMessage(renamed, taskWithTitle(renamed, "Pie"), 0L) { "" })
     }
 
     // ----- The last path ----------------------------------------------------------------------------

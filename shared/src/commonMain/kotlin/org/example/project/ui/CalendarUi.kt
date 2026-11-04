@@ -3312,8 +3312,6 @@ private fun HistoryUnitRow(
             text = unit.delta.label,
             style = MaterialTheme.typography.bodyMedium,
             color = labelColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
         val details = unit.delta.details
         details.take(HISTORY_ROW_DETAIL_LINES).forEach { line ->
@@ -3322,7 +3320,6 @@ private fun HistoryUnitRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = CalColors.muted,
                 maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
             )
         }
         if (details.size > HISTORY_ROW_DETAIL_LINES) {
@@ -3586,7 +3583,6 @@ internal fun HistoryTextLine(value: String, label: String? = null, copyLabel: St
                 text = searchHighlighted(value),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = if (expanded) Int.MAX_VALUE else 1,
-                overflow = TextOverflow.Ellipsis,
                 onTextLayout = { if (!expanded) cut = it.hasVisualOverflow || value.contains('\n') },
             )
         }
@@ -4535,8 +4531,6 @@ private fun CalendarConfigurationSection(
                     text = lockedTaskTitle,
                     style = MaterialTheme.typography.labelSmall,
                     color = CalColors.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 if (lockTaskPending) {
@@ -8157,8 +8151,6 @@ private fun DayColumn(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
                     color = CalColors.muted,
-                    overflow = TextOverflow.Ellipsis,
-                    maxLines = 1,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 3.dp)
@@ -8388,8 +8380,6 @@ private fun NotificationChip(title: String, modifier: Modifier = Modifier) {
             text = "🔔 " + title,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onTertiaryContainer,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
                 .background(MaterialTheme.colorScheme.tertiaryContainer)
@@ -8736,8 +8726,6 @@ private fun ScreenBreakSegment(
                 text = title,
                 style = MaterialTheme.typography.labelSmall,
                 color = CalColors.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 4.dp).padding(top = titleTopInset),
             )
         }
@@ -10296,7 +10284,6 @@ private fun CalendarBlockBody(
                 text = SchedulerDomain.taskTitleLabel(title),
                 style = MaterialTheme.typography.labelSmall,
                 color = titleColor,
-                overflow = TextOverflow.Ellipsis,
                 maxLines = titleMaxLines,
                 modifier = Modifier
                     .padding(horizontal = 3.dp, vertical = 1.dp)

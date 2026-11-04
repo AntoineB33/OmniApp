@@ -205,8 +205,6 @@ internal fun CalendarPlacementEditor(
             },
             style = if (blocked) MaterialTheme.typography.bodySmall else MaterialTheme.typography.labelSmall,
             color = if (blocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
     }
 }

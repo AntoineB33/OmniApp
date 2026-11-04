@@ -458,8 +458,6 @@ internal fun DayField(date: LocalDate?, blank: String, today: LocalDate, enabled
             text = (date?.let { WEEKDAY_SHORT[it.dayOfWeek.ordinal] + " " + it } ?: blank) + "  ▾",
             style = MaterialTheme.typography.bodyMedium,
             color = if (enabled && date != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
@@ -759,8 +757,6 @@ internal fun QuotaResilienceEditor(state: SchedulerState, quotas: List<QuotaEntr
                             Text(
                                 kind,
                                 style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.width(190.dp),
                             )
                             ResilienceField(quotas.map { QuotaDomain.resilienceFor(it, kind) }) { value ->

@@ -112,8 +112,6 @@ internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -
             Text(
                 text = "Goal ${which.label.lowercase()} date",
                 style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             if (goalDay != null) {
@@ -209,8 +207,6 @@ private fun TimeField(
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
         },

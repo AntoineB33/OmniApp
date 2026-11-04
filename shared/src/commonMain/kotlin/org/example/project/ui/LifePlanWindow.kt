@@ -159,8 +159,6 @@ private fun SectionField(section: LifePlanSection, onPick: (LifePlanSection) -> 
         Text(
             text = section.label + "  ▾",
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
@@ -343,7 +341,7 @@ private fun TabField(
             Column(Modifier.width(280.dp)) {
                 for (each in tabs) {
                     DropdownMenuItem(
-                        text = { Text(each.text.ifBlank { "(untitled)" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        text = { Text(each.text.ifBlank { "(untitled)" }) },
                         onClick = { open = false; onPick(each.id) },
                         trailingIcon = { TextButton(onClick = { open = false; onRemove(each.id) }) { Text("🗑") } },
                     )

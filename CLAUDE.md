@@ -96,6 +96,9 @@ The short form; the file named after each carries the whole rule and the reasons
 - **Prefer expressing a thing in the model that already exists** over adding a mechanism beside it.
 - **Platform differences are decided per input event or per injected seam, never by asking which build this is.** Add
   to `docs/PLATFORMS.md` before branching.
+- **No text of the app is cut by "…"** (user rule 2026-11-04): a text too long for its room wraps — never
+  `TextOverflow.Ellipsis`, never a string shortened behind one (`NoTextCutByAnEllipsisTest`). A label saying more is to
+  come ("add…", "Syncing…") is not cut text.
 
 ## State: authoritative vs. derived
 

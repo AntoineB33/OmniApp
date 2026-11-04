@@ -85,8 +85,6 @@ fun TaskCategoryCell(
                 if (carried.isEmpty()) MaterialTheme.colorScheme.outline
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
         AppDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             Column(
@@ -112,8 +110,6 @@ fun TaskCategoryCell(
                         Text(
                             text = category.title,
                             style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
                         // The bin is about THIS TASK. Deleting the category itself is the ✎ window's

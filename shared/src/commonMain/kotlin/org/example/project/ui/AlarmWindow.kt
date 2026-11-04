@@ -1128,8 +1128,6 @@ private fun TimerRowEditor(
                 text = row.label.ifBlank { "Timer" },
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 modifier = Modifier.width(90.dp),
             )
             lines()
@@ -1188,8 +1186,6 @@ private fun ChronoRowEditor(
                 Text(
                     text = row.label.ifBlank { "Chrono" },
                     style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.width(120.dp),
                 )
                 Spacer(Modifier.width(8.dp))

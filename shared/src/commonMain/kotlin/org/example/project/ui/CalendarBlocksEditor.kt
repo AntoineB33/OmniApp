@@ -220,8 +220,6 @@ internal fun CalendarBlockFields(
             block.name.ifBlank { "(untitled)" },
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             NoteText(if (instant) "at" else "starts", color = MaterialTheme.colorScheme.onSurface)

@@ -554,8 +554,6 @@ private fun MicroGroupTitle(text: String, nested: Boolean = false) {
         searchHighlighted(text),
         style = if (nested) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
         color = if (nested) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-        maxLines = 1,
-        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
     )
 }
 
@@ -656,7 +654,6 @@ internal fun MenuActionItem(
             title.ifBlank { action.label },
             style = MaterialTheme.typography.labelMedium,
             maxLines = 2,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
         // The editor is the Search window's: compact, and cut at the menu's width rather than squeezed.
         Box(Modifier.fillMaxWidth().cutAtBounds()) {
@@ -1831,8 +1828,6 @@ private fun ShortcutWindowEditor(added: List<SearchDomain.Result>, handlers: Add
                         Text(
                             text = (mapping.window?.let { titles[it] ?: "$it (closed)" } ?: "choose a window…") + "  ▾",
                             style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(4.dp))
@@ -1848,8 +1843,6 @@ private fun ShortcutWindowEditor(added: List<SearchDomain.Result>, handlers: Add
                                         text = title,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = if (id == mapping.window) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clickable {
@@ -2223,8 +2216,6 @@ private fun FulfilmentLine(
         Text(
             text = title,
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).clickable(onClick = onOpen),
         )
         OutlinedTextField(

@@ -188,8 +188,6 @@ fun CalendarElementsWindow(
                                 .padding(horizontal = 8.dp, vertical = 8.dp),
                             text = kind.label + "  ▾",
                             style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                         )
                         AppDropdownMenu(expanded = kindMenuOpen, onDismissRequest = { kindMenuOpen = false }) {
                             offeredKinds.forEach { option ->
@@ -398,8 +396,6 @@ private fun ElementList(drafts: List<CalendarElements.Draft>, onRemoveRow: (Int)
                 Text(
                     text = draft.displayName,
                     style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = draft.kind.label + if (draft.existingId == null) " · new" else "",

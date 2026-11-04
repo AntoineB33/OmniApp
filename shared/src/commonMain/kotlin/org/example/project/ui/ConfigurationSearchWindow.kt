@@ -186,14 +186,12 @@ fun ConfigurationSearchWindow(
                     label = { it.label },
                     onChange = { checked -> onOwnChange(own.copy(pages = checked.mapTo(HashSet()) { it.id })) },
                     modifier = Modifier.weight(1f),
-                    faceWraps = true,
                 )
                 KindsDropDown(
                     kinds = own.kinds,
                     onKindsChange = { onOwnChange(own.copy(kinds = it)) },
                     modifier = Modifier.weight(1f),
                     options = own.offeredKinds,
-                    faceWraps = true,
                 )
             }
             // User rule 2026-10-11: one button — only the configurations that apply to at least one row of the
@@ -393,7 +391,7 @@ private fun SettingEditor(
             )
         // The Search window's own type selector — a field with a drop-down — not a second drawing of it.
         SearchDomain.Setting.Types ->
-            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = config.offeredKinds, faceWraps = true)
+            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = config.offeredKinds)
         // User rule 2026-11-04: on, the type selector offers the window's page's types alone ([SearchDomain.Config.pageTypesOnly]).
         SearchDomain.Setting.PageTypes ->
             androidx.compose.material3.Switch(checked = config.pageTypesOnly, onCheckedChange = { onChange(config.copy(pageTypesOnly = it)) })
@@ -544,7 +542,6 @@ private fun SettingEditor(
                 face = changedKindsFace(f.historyChangedKinds),
                 label = { it.label },
                 onChange = { filters(f.copy(historyChangedKinds = it)) },
-                faceWraps = true,
             )
         SearchDomain.Setting.NotificationSourceSetting ->
             CheckBoxDropDown(
@@ -555,7 +552,6 @@ private fun SettingEditor(
                     .filter { it in f.notificationSources }.joinToString(", ") { it.label },
                 label = { it.label },
                 onChange = { filters(f.copy(notificationSources = it)) },
-                faceWraps = true,
             )
         SearchDomain.Setting.HistoryChangedElementSetting ->
             ChangedElementField(state, f.historyChangedKinds, f.historyChangedElement, windows) {
@@ -894,7 +890,6 @@ private fun ElementsDropDown(
         label = ::nameOf,
         onChange = onChange,
         onNearEnd = { if (shown < elements.size) shown += ELEMENTS_LISTED_AT_ONCE },
-        faceWraps = true,
     )
 }
 

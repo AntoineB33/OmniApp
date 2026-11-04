@@ -1484,8 +1484,6 @@ private fun AddedElementsList(
                             text = row.name,
                             style = MaterialTheme.typography.bodyMedium,
                             color = logEntryColor(row.kind) ?: Color.Unspecified,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )
                         Text(
@@ -1496,8 +1494,6 @@ private fun AddedElementsList(
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = logEntryColor(row.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
                         Text(
@@ -1617,8 +1613,6 @@ private fun KindSection(kind: SearchDomain.Kind, width: Dp = KIND_SECTION_WIDTH)
         text = kind.label,
         style = MaterialTheme.typography.labelSmall,
         color = logEntryColor(kind) ?: onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
         modifier = Modifier.width(width),
     )
 }
@@ -1680,8 +1674,6 @@ internal fun KindsDropDown(
     onDeployed: () -> Unit = {},
     /** The kinds listed; the checks of the others stay as they are. */
     options: List<SearchDomain.Kind> = SearchDomain.Kind.entries,
-    /** The face wraps instead of being cut by "…" ([CheckBoxDropDown]'s `faceWraps`). */
-    faceWraps: Boolean = false,
 ) {
     CheckBoxDropDown(
         options = options,
@@ -1692,7 +1684,6 @@ internal fun KindsDropDown(
         modifier = modifier,
         deploy = deploy,
         onDeployed = onDeployed,
-        faceWraps = faceWraps,
     )
 }
 
@@ -1722,11 +1713,6 @@ internal fun <T> CheckBoxDropDown(
      * more must show as the user scrolls down in it"*. Null: the list is whole.
      */
     onNearEnd: (() -> Unit)? = null,
-    /**
-     * User rule 2026-11-04: the face wraps instead of being cut by "…" — in the Search configurations window. The
-     * Search window's own header keeps it one line, one task cell tall (`popups.md`).
-     */
-    faceWraps: Boolean = false,
 ) {
     var open by remember { mutableStateOf(false) }
     val range = rememberCheckRange<T>()
@@ -1751,8 +1737,6 @@ internal fun <T> CheckBoxDropDown(
         Text(
             text = "$face  ▾",
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = if (faceWraps) Int.MAX_VALUE else 1,
-            overflow = if (faceWraps) TextOverflow.Clip else TextOverflow.Ellipsis,
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
@@ -1900,8 +1884,6 @@ internal fun <T> ChoiceDropDown(
                 text = (selected?.let(label) ?: placeholder) + "  ▾",
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (usable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
         transientMenuDismissal(open) { open = false }
@@ -2367,8 +2349,6 @@ private fun TaskPathBox(
             style = MaterialTheme.typography.labelMedium,
             fontStyle = if (result.shownPath.isEmpty()) FontStyle.Italic else FontStyle.Normal,
             color = onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
         if (result.hasSeveralPaths && listsPaths) {
@@ -2618,16 +2598,12 @@ private fun ItemResultRow(
                 text = searchHighlighted(item.name, query),
                 style = MaterialTheme.typography.bodyMedium,
                 color = logEntryColor(item.kind) ?: Color.Unspecified,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
             Text(
                 text = searchHighlighted(withCategories(item.detail, categories), query),
                 style = MaterialTheme.typography.labelSmall,
                 color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
         transientMenuDismissal(menuOpen) { menuOpen = false }
@@ -2718,7 +2694,7 @@ private fun ElementChildren(
             ) {
                 KindSection(row.kind, kindWidth)
                 SectionArrow(rowKey !in expanded) { onToggle(rowKey) }
-                Text(row.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text(row.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 if (ElementTree.canUnlink(state, parent, key)) {
                     Text(
                         text = "✕",

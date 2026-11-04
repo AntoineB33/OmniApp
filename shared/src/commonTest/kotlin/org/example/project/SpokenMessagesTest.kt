@@ -52,16 +52,4 @@ class SpokenMessagesTest {
         assertEquals("Time's up: Tea", SpokenMessages.ring(RingKind.Timer, "Tea"))
         assertEquals("Reminder: Water the plants", SpokenMessages.ring(RingKind.Reminder, "Water the plants"))
     }
-
-    @Test
-    fun a_long_path_loses_its_start_first() {
-        val path = listOf("Life", "Work", "Clients", "Acme corporation", "Quarterly report")
-        assertEquals("Life / Work", SearchDomain.shortenedPathLabel(listOf("Life", "Work"), 48))
-        val short = SearchDomain.shortenedPathLabel(path, 40)
-        assertEquals("… / Clients / Acme corporation / Quarterly report", SearchDomain.shortenedPathLabel(path, 50))
-        assertTrue(short.length <= 40, short)
-        assertTrue(short.startsWith("… / ") && short.endsWith("Quarterly report"), short)
-        // A last segment too long on its own keeps its end.
-        assertEquals("…report", SearchDomain.shortenedPathLabel(listOf("A", "Quarterly report"), 7))
-    }
 }
