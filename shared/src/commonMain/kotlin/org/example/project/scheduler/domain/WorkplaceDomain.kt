@@ -18,7 +18,15 @@ enum class WorkplaceApp(val label: String, val tabbed: Boolean = false) {
  * One window of a workplace setup, on the paths the user typed in [tabs]: a file explorer with a tab on each, or (user rule
  * 2026-11-02) VS Code or Claude Code in a cmd window on the one folder.
  */
-data class WorkplaceWindow(val tabs: List<String> = listOf(""), val app: WorkplaceApp = WorkplaceApp.FileExplorer)
+data class WorkplaceWindow(
+    val tabs: List<String> = listOf(""),
+    val app: WorkplaceApp = WorkplaceApp.FileExplorer,
+    /**
+     * User rule 2026-11-04: a file explorer window the setup OPENS is maximized, unless turned off; one it only adds tabs
+     * to, already on the screen, is left as it is.
+     */
+    val maximized: Boolean = true,
+)
 
 /**
  * User rule 2026-11-01: **a workplace setup**: windows of the operating system [os] to open at one press, *"to quickly
@@ -39,7 +47,13 @@ data class OpenExplorerWindow(val handle: Long, val paths: List<String>)
  * What is left to do for one window of a setup: [paths] opened as tabs of the window [handle], of a new one where null; or,
  * [app] being another's, the one folder opened.
  */
-data class WorkplaceStep(val handle: Long?, val paths: List<String>, val app: WorkplaceApp = WorkplaceApp.FileExplorer)
+data class WorkplaceStep(
+    val handle: Long?,
+    val paths: List<String>,
+    val app: WorkplaceApp = WorkplaceApp.FileExplorer,
+    /** The new file explorer window ([handle] null) is maximized once open. */
+    val maximized: Boolean = false,
+)
 
 object WorkplaceDomain {
     /** A new id, none of [used]. */
@@ -143,7 +157,7 @@ object WorkplaceDomain {
             target?.let(free::remove)
             when {
                 whole != null -> emptyList()
-                target == null -> listOf(WorkplaceStep(null, required))
+                target == null -> listOf(WorkplaceStep(null, required, maximized = window.maximized))
                 else -> {
                     val theirs = target.paths.mapTo(HashSet(), ::samePath)
                     listOf(WorkplaceStep(target.handle, required.filter { samePath(it) !in theirs }))
@@ -176,7 +190,8 @@ object WorkplaceDomain {
                 } else if (step.app == WorkplaceApp.ClaudeCode) {
                     append("Open-ClaudeCode ").append(powerShellQuoted(first)).append("\n")
                 } else if (step.handle == null) {
-                    append("Open-ExplorerWindow ").append(powerShellQuoted(first)).append(" @(").append(typed(step.paths.drop(1))).append(")\n")
+                    append("Open-ExplorerWindow ").append(powerShellQuoted(first)).append(" @(").append(typed(step.paths.drop(1))).append(")")
+                        .append(if (step.maximized) " \$true" else " \$false").append("\n")
                 } else {
                     append("Add-ExplorerTabs ").append(step.handle).append(" @(").append(typed(step.paths)).append(")\n")
                 }
@@ -236,7 +251,7 @@ object WorkplaceDomain {
         |    [System.Windows.Forms.SendKeys]::SendWait(${'$'}keys)
         |    Start-Sleep -Milliseconds ${'$'}wait
         |}
-        |function Open-ExplorerWindow([string]${'$'}first, [string[]]${'$'}others) {
+        |function Open-ExplorerWindow([string]${'$'}first, [string[]]${'$'}others, [bool]${'$'}maximize) {
         |    ${'$'}before = @(Get-ExplorerWindows)
         |    Start-Process explorer.exe -ArgumentList ('"' + ${'$'}first + '"')
         |    ${'$'}window = ${'$'}null
@@ -245,6 +260,10 @@ object WorkplaceDomain {
         |        ${'$'}window = Get-ExplorerWindows | Where-Object { ${'$'}before -notcontains ${'$'}_ } | Select-Object -First 1
         |    }
         |    if (-not ${'$'}window) { throw 'No new file explorer window opened.' }
+        |    if (${'$'}maximize) {
+        |        [void][OmniForeground]::ShowWindow([IntPtr]${'$'}window, 3)
+        |        Start-Sleep -Milliseconds 200
+        |    }
         |    Add-Tabs ${'$'}window ${'$'}others
         |}
         |function Add-ExplorerTabs([long]${'$'}window, [string[]]${'$'}paths) {

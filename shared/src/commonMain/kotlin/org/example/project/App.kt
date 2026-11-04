@@ -4168,6 +4168,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         CompositionLocalProvider(
             // What "Now" beside every time field reads ([org.example.project.ui.InstantButtons]): the app's clock.
             org.example.project.ui.LocalAppNowMillis provides appNowMillis,
+            org.example.project.ui.LocalWorkplaceRuns provides workplaceRuns,
             LocalTaskIdentityRow provides taskIdentityRow,
             LocalPeriodRefusal provides periodRefusal,
             org.example.project.ui.LocalPeriodAtLine provides periodAtLine,

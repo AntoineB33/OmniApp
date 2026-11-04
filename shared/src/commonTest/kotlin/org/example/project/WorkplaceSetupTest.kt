@@ -162,13 +162,53 @@ class WorkplaceSetupTest {
 
     @Test
     fun a_new_window_opens_where_none_holds_any() {
-        assertEquals(listOf(WorkplaceStep(null, listOf("C:\\a", "C:\\b"))), WorkplaceDomain.plan(required, listOf(window(1, "D:\\other"))))
+        assertEquals(listOf(WorkplaceStep(null, listOf("C:\\a", "C:\\b"), maximized = true)), WorkplaceDomain.plan(required, listOf(window(1, "D:\\other"))))
+    }
+
+    /**
+     * User rule 2026-11-04: *"If the workplace setup element creates a new file manager window, can I configure the window
+     * to be maximized except if it adds a tab on a window that already existed? It must be on by default."*
+     */
+    @Test
+    fun a_new_file_explorer_window_is_maximized_unless_turned_off_and_an_open_one_is_left_as_it_is() {
+        assertTrue(WorkplaceWindow().maximized, "on by default")
+        val script = WorkplaceDomain.windows11Script(required)
+        assertTrue("\nOpen-ExplorerWindow 'C:\\a' @('C:\\b') \$true\n" in script, script)
+        val open = script.substringAfter("function Open-ExplorerWindow").substringBefore("function Add-ExplorerTabs")
+        assertTrue(open.indexOf("ShowWindow([IntPtr]\$window, 3)") in 0 until open.indexOf("Add-Tabs"), "maximized before its tabs are made")
+        val off = required.copy(windows = listOf(required.windows.single().copy(maximized = false)))
+        assertEquals(listOf(WorkplaceStep(null, listOf("C:\\a", "C:\\b"), maximized = false)), WorkplaceDomain.plan(off, emptyList()))
+        assertTrue("\nOpen-ExplorerWindow 'C:\\a' @('C:\\b') \$false\n" in WorkplaceDomain.windows11Script(off))
+        // Tabs added to a window already open: not maximized, whatever the setting.
+        assertEquals(listOf(WorkplaceStep(7, listOf("C:\\b"))), WorkplaceDomain.plan(required, listOf(window(7, "C:\\a"))))
+        assertFalse("ShowWindow([IntPtr]\$window, 3)" in script.substringAfter("function Add-ExplorerTabs").substringBefore("function Open-VsCode"))
+    }
+
+    @Test
+    fun the_maximized_switch_survives_the_store_and_a_window_stored_before_it_is_maximized() {
+        val off = setup.copy(windows = listOf(setup.windows.single().copy(maximized = false)))
+        val written = SchedulerStateCodec.encode(SchedulerState.empty().copy(workplaceSetups = listOf(off)))
+        assertEquals(listOf(off), SchedulerStateCodec.decode(written)!!.workplaceSetups)
+        val on = SchedulerStateCodec.encode(SchedulerState.empty().copy(workplaceSetups = listOf(setup)))
+        assertFalse("maximized" in on, "on writes no field: the shape before it existed")
+        assertTrue(SchedulerStateCodec.decode(on)!!.workplaceSetups.single().windows.single().maximized)
+    }
+
+    /** User rule 2026-11-04: *"The workplace setup element must show 'running' if it is not done (just like the timer elements)."* */
+    @Test
+    fun a_setup_being_applied_says_running_on_its_row() {
+        val s = r(SchedulerState.empty(), SchedulerIntent.SetWorkplaceSetups(listOf(setup)))
+        val row = SearchDomain.itemResults(s, Kind.WorkplaceSetup, "").single()
+        assertEquals("Windows 11 · 1 window, 2 tabs · running", SearchDomain.shownDetail(row) { it == setup.id })
+        assertEquals("Windows 11 · 1 window, 2 tabs", SearchDomain.shownDetail(row) { false })
+        val other = SearchDomain.ItemResult(Kind.Timer, setup.id, "t", "5 min")
+        assertEquals("5 min", SearchDomain.shownDetail(other) { true }, "a timer says it from its own state")
     }
 
     @Test
     fun an_open_window_serves_one_window_of_the_setup() {
         val two = WorkplaceSetup("w", windows = listOf(WorkplaceWindow(listOf("C:\\a")), WorkplaceWindow(listOf("C:\\a", "C:\\b"))))
-        assertEquals(listOf(WorkplaceStep(null, listOf("C:\\a", "C:\\b"))), WorkplaceDomain.plan(two, listOf(window(1, "C:\\a"))))
+        assertEquals(listOf(WorkplaceStep(null, listOf("C:\\a", "C:\\b"), maximized = true)), WorkplaceDomain.plan(two, listOf(window(1, "C:\\a"))))
     }
 
     @Test
@@ -218,7 +258,7 @@ class WorkplaceSetupTest {
     fun both_kinds_of_window_stand_in_one_setup() {
         val both = code.copy(windows = setup.windows + code.windows + WorkplaceWindow(listOf(" "), WorkplaceApp.VsCode))
         assertEquals(
-            listOf(WorkplaceStep(null, listOf("C:\\code", "D:\\docs (old)")), WorkplaceStep(null, listOf("C:\\it's"), WorkplaceApp.VsCode)),
+            listOf(WorkplaceStep(null, listOf("C:\\code", "D:\\docs (old)"), maximized = true), WorkplaceStep(null, listOf("C:\\it's"), WorkplaceApp.VsCode)),
             WorkplaceDomain.plan(both, emptyList()),
         )
         assertEquals("Windows 11 · 1 window, 2 tabs, 1 VS Code window", WorkplaceDomain.detail(both))

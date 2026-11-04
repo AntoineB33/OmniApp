@@ -1429,6 +1429,7 @@ private fun AddedElementsList(
                     var menuOpen by remember(key) { mutableStateOf(false) }
                     val currentOnOpen by rememberUpdatedState(onOpen)
                     val currentRow by rememberUpdatedState(row)
+                    val workplaceRuns = LocalWorkplaceRuns.current
                     Box(Modifier.outsidePressPart(selectedRows)) {
                     Row(
                         modifier = resultRowModifier(
@@ -1490,7 +1491,8 @@ private fun AddedElementsList(
                             text = when (row) {
                                 is SearchDomain.TaskResult ->
                                     if (row.shownPath.isEmpty()) "no path" else SearchDomain.pathLabel(row.shownPath)
-                                is SearchDomain.ItemResult -> withCategories(row.detail, elementCategories[key].orEmpty())
+                                is SearchDomain.ItemResult ->
+                                    withCategories(SearchDomain.shownDetail(row) { workplaceRuns?.isRunning(it) == true }, elementCategories[key].orEmpty())
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = logEntryColor(row.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2569,6 +2571,7 @@ private fun ItemResultRow(
     onAddReplacing: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val workplaceRuns = LocalWorkplaceRuns.current
     // The gestures are keyed by the row and started once: they call the handlers of the LATEST composition.
     val currentOnSelect by rememberUpdatedState(onSelect)
     val currentOnSecondarySelect by rememberUpdatedState(onSecondarySelect)
@@ -2601,7 +2604,7 @@ private fun ItemResultRow(
                 modifier = Modifier.weight(1f, fill = false),
             )
             Text(
-                text = searchHighlighted(withCategories(item.detail, categories), query),
+                text = searchHighlighted(withCategories(SearchDomain.shownDetail(item) { workplaceRuns?.isRunning(it) == true }, categories), query),
                 style = MaterialTheme.typography.labelSmall,
                 color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -2396,6 +2396,8 @@ private data class PersistedWorkplaceWindow(
     val tabs: List<String> = emptyList(),
     // User rule 2026-11-02, by name: absent before VS Code windows existed, and one a later build added reads as a file explorer.
     val app: String? = null,
+    // User rule 2026-11-04: written only when turned off; absent (every older payload) is maximized.
+    val maximized: Boolean? = null,
 )
 
 /** User rule 2026-11-01: one workplace setup. Its OS by name: one a later build added reads as the first this one knows. */
@@ -2408,7 +2410,7 @@ private data class PersistedWorkplaceSetup(
 )
 
 private fun org.example.project.scheduler.domain.WorkplaceSetup.toPersisted(): PersistedWorkplaceSetup =
-    PersistedWorkplaceSetup(id, title, os.name, windows.map { PersistedWorkplaceWindow(it.tabs, it.app.name) })
+    PersistedWorkplaceSetup(id, title, os.name, windows.map { PersistedWorkplaceWindow(it.tabs, it.app.name, if (it.maximized) null else false) })
 
 private fun PersistedWorkplaceSetup.toWorkplaceSetup(): org.example.project.scheduler.domain.WorkplaceSetup =
     org.example.project.scheduler.domain.WorkplaceSetup(
@@ -2420,6 +2422,7 @@ private fun PersistedWorkplaceSetup.toWorkplaceSetup(): org.example.project.sche
                 window.tabs,
                 org.example.project.scheduler.domain.WorkplaceApp.entries.firstOrNull { it.name == window.app }
                     ?: org.example.project.scheduler.domain.WorkplaceApp.FileExplorer,
+                maximized = window.maximized ?: true,
             )
         },
     )

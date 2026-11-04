@@ -2246,6 +2246,13 @@ object SearchDomain {
         val detail: String,
     ) : Result
 
+    /**
+     * User rule 2026-11-04: **a row's detail as drawn**: a workplace setup still being applied says "running", as a timer
+     * does. Its run lives in memory (`WorkplaceRuns`), never in the state, so it is added where the row is drawn.
+     */
+    fun shownDetail(item: ItemResult, workplaceRunning: (String) -> Boolean): String =
+        if (item.kind == Kind.WorkplaceSetup && workplaceRunning(item.id)) item.detail + " · running" else item.detail
+
     fun itemResults(
         state: SchedulerState,
         kind: Kind,

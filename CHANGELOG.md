@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A workplace setup says "running"; a new file explorer window opens maximized — 2026-11-04
+
+User rules: a workplace setup's row says "running" while it is being applied, as a timer's does (`SearchDomain.shownDetail`, over the in-memory `WorkplaceRuns` through `LocalWorkplaceRuns`: a run is never state). Each file explorer window of a setup has a "Maximized when opened" switch, on by default (`WorkplaceWindow.maximized`, persisted only when off, absent = on): a window the setup opens is maximized before its tabs are made; tabs added to a window already open leave it as it is. `WorkplaceSetupTest`. Client rebuild only.
+
 ### What the usage panel cannot read, it links to — 2026-11-04
 
 User rule: usage the app cannot give, it says where to see. Supabase's Management API was checked (its OpenAPI description, 2026-11-04): no egress, Realtime messages or Edge Function invocations over the billing period — only request counts by kind over a week at most — so the planned Edge Function would not have given them and was not built. The Settings page's usage panel names them and links, above Refresh, to the dashboard's Usage page (`ServerBudget.SUPABASE_USAGE_PAGE`, the address Supabase's docs use). Client rebuild only.

@@ -1,6 +1,7 @@
 package org.example.project.ui
 
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.staticCompositionLocalOf
 import org.example.project.scheduler.domain.WorkplaceDomain
 import org.example.project.scheduler.domain.WorkplaceOs
 import org.example.project.scheduler.domain.WorkplaceSetup
@@ -53,3 +54,6 @@ class WorkplaceRuns(
         step(0)
     }
 }
+
+/** The app's [WorkplaceRuns], for the rows that say a setup is running ([org.example.project.scheduler.domain.SearchDomain.shownDetail]); none in a preview. */
+val LocalWorkplaceRuns = staticCompositionLocalOf<WorkplaceRuns?> { null }

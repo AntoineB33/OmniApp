@@ -2440,6 +2440,18 @@ private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDoma
                         Text(window.app.label + " " + (windowAt + 1), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                         FrameButton("Remove window") { write(setup.id, setup.windows.filterIndexed { i, _ -> i != windowAt }) }
                     }
+                    // User rule 2026-11-04: a file explorer window the setup opens is maximized, unless turned off here.
+                    if (window.app.tabbed) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            androidx.compose.material3.Switch(
+                                checked = window.maximized,
+                                onCheckedChange = { on ->
+                                    write(setup.id, setup.windows.mapIndexed { i, w -> if (i == windowAt) w.copy(maximized = on) else w })
+                                },
+                            )
+                            NoteText("Maximized when opened (not when its tabs are added to a window already open)", color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
                     window.tabs.forEachIndexed { tabAt, path ->
                         fun replaced(tabs: List<String>) =
                             setup.windows.mapIndexed { i, w -> if (i == windowAt) w.copy(tabs = tabs) else w }
