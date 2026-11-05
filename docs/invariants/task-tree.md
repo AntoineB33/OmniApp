@@ -35,6 +35,8 @@ second copy of it on a kind of element.
   Derived, never a link: never stored, never synced, no ✕.
 - **A child row is selected as a row is** (anomaly 2026-11-05, `ElementChildSelection`): `ClickSelection`'s rule, Shift over
   its siblings, its menu's "add" on the selected children; selecting one takes the result list's selection away.
+  The result list's ↑ and ↓ walk the rows as drawn, children included (`shownRowOrder`, over `elementChildRows`, what
+  `ElementChildren` draws: one reading).
 
 ### The task-tree timeline
 

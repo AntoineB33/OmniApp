@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### ↑ and ↓ walk the children under an open element — 2026-11-05
+
+Anomaly: the arrows walked the results alone, and a click on a child gave the list no keyboard. In the result list they now walk the rows as drawn (`shownRowOrder`: each result, then the children of an open element, depth first, read by `elementChildRows`, which `ElementChildren` draws from too), the list scrolling to a child as it does to a row; Enter opens the selected child. A click on a child of the result list gives the list the keyboard. `ElementChildSelectionTest`. Client rebuild only.
+
 ### The children under an element's arrow are selectable — 2026-11-05
 
 Anomaly: the rows under an element's arrow took no click. They are selected as the rows are (`ElementChildSelection`, `ClickSelection`'s rule: a click one, Ctrl one more, across parents too, Shift the range among its siblings, a right-click keeping a selection it lands in), on both surfaces; their menu's "add" and "add and remove the others" add the selected children's elements. Selecting a child takes the result list's selection away; a press anywhere else leaves none. Compose-only. `ElementChildSelectionTest`. Client rebuild only.

@@ -30,6 +30,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -705,9 +706,15 @@ fun SearchWindow(
      */
     fun addSelected(replacing: Boolean = false) = addKeys(latestSelectedShown, replacing)
     // A child selected: the result list's rows are not any more (the added list's leave on the press outside them).
-    childSelection.onTake = {
+    childSelection.onTake = { rowKey ->
         deselected = true
         multiSelection = null
+        // A child of the result list holds the list's keyboard, as a row does: the arrows go on from it.
+        if (rowKey.startsWith(RESULT_SURFACE)) {
+            subtreeFocusOwner = null
+            selectionSurface = null
+            runCatching { listFocus.requestFocus() }
+        }
     }
     childSelection.onAdd = { keys, replacing -> addKeys(keys, replacing) }
     /**
@@ -1065,13 +1072,20 @@ fun SearchWindow(
                                 }
                                 val ctrl = event.isCtrlPressed || event.isMetaPressed
                                 when {
-                                    event.key == Key.DirectionDown -> {
-                                        if (count > 0) select((selected + 1).coerceAtMost(count - 1))
-                                        true
-                                    }
-                                    event.key == Key.DirectionUp -> {
-                                        if (selected == 0) runCatching { fieldFocus.requestFocus() }
-                                        else select(selected - 1)
+                                    // The rows as drawn, the open elements' children included ([shownRowOrder]).
+                                    event.key == Key.DirectionDown || event.key == Key.DirectionUp -> {
+                                        if (count == 0) return@onPreviewKeyEvent true
+                                        val order = shownRowOrder(state, results, expandedElements, windows, schedulerRuns, claudeLogs)
+                                        val at = childSelection.main?.let { main -> order.indexOfFirst { it.child?.rowKey == main } }?.takeIf { it >= 0 }
+                                            ?: order.indexOfFirst { it.child == null && it.index == selected }
+                                        val next = at + if (event.key == Key.DirectionDown) 1 else -1
+                                        val target = order.getOrNull(next)
+                                        when {
+                                            next < 0 -> runCatching { fieldFocus.requestFocus() }
+                                            target == null -> Unit
+                                            target.child != null -> childSelection.selectOnly(target.child.rowKey, target.child.key)
+                                            else -> select(target.index)
+                                        }
                                         true
                                     }
                                     // User rule 2026-11-03: Ctrl+A selects every row, which the menu's "add" then adds.
@@ -1083,7 +1097,11 @@ fun SearchWindow(
                                         true
                                     }
                                     event.key == Key.Enter || event.key == Key.NumPadEnter -> {
-                                        openSelected()
+                                        val child = childSelection.main?.let { main ->
+                                            shownRowOrder(state, results, expandedElements, windows, schedulerRuns, claudeLogs)
+                                                .firstOrNull { it.child?.rowKey == main }?.child
+                                        }
+                                        if (child != null) openers.open(state, child.row) else openSelected()
                                         true
                                     }
                                     ctrl && event.key == Key.C && current is SearchDomain.TaskResult -> {
@@ -2702,24 +2720,27 @@ private fun ElementChildren(
     kindWidth: Dp,
     selection: ElementChildSelection,
 ) {
-    val keys = ElementTree.childrenOf(state, parent, claudeLogs).filterNot { it in path }
-    val rows = SearchDomain.resolve(state, keys, { emptyMap() }, windows, schedulerRuns, claudeLogs)
+    val children = elementChildRows(state, parent, surface, path, windows, schedulerRuns, claudeLogs)
     val indent = Modifier.padding(start = ELEMENT_CHILD_INDENT * depth)
-    fun rowKeyOf(key: String) = surface + path.joinToString(">") + ">" + key
     // A Shift+click's range runs over these siblings.
-    val siblings by rememberUpdatedState(rows.map { rowKeyOf(resultKey(it)) })
-    for (row in rows) {
-        val key = resultKey(row)
+    val siblings by rememberUpdatedState(children.map { it.rowKey })
+    for (child in children) {
+        val row = child.row
+        val key = child.key
         androidx.compose.runtime.key(key) {
-            val rowKey = rowKeyOf(key)
+            val rowKey = child.rowKey
             selection.elements[rowKey] = key
             val currentRow by rememberUpdatedState(row)
             var menuOpen by remember { mutableStateOf(false) }
-            Box(Modifier.outsidePressPart(selection.editor)) {
+            // Moved onto by the arrows: the list scrolls just enough to show it, as it does for a row.
+            val isMain = rowKey == selection.main
+            val bringIntoView = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+            LaunchedEffect(isMain) { if (isMain) runCatching { bringIntoView.bringIntoView() } }
+            Box(Modifier.outsidePressPart(selection.editor).bringIntoViewRequester(bringIntoView)) {
             Row(
                 modifier = resultRowModifier(
-                    selected = rowKey in selection.selected && rowKey == selection.main,
-                    inSelection = rowKey in selection.selected && rowKey != selection.main,
+                    selected = rowKey in selection.selected && isMain,
+                    inSelection = rowKey in selection.selected && !isMain,
                 )
                     .then(indent)
                     .recordPressModifiers(selection.pressModifiers)
@@ -2766,7 +2787,7 @@ private fun ElementChildren(
             }
             }
             if (rowKey in expanded) {
-                ElementChildren(key, rowKey + ">", depth + 1, path + key, state, windows, schedulerRuns, claudeLogs, expanded, onToggle, openers, onIntent, kindWidth, selection)
+                ElementChildren(key, childSurface(rowKey), depth + 1, path + key, state, windows, schedulerRuns, claudeLogs, expanded, onToggle, openers, onIntent, kindWidth, selection)
             }
         }
     }
@@ -2777,6 +2798,60 @@ private fun ElementChildren(
         modifier = resultRowModifier(selected = false)
             .resultRowGestures(surface + parent + "/blank", onSelect = {}, onSecondarySelect = {}, onOpen = { openers.onOpenChildSearch(parent) }, onOpenMenu = {}),
     )
+}
+
+/** One row under an element's arrow: where it is drawn ([rowKey]: surface and path), the element, its row. */
+internal class ElementChildRow(val rowKey: String, val key: String, val row: SearchDomain.Result)
+
+/** The surface the children of the child row [rowKey] are drawn on: open rows are told apart by it. */
+private fun childSurface(rowKey: String): String = "$rowKey>"
+
+/**
+ * **The children drawn under [parent]** ([ElementTree.childrenOf], [path] — the elements above — cut out, a loop two
+ * devices made), the one reading of them: what [ElementChildren] draws and what the arrows walk ([shownRowOrder]).
+ */
+internal fun elementChildRows(
+    state: SchedulerState,
+    parent: String,
+    surface: String,
+    path: Set<String>,
+    windows: List<SearchDomain.WindowEntry>,
+    schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry>,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+): List<ElementChildRow> {
+    val keys = ElementTree.childrenOf(state, parent, claudeLogs).filterNot { it in path }
+    if (keys.isEmpty()) return emptyList()
+    return SearchDomain.resolve(state, keys, { emptyMap() }, windows, schedulerRuns, claudeLogs).map { row ->
+        val key = resultKey(row)
+        ElementChildRow(surface + path.joinToString(">") + ">" + key, key, row)
+    }
+}
+
+/** A row of the result list as drawn: a result ([index]), or a child under an open element ([child]). */
+internal data class ShownRow(val index: Int, val child: ElementChildRow? = null)
+
+/**
+ * Anomaly 2026-11-05 (*"the up and down arrow don't work"* on the children): **the result list's rows as drawn, top to
+ * bottom** — each result, then, under an open element, its children and theirs, depth first. What ↑ and ↓ walk.
+ */
+internal fun shownRowOrder(
+    state: SchedulerState,
+    results: List<SearchDomain.Result>,
+    expanded: Set<String>,
+    windows: List<SearchDomain.WindowEntry> = emptyList(),
+    schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
+): List<ShownRow> {
+    fun under(parent: String, surface: String, path: Set<String>, index: Int): List<ShownRow> =
+        elementChildRows(state, parent, surface, path, windows, schedulerRuns, claudeLogs).flatMap { child ->
+            listOf(ShownRow(index, child)) +
+                if (child.rowKey in expanded) under(child.key, childSurface(child.rowKey), path + child.key, index) else emptyList()
+        }
+    return results.flatMapIndexed { index, result ->
+        val key = resultKey(result)
+        val open = result is SearchDomain.ItemResult && RESULT_SURFACE + key in expanded
+        listOf(ShownRow(index)) + if (open) under(key, RESULT_SURFACE, setOf(key), index) else emptyList()
+    }
 }
 
 /**
@@ -2797,7 +2872,7 @@ internal class ElementChildSelection {
     val elements: HashMap<String, String> = HashMap()
     val pressModifiers = PressModifiers()
     var editor: OutsidePressEditor = OutsidePressEditor()
-    var onTake: () -> Unit = {}
+    var onTake: (rowKey: String) -> Unit = {}
     var onAdd: (keys: List<String>, replacing: Boolean) -> Unit = { _, _ -> }
 
     fun click(siblings: List<String>, rowKey: String) {
@@ -2805,7 +2880,16 @@ internal class ElementChildSelection {
         selected = next.selected
         anchor = next.anchor
         main = rowKey
-        onTake()
+        onTake(rowKey)
+    }
+
+    /** [rowKey] selected alone, as an arrow moves onto it. */
+    fun selectOnly(rowKey: String, element: String) {
+        elements[rowKey] = element
+        selected = setOf(rowKey)
+        anchor = rowKey
+        main = rowKey
+        onTake(rowKey)
     }
 
     fun secondaryClick(rowKey: String) {
@@ -2814,7 +2898,7 @@ internal class ElementChildSelection {
             anchor = rowKey
         }
         main = rowKey
-        onTake()
+        onTake(rowKey)
     }
 
     /** The selected children's elements, each once, into the window's added elements. */
