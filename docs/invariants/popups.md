@@ -768,7 +768,10 @@ It lives in the host because the host already sees the only two events that deci
   default sorting taken), never its added elements, its actions' bars and picks, or the window it was opened from.
   Anomaly 2026-11-04: compared whole and as written, the Task Scheduler page's Search button never found its window,
   which had sorted its tasks newest first on opening, and opened a new one at every press; a ☆ button's "Update" was
-  offered for the same reason. Both callers ask the one funnel. Otherwise a NEW window opens: the original when it is not open,
+  offered for the same reason. Both callers ask the one funnel. **A button that asks for added elements brings back
+  the window holding those same elements** (anomaly 2026-11-05, `SearchDomain.bringsBackSearch`): "Claude quota" and
+  "Gemini quota", one search with a quota added each, were one window, and "Gemini quota" brought back the other's. One
+  asking for none finds its window whatever was added to it since. Otherwise a NEW window opens: the original when it is not open,
   else a copy (`Search#2`) cascaded off it. So a Search window whose query was typed into is no longer "the"
   Search button's, and the button opens a fresh one. It is never drawn as "open" (no blue) — the window bar
   says what is open. The **task tree and the calendar** exist once (*Not duplicable*). A ☆ button of a

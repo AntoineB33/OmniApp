@@ -1430,6 +1430,19 @@ object SearchDomain {
     fun sameSearchConfigurations(a: String?, b: String?): Boolean =
         searchConfigurations(Config.decode(a) ?: Config()) == searchConfigurations(Config.decode(b) ?: Config())
 
+    /**
+     * **Whether the open Search window holding [window] is the one [asked] asks for** — what a window button brings back:
+     * the same search configurations ([sameSearchConfigurations]), and, where [asked] names added elements, those same
+     * elements. Anomaly 2026-11-05: "Claude quota" and "Gemini quota", the same search with one quota added each, were one
+     * window, so "Gemini quota" brought back the Claude quota's and seemed to do nothing. A window asked for with none
+     * (the Search button, "Search every element of the kind") is still found whatever was added to it since.
+     */
+    fun bringsBackSearch(window: String?, asked: String?): Boolean {
+        if (!sameSearchConfigurations(window, asked)) return false
+        val wanted = Config.decode(asked)?.added.orEmpty()
+        return wanted.isEmpty() || wanted.toSet() == Config.decode(window)?.added.orEmpty().toSet()
+    }
+
     /** [config] with its default sorting ([defaultSortsOf]) while it follows it; as it is otherwise. A window opened is read through it. */
     fun withDefaultSort(config: Config): Config {
         if (!config.sortFollowsDefault) return config

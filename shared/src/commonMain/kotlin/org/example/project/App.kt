@@ -2205,7 +2205,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
             val wanted = normalizedWindowConfig(kind, config)
             val open = listOfNotNull(kind.name.takeIf { isWindowOpen(kind) }) + windowCopies.filter { lateralWindowOf(it) == kind }
-            open.firstOrNull { sameWindowConfigurations(kind, windowConfigOf(it), wanted) }?.let { existing ->
+            // A Search window asked for with added elements is the one holding them (anomaly 2026-11-05, [SearchDomain.bringsBackSearch]).
+            val bringsBack: (String) -> Boolean =
+                if (kind == FloatingWindow.Search) { it -> SearchDomain.bringsBackSearch(windowConfigOf(it), wanted) }
+                else { it -> sameWindowConfigurations(kind, windowConfigOf(it), wanted) }
+            open.firstOrNull(bringsBack)?.let { existing ->
                 presentWindow(kind, existing)
                 return existing
             }

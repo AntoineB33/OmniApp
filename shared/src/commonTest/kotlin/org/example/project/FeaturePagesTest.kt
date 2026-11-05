@@ -6,6 +6,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.SearchDomain.Kind
+import org.example.project.ui.CustomMenuButton
 import org.example.project.ui.CustomMenuButtons
 import org.example.project.ui.MenuControl
 
@@ -71,6 +72,31 @@ class FeaturePagesTest {
      * window its search configurations. Anomaly: the Task Scheduler page's Search button opened a new window at every
      * press, its window having taken its default sorting (tasks newest first) on opening.
      */
+    /**
+     * Anomaly 2026-11-05 (account 3): "Gemini quota" did nothing on the Claude Code logs page. It and "Claude quota" are
+     * global ☆ buttons of one search (the quotas), one quota added each; "Claude quota"'s window was open, and the
+     * Gemini button brought it back. A button asking for added elements brings back the window holding them alone.
+     */
+    @Test
+    fun a_button_asking_for_added_elements_brings_back_the_window_holding_them() {
+        // The two buttons as account 3 keeps them: no page in their configuration (made before pages were said).
+        val claude = CustomMenuButton("g2", "Search#3", "Claude quota", config = """{"kinds":["Quota"],"added":["Quota/quota-0"]}""", global = true)
+        val gemini = CustomMenuButton("g1", "Search#3", "Gemini quota", config = """{"kinds":["Quota"],"added":["Quota/quota-1"]}""", global = true)
+        val logs = SearchDomain.CLAUDE_LOGS_PAGE
+        // The Claude quota's window, as it was opened on the logs page and stored.
+        val claudeWindow = SearchDomain.withDefaultSort(SearchDomain.Config.decode(CustomMenuButtons.globalSearchConfig(claude, logs))!!).encode()
+        assertTrue(SearchDomain.bringsBackSearch(claudeWindow, CustomMenuButtons.globalSearchConfig(claude, logs)))
+        assertFalse(SearchDomain.bringsBackSearch(claudeWindow, CustomMenuButtons.globalSearchConfig(gemini, logs)))
+        // Still one search: the configurations the Update compares are the same.
+        assertTrue(SearchDomain.sameSearchConfigurations(claudeWindow, CustomMenuButtons.globalSearchConfig(gemini, logs)))
+        // A window asked for with nothing added is found whatever was added to it since (the Search button's rule).
+        val plain = SearchDomain.pageDefaultConfig(logs)
+        assertTrue(SearchDomain.bringsBackSearch(SearchDomain.withDefaultSort(plain).copy(added = listOf("Quota/quota-0")).encode(), plain.encode()))
+        // The added elements in another order are the same elements.
+        val both = SearchDomain.Config(kinds = setOf(Kind.Quota), added = listOf("Quota/quota-0", "Quota/quota-1"))
+        assertTrue(SearchDomain.bringsBackSearch(both.copy(added = both.added.reversed()).encode(), both.encode()))
+    }
+
     @Test
     fun a_search_window_has_its_buttons_configurations_however_it_was_opened_and_used() {
         for (page in SearchDomain.FEATURE_PAGES) {

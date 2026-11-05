@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A window button asking for added elements brings back the window holding them — 2026-11-05
+
+Anomaly (account 3): "Gemini quota" did nothing on the Claude Code logs page. It and "Claude quota" are global ☆ buttons of one search, the quotas, with one quota added each; the window a button brings back was compared by its search configurations alone (2026-11-04, never its added elements), so with the Claude quota's window open, "Gemini quota" brought that one back. A button asking for added elements now brings back only the window holding those same elements, else opens its own (`SearchDomain.bringsBackSearch`, `App.openWindowOnItsPage`); one asking for none (the Search button) finds its window whatever was added since. The Update still compares search configurations. `FeaturePagesTest`. Client rebuild only.
+
 ### ↑ and ↓ walk the children under an open element — 2026-11-05
 
 Anomaly: the arrows walked the results alone, and a click on a child gave the list no keyboard. In the result list they now walk the rows as drawn (`shownRowOrder`: each result, then the children of an open element, depth first, read by `elementChildRows`, which `ElementChildren` draws from too), the list scrolling to a child as it does to a row; Enter opens the selected child. A click on a child of the result list gives the list the keyboard. `ElementChildSelectionTest`. Client rebuild only.
