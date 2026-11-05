@@ -1404,7 +1404,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 kept.splits[0], kept.splits[1],
                                 kept.hidden.getOrNull(0) ?: false, kept.hidden.getOrNull(1) ?: false, kept.hidden.getOrNull(2) ?: false,
                                 expandedResults = kept.expanded.toSet(), expandedAdded = kept.expandedAdded.toSet(),
-                                expandedElements = kept.expandedElements.toSet(),
+                                expandedElements = kept.expandedElements.toSet(), scrolls = kept.scrolls,
                             )
                     }
                 }
@@ -1416,7 +1416,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     searchSplits.mapValues { (_, s) ->
                         org.example.project.ui.WindowSections(
                             listOf(s.left, s.topRight), listOf(s.searchHidden, s.actionsHidden, s.addedHidden),
-                            s.expandedResults.sorted(), s.expandedAdded.sorted(), s.expandedElements.sorted(),
+                            s.expandedResults.sorted(), s.expandedAdded.sorted(), s.expandedElements.sorted(), s.scrolls,
                         )
                     }
                 val calendar =
@@ -2133,6 +2133,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun sameWindowConfigurations(kind: FloatingWindow, a: String?, b: String?): Boolean =
             if (kind == FloatingWindow.Search) SearchDomain.sameSearchConfigurations(a, b)
             else normalizedWindowConfig(kind, a) == normalizedWindowConfig(kind, b)
+        // User rule 2026-11-05: **whether a window's configuration is ALL that [b] holds** — for a Search window its whole
+        // state ([SearchDomain.sameSearchWindowState]: its added elements by id, its actions'), for the others the
+        // configuration as the window holds it. What "Update" is offered on, and what a "match the whole state" button
+        // brings back by ([CustomMenuButtons.isSameWindow]).
+        fun sameWindowState(kind: FloatingWindow, a: String?, b: String?): Boolean =
+            if (kind == FloatingWindow.Search) SearchDomain.sameSearchWindowState(a, b)
+            else normalizedWindowConfig(kind, a) == normalizedWindowConfig(kind, b)
         // Bring the open window [id] of [kind] back: out of the window bar, to the front, into the focus.
         // User rule 2026-10-07: **the state a menu button keeps of its window** — where the window stands and the
         // lines between its sections ([org.example.project.ui.WindowLayout]); its configuration is [windowConfigOf].
@@ -2148,7 +2155,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     FloatingWindow.TaskTree -> listOfNotNull(taskTreeConfigurationWidth) to taskTreeSectionsHidden.orEmpty()
                     else -> emptyList<Float>() to emptyList()
                 }
-            return org.example.project.ui.WindowLayout(frame.offset.x, frame.offset.y, frame.size.width, frame.size.height, splits, hidden)
+            val scrolls = if (lateralWindowOf(frameId) == FloatingWindow.Search) search.scrolls else emptyList()
+            return org.example.project.ui.WindowLayout(frame.offset.x, frame.offset.y, frame.size.width, frame.size.height, splits, hidden, scrolls)
         }
         // The window a button is about: the one it opened or brought back this session, else — a window that came back
         // at a restart — the open one of its kind that still carries the button's name on its tab
@@ -2172,8 +2180,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             return CustomMenuButtons.needsUpdate(
                 button,
                 savedConfig = kind?.let { normalizedWindowConfig(it, button.config) },
-                // The same configurations are no change ([sameWindowConfigurations]), however differently written.
-                config = if (kind != null && sameWindowConfigurations(kind, current, button.config)) normalizedWindowConfig(kind, button.config) else current,
+                // The same state is no change ([sameWindowState]), however differently written; its added elements,
+                // its actions' state, are (user rule 2026-11-05: whether or not the button matches the whole state).
+                config = if (kind != null && sameWindowState(kind, current, button.config)) normalizedWindowConfig(kind, button.config) else current,
                 layout = windowLayoutOf(frameId),
                 opened = menuButtonOpenedLayouts[button.id],
             )
@@ -2196,7 +2205,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Returns the frame id of the window it opened or brought back.
         // [atBack]: the app opens it at the back, under the other windows and not focused (user rule 2026-10-18,
         // [WindowFrameHost.openAtBack]) — the notifications pair.
-        fun openWindowOnItsPage(kind: FloatingWindow, config: String? = null, asCopy: Boolean = false, atBack: Boolean = false): String {
+        // [matches]: which open window of [kind] is the one asked for — by default the same configurations
+        // ([sameWindowConfigurations]); a "match the whole state" button's, its whole state ([CustomMenuButtons.isSameWindow]).
+        fun openWindowOnItsPage(
+            kind: FloatingWindow,
+            config: String? = null,
+            asCopy: Boolean = false,
+            atBack: Boolean = false,
+            matches: ((String) -> Boolean)? = null,
+        ): String {
             if (kind == FloatingWindow.TaskTree || kind == FloatingWindow.TimeSim || (kind == FloatingWindow.Calendar && config == null)) {
                 if (!isWindowOpen(kind)) setWindowOpen(kind, true)
                 focusWindow(kind)
@@ -2205,11 +2222,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
             val wanted = normalizedWindowConfig(kind, config)
             val open = listOfNotNull(kind.name.takeIf { isWindowOpen(kind) }) + windowCopies.filter { lateralWindowOf(it) == kind }
-            // A Search window asked for with added elements is the one holding them (anomaly 2026-11-05, [SearchDomain.bringsBackSearch]).
-            val bringsBack: (String) -> Boolean =
-                if (kind == FloatingWindow.Search) { it -> SearchDomain.bringsBackSearch(windowConfigOf(it), wanted) }
-                else { it -> sameWindowConfigurations(kind, windowConfigOf(it), wanted) }
-            open.firstOrNull(bringsBack)?.let { existing ->
+            open.firstOrNull(matches ?: { sameWindowConfigurations(kind, windowConfigOf(it), wanted) })?.let { existing ->
                 presentWindow(kind, existing)
                 return existing
             }
@@ -2247,9 +2260,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // What every window button does ([openWindowOnItsPage]), on the page it is pressed on: a window no page owns
         // comes to that page ([windowsAskedOn]) — opened, or brought back from the page it was left on.
-        fun openNewWindow(kind: FloatingWindow, config: String? = null, asCopy: Boolean = false, atBack: Boolean = false): String {
+        fun openNewWindow(
+            kind: FloatingWindow,
+            config: String? = null,
+            asCopy: Boolean = false,
+            atBack: Boolean = false,
+            matches: ((String) -> Boolean)? = null,
+        ): String {
             val asked = page
-            val id = openWindowOnItsPage(kind, config, asCopy, atBack)
+            val id = openWindowOnItsPage(kind, config, asCopy, atBack, matches)
             if (kind != FloatingWindow.Search && kind != FloatingWindow.ConfigSearch && kind != FloatingWindow.AddedConfig) windowsAskedOn[id] = asked
             return id
         }
@@ -2651,7 +2670,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 openObjectWindow(key)
             } ?: run {
                 val kind = lateralWindowOf(button.windowId) ?: return
-                val id = openNewWindow(kind, button.config)
+                // User rule 2026-11-05: a "match the whole state" button brings back only a window that is all it keeps
+                // (its added elements, its actions, where it stands, its sections, its scrolls); otherwise it opens one.
+                val whole: ((String) -> Boolean)? =
+                    if (!CustomMenuButtons.wholeStateOn(pressed)) null
+                    else { frameId ->
+                        CustomMenuButtons.isSameWindow(
+                            button,
+                            sameState = sameWindowState(kind, windowConfigOf(frameId), button.config),
+                            layout = windowLayoutOf(frameId),
+                            opened = menuButtonOpenedLayouts[button.id]?.takeIf { menuButtonWindows[button.id] == frameId },
+                        )
+                    }
+                val id = openNewWindow(kind, button.config, matches = whole)
                 asked = id
                 menuButtonWindows[button.id] = id
                 if (id in before) {
@@ -2671,6 +2702,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     org.example.project.ui.SearchSplits(
                                         saved.splits[0], saved.splits[1],
                                         saved.hidden.getOrNull(0) ?: false, saved.hidden.getOrNull(1) ?: false, saved.hidden.getOrNull(2) ?: false,
+                                        scrolls = saved.scrolls,
                                     )
                             }
                         FloatingWindow.Calendar -> {
@@ -4362,6 +4394,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 }
                                 setMenuLists(lists)
                             },
+                            onSetWholeState = { id, on -> setMenuButtons(CustomMenuButtons.withWholeState(menuButtons, id, on)) },
                             canUpdate = { menuButtonCanUpdate(it) },
                             onUpdate = { button ->
                                 menuButtonWindowOf(button)?.let { frameId ->

@@ -39,6 +39,9 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.runtime.getValue
@@ -180,6 +183,11 @@ data class SearchSplits(
     val expandedAdded: Set<String> = emptySet(),
     /** User rule 2026-11-02: the rows of other kinds that are open, of both lists: [RESULT_SURFACE] or [ADDED_SURFACE] + the row's key. */
     val expandedElements: Set<String> = emptySet(),
+    /**
+     * User rule 2026-11-05: where the result list and the added elements are scrolled, each its first row shown and how
+     * far under the top ([WindowLayout.scrolls]'s order): a menu button keeps them with the window, and puts them back.
+     */
+    val scrolls: List<Int> = emptyList(),
 )
 
 /**
@@ -440,7 +448,7 @@ fun SearchWindow(
     val sorts = config.sorts
     // Which copy of the window this is: its selection is its own (PRD §5, `Alt+←` walks it back).
     val instance = LocalWindowInstance.current?.suffix ?: ""
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(splits?.scrolls?.getOrNull(0) ?: 0, splits?.scrolls?.getOrNull(1) ?: 0)
     // User rule 2026-10-14: typing in the bar brings the result list back to its top.
     ScrollsToTopWhenTyped(query, listState)
     val fieldFocus = remember { FocusRequester() }
@@ -798,13 +806,26 @@ fun SearchWindow(
               addedCollapsed = it.addedHidden
           }
       }
+      // The added elements' scroll, told by their list ([AddedElementsList]).
+      var addedScroll by remember { mutableStateOf((splits?.scrolls?.getOrNull(2) ?: 0) to (splits?.scrolls?.getOrNull(3) ?: 0)) }
       fun splitsNow() =
           SearchSplits(
               leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed,
               expandedTasks.mapTo(HashSet()) { it.value }, expandedAdded.mapTo(HashSet()) { it.value }, expandedElements,
+              scrolls = listOf(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, addedScroll.first, addedScroll.second),
           )
-      // A section retracted or brought back, a row opened or closed, is told as a dragged line is.
-      LaunchedEffect(searchCollapsed, actionsCollapsed, addedCollapsed, expandedTasks, expandedAdded, expandedElements) { onSplitsChange(splitsNow()) }
+      // A section retracted or brought back, a row opened or closed, a list come to rest after a scroll, is told as a
+      // dragged line is (user rule 2026-11-05: the scrolls are the window's state too). Event-driven: on the scroll's end.
+      LaunchedEffect(searchCollapsed, actionsCollapsed, addedCollapsed, expandedTasks, expandedAdded, expandedElements, addedScroll) { onSplitsChange(splitsNow()) }
+      LaunchedEffect(listState) {
+          androidx.compose.runtime.snapshotFlow {
+              if (listState.isScrollInProgress) null else listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+          }
+              .filterNotNull()
+              .distinctUntilChanged()
+              .drop(1)
+              .collect { onSplitsChange(splitsNow()) }
+      }
       var rowWidthPx by remember { mutableStateOf(0f) }
       var rightHeightPx by remember { mutableStateOf(0f) }
       // The left section's width and the top right one's height as laid out (a retracted one: its head's), which a
@@ -1230,6 +1251,8 @@ fun SearchWindow(
             else HorizontalDivider()
             // --- The added elements (bottom right) ---------------------------------------------------
             AddedElementsList(
+                initialScroll = addedScroll,
+                onScrolled = { addedScroll = it },
                 expandedTasks = expandedAdded,
                 onExpandedTasksChange = { expandedAdded = it },
                 rows = addedRows,
@@ -1359,6 +1382,9 @@ private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
  */
 @Composable
 private fun AddedElementsList(
+    /** Where the list is scrolled when it is first drawn, and its scroll once it comes to rest ([SearchSplits.scrolls]). */
+    initialScroll: Pair<Int, Int>,
+    onScrolled: (Pair<Int, Int>) -> Unit,
     rows: List<SearchDomain.Result>,
     /** What an expanded task element's sub-tree needs — the result list's own ([SearchSubtree]). */
     state: SchedulerState,
@@ -1450,7 +1476,17 @@ private fun AddedElementsList(
             )
             return@Column
         }
-        val listState = rememberLazyListState()
+        val listState = rememberLazyListState(initialScroll.first, initialScroll.second)
+        val currentOnScrolled by rememberUpdatedState(onScrolled)
+        LaunchedEffect(listState) {
+            androidx.compose.runtime.snapshotFlow {
+                if (listState.isScrollInProgress) null else listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+            }
+                .filterNotNull()
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { currentOnScrolled(it) }
+        }
         val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
         val pinnedIndex by remember(listState, bandPx) { derivedStateOf { pinnedItemIndex(listState, bandPx) } }
         val pinScope = rememberCoroutineScope()

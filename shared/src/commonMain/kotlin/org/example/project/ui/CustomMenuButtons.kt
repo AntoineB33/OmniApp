@@ -118,6 +118,14 @@ data class CustomMenuButton(
      * un-set on the scheduler's, it stayed on the scheduler's only). Null for an item global from the start.
      */
     val homePage: String? = null,
+    /**
+     * User rule 2026-11-05: **"match the whole state"** — on, the button brings back only a window whose WHOLE state is
+     * the one it keeps: its configuration with its added elements (told apart by their ids) and its actions' state, where
+     * it stands, its sections and its lists' scrolls ([CustomMenuButtons.isSameWindow]); off, a window of the same search
+     * configurations, whatever was added to it, scrolled or moved. Kept either way, and "Update" offered either way when
+     * the window changed. Null: its default — on for a button the user made, off for a default one ([wholeStateOn]).
+     */
+    val wholeState: Boolean? = null,
 )
 
 /**
@@ -311,10 +319,17 @@ data class WindowLayout(
     val height: Float = 0f,
     val splits: List<Float> = emptyList(),
     val hidden: List<Boolean> = emptyList(),
+    /**
+     * User rule 2026-11-05: where the window's lists are scrolled, in its own order, each as its first row shown and how
+     * far that row is scrolled under the top — the Search window's results, then its added elements. Absent from a layout
+     * kept before: its lists at their top, where a window opens.
+     */
+    val scrolls: List<Int> = emptyList(),
 ) {
     /** The same layout to the eye: a pixel, and a thousandth of a share, are no change. */
     fun sameAs(other: WindowLayout?): Boolean =
         other != null &&
+            sameScrolls(scrolls, other.scrolls) &&
             kotlin.math.abs(x - other.x) < 1f && kotlin.math.abs(y - other.y) < 1f &&
             kotlin.math.abs(width - other.width) < 1f && kotlin.math.abs(height - other.height) < 1f &&
             // A layout kept before the hidden sections were (none listed) hid none.
@@ -322,6 +337,10 @@ data class WindowLayout(
             splits.size == other.splits.size &&
             splits.indices.all { kotlin.math.abs(splits[it] - other.splits[it]) < if (splits[it] <= 1f && other.splits[it] <= 1f) 0.002f else 1f }
 }
+
+/** Two lists' scrolls ([WindowLayout.scrolls]); what is not said is a list at its top. A pixel is no change. */
+internal fun sameScrolls(a: List<Int>, b: List<Int>): Boolean =
+    (0 until maxOf(a.size, b.size)).all { i -> kotlin.math.abs(a.getOrElse(i) { 0 } - b.getOrElse(i) { 0 }) <= if (i % 2 == 0) 0 else 1 }
 
 /**
  * One window's sections as it is looked at, in [WindowLayout]'s own terms: [splits] (the Search window's two shares,
@@ -336,6 +355,8 @@ data class WindowSections(
     val expandedAdded: List<String> = emptyList(),
     /** The element rows that are open, of both lists ([SearchSplits.expandedElements]), absent from what an older build wrote. */
     val expandedElements: List<String> = emptyList(),
+    /** Where its lists are scrolled ([WindowLayout.scrolls]), absent from what an older build wrote. */
+    val scrolls: List<Int> = emptyList(),
 )
 
 /** The list of [CustomMenuButton]s, in menu order, and the few things done to it. Pure. */
@@ -531,7 +552,8 @@ object CustomMenuButtons {
         }
         val used = lists.values.flatten().mapTo(HashSet()) { it.id }
         val newId = generateSequence(1) { it + 1 }.map { "g$it" }.first { it !in used }
-        val next = list.map { if (it.id == id) it.copy(id = newId, global = true, homePage = page) else it }
+        // Its new id says nothing of where it came from: "match the whole state" is said, so a default stays off.
+        val next = list.map { if (it.id == id) it.copy(id = newId, global = true, homePage = page, wholeState = wholeStateOn(it)) else it }
         return withGlobalsPropagated(lists, page, next) to newId
     }
 
@@ -874,6 +896,33 @@ object CustomMenuButtons {
 
     fun encodeLayout(layout: WindowLayout): String = json.encodeToString(WindowLayout.serializer(), layout)
 
+    /**
+     * Whether [button] is "match the whole state" ([CustomMenuButton.wholeState]): as set, else on for a button the user
+     * made and off for one of the menu's defaults ([DEFAULTS], the global Search and sound buttons, `d-…` ids).
+     */
+    fun wholeStateOn(button: CustomMenuButton): Boolean = button.wholeState ?: !isDefault(button)
+
+    private fun isDefault(button: CustomMenuButton): Boolean =
+        button.id.startsWith("d-") || button.id == GLOBAL_SEARCH.id || button.id == GLOBAL_MUTE.id || DEFAULTS.any { it.id == button.id }
+
+    /** [buttons] with [id]'s "match the whole state" set to [on]. */
+    fun withWholeState(buttons: List<CustomMenuButton>, id: String, on: Boolean): List<CustomMenuButton> =
+        buttons.map { if (it.id == id) it.copy(wholeState = on) else it }
+
+    /**
+     * User rule 2026-11-05: **whether the open window is the one [button] keeps** — what "Update" is offered on (not the
+     * same) and, for a button that "matches the whole state", what it brings back (the same). [sameState]: the window's
+     * configuration is the one the button keeps, the window's own say ([org.example.project.scheduler.domain.SearchDomain.sameSearchWindowState]
+     * for a Search window: added elements and actions included). [layout] is the window's now, [opened] what it was
+     * when this button opened it: a window put back as far as the app lets it (a size cut to the screen) is still the
+     * button's. A button that keeps no layout is about the configuration alone.
+     */
+    fun isSameWindow(button: CustomMenuButton, sameState: Boolean, layout: WindowLayout?, opened: WindowLayout?): Boolean {
+        if (!sameState) return false
+        val reference = decodeLayout(button.layout) ?: opened ?: return true
+        return layout != null && (layout.sameAs(reference) || layout.sameAs(opened))
+    }
+
     /** [encodeLayout]'s reverse; nothing stored, or nothing readable, is no layout. */
     fun decodeLayout(text: String?): WindowLayout? =
         text?.let { runCatching { json.decodeFromString(WindowLayout.serializer(), it) }.getOrNull() }
@@ -886,11 +935,10 @@ object CustomMenuButtons {
      */
     fun needsUpdate(button: CustomMenuButton, savedConfig: String?, config: String?, layout: WindowLayout?, opened: WindowLayout?): Boolean {
         if (layout == null) return false
-        if (config != savedConfig) return true
         // A button that never kept a layout, about a window it is not known to have opened so (one that came back
         // at a restart): there is a state to save, and saving it is what ends the question.
-        val reference = decodeLayout(button.layout) ?: opened ?: return true
-        return !layout.sameAs(reference)
+        if (decodeLayout(button.layout) == null && opened == null) return true
+        return !isSameWindow(button, config == savedConfig, layout, opened)
     }
 
     /** [buttons] with [id] holding its window's state as it stands: [config] and [layout]. */
@@ -973,6 +1021,8 @@ internal fun CustomMenuSection(
     actionContent: @Composable (CustomMenuButton) -> Unit = {},
     /** User rule 2026-10-18: the item [id] made global (it stands in the menu of every page) or its page's own again. */
     onSetGlobal: (id: String, global: Boolean) -> Unit = { _, _ -> },
+    /** User rule 2026-11-05: the button's "match the whole state" set ([CustomMenuButton.wholeState]). */
+    onSetWholeState: (id: String, on: Boolean) -> Unit = { _, _ -> },
     /** The page's menu back to its default items ([CustomMenuButtons.withPageReset]). */
     onReset: () -> Unit = {},
     /** The customization mode's drag: the item [id] dropped on the item [targetId]. */
@@ -1129,6 +1179,15 @@ internal fun CustomMenuSection(
                                     DropdownMenuItem(
                                         text = { Text((if (button.global) "✓ " else "") + "all pages") },
                                         onClick = { menuOpen = false; onSetGlobal(button.id, !button.global) },
+                                    )
+                                }
+                                // User rule 2026-11-05: a window's button only — checked, it brings back its window
+                                // only as it keeps it whole.
+                                if (!button.folder && button.control == null && button.action == null && button.windowId.isNotBlank()) {
+                                    val on = CustomMenuButtons.wholeStateOn(button)
+                                    DropdownMenuItem(
+                                        text = { Text((if (on) "✓ " else "") + "match the whole state") },
+                                        onClick = { menuOpen = false; onSetWholeState(button.id, !on) },
                                     )
                                 }
                                 DropdownMenuItem(text = { Text("Remove") }, onClick = { menuOpen = false; onRemove(button.id) })

@@ -1431,17 +1431,21 @@ object SearchDomain {
         searchConfigurations(Config.decode(a) ?: Config()) == searchConfigurations(Config.decode(b) ?: Config())
 
     /**
-     * **Whether the open Search window holding [window] is the one [asked] asks for** — what a window button brings back:
-     * the same search configurations ([sameSearchConfigurations]), and, where [asked] names added elements, those same
-     * elements. Anomaly 2026-11-05: "Claude quota" and "Gemini quota", the same search with one quota added each, were one
-     * window, so "Gemini quota" brought back the Claude quota's and seemed to do nothing. A window asked for with none
-     * (the Search button, "Search every element of the kind") is still found whatever was added to it since.
+     * User rule 2026-11-05: **a Search window's whole state**, as a menu button keeps it — its search as the window holds
+     * it once opened (its default sorting taken), its added elements told apart by their ids alone (not their order), its
+     * actions' bars, picks and fields. Not the window it was opened from, nor when its settings were last changed.
      */
-    fun bringsBackSearch(window: String?, asked: String?): Boolean {
-        if (!sameSearchConfigurations(window, asked)) return false
-        val wanted = Config.decode(asked)?.added.orEmpty()
-        return wanted.isEmpty() || wanted.toSet() == Config.decode(window)?.added.orEmpty().toSet()
-    }
+    fun searchWindowState(config: Config): Config =
+        withDefaultSort(config).copy(
+            sortFollowsDefault = false,
+            added = config.added.distinct().sorted(),
+            openedFrom = null,
+            settingsChangedAt = emptyMap(),
+        )
+
+    /** Whether two Search windows' configurations, as stored, have the same [searchWindowState]. */
+    fun sameSearchWindowState(a: String?, b: String?): Boolean =
+        searchWindowState(Config.decode(a) ?: Config()) == searchWindowState(Config.decode(b) ?: Config())
 
     /** [config] with its default sorting ([defaultSortsOf]) while it follows it; as it is otherwise. A window opened is read through it. */
     fun withDefaultSort(config: Config): Config {

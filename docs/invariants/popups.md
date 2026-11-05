@@ -90,15 +90,23 @@ means.
     opened or brought back is open (`App`'s `menuButtonWindows`, Compose-only — forgotten when that window closes;
     after a restart, `menuButtonWindowOf` finds it again as the open window of the button's kind that still carries
     the button's name on its tab, `WindowFrameHost.tabTitles`) and is no longer what the button holds. The state is the configuration (`config`: for a Search
-    window its query, kinds, filters, sorts AND added elements) and the **layout** (`CustomMenuButton.layout`, a
+    window its query, kinds, filters, sorts AND added elements, by id — `SearchDomain.sameSearchWindowState`, through
+    `App.sameWindowState`, user rule 2026-11-05: the bring-back's 2026-11-04 search configurations had left the added
+    elements out of the Update too) and the **layout** (`CustomMenuButton.layout`, a
     `WindowLayout`: the window's offset and size, and the lines between its sections — the Search window's two
     shares, `SearchSplits`; the calendar's configuration width — **and which sections are retracted to their arrow**,
-    `WindowLayout.hidden`, anomaly 2026-10-08). A button that never kept a layout is read against
+    `WindowLayout.hidden`, anomaly 2026-10-08; **and where its lists are scrolled**, `WindowLayout.scrolls`, user rule
+    2026-11-05: the Search window's results and added elements, kept with its sections and put back by the button). A
+    button that never kept a layout is read against
     the one its window had when the button opened it, so nothing is offered for a window left as it opened; where
     that is not known either (the window came back at a restart), "Update" IS offered — there is a state to save. A NEW
     window a button opens is put back as its layout says (its lines at once, its place once it has a frame); one
-    only brought back is left where it is. The button's click still asks for "that exact window" by its
-    CONFIGURATION alone (`openNewWindow`): the layout never decides which window is found.
+    only brought back is left where it is. **Which window the click brings back is the button's "match the whole
+    state"** (user rule 2026-11-05, `CustomMenuButton.wholeState`, a check in its right-click menu; on by default for
+    a button the user made, off for a default one, `CustomMenuButtons.wholeStateOn`): on, only a window that is ALL the
+    button keeps — the same test as Update's, `CustomMenuButtons.isSameWindow` (a window put back as far as the app let
+    it, as it was when the button opened it, still is); off, by its search configurations alone (below). Either way
+    the whole state is kept and Update offered on any change.
     **The sections of an OPEN window survive a restart** (anomaly 2026-10-08): the lines and the retracted sections
     are local view state kept on the `WindowSections` placement row (`CustomMenuButtons.encodeWindowSections`,
     frame id -> `WindowSections`), written at every change and read back at startup for the windows that come
@@ -153,7 +161,7 @@ means.
     ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
   - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename (a window's
     button or a folder only — user rule 2026-11-04, `CustomMenuButtons.canRename`: a control or an action is named after
-    what it is), "all pages" (named "Global" until 2026-11-04), Remove, Customize, Reset. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of
+    what it is), "all pages" (named "Global" until 2026-11-04), "match the whole state" (a window's button only), Remove, Customize, Reset. A control's is asked BEFORE the control (`secondaryPressFirst`: a text field has a menu of
     its own); a right-click beside the items offers Customize and Reset too, at the pointer, so an empty menu can be filled.
   - **"Reset" puts the menu of the page it is pressed on back to that page's defaults**
     (`CustomMenuButtons.withPageReset`, `GlobalItemsTest`), one History Unit, so one `Ctrl+Z` from ANY window brings it
@@ -768,10 +776,9 @@ It lives in the host because the host already sees the only two events that deci
   default sorting taken), never its added elements, its actions' bars and picks, or the window it was opened from.
   Anomaly 2026-11-04: compared whole and as written, the Task Scheduler page's Search button never found its window,
   which had sorted its tasks newest first on opening, and opened a new one at every press; a ☆ button's "Update" was
-  offered for the same reason. Both callers ask the one funnel. **A button that asks for added elements brings back
-  the window holding those same elements** (anomaly 2026-11-05, `SearchDomain.bringsBackSearch`): "Claude quota" and
-  "Gemini quota", one search with a quota added each, were one window, and "Gemini quota" brought back the other's. One
-  asking for none finds its window whatever was added to it since. Otherwise a NEW window opens: the original when it is not open,
+  offered for the same reason. **A "match the whole state" button** (user rule 2026-11-05, above) brings back only
+  the window that is all it keeps: anomaly 2026-11-05, "Claude quota" and "Gemini quota", one search with a quota added
+  each, were one window, and "Gemini quota" brought back the other's. Otherwise a NEW window opens: the original when it is not open,
   else a copy (`Search#2`) cascaded off it. So a Search window whose query was typed into is no longer "the"
   Search button's, and the button opens a fresh one. It is never drawn as "open" (no blue) — the window bar
   says what is open. The **task tree and the calendar** exist once (*Not duplicable*). A ☆ button of a

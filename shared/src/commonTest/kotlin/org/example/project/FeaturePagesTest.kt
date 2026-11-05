@@ -9,6 +9,7 @@ import org.example.project.scheduler.domain.SearchDomain.Kind
 import org.example.project.ui.CustomMenuButton
 import org.example.project.ui.CustomMenuButtons
 import org.example.project.ui.MenuControl
+import org.example.project.ui.WindowLayout
 
 /**
  * User rule 2026-11-01: a feature page of the app's settings, and in the Search configurations window a drop-down of the
@@ -73,28 +74,78 @@ class FeaturePagesTest {
      * press, its window having taken its default sorting (tasks newest first) on opening.
      */
     /**
-     * Anomaly 2026-11-05 (account 3): "Gemini quota" did nothing on the Claude Code logs page. It and "Claude quota" are
-     * global ☆ buttons of one search (the quotas), one quota added each; "Claude quota"'s window was open, and the
-     * Gemini button brought it back. A button asking for added elements brings back the window holding them alone.
+     * Anomaly 2026-11-05 (account 3): "Gemini quota" did nothing on the Claude Code logs page — it and "Claude quota" are
+     * global ☆ buttons of one search, one quota added each, and with the Claude quota's window open the Gemini button
+     * brought that one back. User rule 2026-11-05: a button's "match the whole state" — on, it brings back only a window
+     * whose whole state is the one it keeps (its added elements by id, where it stands, its sections, its scrolls); on by
+     * default for a button the user made, off for a default one. On or off, "Update" is offered when any of it changed.
      */
     @Test
-    fun a_button_asking_for_added_elements_brings_back_the_window_holding_them() {
-        // The two buttons as account 3 keeps them: no page in their configuration (made before pages were said).
-        val claude = CustomMenuButton("g2", "Search#3", "Claude quota", config = """{"kinds":["Quota"],"added":["Quota/quota-0"]}""", global = true)
-        val gemini = CustomMenuButton("g1", "Search#3", "Gemini quota", config = """{"kinds":["Quota"],"added":["Quota/quota-1"]}""", global = true)
+    fun a_whole_state_button_brings_back_only_the_window_that_is_all_it_keeps() {
+        val layout = WindowLayout(0f, 184f, 1353f, 1120f, splits = listOf(0.2f, 0.7f), hidden = listOf(true, false, true))
+        // The two buttons as account 3 keeps them: no page in their configuration, nothing said of the switch.
+        val claude = CustomMenuButton("g2", "Search#3", "Claude quota", config = """{"kinds":["Quota"],"added":["Quota/quota-0"]}""",
+            layout = CustomMenuButtons.encodeLayout(layout), global = true)
+        val gemini = claude.copy(id = "g1", title = "Gemini quota", config = """{"kinds":["Quota"],"added":["Quota/quota-1"]}""")
+        assertTrue(CustomMenuButtons.wholeStateOn(claude) && CustomMenuButtons.wholeStateOn(gemini), "a button the user made: on")
+        assertFalse(CustomMenuButtons.wholeStateOn(CustomMenuButtons.GLOBAL_SEARCH), "a default one: off")
+        assertFalse(CustomMenuButtons.wholeStateOn(CustomMenuButtons.LIFE_PLAN))
+        assertFalse(CustomMenuButtons.wholeStateOn(CustomMenuButtons.withWholeState(listOf(claude), "g2", false).single()))
+        // A default made "all pages" takes a g… id, and stays off.
+        val (lists, newId) = CustomMenuButtons.withGlobal(mapOf("" to listOf(CustomMenuButtons.LIFE_PLAN)), "", CustomMenuButtons.LIFE_PLAN.id, true)
+        assertFalse(CustomMenuButtons.wholeStateOn(lists.getValue("").single { it.id == newId }))
+
         val logs = SearchDomain.CLAUDE_LOGS_PAGE
-        // The Claude quota's window, as it was opened on the logs page and stored.
-        val claudeWindow = SearchDomain.withDefaultSort(SearchDomain.Config.decode(CustomMenuButtons.globalSearchConfig(claude, logs))!!).encode()
-        assertTrue(SearchDomain.bringsBackSearch(claudeWindow, CustomMenuButtons.globalSearchConfig(claude, logs)))
-        assertFalse(SearchDomain.bringsBackSearch(claudeWindow, CustomMenuButtons.globalSearchConfig(gemini, logs)))
-        // Still one search: the configurations the Update compares are the same.
-        assertTrue(SearchDomain.sameSearchConfigurations(claudeWindow, CustomMenuButtons.globalSearchConfig(gemini, logs)))
-        // A window asked for with nothing added is found whatever was added to it since (the Search button's rule).
-        val plain = SearchDomain.pageDefaultConfig(logs)
-        assertTrue(SearchDomain.bringsBackSearch(SearchDomain.withDefaultSort(plain).copy(added = listOf("Quota/quota-0")).encode(), plain.encode()))
-        // The added elements in another order are the same elements.
+        val claudeAsked = CustomMenuButtons.globalSearchConfig(claude, logs)
+        val geminiAsked = CustomMenuButtons.globalSearchConfig(gemini, logs)
+        // The Claude quota's window, as it was opened on the logs page and stored, and put where the button keeps it.
+        val claudeWindow = SearchDomain.withDefaultSort(SearchDomain.Config.decode(claudeAsked)!!).encode()
+        fun same(button: CustomMenuButton, asked: String, window: String, now: WindowLayout, opened: WindowLayout? = null) =
+            CustomMenuButtons.isSameWindow(button, SearchDomain.sameSearchWindowState(window, asked), now, opened)
+        assertTrue(same(claude, claudeAsked, claudeWindow, layout))
+        assertFalse(same(gemini, geminiAsked, claudeWindow, layout), "another quota added: another window")
+        // The added elements are told apart by their ids, not their order.
         val both = SearchDomain.Config(kinds = setOf(Kind.Quota), added = listOf("Quota/quota-0", "Quota/quota-1"))
-        assertTrue(SearchDomain.bringsBackSearch(both.copy(added = both.added.reversed()).encode(), both.encode()))
+        assertTrue(SearchDomain.sameSearchWindowState(both.copy(added = both.added.reversed()).encode(), both.encode()))
+        // Scrolled, a line moved, moved: no longer the button's window...
+        assertFalse(same(claude, claudeAsked, claudeWindow, layout.copy(scrolls = listOf(4, 0, 0, 0))))
+        assertFalse(same(claude, claudeAsked, claudeWindow, layout.copy(splits = listOf(0.5f, 0.7f))))
+        assertFalse(same(claude, claudeAsked, claudeWindow, layout.copy(x = 300f)))
+        // ...but put back as far as the app let it (cut to the screen) it still is, as it was when the button opened it.
+        val cut = layout.copy(height = 900f)
+        assertTrue(same(claude, claudeAsked, claudeWindow, cut, opened = cut))
+        // A layout kept before scrolls were: its lists at their top.
+        assertTrue(layout.sameAs(layout.copy(scrolls = listOf(0, 0, 0, 0))))
+
+        // Off, the bring-back is by the search configurations alone (the Search button's rule, 2026-11-04)...
+        assertTrue(SearchDomain.sameSearchConfigurations(claudeWindow, geminiAsked))
+        // ...and on or off, "Update" is offered when the added elements or a scroll changed.
+        for (button in listOf(claude, claude.copy(wholeState = false))) {
+            val saved = SearchDomain.Config.decode(claudeAsked)!!
+            fun offered(window: String, now: WindowLayout) =
+                CustomMenuButtons.needsUpdate(
+                    button, savedConfig = saved.encode(),
+                    config = if (SearchDomain.sameSearchWindowState(window, claudeAsked)) saved.encode() else window,
+                    layout = now, opened = null,
+                )
+            assertFalse(offered(claudeWindow, layout))
+            assertTrue(offered(SearchDomain.Config.decode(claudeWindow)!!.copy(added = listOf("Quota/quota-1")).encode(), layout))
+            assertTrue(offered(claudeWindow, layout.copy(scrolls = listOf(0, 0, 2, 10))))
+        }
+    }
+
+    /** What an older build kept still reads: a button without the switch, sections and a layout without scrolls. */
+    @Test
+    fun buttons_sections_and_layouts_kept_before_the_whole_state_still_load() {
+        val button = CustomMenuButtons.decode("""{"buttons":[{"id":"b3","window":"Search","title":"timers Search","config":"{}"}],"seeded":true}""")
+            .single { it.id == "b3" }
+        assertEquals(null, button.wholeState)
+        assertTrue(CustomMenuButtons.wholeStateOn(button))
+        val sections = CustomMenuButtons.decodeWindowSections("""{"sections":{"Search#2":{"splits":[0.5,0.5],"hidden":[false,false,false]}}}""")
+        assertEquals(emptyList(), sections.getValue("Search#2").scrolls)
+        val old = CustomMenuButtons.decodeLayout("""{"x":1.0,"y":2.0,"width":3.0,"height":4.0,"splits":[0.5,0.5]}""")!!
+        assertEquals(emptyList(), old.scrolls)
+        assertEquals(old, CustomMenuButtons.decodeLayout(CustomMenuButtons.encodeLayout(old)))
     }
 
     @Test
