@@ -1,5 +1,7 @@
 package org.example.project.scheduler.domain
 
+import org.example.project.claudelogs.ClaudeLogCatalog
+import org.example.project.claudelogs.ClaudeLogKind
 import org.example.project.scheduler.domain.SearchDomain.Kind
 import org.example.project.scheduler.model.CategoryKind
 import org.example.project.scheduler.model.TaskId
@@ -44,9 +46,14 @@ object ElementTree {
             Kind.TaskTree, Kind.WorkplaceSetup,
         )
 
-    /** The direct children of [key], in their order. */
-    fun childrenOf(state: SchedulerState, key: String): List<String> {
-        val own = state.elementLinks.filter { it.parent == key }.sortedWith(compareBy({ it.rank }, { it.id })).map { it.child }
+    /**
+     * The direct children of [key], in their order. A Claude Code log entry's come first, read off [claudeLogs]
+     * ([ClaudeLogCatalog.childrenOf]: a prompt's reasoning chain and answer, a chain's answer), derived and never linked.
+     */
+    fun childrenOf(state: SchedulerState, key: String, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): List<String> {
+        val links = state.elementLinks.filter { it.parent == key }.sortedWith(compareBy({ it.rank }, { it.id })).map { it.child }
+        val derived = claudeChildren(key, claudeLogs)
+        val own = if (derived.isEmpty()) links else (derived + links).distinct()
         val taskId = taskIdOf(key)
         if (taskId != null) {
             val listId = state.tasks[taskId]?.childListId ?: return own
@@ -57,6 +64,19 @@ object ElementTree {
         if (kindOf(key) != Kind.Category) return own
         val categoryId = org.example.project.scheduler.model.CategoryId(idOf(key))
         return state.tasks.values.filter { categoryId in it.categoryIds }.sortedBy { it.title.lowercase() }.map { SearchDomain.taskKey(it.id) } + own
+    }
+
+    /** The children [claudeLogs] gives a Claude Code log entry [key]: none for any other key. */
+    private fun claudeChildren(key: String, claudeLogs: ClaudeLogCatalog): List<String> {
+        if (kindOf(key) !in SearchDomain.CLAUDE_KINDS) return emptyList()
+        return claudeLogs.childrenOf(idOf(key)).map { (kind, id) ->
+            val childKind = when (kind) {
+                ClaudeLogKind.Prompt -> Kind.ClaudePrompt
+                ClaudeLogKind.Answer -> Kind.ClaudeAnswer
+                ClaudeLogKind.Reasoning -> Kind.ClaudeReasoning
+            }
+            childKind.name + "/" + id
+        }
     }
 
     /** The direct parents of [key], categories included: a task's are the tree's and what it carries, then the links'. */
@@ -111,8 +131,13 @@ object ElementTree {
     /** [links] without [child] under [parent]. */
     fun unlinked(links: List<ElementLink>, parent: String, child: String): List<ElementLink> = links.filterNot { it.parent == parent && it.child == child }
 
-    /** Whether the row of [child] under [parent] can be taken out from there: the last place of a task in the tree cannot. */
-    fun canUnlink(state: SchedulerState, parent: String, child: String): Boolean {
+    /**
+     * Whether the row of [child] under [parent] can be taken out from there: the last place of a task in the tree cannot,
+     * nor what the Claude Code logs make a child.
+     */
+    fun canUnlink(state: SchedulerState, parent: String, child: String, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): Boolean {
+        // What the logs make a child (a prompt's answer) is read off them, so no ✕ takes it out.
+        if (child in claudeChildren(parent, claudeLogs)) return false
         val taskId = taskIdOf(child) ?: return true
         if (kindOf(parent) != Kind.Task) return true
         val places = TaskPathsDomain.occurrences(state, taskId)

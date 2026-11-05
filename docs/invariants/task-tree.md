@@ -30,6 +30,9 @@ second copy of it on a kind of element.
   checked and not reached yet at its head.
 - **What a link DOES is the kind's.** Applying a workplace setup applies what stands under it (`workplaceFamily`), one setup at
   a time since each takes the keyboard. No other kind acts on its children yet.
+- **A Claude Code log entry's children are read off the logs** (user rule 2026-11-05): a prompt's are its turn's reasoning
+  chain and answer, a reasoning chain's is its answer (`ClaudeLogCatalog.childrenOf`, through `ElementTree.childrenOf`).
+  Derived, never a link: never stored, never synced, no ✕.
 
 ### The task-tree timeline
 

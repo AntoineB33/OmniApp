@@ -395,6 +395,43 @@ class ClaudeLogCatalog(
     /** The entry a Search row's id names, or null for one no longer in the logs. */
     fun find(id: String): Pair<ClaudeLogSession, ClaudeLogEntry>? = byId[id]
 
+    /**
+     * User rule 2026-11-05: **what follows an entry in its turn is its child** — a prompt's are the reasoning chain and the
+     * answer of its turn ([foldedTurns]), in that order; a reasoning chain's is the answer it led to; an answer has none. By
+     * id ([idOf]), read off the logs as they stand: derived, never stored nor synced.
+     */
+    fun childrenOf(id: String): List<Pair<ClaudeLogKind, String>> = turnChildren[id].orEmpty()
+
+    private val turnChildren: Map<String, List<Pair<ClaudeLogKind, String>>> by lazy {
+        val out = HashMap<String, List<Pair<ClaudeLogKind, String>>>()
+        var prompt: String? = null
+        var reasoning: String? = null
+        var session: ClaudeLogSession? = null
+        for ((s, entry) in entries) {
+            if (s !== session) {
+                session = s
+                prompt = null
+                reasoning = null
+            }
+            val id = idOf(s, entry)
+            when (entry.kind) {
+                ClaudeLogKind.Prompt -> {
+                    prompt = id
+                    reasoning = null
+                }
+                ClaudeLogKind.Reasoning -> {
+                    prompt?.let { out[it] = out[it].orEmpty() + (entry.kind to id) }
+                    reasoning = id
+                }
+                ClaudeLogKind.Answer -> {
+                    prompt?.let { out[it] = out[it].orEmpty() + (entry.kind to id) }
+                    reasoning?.let { out[it] = out[it].orEmpty() + (entry.kind to id) }
+                }
+            }
+        }
+        out
+    }
+
     /** Every project the sessions are filed under, for the project filter. */
     val projects: List<String> by lazy { sessions.orEmpty().map { it.project }.distinct().sorted() }
 

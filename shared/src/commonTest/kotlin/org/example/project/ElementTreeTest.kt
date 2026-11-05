@@ -238,4 +238,54 @@ class ElementTreeTest {
         val task = s.tasks.values.first { it.title == "One" }
         assertTrue(s.lists[task.childListId]?.cellIds?.isNotEmpty() == true, "its list holds the blank cell")
     }
+
+    /**
+     * User rule 2026-11-05: a prompt's children are its reasoning chain and its answer; a reasoning chain's is its final
+     * answer. Read off the logs as [ClaudeLogCatalog.entries] folds them, never a link of the state.
+     */
+    @Test
+    fun aClaudePromptsChildrenAreItsReasoningChainAndAnswer() {
+        val session = org.example.project.claudelogs.ClaudeLogSession(
+            "C:/logs/p/s1.jsonl", "s1", "p", null, null,
+            listOf(
+                claudeEntry(org.example.project.claudelogs.ClaudeLogKind.Prompt, "first", 0),
+                // Two steps and the last text: the steps fold into one chain, the last text is the answer.
+                claudeEntry(org.example.project.claudelogs.ClaudeLogKind.Reasoning, "thinking", 1),
+                claudeEntry(org.example.project.claudelogs.ClaudeLogKind.Answer, "a step", 2),
+                claudeEntry(org.example.project.claudelogs.ClaudeLogKind.Answer, "the answer", 3),
+                claudeEntry(org.example.project.claudelogs.ClaudeLogKind.Prompt, "second", 4),
+                claudeEntry(org.example.project.claudelogs.ClaudeLogKind.Answer, "only an answer", 5),
+            ),
+        )
+        val logs = org.example.project.claudelogs.ClaudeLogCatalog("dir", listOf(session))
+        val s = SchedulerState.empty()
+        fun key(kind: Kind, text: String): String {
+            val (sess, entry) = logs.entries.single { it.second.text == text }
+            return kind.name + "/" + org.example.project.claudelogs.ClaudeLogCatalog.idOf(sess, entry)
+        }
+        val first = key(Kind.ClaudePrompt, "first")
+        val chain = key(Kind.ClaudeReasoning, "thinking\n\na step")
+        val answer = key(Kind.ClaudeAnswer, "the answer")
+        val second = key(Kind.ClaudePrompt, "second")
+        val onlyAnswer = key(Kind.ClaudeAnswer, "only an answer")
+
+        assertEquals(listOf(chain, answer), ElementTree.childrenOf(s, first, logs))
+        assertEquals(listOf(onlyAnswer), ElementTree.childrenOf(s, second, logs))
+        assertEquals(listOf(answer), ElementTree.childrenOf(s, chain, logs))
+        assertEquals(emptyList(), ElementTree.childrenOf(s, answer, logs))
+        // The rows resolve, and the logs' children have no ✕: they are read off the logs.
+        assertEquals(listOf(chain, answer), SearchDomain.resolve(s, ElementTree.childrenOf(s, first, logs), { emptyMap() }, claudeLogs = logs).map(SearchDomain::keyOf))
+        assertFalse(ElementTree.canUnlink(s, first, answer, logs))
+        // Nothing of it is stored: the state holds no link.
+        assertTrue(s.elementLinks.isEmpty())
+        // While the last turn goes on, it has no answer: all it wrote so far is its chain.
+        val working = org.example.project.claudelogs.ClaudeLogCatalog(
+            "dir", listOf(session), working = setOf(org.example.project.claudelogs.ClaudeLogArchive.sessionName(session)),
+        )
+        assertEquals(1, ElementTree.childrenOf(s, second, working).size)
+        assertTrue(ElementTree.childrenOf(s, second, working).single().startsWith(Kind.ClaudeReasoning.name + "/"))
+    }
+
+    private fun claudeEntry(kind: org.example.project.claudelogs.ClaudeLogKind, text: String, ordinal: Int) =
+        org.example.project.claudelogs.ClaudeLogEntry(kind, text, 1_000L * (ordinal + 1), null, ordinal)
 }

@@ -2690,7 +2690,7 @@ private fun ElementChildren(
     onIntent: (SchedulerIntent) -> Unit,
     kindWidth: Dp,
 ) {
-    val keys = ElementTree.childrenOf(state, parent).filterNot { it in path }
+    val keys = ElementTree.childrenOf(state, parent, claudeLogs).filterNot { it in path }
     val rows = SearchDomain.resolve(state, keys, { emptyMap() }, windows, schedulerRuns, claudeLogs)
     val indent = Modifier.padding(start = ELEMENT_CHILD_INDENT * depth)
     for (row in rows) {
@@ -2708,7 +2708,7 @@ private fun ElementChildren(
                 KindSection(row.kind, kindWidth)
                 SectionArrow(rowKey !in expanded) { onToggle(rowKey) }
                 Text(row.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                if (ElementTree.canUnlink(state, parent, key)) {
+                if (ElementTree.canUnlink(state, parent, key, claudeLogs)) {
                     Text(
                         text = "✕",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
