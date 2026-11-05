@@ -462,6 +462,10 @@ fun SearchWindow(
     var expandedAdded by remember { mutableStateOf(splits?.expandedAdded.orEmpty().map { TaskId(it) }.toSet()) }
     var expandedElements by remember { mutableStateOf(splits?.expandedElements.orEmpty()) }
     val toggleElement: (String) -> Unit = { key -> expandedElements = if (key in expandedElements) expandedElements - key else expandedElements + key }
+    // Anomaly 2026-11-05: the children under an element's arrow are selected as the rows are ([ElementChildSelection]),
+    // on either surface; a press on anything else leaves none selected.
+    val childSelection = remember { ElementChildSelection() }
+    childSelection.editor = rememberOutsidePressEditor(active = childSelection.selected.isNotEmpty()) { childSelection.clear() }
     val elementCategories = remember(state.elementLinks, state.categories) { ElementTree.categoryTitles(state) }
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
     // Anomaly 2026-10-07 ("I click on a task cell in the sub-tree, then on the root task cell: both are selected"):
@@ -545,6 +549,7 @@ fun SearchWindow(
         val key = results.getOrNull(index)?.let(::resultKey)
         multiSelection = null
         deselected = false
+        childSelection.clear()
         selectionAnchor = key
         if (picker != null) {
             pickerSelectedKey = key
@@ -699,6 +704,12 @@ fun SearchWindow(
      * [replacing] is its "add and remove the others" (user rule 2026-10-01).
      */
     fun addSelected(replacing: Boolean = false) = addKeys(latestSelectedShown, replacing)
+    // A child selected: the result list's rows are not any more (the added list's leave on the press outside them).
+    childSelection.onTake = {
+        deselected = true
+        multiSelection = null
+    }
+    childSelection.onAdd = { keys, replacing -> addKeys(keys, replacing) }
     /**
      * User rule 2026-10-07: the menu of a CHILD cell — one of an expanded row's sub-tree, in the result list or in the
      * added elements — offers "add" and "add and remove the others" too: those cells' tasks (a placeholder holds none).
@@ -1127,7 +1138,7 @@ fun SearchWindow(
                                     if (elementKey in expandedElements) {
                                         ElementChildren(
                                             resultKey(result), RESULT_SURFACE, 1, setOf(resultKey(result)), state, windows, schedulerRuns, claudeLogs,
-                                            expandedElements, toggleElement, openers, onIntent, resultKindWidth,
+                                            expandedElements, toggleElement, openers, onIntent, resultKindWidth, childSelection,
                                         )
                                     }
                                 }
@@ -1224,7 +1235,7 @@ fun SearchWindow(
                 elementChildren = { key, width ->
                     ElementChildren(
                         key, ADDED_SURFACE, 1, setOf(key), state, windows, schedulerRuns, claudeLogs,
-                        expandedElements, toggleElement, openers, onIntent, width,
+                        expandedElements, toggleElement, openers, onIntent, width, childSelection,
                     )
                 },
                 onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
@@ -2689,19 +2700,36 @@ private fun ElementChildren(
     openers: SearchRowOpeners,
     onIntent: (SchedulerIntent) -> Unit,
     kindWidth: Dp,
+    selection: ElementChildSelection,
 ) {
     val keys = ElementTree.childrenOf(state, parent, claudeLogs).filterNot { it in path }
     val rows = SearchDomain.resolve(state, keys, { emptyMap() }, windows, schedulerRuns, claudeLogs)
     val indent = Modifier.padding(start = ELEMENT_CHILD_INDENT * depth)
+    fun rowKeyOf(key: String) = surface + path.joinToString(">") + ">" + key
+    // A Shift+click's range runs over these siblings.
+    val siblings by rememberUpdatedState(rows.map { rowKeyOf(resultKey(it)) })
     for (row in rows) {
         val key = resultKey(row)
         androidx.compose.runtime.key(key) {
-            val rowKey = surface + path.joinToString(">") + ">" + key
+            val rowKey = rowKeyOf(key)
+            selection.elements[rowKey] = key
             val currentRow by rememberUpdatedState(row)
+            var menuOpen by remember { mutableStateOf(false) }
+            Box(Modifier.outsidePressPart(selection.editor)) {
             Row(
-                modifier = resultRowModifier(selected = false)
+                modifier = resultRowModifier(
+                    selected = rowKey in selection.selected && rowKey == selection.main,
+                    inSelection = rowKey in selection.selected && rowKey != selection.main,
+                )
                     .then(indent)
-                    .resultRowGestures(rowKey, onSelect = {}, onSecondarySelect = {}, onOpen = { openers.open(state, currentRow) }, onOpenMenu = {}),
+                    .recordPressModifiers(selection.pressModifiers)
+                    .resultRowGestures(
+                        rowKey,
+                        onSelect = { selection.click(siblings, rowKey) },
+                        onSecondarySelect = { selection.secondaryClick(rowKey) },
+                        onOpen = { openers.open(state, currentRow) },
+                        onOpenMenu = { menuOpen = true },
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -2719,8 +2747,26 @@ private fun ElementChildren(
                     )
                 }
             }
+            // The menu, on the selected children: added to the window's elements, as a result row's "add" adds.
+            transientMenuDismissal(menuOpen) { menuOpen = false }
+            AppDropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                properties = PopupProperties(focusable = false),
+                atPointer = LocalRowMenusAtPointer.current,
+            ) {
+                MenuEntry("add") {
+                    menuOpen = false
+                    selection.add(replacing = false)
+                }
+                MenuEntry(ADD_REPLACING_LABEL) {
+                    menuOpen = false
+                    selection.add(replacing = true)
+                }
+            }
+            }
             if (rowKey in expanded) {
-                ElementChildren(key, rowKey + ">", depth + 1, path + key, state, windows, schedulerRuns, claudeLogs, expanded, onToggle, openers, onIntent, kindWidth)
+                ElementChildren(key, rowKey + ">", depth + 1, path + key, state, windows, schedulerRuns, claudeLogs, expanded, onToggle, openers, onIntent, kindWidth, selection)
             }
         }
     }
@@ -2733,8 +2779,57 @@ private fun ElementChildren(
     )
 }
 
+/**
+ * Anomaly 2026-11-05 (*"the children are not selectable"*): **which children under an element's arrow are selected**, on
+ * both surfaces of one window, by row key (surface and path: one element under two parents is two rows). The rows' own
+ * rule ([ClickSelection]: a click one, Ctrl one more, Shift the range among its siblings; a right-click keeps a selection
+ * it lands in), the row menu's "add" on them, and a press anywhere else ([editor]) leaves none. Compose-only, as the
+ * rows' selection is. Selecting a child takes the result list's selection away ([onTake]).
+ */
+internal class ElementChildSelection {
+    var selected: Set<String> by mutableStateOf(emptySet())
+        private set
+    /** The row pressed last: the full outline; the others of [selected] the thin one. */
+    var main: String? by mutableStateOf(null)
+        private set
+    private var anchor: String? = null
+    /** The element each drawn row stands for. */
+    val elements: HashMap<String, String> = HashMap()
+    val pressModifiers = PressModifiers()
+    var editor: OutsidePressEditor = OutsidePressEditor()
+    var onTake: () -> Unit = {}
+    var onAdd: (keys: List<String>, replacing: Boolean) -> Unit = { _, _ -> }
+
+    fun click(siblings: List<String>, rowKey: String) {
+        val next = ClickSelection.click(siblings, selected, anchor, rowKey, shift = pressModifiers.shift, ctrl = pressModifiers.ctrl)
+        selected = next.selected
+        anchor = next.anchor
+        main = rowKey
+        onTake()
+    }
+
+    fun secondaryClick(rowKey: String) {
+        if (rowKey !in selected) {
+            selected = setOf(rowKey)
+            anchor = rowKey
+        }
+        main = rowKey
+        onTake()
+    }
+
+    /** The selected children's elements, each once, into the window's added elements. */
+    fun add(replacing: Boolean) = onAdd(selected.mapNotNull { elements[it] }.distinct(), replacing)
+
+    fun clear() {
+        if (selected.isEmpty() && main == null) return
+        selected = emptySet()
+        main = null
+        anchor = null
+    }
+}
+
 /** Ctrl and Shift as held on the last press in a list — read by a row whose gesture does not report them. */
-private class PressModifiers {
+internal class PressModifiers {
     var ctrl: Boolean = false
     var shift: Boolean = false
 }

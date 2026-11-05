@@ -33,6 +33,8 @@ second copy of it on a kind of element.
 - **A Claude Code log entry's children are read off the logs** (user rule 2026-11-05): a prompt's are its turn's reasoning
   chain and answer, a reasoning chain's is its answer (`ClaudeLogCatalog.childrenOf`, through `ElementTree.childrenOf`).
   Derived, never a link: never stored, never synced, no ✕.
+- **A child row is selected as a row is** (anomaly 2026-11-05, `ElementChildSelection`): `ClickSelection`'s rule, Shift over
+  its siblings, its menu's "add" on the selected children; selecting one takes the result list's selection away.
 
 ### The task-tree timeline
 

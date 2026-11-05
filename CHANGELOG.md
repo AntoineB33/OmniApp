@@ -11,6 +11,10 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The children under an element's arrow are selectable — 2026-11-05
+
+Anomaly: the rows under an element's arrow took no click. They are selected as the rows are (`ElementChildSelection`, `ClickSelection`'s rule: a click one, Ctrl one more, across parents too, Shift the range among its siblings, a right-click keeping a selection it lands in), on both surfaces; their menu's "add" and "add and remove the others" add the selected children's elements. Selecting a child takes the result list's selection away; a press anywhere else leaves none. Compose-only. `ElementChildSelectionTest`. Client rebuild only.
+
 ### A Claude Code prompt's children: its reasoning chain and its answer — 2026-11-05
 
 User rule: in the Search window's element tree, a prompt's children are its reasoning chain and its answer, and a reasoning chain's child is its final answer. Read off the logs as `foldedTurns` reads them (`ClaudeLogCatalog.childrenOf`, a map made once per catalog) and routed through the one children funnel (`ElementTree.childrenOf`, handed the catalog as `ElementChildren` is): derived, never an `ElementLink`, never stored nor synced, so no ✕ takes them out (`canUnlink`). A turn still going has no answer, so its prompt's one child is its chain. `ElementTreeTest.aClaudePromptsChildrenAreItsReasoningChainAndAnswer`. Client rebuild only.
