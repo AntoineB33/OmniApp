@@ -270,8 +270,14 @@ model exists to prevent.
     the WINDOW at the line, not only its companion. **A carrier gives way only where the line is IN it**
     (`startMillis <= now`): a night or a wind-down hour still ahead stays an obstacle in the plan, or every future
     night would be planned as working time (the morning plan, the shares and `scheduleCycle` all built as if nobody
-    slept — `ScheduleCycleTest` caught it). A line reaching bedtime still at a screen meets the window, and
-    `planMismatchAtLine` asks the fill once at that edge. Only the single-kind closure counts: a no-screen period a
+    slept — `ScheduleCycleTest` caught it). **What a line reaching bedtime still at a
+    screen is on there is in the rules already** (user rule 2026-11-06, `SchedulerDomain.isLineBranch`,
+    `lineBranchPanels`): the mode-1 fill searches each carrier ahead once more from its start, the carrier given up as
+    it is to a line inside it, the plan before it as its past (step-bounded passes only), and lays those runs held at
+    the line where the plan left nobody. They are never a seed, never published, never the plan a flip leaves — every
+    mode-1 fill makes them again, the one laid at a flip included — and nothing is drawn of them before the line gets
+    there. Account 3, 2026-11-06: without them the line walked into the wind-down hour at 00:07 with no run, nothing
+    re-plans on time passing, and the calendar drew Inactivity from 00:07 to 02:29. `SleepWindowNoIdlingTest`. Only the single-kind closure counts: a no-screen period a
     two-kind rule brings retracts itself and neither cause. (2026-09-28 → 2026-10-01 only the companion lifted and
     the window stayed over the line; before that `sleep` retracted on PRD §17's *"carved by activity"*.) The
     predicate is deliberately **not** `coversNoScreen`, or a grey period the user drew would be pulled out from

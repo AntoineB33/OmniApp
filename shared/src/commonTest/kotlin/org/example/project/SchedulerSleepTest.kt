@@ -103,7 +103,7 @@ class SchedulerSleepTest {
         val now = utc(2024, 1, 1, 10, 0)
         val state = soloTask().copy(sleep = SchedulerDomain.DEFAULT_SLEEP)
         val panels = SchedulerDomain.fillSchedule(state, now, tz)
-        val autos = panels.filter { it.auto }
+        val autos = panels.filter { it.auto && !SchedulerDomain.isLineBranch(it) } // the plan's own runs: what the rules hold for a line still at a screen there is held at the line (2026-11-06)
         val sleeps = panels.filter { it.sleep }
         assertTrue(autos.isNotEmpty() && sleeps.isNotEmpty())
         sleeps.forEach { s ->
@@ -121,7 +121,7 @@ class SchedulerSleepTest {
         // not to the sleep window's — and opens a fresh chunk on the far side of the night.
         val now = utc(2024, 1, 1, 10, 0)
         val panels = SchedulerDomain.fillSchedule(soloTask().copy(sleep = SchedulerDomain.DEFAULT_SLEEP), now, tz)
-        val autos = panels.filter { it.auto }
+        val autos = panels.filter { it.auto && !SchedulerDomain.isLineBranch(it) } // the plan's own runs: what the rules hold for a line still at a screen there is held at the line (2026-11-06)
         val firstNight = panels.filter { it.sleep }.minByOrNull { it.startEpochMillis }
         assertNotNull(firstNight, "no sleep window was projected")
         val windDownStart = firstNight.startEpochMillis - SchedulerDomain.BEFORE_BED_MILLIS

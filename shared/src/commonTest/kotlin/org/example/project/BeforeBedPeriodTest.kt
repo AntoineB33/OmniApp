@@ -222,7 +222,7 @@ class BeforeBedPeriodTest {
         val panels = SchedulerDomain.fillSchedule(sleeping(), now, tz)
         val windDowns = panels.filter { it.restrictiveKind == PeriodKinds.BEFORE_BED }
         assertTrue(windDowns.isNotEmpty(), "the fill laid no wind-down period")
-        val autos = panels.filter { it.auto }
+        val autos = panels.filter { it.auto && !SchedulerDomain.isLineBranch(it) } // the plan's own runs: what the rules hold for a line still at a screen there is held at the line (2026-11-06)
         assertTrue(autos.isNotEmpty())
         windDowns.forEach { w ->
             assertEquals(SchedulerDomain.BEFORE_BED_PANEL_TITLE, w.title)

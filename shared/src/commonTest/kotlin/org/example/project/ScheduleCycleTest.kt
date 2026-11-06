@@ -193,7 +193,7 @@ class ScheduleCycleTest {
         val to = NOW + 30 * DAY
         val served = HashMap<TaskId, Long>()
         for (p in far.panels) {
-            if (!p.auto || p.taskId == null) continue
+            if (!p.auto || p.taskId == null || SchedulerDomain.isLineBranch(p)) continue
             val a = maxOf(from, p.startEpochMillis)
             val b = minOf(to, p.endEpochMillis)
             if (b > a) served[p.taskId!!] = (served[p.taskId!!] ?: 0L) + (b - a)
@@ -211,7 +211,7 @@ class ScheduleCycleTest {
                 metBy(s, NOW, far.panels.maxOf { it.endEpochMillis })
         assertTrue(
             far.panels.none { a ->
-                a.auto && a.startEpochMillis > NOW + HOUR &&
+                a.auto && !SchedulerDomain.isLineBranch(a) && a.startEpochMillis > NOW + HOUR &&
                     periods.any { it.startEpochMillis < a.endEpochMillis && it.endEpochMillis > a.startEpochMillis }
             },
             "the unrolled repetition runs nobody through a break or a night",

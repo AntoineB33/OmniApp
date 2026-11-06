@@ -236,10 +236,89 @@ class SleepWindowNoIdlingTest {
         assertEquals(utc(18, 23, 15), nextNight.startEpochMillis)
         assertTrue(
             panels.none {
+                SchedulerDomain.isPlanRun(it) &&
+                    it.startEpochMillis < nextNight.endEpochMillis && it.endEpochMillis > nextNight.startEpochMillis
+            },
+            "the PLAN keeps tomorrow night empty: the user is expected to go to bed",
+        )
+        // What the rules hold for a line that gets there still at a screen (user rule 2026-11-06) is held at the line:
+        // nothing of it is drawn before the line reaches it.
+        assertTrue(
+            SchedulerDomain.atLine(panels, daytime).none {
                 it.auto && it.taskId != null &&
                     it.startEpochMillis < nextNight.endEpochMillis && it.endEpochMillis > nextNight.startEpochMillis
             },
-            "tomorrow night must stay empty",
+            "nothing may be drawn into tomorrow night",
+        )
+    }
+
+    // ----- user rule 2026-11-06: the line reaches bedtime still at a screen ------------------------
+
+    /**
+     * Account 3, 2026-11-06: the plan was made in the evening, around a wind-down hour from 00:07 and a night from
+     * 01:07. The user stayed at the computer, mode 1, until 02:29; the line walked into the hour and the night with no
+     * run, nothing re-plans on time passing, nothing was recorded, and the calendar drew Inactivity from 00:07. The
+     * user's rule: *"When the now line reaches a Sleep period while in mode 1, then it gets eaten by the now line …
+     * the now line must be on a task, which gets printed in the past of the timeline as the now line moves forward."*
+     * So the rules found in the evening must already name, at every instant of the hour and the night, the task a
+     * mode-1 line is on there — held at the line, so nothing is drawn before it gets there.
+     */
+    @Test
+    fun a_line_reaching_bedtime_at_a_screen_finds_its_task_in_the_rules_found_before() {
+        val evening = utc(17, 20, 0)
+        val panels = fill(account(), now = evening, horizon = evening + 24 * HOUR)
+        val windDown = panels.single { it.restrictiveKind == PeriodKinds.BEFORE_BED && it.startEpochMillis > evening }
+        val night = sleepBands(panels).single { it.startEpochMillis > evening }
+        assertEquals(utc(17, 22, 15), windDown.startEpochMillis)
+        assertEquals(windDown.endEpochMillis, night.startEpochMillis)
+        var t = windDown.startEpochMillis
+        while (t < night.endEpochMillis) {
+            val work = workAt(panels, t)
+            assertEquals(1, work.size, "at ${t - evening} ms past 20:00 the rules must name one task for a mode-1 line: $work")
+            assertTrue(work.single().lineBound, "a run there is held at the line, never laid in the night")
+            t += 20 * MIN
+        }
+        // Nothing of it is drawn ahead, and it is never the plan the score continues from.
+        val drawn = SchedulerDomain.atLine(panels, evening)
+        assertTrue(drawn.none { it.auto && it.taskId != null && it.startEpochMillis >= windDown.startEpochMillis && it.startEpochMillis < night.endEpochMillis })
+        assertTrue(SchedulerDomain.placementsAhead(panels, evening).none { it.startMillis >= windDown.startEpochMillis && it.startMillis < night.endEpochMillis })
+        // Once the line is there, the run is drawn up to the line: what it walked is a task, not Inactivity.
+        val inside = utc(18, 1, 0)
+        val walked = SchedulerDomain.atLine(panels, inside)
+        val uncovered = SchedulerDomain.derivedInactivityBands(
+            walked.filterNot { it.screenBreak || it.isRestrictivePeriod }.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
+            windDown.startEpochMillis,
+            inside,
+        )
+        assertEquals(emptyList(), uncovered, "the stretch a mode-1 line walked from bedtime on must carry its task")
+    }
+
+    @Test
+    fun the_away_modes_lay_no_mode_one_branch() {
+        // Asleep is what the night is for: in modes 2 and 3 the line is covered, and no run is held for it there.
+        val evening = utc(17, 20, 0)
+        for (mode in listOf(DynamicPeriods.MODE_AWAY, DynamicPeriods.MODE_ON_BREAK)) {
+            val panels = fill(account(), now = evening, mode = mode, horizon = evening + 24 * HOUR)
+            assertTrue(panels.none(SchedulerDomain::isLineBranch), "mode $mode")
+        }
+    }
+
+    @Test
+    fun a_task_resilient_to_the_night_keeps_its_own_run_there() {
+        // The branch fills only what the plan left to nobody: a task the user let through the night is the plan's.
+        var s = account()
+        val alpha = s.tasks.keys.first { s.tasks[it]!!.title == "Alpha" }
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskResilience(alpha, PeriodKinds.SLEEP, 1.0))
+        val evening = utc(17, 20, 0)
+        val panels = fill(s, now = evening, horizon = evening + 24 * HOUR)
+        val night = sleepBands(panels).single { it.startEpochMillis > evening }
+        val inNight = panels.filter { it.auto && it.taskId != null && it.startEpochMillis < night.endEpochMillis && it.endEpochMillis > night.startEpochMillis }
+        val plan = inNight.filter(SchedulerDomain::isPlanRun)
+        val branch = inNight.filter(SchedulerDomain::isLineBranch)
+        assertTrue(plan.isNotEmpty() && plan.all { it.taskId == alpha }, "the plan runs the resilient task in the night: $plan")
+        assertTrue(
+            branch.none { b -> plan.any { it.startEpochMillis < b.endEpochMillis && b.startEpochMillis < it.endEpochMillis } },
+            "the branch never overlaps the plan's own runs",
         )
     }
 

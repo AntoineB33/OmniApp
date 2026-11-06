@@ -2792,8 +2792,9 @@ object SchedulerDomain {
      *
      * **A carrier gives way only where the line is IN it**: a night still ahead stays an obstacle in the plan (user
      * rule, 2026-10-01). Retracting it too would plan every future night and wind-down hour as working time — the
-     * morning's plan, the shares and the repeating cycle all built as if nobody slept. A line that reaches bedtime
-     * still at a screen meets the window, and [planMismatchAtLine] asks the fill once at that edge. The [PeriodKinds.NO_SCREEN]
+     * morning's plan, the shares and the repeating cycle all built as if nobody slept. What a line that reaches bedtime
+     * still at a screen is on there is found beside the plan, ahead of time — the mode-1 branch ([isLineBranch], user rule
+     * 2026-11-06) — so nothing re-plans when it gets there. The [PeriodKinds.NO_SCREEN]
      * periods themselves keep giving up their whole span ahead ([retractedAtLineSpans] says why) — a future night's
      * companion included, which is why [retractAtLine] must ask this with the same [nowMillis], or that companion's
      * span would carve the night it belongs to.
@@ -5962,7 +5963,19 @@ object SchedulerDomain {
      * (a seed), the rules a device publishes to its peers, and the plan the line leaves at a mode flip.
      */
     fun isPlanRun(panel: TaskPanel): Boolean =
-        panel.auto && !panel.pinned && !panel.chore && panel.taskId != null && !panel.isRestrictivePeriod
+        panel.auto && !panel.pinned && !panel.chore && panel.taskId != null && !panel.isRestrictivePeriod && !isLineBranch(panel)
+
+    /** Id prefix of a run of the mode-1 branch over a night or wind-down hour ahead ([isLineBranch]). */
+    const val LINE_BRANCH_ID_PREFIX: String = "line/"
+
+    /**
+     * User rule 2026-11-06: **a run the rules hold for a line that reaches a no-screen carrier ahead (a night, the hour
+     * before bed) still at a screen** — laid by the mode-1 fill, held at the line over its whole span
+     * ([TaskPanel.heldAtLine]), so nothing of it is drawn before the line gets there. It is the answer for that
+     * (line, mode 1), not the plan the score continues from: never a seed, never published to a peer, never the plan a
+     * flip leaves (each mode-1 fill makes it again, the one laid at a flip included).
+     */
+    fun isLineBranch(panel: TaskPanel): Boolean = panel.id.startsWith(LINE_BRANCH_ID_PREFIX)
 
     /** The plan's own runs ([isPlanRun]) from [nowMillis] on, a run the line is inside starting at the line. */
     fun placementsAhead(panels: List<TaskPanel>, nowMillis: Long): List<org.example.project.scheduler.model.RulePlacement> =
@@ -6399,8 +6412,10 @@ object SchedulerDomain {
                 // user placed — so the calendar stops drawing it as one ([isUserPlaced]).
                 !panel.chore && panel.taskId != null &&
                     panel.startEpochMillis < nowMillis && panel.endEpochMillis > nowMillis -> {
-                    elapsedHeadIds += panel.id
-                    panel.copy(endEpochMillis = nowMillis, auto = true)
+                    // The line went through it at a screen: what it walked of a branch run is ordinary served past.
+                    val headId = if (isLineBranch(panel)) "walked-" + panel.id else panel.id
+                    elapsedHeadIds += headId
+                    panel.copy(id = headId, endEpochMillis = nowMillis, auto = true)
                 }
 
                 else -> null
@@ -6604,7 +6619,7 @@ object SchedulerDomain {
         val keptHead =
             if (keepExistingUntilMillis == null) emptyList()
             else kept.filter {
-                it.auto && !it.pinned && !it.chore && it.taskId != null && it.id !in elapsedHeadIds &&
+                it.auto && !it.pinned && !it.chore && it.taskId != null && it.id !in elapsedHeadIds && !isLineBranch(it) &&
                     it.endEpochMillis > nowMillis && it.startEpochMillis < keepExistingUntilMillis &&
                     it.startEpochMillis <= horizon && !it.isRestrictivePeriod
             }
@@ -6765,12 +6780,137 @@ object SchedulerDomain {
                     },
                 )
             }
+        // User rule 2026-11-06 (*"when the now line reaches a Sleep period while in mode 1, it gets eaten by the now line
+        // … the now line must be on a task, which gets printed in the past of the timeline as the now line moves
+        // forward"*): **the mode-1 branch over every no-screen carrier ahead** — a night, the hour before bed, any kind
+        // that carries "no screen". The plan keeps planning around it (the user is expected to go to bed: the shares
+        // and the morning are built that way), but the rules are parameterized by the line AND its mode, so they must
+        // also say which task the line is on if it gets there still at a screen. Found here, now, by the same search
+        // run from the carrier's start with the carrier given up to the line ([retractedAtLineSpans]' rule, as it reads
+        // once the line is in it), the plan before it as its past; laid held at the line ([isLineBranch]) where the
+        // plan left nobody. Without it the line walked into the night at a screen with no run, nothing re-plans on time
+        // passing, and the stretch stood empty behind it as Inactivity (account 3, 2026-11-06, 00:07 → 02:29).
+        val branchPanels =
+            if (tpMode != DynamicPeriods.MODE_AT_SCREEN) {
+                emptyList()
+            } else {
+                lineBranchPanels(
+                    standingRestrictions = standingRestrictions,
+                    config = state.periodKindConfig,
+                    nowMillis = nowMillis,
+                    fromMillis = startMillis,
+                    horizon = horizon,
+                    taken = generated.map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) } +
+                        pinnedBlocks.map { TaskTimeRange(it.startMillis, it.endMillis) } +
+                        kept.filter(::isLineBranch).map { TaskTimeRange(it.startEpochMillis, it.endEpochMillis) },
+                    planBefore = history + placements.map { PlanBlock(it.taskId, it.startMillis, it.endMillis) },
+                    scoreFrom = scoreFrom,
+                    ruleStateAt = { at -> timeline?.at(at) ?: planTasks },
+                    timeline = timeline,
+                    pinnedBlocks = pinnedBlocks,
+                    minimumWeight = state.minimumTimeWeight,
+                    usedIds = keptIds,
+                    titleOf = { id -> working.tasks[id]?.title?.takeIf { it.isNotBlank() } ?: timeline?.titleOf(id).orEmpty() },
+                )
+            }
         // PRD §9: two consecutive auto panels of the same task merge into one block. Screen-break and sleep
         // panels are added as-is (they split the run, so adjacent same-task pieces don't touch and stay apart).
         return (
             kept.filterNot { it.id in elapsedHeadIds } + sidePanels + sleepPanels + beforeBedPanels +
-                mergeSameTaskPanels(kept.filter { it.id in elapsedHeadIds } + generated)
+                mergeSameTaskPanels(kept.filter { it.id in elapsedHeadIds } + generated) + branchPanels
             ).filter(::keepsOccurrence).sortedBy { it.startEpochMillis }
+    }
+
+    /**
+     * The mode-1 branch's runs ([isLineBranch]) over every no-screen carrier starting after [nowMillis], from
+     * [fromMillis] to [horizon] — see the call in [fillScheduleUninstrumented]. Each carrier span (adjacent carriers
+     * as one: the hour before bed runs into the night) is searched from its start, the carrier given up there as it
+     * is to a mode-1 line inside it and the rest of the timeline as the plan has it, with [planBefore] (the frozen
+     * past and the plan's own runs) as its past. Only the step-bounded passes: it is an answer held in reserve, and
+     * a fill must not cost a search per night. Its runs are laid only where [taken] leaves the span to nobody — a
+     * task resilient to the night keeps its own run — each held at the line over all of it.
+     */
+    private fun lineBranchPanels(
+        standingRestrictions: List<RestrictivePeriod>,
+        config: PeriodKindConfig,
+        nowMillis: Long,
+        fromMillis: Long,
+        horizon: Long,
+        taken: List<TaskTimeRange>,
+        planBefore: List<PlanBlock>,
+        scoreFrom: Long,
+        ruleStateAt: (Long) -> List<PlanTask>,
+        timeline: ScheduleFill.RuleStates?,
+        pinnedBlocks: List<PlanBlock>,
+        minimumWeight: Double,
+        usedIds: Set<String>,
+        titleOf: (TaskId) -> String,
+    ): List<TaskPanel> {
+        val carriers =
+            mergeOccupied(
+                standingRestrictions
+                    .filter { it.kind != PeriodKinds.NO_SCREEN && config.isOrImpliesNoScreen(it.kind) && it.startMillis > nowMillis }
+                    .mapNotNull { period ->
+                        TaskTimeRange(maxOf(period.startMillis, fromMillis), minOf(period.endMillis, horizon))
+                            .takeIf { it.endEpochMillis > it.startEpochMillis }
+                    },
+            )
+        if (carriers.isEmpty()) return emptyList()
+        val takenMerged = mergeOccupied(taken)
+        val out = ArrayList<TaskPanel>()
+        var counter = 0
+        for (span in carriers) {
+            val free = subtractRegions(listOf(span), takenMerged)
+            if (free.isEmpty()) continue
+            val from = span.startEpochMillis
+            // The timeline as a mode-1 line inside this span reads it: the span given up, the "no screen" periods ahead
+            // of it too, every other carrier as it stands.
+            val givenUp = mergeOccupied(retractedAtLineSpans(standingRestrictions, from, DynamicPeriods.MODE_AT_SCREEN, config) + span)
+            val periods = retractAtLine(standingRestrictions, givenUp, span.endEpochMillis - 1, config)
+            val history =
+                planBefore.mapNotNull { b ->
+                    PlanBlock(b.taskId, b.startMillis, minOf(b.endMillis, from)).takeIf { it.endMillis > it.startMillis }
+                }
+            val branch =
+                ScheduleFill.run(
+                    ScheduleFill.Input(
+                        startMillis = from,
+                        horizonMillis = span.endEpochMillis,
+                        lookbackMillis = from - scoreFrom,
+                        ruleState = ruleStateAt(from),
+                        periods = periods,
+                        blocks = pinnedBlocks,
+                        history = history,
+                        searchUntilMillis = span.endEpochMillis,
+                        budget = SearchBudget.NONE,
+                        ruleStates = timeline,
+                        minimumWeight = minimumWeight,
+                    ),
+                )
+            for (p in branch.placements) {
+                for (piece in free) {
+                    val start = maxOf(p.startMillis, piece.startEpochMillis)
+                    val end = minOf(p.endMillis, piece.endEpochMillis)
+                    if (end <= start) continue
+                    var id: String
+                    do { id = LINE_BRANCH_ID_PREFIX + counter++ } while (id in usedIds)
+                    out +=
+                        TaskPanel(
+                            id = id,
+                            taskId = p.taskId,
+                            title = titleOf(p.taskId),
+                            startEpochMillis = start,
+                            endEpochMillis = end,
+                            pinned = false,
+                            auto = true,
+                            alternativeTaskId = p.alternative,
+                            alternativeSpans = p.alternativeSpans,
+                            heldAtLine = listOf(TaskTimeRange(start, end)),
+                        )
+                }
+            }
+        }
+        return out
     }
 
     /**
