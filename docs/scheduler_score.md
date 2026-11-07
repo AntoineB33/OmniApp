@@ -4,11 +4,10 @@
 defining the score, and leaves the definition to the implementation. This document is that definition. It adds no
 requirement: it only fixes what "best" means. Every § below names a section of `docs/scheduler_requirements.md`.
 
-**Behind the requirements since 2026-11-07.** The requirements now ask for more than this score defines, and the
-code does not do it yet: a compensation distance of each task's own (here one $\lambda$ for all), any ratio reached
-however small (here the past is read back at most 90 days, § *How far back*), a soft maximum execution time, quantities
-by a date, and formulas of the target ratio and the minimum and maximum times over the timeline (here the rule state
-changes; a formula is one such change, so § *Notation*'s "$R(t)$ alone" already reads it).
+**Not implemented yet (2026-11-07).** The requirements of 2026-11-07 are defined here, but the code still scores
+the previous definition: one $\lambda$ for every task, the past read back at most 90 days, no maximum execution time,
+no quantity by a date, no rare task, no formula of the target ratio or of the minimum and maximum times. The sections
+that change are marked *(2026-11-07)*.
 
 ## Notation
 
@@ -18,8 +17,15 @@ changes; a formula is one such change, so § *Notation*'s "$R(t)$ alone" already
   against $R(t)$'s targets (the catch-up), the future as if $R(t)$ held forever (its hypothetical backward
   compensation). Where $R$ holds over a stretch, that is one continuation searched under it and emitted up to its
   next change; where it moves, one decision at a time. Nothing of a later rule state reaches back before it.
-* For each task $i$: priority $P_i \ge 0$, minimum execution time $M_i$, resilience $r_{i,k}$ to each kind $k$.
+* For each task $i$: priority $P_i \ge 0$, minimum execution time $M_i$, maximum execution time $X_i$ ($\infty$ by
+  default, never below $M_i$: a rule state with $X_i < M_i$ is refused where it is entered), resilience $r_{i,k}$ to
+  each kind $k$, and quantities by a date (§ *Quantities by a date*).
   The nominal share is $\pi_i = P_i / \sum_j P_j$ (uniform over all tasks if every priority is 0).
+* **Formulas** *(2026-11-07)*. A target ratio, minimum or maximum execution time given as a formula of the position
+  on the timeline is read like every other quantity of the rule state: the decision at $t$ uses its value at $t$, as
+  if that value held at all times, past included. That is the requirement's "the result on $(0, \infty)$ is the same
+  as if $r$ were $r_2$ at all times", and a linear formula is the same with infinitesimal steps (§ *The schedule the
+  rules give*).
 * The environment at instant $t$ is the set of restrictive periods covering it, the pre-placed tasks, and the
   three dynamic restrictive periods as placed for $(x, m)$. The **multiplier** of task $i$ at $t$ is
   $\mu_i(t) = \prod_k r_{i,k}$ over the kinds $k$ covering $t$. Inside a pre-placed task of task $a$,
@@ -34,8 +40,14 @@ changes; a formula is one such change, so § *Notation*'s "$R(t)$ alone" already
   task, and the score prices it: the targets $f_i$ add up to 1, so every lag falls behind over time left to nobody.
 * $\tau_i = \max(M_i, 1) / \pi_i$ is **the smallest window in which task $i$ can get one slot of its minimum
   execution time at its share** (§ *Priority, Granularity and Compensation*: the window must be as small as
-  possible while still allowing the minimum execution time). A task with $\pi_i = 0$ takes $\Theta$.
-  $\Theta = \max_{\pi_i > 0} \tau_i$ is the window in which every task can be matched.
+  possible while still allowing the minimum execution time). It is also the task's **period**: at its share, one
+  panel of its minimum every $\tau_i$. A task with $\pi_i = 0$ takes $\Theta$.
+* **Rare tasks** *(2026-11-07)*. $H = 168\text{h}$ is the longest the search plans ahead (§ *The rules repeat*). A
+  task with $\tau_i > H$ is **rare**: its next panel can be further than anything the search lays out (a panel
+  every few years). Every other task is **ordinary**.
+  $\Theta = \max \tau_i$ over the ordinary tasks with $\pi_i > 0$ is the window in which every ordinary task can be
+  matched. A rare task is discounted over its own window: $\Theta_i = \Theta$ for an ordinary task, $\tau_i$ for a
+  rare one. With no rare task (every account before 2026-11-07), nothing below changes.
 
 ## The target share (priority percentage, resilience and compensation)
 
@@ -43,17 +55,27 @@ changes; a formula is one such change, so § *Notation*'s "$R(t)$ alone" already
   $q_i(t)$ is uniform over the tasks with $\mu_i(t) > 0$.
 * **Compensation.** A task is deprived at $s$ by as much as its multiplier there is below its multiplier now.
   The influence of a deprivation decays exponentially with the schedulable distance from it, on both sides, over
-  the **compensation length** $\lambda = 4\text{h}$ of schedulable time:
-  $$c_i(t) = \frac{\pi_i}{\lambda} \int e^{-|u(t) - u(s)|/\lambda}\, \big(\mu_i(t) - \mu_i(s)\big)^+ \, du(s)$$
+  the task's **compensation length** $\lambda_i$ of schedulable time:
+  $$c_i(t) = \frac{\pi_i}{\lambda_i} \int e^{-|u(t) - u(s)|/\lambda_i}\, \big(\mu_i(t) - \mu_i(s)\big)^+ \, du(s)$$
+* **The compensation length is each task's own** *(2026-11-07)*: the user's value for the task if set, otherwise
+  $$\lambda_i = \lambda + 3\,(\tau_i - \lambda)^+$$
+  with $\lambda$ the account's **default compensation length**, 4h of schedulable time unless the user changes it.
+  A task that recurs at least every $\lambda$ ($\tau_i \le \lambda$) keeps $\lambda$, so everything said below about
+  $\lambda$ holds for it unchanged. A task that recurs less often gets about three of its own periods: a deprivation is
+  still being repaid when its next panel or two come, instead of being forgotten long before (with $\lambda$ alone,
+  a task due once a month would forget a week-long blockage in a day). The formula is continuous at $\tau_i = \lambda$,
+  so a formula of the target ratio that moves $\tau_i$ across $\lambda$ moves $\lambda_i$ without a jump. The
+  paragraph below says $\lambda$ for $\lambda_i$.
   With this constant, the compensation around a deprivation much shorter than $\lambda$ is proportional to its
   length (for two equal tasks, it repays exactly the time lost), and the compensation around a deprivation of any
   length is bounded by $2\pi_i\lambda$: the decay is what prevents a massive overcompensation. This bound is the
   saturation the requirements ask for: a deprivation much longer than $\lambda$ (a 24-hour pre-placed task, and a
   48-hour one) buys about the same compensation, at most $\pi_i(1-\pi_i)\lambda$ of extra presence on each side
   (an hour for a 50% task), and the schedule returns to the nominal shares within a few $\lambda$ of the blockage
-  instead of repaying it indefinitely. $\lambda$ is one constant, not $\tau_i$: how much a task is repaid must not
-  depend on its minimum execution time (with $\tau_i$, a 50% task with a 30min minimum got about 15min back on
-  each side of a day-long blockage, and one with a 10min minimum about 5min). A stretch that
+  instead of repaying it indefinitely. For the tasks that recur at least every $\lambda$, it is one constant, not
+  $\tau_i$: how much a task is repaid must not depend on its minimum execution time (with $\tau_i$, a 50% task with a
+  30min minimum got about 15min back on each side of a day-long blockage, and one with a 10min minimum about 5min).
+  Only past $\lambda$ does the task's period take over, where repaying within $\lambda$ would mean never. A stretch that
   deprives every task equally (a night) creates no relative compensation, because the shares are renormalized
   below. A task that is deprived at $t$ itself (its multiplier now is the lower one) is not compensated at $t$.
 * Target share, with $C(t) = \sum_j c_j(t)$:
@@ -65,20 +87,31 @@ changes; a formula is one such change, so § *Notation*'s "$R(t)$ alone" already
 § *Core Constraints*: *"The timeline is infinite forward **and backward**"*. $L_i(x)$ is determined by the frozen
 past, so the past has to be replayed far enough back that what is left out no longer moves it.
 
-* **The window is measured in $\Theta$, on the schedulable clock**, never in wall time. A lag forgets over its own
-  $\tau_i$, so replaying from a cutoff rather than from the beginning of time gets exactly
+* **The window is measured in each task's own lengths, on the schedulable clock**, never in wall time. A lag
+  forgets over its own $\tau_i$, so replaying from a cutoff rather than from the beginning of time gets exactly
   $L_i(\text{cutoff})\,e^{-\Delta/\tau_i}$ wrong — the whole lag standing at the cutoff, re-seeded at zero. At
-  $\Delta = 4\Theta$ of schedulable time under 2 % of it survives. A stretch nobody may run in buys the window no
+  $\Delta = 4\tau_i$ of schedulable time under 2 % of it survives. A stretch nobody may run in buys the window no
   lag at all, so the walk reaches past it exactly as every other distance here does.
 * **What a wall-time ceiling did.** A flat 168 h is what shipped, and it zeroed the lag of every task whose
   $\tau_i$ exceeded it — a share under about $M_i / 168\text{h}$, i.e. 0.3 % for a 30-minute minimum, a task that
   runs once a fortnight. A three-day pre-placed task ending nine days ago did not count as served at all: the task
   read as starved by twelve minutes instead of over-served by thirty-three hours, and was placed at the $now line$
   instead of not for weeks.
-* **The cap is the one approximation left** (`SchedulerDomain.SCHEDULE_PAST_LOOKBACK_CAP_MILLIS`, 90 days), the
-  backward counterpart of the forward limit in § *The rules repeat*. A leaf at a near-zero share has an enormous
-  $\tau_i$, and without a cap a fill would cost O(total history). A floor of 168 h is what every ordinary account
-  gets, its $\Theta$ being hours.
+* **Before 2026-11-07, a 90-day cap** (`SchedulerDomain.SCHEDULE_PAST_LOOKBACK_CAP_MILLIS`) bounded the walk, so a
+  fill never cost O(total history). It is what kept a task due less often than about every three weeks from its
+  ratio: the requirements now forbid it ("any target ratio is reached, however small").
+* **Each task reads its own past** *(2026-11-07)*, back to $4\lambda_i$ of schedulable time ($\lambda_i \ge \tau_i$,
+  so this covers its lag's $4\tau_i$ too): hours or days for an ordinary task, decades for a task due every few
+  years. A fill reads each task only that far, so the cost of a rare task is its few panels, not the history in
+  between.
+* **What is read, and the one approximation.** Inside the history the memory limit keeps whole (§ *Strict
+  Requirements* of the requirements), everything is read as it is. Further back, only two things are kept, and they
+  are kept for as long as some task's reach needs them: **each task's panels** (start and length) and **the
+  schedulable clock** $u(t)$ at the panels' edges. That is the requirement's "how much the task was served, and
+  when", exact. What is not kept there is the environment: further back than the whole history, it is read as
+  uniform, every task at its nominal share and deprived of nothing. So a rare task's service is exact over its whole
+  reach, and only the compensation for blockages older than the kept history is lost: a blockage that old repays
+  a task due every few years by a fraction of one panel, at most.
 
 
 ## Criterion 1: priority percentages over the smallest possible window
@@ -89,7 +122,8 @@ past, so the past has to be replayed far enough back that what is left out no lo
   $L_i(x)$ is determined by the frozen past (the past schedule measured against the targets of $R(x)$).
 * Criterion 1 is the discounted squared lag of the continuation, **each task's lag counted in units of its own
   minimum execution time**:
-  $$J_1 = \int_{u(x)}^{\infty} e^{-(u - u(x))/\Theta} \sum_i \Big(\frac{L_i}{\max(M_i, 1)}\Big)^2 \, du$$
+  $$J_1 = \int_{u(x)}^{\infty} \sum_i e^{-(u - u(x))/\Theta_i} \Big(\frac{L_i}{\max(M_i, 1)}\Big)^2 \, du$$
+  ($\Theta_i = \Theta$ for every ordinary task, so with no rare task this is the single discount it always was.)
   A block twice as long produces a lag excursion twice as high, so this criterion strictly prefers the smallest
   windows: two 50% tasks alternating every 10min score 4 times better than every 20min.
 * **Why the unit is the task's own minimum** (2026-10-06, `ScoreModel.lagWeight`). A task served a fraction
@@ -111,7 +145,7 @@ past, so the past has to be replayed far enough back that what is left out no lo
 * Its **shortfall** is $s = (M_i - \ell)^+$. A panel short by $s$ costs what raising a lag of $M_i$ to
   $M_i + s$ costs over the task's own window in criterion 1, charged when the panel ends, for every panel ending
   after $x$ (the panel still open at the end of the continuation is not charged):
-  $$J_2 = \sum_{\text{panels ending at } u_e > u(x)} e^{-(u_e - u(x))/\Theta}\; \frac{\tau_i\, s\,(2M_i + s)}{\max(M_i, 1)^2}$$
+  $$J_2 = \sum_{\text{panels ending at } u_e > u(x)} e^{-(u_e - u(x))/\Theta_i}\; \frac{\tau_i\, s\,(2M_i + s)}{\max(M_i, 1)^2}$$
   (in the task's own unit, like the lag it is derived from)
   This common unit is what lets the two criteria form one score, and two properties of it are deliberate:
   * **It is scaled by $\tau_i$, not by $M_i$.** A lag in criterion 1 is forgotten over $\tau_i = M_i/\pi_i$, so it
@@ -126,6 +160,19 @@ past, so the past has to be replayed far enough back that what is left out no lo
   It reproduces the example of § *Priority, Granularity and Compensation*: A 30min, B 15min, C 15min at 33% each
   gives A30 B15 C15 B15 C15, because splitting A into two 15min panels would gain less on criterion 1 than its
   shortfall costs on criterion 2.
+
+## Criterion 3: soft maximum execution time *(2026-11-07)*
+
+* A panel of task $i$ (as in criterion 2) longer than $X_i$ has an **excess** $e = (\ell - X_i)^+$. It costs what a
+  shortfall of the same length costs, from the maximum instead of the minimum:
+  $$J_3 = \sum_{\text{panels ending at } u_e > u(x)} e^{-(u_e - u(x))/\Theta_i}\; \frac{\tau_i\, e\,(2M_i + e)}{\max(M_i, 1)^2}$$
+  So one minute past the maximum costs as much as one minute short of the minimum, and the cost grows with the
+  excess as the shortfall's does: the requirement's "a panel longer than its maximum is allowed only where the other
+  goals gain more than it costs".
+* **The panel still open at the end of the continuation is charged** for the excess it already has, unlike a
+  shortfall: a shortfall can still be made up by the panel going on, an excess can only grow. Without it, a
+  continuation ending in one endless panel would never pay for it.
+* With $X_i = \infty$ (the default) $J_3 = 0$.
 
 ## Sets of tasks
 
@@ -150,9 +197,35 @@ fulfils "watch videos explaining chemistry" at 80% and "listen to Spanish" at 80
 * **What the search must re-score.** A move of a run of $X$ changes the lag of every task in $X$'s set, not only
   $X$'s: the whole-continuation improvement re-scores those terms too (`ScheduleImprover.affectedBy`).
 
+## Quantities by a date *(2026-11-07)*
+
+A quantity $k$ of task $i$ asks for $Q_k$ minutes of presence within $[a_k, b_k]$.
+
+* **Served so far**, at $t \in [a_k, b_k]$: $S_k(t)$, the presence of $i$ in $[a_k, t)$, whoever placed it, plus
+  what runs of other tasks serve $i$ through their sets (§ *Sets of tasks*). **Missing**: $R_k(t) = (Q_k - S_k(t))^+$.
+  **Available**: $A_k(t)$, the schedulable time in $[t, b_k]$ where $\mu_i > 0$ (where $i$ may run; a pre-placed
+  task of another task and a period $i$ has resilience 0 to are not available).
+* **The share it asks**: $g_k(t) = \min\big(1, R_k(t)/A_k(t)\big)$ where $A_k(t) > 0$, and nothing outside
+  $[a_k, b_k]$. It is the requirement's "the part of $Q$ still missing spread over the time still available": served
+  at $g_k$ from $t$ on, the task reaches $Q_k$ exactly at $b_k$.
+* **The target is raised to it.** Where $g_k(t) > f_i(t)$, $f_i(t)$ becomes $g_k(t)$, and every other task's target
+  is scaled by the same factor so that the targets still add up to 1. Where the raised targets of several tasks add
+  up to more than 1, they are scaled to add up to 1, and every other task gets 0. A task with two quantities at once
+  takes the larger $g_k$. Nothing else changes: the lag of criterion 1 now follows the raised target, so the task is
+  spread over $[a_k, b_k]$ the way any target spreads it, not left to the end.
+* **The shortfall**: $D = \sum_k R_k(b_k)$ over the quantities whose $b_k$ is after the $now line$, in minutes, not
+  discounted and not weighted by task. A quantity whose $b_k$ is past is frozen: it no longer counts.
+* **It comes before every other goal** (§ *The score*): of two continuations, the one with the smaller $D$ is
+  better, whatever their $J$. So a quantity the constraints leave room for is always reached, and one they do not
+  is missed by as little as they allow.
+* The quantity is part of the rule state, so it keeps raising the target over $[a_k, b_k]$ when that interval is
+  past: the time it took is not read as a surplus afterwards. Removing it after $b_k$ re-reads that past at the
+  nominal share (the rule for a change of rule state), and the task then waits a while, as after any surplus.
+
 ## The score
 
-* **The balance of the two criteria is the account's** (user rule 2026-10-06): $J = J_1 + w\,J_2$, with $w$ the
+* **The balance of the criteria is the account's** (user rule 2026-10-06): $J = J_1 + w\,J_2 + w_X\,J_3$, with
+  $w_X$ the **maximum time weight** *(2026-11-07)*, 1 by default, set like $w$, and $w$ the
   **minimum time weight** (`SchedulerState.minimumTimeWeight`, the calendar's configuration section). $w = 1$ is the
   default and the balance this document derives — § *Criterion 2* puts a shortfall in the unit of a lag, so the two
   add up as they are. $w = 0$ follows the percentages alone and cuts panels as short as that takes; a larger $w$
@@ -161,14 +234,16 @@ fulfils "watch videos explaining chemistry" at 80% and "listen to Spanish" at 80
   enough that panels are held at their minimum — and it is only towards $0$ that panels are cut. So the default
   stays $1$, and the setting is for an account that wants the other extreme. $w$ is part of the rule state: another
   $w$ is another best continuation, and every device of the account scores with the same one.
-* **The score of a continuation is $J = J_1 + w\,J_2$, lower is better.** Hard constraints are not in the score:
+* **The score of a continuation is the pair $(D, J)$, compared in that order, lower is better**, with
+  $J = J_1 + w\,J_2 + w_X\,J_3$ and $D$ the shortfall of § *Quantities by a date* (0 when there is none, so $J$ alone
+  as before). Two values of $D$ within one second of each other are equal. Hard constraints are not in the score:
   a continuation that violates any requirement of `docs/scheduler_requirements.md` (resilience 0, pre-placed tasks,
   dynamic restrictive periods, $now line$ modes, frozen past) is not a candidate at all. Leaving schedulable time to
   nobody violates none of them: it is a candidate, and it is kept only where it scores lower than any task — as a
   stretch before an edge can, where every task would be a panel cut far short of its minimum or a task served far
   past its share.
-* **The best possible score** at $(x, m)$ is the infimum of $J$ over all candidate continuations of the frozen
-  past. Because the discount is exponential, the score is time-consistent: the best continuation from a later
+* **The best possible score** at $(x, m)$ is the infimum of $(D, J)$, in that order, over all candidate
+  continuations of the frozen past. Because the discount is exponential, the score is time-consistent: the best continuation from a later
   $now line$ is the rest of the best continuation from an earlier one whenever $R$ and the environment did not
   change in between, so the frozen past and the definitive schedule never contradict the best score.
 * **The schedule the rules give** at a $now line$ position is the first instant of the best continuation at that
@@ -194,7 +269,7 @@ fulfils "watch videos explaining chemistry" at 80% and "listen to Spanish" at 80
      policy, re-scored under the rule state and environment in force, and kept when they score lower — so a
      re-plan never returns a continuation worse than one it was shown;
   3. a **whole-continuation improvement** then shifts boundaries between neighbouring runs, swaps neighbouring
-     runs and reassigns runs to other permitted tasks or to nobody, keeping a change only when it lowers $J$ of the WHOLE
+     runs and reassigns runs to other permitted tasks or to nobody, keeping a change only when it lowers $(D, J)$ of the WHOLE
      continuation. It can therefore only move the result closer to the best score, never away from it. (A search
      that judged each decision over its own window was tried and rejected: it made $J$ worse, because what is
      best for a window can cost more over the continuation.)
@@ -204,7 +279,7 @@ fulfils "watch videos explaining chemistry" at 80% and "listen to Spanish" at 80
      possible score is reachable within the required time … it must be reached" is answered with: the time is
      spent reaching it, and the result says whether it was. When it does not finish, the platform's own solver (the
      desktop's mixed-integer program over windows of the continuation) gets what is left, and anything it returns
-     is re-scored here and kept only when $J$ goes down;
+     is re-scored here and kept only when $(D, J)$ goes down;
   5. the **alternative** of every run is the next-best first run of the decision asked where the run starts,
      and where the answer changes inside the run, the instant it changes, located to one second (the probes
      that locate it look one run deep; the answers at the run's two ends are the full decisions').
@@ -234,6 +309,19 @@ repeats.
   most 64 task runs, over a stretch uniform to the end of the continuation, the rules are the continuation up to
   the last copy, then **that copy repeated forever** (a *cycle*). The runs the search laid against the horizon are
   replaced by the repetition: they are shaped by the end of the search, not by the score.
+* **A formula that repeats** *(2026-11-07)* (a target ratio higher in the mornings, a period $P$) repeats the rule
+  state with it: the stretch is uniform only over whole periods of it, and a cycle is a sequence of runs that comes
+  back at the same phase of every such formula. A formula that does not repeat (a linear change) never lets a cycle
+  start before it ends.
+* **Rare tasks are not in the cycle** *(2026-11-07)*. A rare task's next panel is usually further than $H$, so no
+  cycle the search can see contains it. The cycle is found over the ordinary tasks, and each rare task's panels are
+  then placed on it in closed form: between two of its panels a rare task's lag follows
+  $dL_i/du = -\bar f_i - L_i/\tau_i$, with $\bar f_i$ its target averaged over the cycle, and its next panel starts
+  where that lag reaches the lowest point of the orbit a task served one panel of $M_i$ every $\tau_i$ follows. The
+  cycle is cut there for one panel and resumes after it (the ordinary tasks lose $M_i$ every $\tau_i$, which a rare
+  task's tiny share makes negligible over a cycle, and which the search re-scores in full when that panel comes
+  within $H$). This placement, the time the panel takes from the others aside, is the best one for the rare task's
+  own terms; it is the second approximation of the repetition, marked like the first.
 * **Where it stops holding.** A cycle belongs to the rule state it was found under and to the uniform environment it
   repeated over. Unrolling it past a pre-placed task, a period that treats the tasks differently, or under another
   rule state is refused, and the search runs again from there.
