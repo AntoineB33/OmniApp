@@ -4,6 +4,12 @@
 defining the score, and leaves the definition to the implementation. This document is that definition. It adds no
 requirement: it only fixes what "best" means. Every § below names a section of `docs/scheduler_requirements.md`.
 
+**Behind the requirements since 2026-11-07.** The requirements now ask for more than this score defines, and the
+code does not do it yet: a compensation distance of each task's own (here one $\lambda$ for all), any ratio reached
+however small (here the past is read back at most 90 days, § *How far back*), a soft maximum execution time, quantities
+by a date, and formulas of the target ratio and the minimum and maximum times over the timeline (here the rule state
+changes; a formula is one such change, so § *Notation*'s "$R(t)$ alone" already reads it).
+
 ## Notation
 
 * All times are in minutes. $x$ is the $now line$ and $m$ its mode.

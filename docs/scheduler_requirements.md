@@ -2,7 +2,7 @@
 
 ### System Overview
 
-The scheduler returns a set of rules output defining the timeline task schedule to satisfy constraints and two optimization criteria. 
+The scheduler returns a set of rules output defining the timeline task schedule to satisfy constraints and the optimization goals below (target ratios, minimum and maximum execution times, quantities by a date). 
 
 #### Rule Structure:
 * **Event-Driven / Cursor-Based Evaluation:** Rules must be structured as sequential local branches and trigger boundaries (e.g., active `if...then...else...` clauses for the current interval, paired with an alarm/trigger for the next transition at $t$, at $now line$ mode switch, at history being rewritten by a program etc...).
@@ -11,14 +11,27 @@ The scheduler returns a set of rules output defining the timeline task schedule 
 ### Core Constraints & Task Allocation
 
 #### Priority, Granularity and Compensation
-* Each task has a **target priority percentage**. One optimization goal is to match these percentages across the smallest possible time window, avoiding unnecessarily large monolithic blocks (e.g., alternating two 50% tasks in 10-minute intervals rather than 1-hour intervals). The time windows must be as small as possible while still allowing for the task's minimum execution time to be respected (e.g., task A 30min 33%, task B 15min 33%, task C 15min 33% => task A 30min, task B 15min, task C 15min, task B 15min, task C 15min...).
+* Each task has a **target priority percentage** (its target ratio). One optimization goal is to match these percentages across the smallest possible time window, avoiding unnecessarily large monolithic blocks (e.g., alternating two 50% tasks in 10-minute intervals rather than 1-hour intervals). The time windows must be as small as possible while still allowing for the task's minimum execution time to be respected (e.g., task A 30min 33%, task B 15min 33%, task C 15min 33% => task A 30min, task B 15min, task C 15min, task B 15min, task C 15min...).
+* **Any target ratio is reached, however small.** A task whose ratio and minimum execution time give it one panel every few years appears once every few years, at that average, for as long as its ratio stays the same. Nothing about how far back the past is read may make a task drift from its ratio: a memory limit on the frozen history (§ *Strict Requirements*) may summarize the past, but it keeps what each task's ratio needs from it (how much the task was served, and when) for as far back as that task's compensation reads it.
+* **The ratio adapts to the state of the timeline.** It applies to the time the task may have: its resilience to the restrictive periods present scales it (§ *Restrictive Period*), and the time it is excluded from creates a deficit (below). Every panel of the task counts as serving it, whoever placed it: the scheduler, the user, or a pre-placed task.
 * Pre-placed tasks or restrictive periods can create priority deficits for excluded tasks. To prevent massive, disruptive overcompensation and ensure the timeline rapidly returns to a normal schedule, the priority optimization uses an **exponential decay** model. 
 * The influence of debt repayment decays over the distance from the blockage (both backward and forward in time). Because the influence decays exponentially with distance, a long blockage's compensation is bounded rather than proportional to its length. The goal is to avoid repaying debts indefinitely in favor of stabilizing the schedule.
+* **The distance over which it decays is each task's own.** It is never shorter than a default compensation length the user can change, and for a task that recurs less often than that, it spans a few of the task's own periods (the time in which its ratio gives it one panel of its minimum execution time). The user can also set it per task. So a frequent task returns to its normal schedule within hours, and a task due once a month is repaid over months instead of being forgotten after a few hours.
 * In an ideal situation where the timeline is cleared from pre-placed tasks or restrictive periods, this exponential decay is not needed.
 * The timeline is infinite forward and backward, and the pre-placed tasks and restrictive periods can be in infinite patterns.
 
-#### Soft Minimum Execution Time
+#### Soft Minimum and Maximum Execution Time
 Each task has a defined minimum execution time. Another optimization goal is to reach the minimum execution time for any task appearing in the timeline. The ideal situation is that each task panels spans at least its minimum execution time without interruption.
+Each task may also have a maximum execution time (none by default). Another optimization goal is that no panel of the task spans more than its maximum without interruption: three hours on the same task in one panel are worth less than the same time in shorter panels. Like the minimum, it is soft: a panel longer than its maximum is allowed only where the other goals gain more than it costs.
+
+#### Quantity by a date
+* A task can have **quantities to reach by a date**: a total time of presence Q within an interval [a, b] of the timeline (for example, 10 hours of "moving" before Friday).
+* Inside [a, b], the task's target ratio is raised to what spreads the part of Q still missing over the time still available to the task in [a, b] (its resilience, the pre-placed tasks and the restrictive periods counted). The quantity is spread as evenly as the other goals allow, not left to the end of [a, b].
+* Missing part of Q at b outweighs every other optimization goal: whenever the constraints leave enough time for Q, it is reached.
+* Outside [a, b], the quantity has no effect.
+
+#### Balance of the goals
+The user sets the balance between the optimization goals (target ratios, minimum and maximum execution times). A quantity by a date is above that balance, as said above. The constraints are never traded for any goal.
 
 #### Restrictive Period
 * The user can define restrictive periods, which are types of periods that can be placed in any time intervals on the timeline. The user can place them manually, or define rules to place them automatically. The user can also define that a period must be accompanied by others, for example whenever there is period A, then there is also period B.
@@ -62,11 +75,12 @@ Here are some example situations resulting from the rules described above.
 The returned set of rules output must also give for every $now line$ the task that must be scheduled if the task scheduled by the scheduler is refused by the user. When it happens, a program would simply read the rules, set this alternative task starting at [$now line$, $now line$+d], with d defined beforehand (like 10 minutes), and run the scheduler again with this new schedule.
 
 ### Rule state input evolution
-* **Rule State Input Definition:** A rule state input is the set of tasks and their associated priority percentages, minimum execution time and resilience values for every periods at a given moment in time.
+* **Rule State Input Definition:** A rule state input is the set of tasks and their associated priority percentages, minimum and maximum execution times, quantities by a date and resilience values for every periods at a given moment in time.
 * **New Schedule:** The scheduler engine starts a new run from scratch each time when the context is different and calculating a new set of rules output would be relevant. Each time the user manually edits the timeline,  changes the rule state inputs (with a debounce time for some cases) or switch to a new task at $now line$, it triggers a run.
 For some changes in the input for the scheduler engine, it wouldn't be relevant to start a new run. If a run was triggered each time $now line$ changes, it would trigger a new run that has 0 calculation time because interrupted by the next run an infinitesimal time afterward. For the same reason, if the phone is locked, the $now line$ is constantly extending the "no phone unlocked" period and shouldn't always trigger a new run. The scheduler engine must decide when those changes should actually trigger a new run.
 * **Rule State Input Evolution:** The rule state input can change continuously through transition, or via discrete switches on the timeline. For example, if there is a switch from RSI A to RSI B at $t_s$, then the perfect schedule for the period with t < $t_s$ is the part where t < $t_s$ in the perfect schedule if RSI A is the only RSI in the whole timeline. Backward compensation is still applied. The perfect schedule for the period with t > $t_s$ is the part where t > $t_s$ in the perfect schedule if RSI B is the only RSI in the whole timeline, with the currently best schedule found for t < $t_s$ as a frozen past. Since RSI change at $t_s$ represents a fundamental shift in optimizations and constraints, backward compensation from RSI B must not leak into RSI A. Instead, hypothetical backward compensation from RSI A at t > $t_s$ must leak into t < $t_s$. It also means that a new rule state should dynamically "catch up" or compensate for how the past deviated from its newly established goals. If the transition was continuous, then the same logic is taken to infinitesimals. 
 * **When not the same task ids:** If a task id is missing in the other rule state input, then in the continuous evolution of the rule state input the priority starts or ends at 0, but the minimum execution time and the resilience value don't change.
+* **Formulas over the timeline:** The user can define each task's target ratio, minimum execution time and maximum execution time as a formula of the position on the timeline (not of the $now line$): a constant, a value per interval, a linear change, a periodic pattern (for example, higher in the mornings), or any other formula. A formula is an evolution of the rule state input and follows the rule above. If a target ratio r is r1 on (-inf, 0] and r2 on (0, inf), then the result of the scheduler on (-inf, 0] is the same as if r were r1 at all times, and its result on (0, inf) is the same as if r were r2 at all times, wherever the $now line$ is. If the formula evolves linearly, it is the same, the intervals being infinitesimal.
 
 
 ### Progressive Calculation:
@@ -78,7 +92,7 @@ The scheduler can have a time $t goal$ such as when definitive schedule is found
 ### Strict Requirements
 All of the above requirements must be strictly adhered to, with only two acceptable exceptions:
 
-1. Get as close as possible to the optimal score for both optimization criteria, without actually reaching it, in order to save time or computing power, or if necessary to maintain the required pace. However, if the optimal score is achievable within the given time and with acceptable computing power, it must be achieved.
+1. Get as close as possible to the optimal score for the optimization goals, without actually reaching it, in order to save time or computing power, or if necessary to maintain the required pace. However, if the optimal score is achievable within the given time and with acceptable computing power, it must be achieved.
 
 2. Other limits may be imposed to conserve memory, computing power, or CPU usage over time, as appropriate. For example, a limit may be imposed on the memory for the frozen timeline history.
 
