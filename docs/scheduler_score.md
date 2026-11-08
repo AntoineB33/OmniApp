@@ -144,8 +144,10 @@ past, so the past has to be replayed far enough back that what is left out no lo
   another task or to nobody. Its length $\ell$ is measured on the schedulable clock, part before $x$ included.
 * Its **shortfall** is $s = (M_i - \ell)^+$. A panel short by $s$ costs what raising a lag of $M_i$ to
   $M_i + s$ costs over the task's own window in criterion 1, charged when the panel ends, for every panel ending
-  after $x$ (the panel still open at the end of the continuation is not charged):
-  $$J_2 = \sum_{\text{panels ending at } u_e > u(x)} e^{-(u_e - u(x))/\Theta_i}\; \frac{\tau_i\, s\,(2M_i + s)}{\max(M_i, 1)^2}$$
+  at or after $x$ (the panel still open at the end of the continuation is not charged). A panel that ends AT $x$ is
+  charged: the continuation ends it there, and free, a re-plan at the line would drop a short panel for nothing
+  (2026-11-08: `ScoreModel` charged it, line_manager's score did not; the two now agree):
+  $$J_2 = \sum_{\text{panels ending at } u_e \ge u(x)} e^{-(u_e - u(x))/\Theta_i}\; \frac{\tau_i\, s\,(2M_i + s)}{\max(M_i, 1)^2}$$
   (in the task's own unit, like the lag it is derived from)
   This common unit is what lets the two criteria form one score, and two properties of it are deliberate:
   * **It is scaled by $\tau_i$, not by $M_i$.** A lag in criterion 1 is forgotten over $\tau_i = M_i/\pi_i$, so it
@@ -165,7 +167,7 @@ past, so the past has to be replayed far enough back that what is left out no lo
 
 * A panel of task $i$ (as in criterion 2) longer than $X_i$ has an **excess** $e = (\ell - X_i)^+$. It costs what a
   shortfall of the same length costs, from the maximum instead of the minimum:
-  $$J_3 = \sum_{\text{panels ending at } u_e > u(x)} e^{-(u_e - u(x))/\Theta_i}\; \frac{\tau_i\, e\,(2M_i + e)}{\max(M_i, 1)^2}$$
+  $$J_3 = \sum_{\text{panels ending at } u_e \ge u(x)} e^{-(u_e - u(x))/\Theta_i}\; \frac{\tau_i\, e\,(2M_i + e)}{\max(M_i, 1)^2}$$
   So one minute past the maximum costs as much as one minute short of the minimum, and the cost grows with the
   excess as the shortfall's does: the requirement's "a panel longer than its maximum is allowed only where the other
   goals gain more than it costs".
