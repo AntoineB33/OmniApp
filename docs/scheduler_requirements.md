@@ -83,6 +83,14 @@ For some changes in the input for the scheduler engine, it wouldn't be relevant 
 * **Formulas over the timeline:** The user can define each task's target ratio, minimum execution time and maximum execution time as a formula of the position on the timeline (not of the $now line$): a constant, a value per interval, a linear change, a periodic pattern (for example, higher in the mornings), or any other formula. A formula is an evolution of the rule state input and follows the rule above. If a target ratio r is r1 on (-inf, 0] and r2 on (0, inf), then the result of the scheduler on (-inf, 0] is the same as if r were r1 at all times, and its result on (0, inf) is the same as if r were r2 at all times, wherever the $now line$ is. If the formula evolves linearly, it is the same, the intervals being infinitesimal.
 
 
+### Two paces
+There are two paces: the instant schedule, and the scheduler going 10 minutes at a time from the $now line$ (§ *Progressive Calculation*).
+* **Instant schedule:** prevents displaying obviously wrong schedules.
+    * Example 1: the user adds a big block of A, creating an excess of A in the area close to it. As the user drags the block, the schedule around it is instantly adjusted to have less A.
+    * Example 2: the user changes the rules, so the displayed calendar instantly gets a schedule that doesn't break the rules and roughly matches the new target ratios and minimum lengths.
+    * Example 3: the user goes to see thousands of years in the future: the schedule displayed doesn't break any rules, and the ratio targets and minimum lengths are roughly respected. There would be nothing obviously wrong, so for example no inactivity area where a task with a ratio target can fit in.
+* **10 minutes steps from the $now line$:** the scheduler of § *Progressive Calculation*. Where it has made the schedule definitive, its schedule is the one displayed.
+
 ### Progressive Calculation:
 The scheduler doesn't need to calculate the right schedule for the entire timeline, but if the definitive schedule is found for any t < $t_1$, then 10 seconds later the definitive schedule must be found for any t < $t_1$ + 10 minutes. When the schedule is definitive for any t < $t_1$, it means that for all the next set of rules output the scheduler will return until it is done, they will all indicate the same schedule rules for any t < $t_1$ (task panel scheduling parameterized by $now line$ and $now line$ mode as well as the "alternative schedule"). As time passes, the scheduler returns one set of rule output after the other to satisfy this pace. If exact schedules cannot be found in time, approved approximation strategies must be used.
 The scheduler can have a time $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop. It will also stop if the set of rules output became too heavy, or if it calculated for too long.
