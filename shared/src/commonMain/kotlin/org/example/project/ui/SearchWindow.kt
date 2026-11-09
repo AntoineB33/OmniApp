@@ -1173,6 +1173,14 @@ fun SearchWindow(
                                         },
                                         onAdd = { addSelected() },
                                         onAddReplacing = { addSelected(replacing = true) },
+                                        timerRun = if (result.kind == SearchDomain.Kind.Timer) {
+                                            {
+                                                actionHandlers.timerRun(
+                                                    setOf(AlarmWindowSubject(result.id, AlarmWindowSubject.Kind.Timer)),
+                                                    true,
+                                                )
+                                            }
+                                        } else null,
                                     )
                                     if (elementKey in expandedElements) {
                                         ElementChildren(
@@ -2644,6 +2652,8 @@ private fun ItemResultRow(
     onAdd: () -> Unit,
     /** The menu's "add and remove the others": [onAdd], the added elements emptied first. */
     onAddReplacing: () -> Unit,
+    /** The timer's live countdown and controls, rendered in the same compact row as timer action runs. */
+    timerRun: (@Composable () -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val workplaceRuns = LocalWorkplaceRuns.current
@@ -2672,17 +2682,21 @@ private fun ItemResultRow(
             KindSection(item.kind, kindWidth)
             // User rule 2026-11-02: every element has its arrow. A "creation" row is a command, and no element.
             if (item.kind != SearchDomain.Kind.Creation) SectionArrow(!expanded, onToggleExpand)
-            Text(
-                text = searchHighlighted(item.name, query),
-                style = MaterialTheme.typography.bodyMedium,
-                color = logEntryColor(item.kind) ?: Color.Unspecified,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Text(
-                text = searchHighlighted(withCategories(SearchDomain.shownDetail(item) { workplaceRuns?.isRunning(it) == true }, categories), query),
-                style = MaterialTheme.typography.labelSmall,
-                color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (timerRun != null) {
+                timerRun()
+            } else {
+                Text(
+                    text = searchHighlighted(item.name, query),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = logEntryColor(item.kind) ?: Color.Unspecified,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Text(
+                    text = searchHighlighted(withCategories(SearchDomain.shownDetail(item) { workplaceRuns?.isRunning(it) == true }, categories), query),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         transientMenuDismissal(menuOpen) { menuOpen = false }
         AppDropdownMenu(
