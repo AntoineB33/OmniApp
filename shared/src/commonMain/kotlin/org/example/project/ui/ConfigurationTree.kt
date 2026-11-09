@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,8 +64,10 @@ internal fun ConfigurationTreeArrow(
     windows: List<SearchDomain.WindowEntry>,
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
+    depth: Int = 0,
 ) {
     var open by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
     // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
     val hover = rememberMenuHoverTracker { open = false }
     Box {
@@ -81,11 +84,35 @@ internal fun ConfigurationTreeArrow(
         )
         androidx.compose.runtime.CompositionLocalProvider(LocalMenuHover provides hover) {
         AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
-            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs) { which ->
-                open = false
-                onPickOnCalendar(which)
+        Column(
+            modifier = Modifier.width(320.dp).padding(8.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    label = { Text("Search configuration") },
+                    modifier = Modifier.weight(1f),
+                )
+                if (depth < 2) {
+                    ConfigurationTreeArrow(
+                        state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs,
+                        onPickOnCalendar, depth + 1,
+                    )
+                }
+            }
+            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, query, nowMillis, windows, claudeLogs) { which ->
+            open = false
+            onPickOnCalendar(which)
             }
         }
+    }
         }
     }
 }
@@ -101,6 +128,7 @@ private fun ConfigurationTreeColumns(
     config: SearchDomain.Config,
     openedConfig: SearchDomain.Config?,
     onConfigChange: (SearchDomain.Config) -> Unit,
+    query: String,
     nowMillis: () -> Long,
     windows: List<SearchDomain.WindowEntry>,
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
@@ -116,7 +144,9 @@ private fun ConfigurationTreeColumns(
         val echo = written.indexOf(config)
         if (echo >= 0) repeat(echo + 1) { written.removeFirst() } else { written.clear(); shown = config }
     }
-    val tree = remember(shown.settingsChangedAt) { SearchDomain.configurationTree(shown) }
+    val tree = remember(shown.settingsChangedAt, shown.searchedKinds, query) {
+        SearchDomain.configurationTree(shown).filterConfigurationNodes(query, shown.searchedKinds)
+    }
     // The category revealing its children at each depth, by id.
     var path by remember { mutableStateOf(listOf<String>()) }
     val leaf: @Composable (SearchDomain.Setting) -> Unit = { setting ->
@@ -136,6 +166,29 @@ private fun ConfigurationTreeColumns(
     HighlightsSearch("") {
         TreeColumn(tree, 0, path, { path = it }, leaf)
     }
+}
+
+private fun List<SearchDomain.ConfigurationNode>.filterConfigurationNodes(
+    query: String,
+    associatedKinds: Set<SearchDomain.Kind>,
+): List<SearchDomain.ConfigurationNode> {
+    val needle = query.trim()
+    fun filter(nodes: List<SearchDomain.ConfigurationNode>): List<SearchDomain.ConfigurationNode> =
+        nodes.mapNotNull { node ->
+            when (node) {
+                is SearchDomain.ConfigurationLeaf ->
+                    node.takeIf {
+                        (it.setting.section == null || it.setting.section in associatedKinds) &&
+                            (needle.isEmpty() || it.label.contains(needle, ignoreCase = true))
+                    }
+                is SearchDomain.ConfigurationCategory -> {
+                    val children = filter(node.children)
+                    node.takeIf { node.label.contains(needle, ignoreCase = true) || children.isNotEmpty() }
+                        ?.copy(children = children)
+                }
+            }
+        }
+    return filter(this)
 }
 
 /** One level of the tree: its [nodes], and the pop-up of the one of them [path] says reveals its children. */

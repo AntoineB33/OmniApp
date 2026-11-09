@@ -968,7 +968,7 @@ class SearchAddedElementsTest {
         val picking = SearchDomain.Config(pickedTimers = setOf("t2", "t4"), compactTimers = true)
         assertEquals(picking, SearchDomain.Config.decode(picking.encode()))
         assertEquals(emptySet(), SearchDomain.Config.decode("""{"query":"x"}""")!!.pickedTimers, "a configuration written before it")
-        assertEquals(false, SearchDomain.Config.decode("""{"query":"x"}""")!!.compactTimers)
+        assertEquals(true, SearchDomain.Config.decode("""{"query":"x"}""")!!.compactTimers)
 
         // User rule 2026-10-12: "The actions to define the default configurations of a timer are in the macro group
         // that gathers all timers, or in the group of the timer if there is only one timer in the added elements list."

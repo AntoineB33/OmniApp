@@ -638,7 +638,7 @@ object SearchDomain {
          * User rule 2026-10-12: the "Lowest countdown" action draws each timer it shows on ONE row — its countdown,
          * its buttons, Elapsed and when it ends side by side — instead of a block of three lines.
          */
-        val compactTimers: Boolean = false,
+        val compactTimers: Boolean = true,
         /**
          * User rule 2026-10-14, the timers' rule for the chronos: the chronos checked in the "Highest count" action of
          * the group of several chronos ([AddedAction.ChronoHighestCount], by id); none checked, the one with the highest
@@ -1876,7 +1876,7 @@ object SearchDomain {
         /** New 2026-10-12: absent = no timer picked in "Lowest countdown" (it then shows the lowest one). */
         val pickedTimers: List<String> = emptyList(),
         /** New 2026-10-12: absent = each timer of "Lowest countdown" as a block, not on one row. */
-        val compactTimers: Boolean = false,
+        val compactTimers: Boolean = true,
         /** New 2026-10-14: absent = no chrono picked in "Highest count" (it then shows the highest one). */
         val pickedChronos: List<String> = emptyList(),
         /** New 2026-10-14: absent = each chrono's run as a block, not on one row. */
