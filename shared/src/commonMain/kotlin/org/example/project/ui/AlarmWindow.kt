@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -1342,7 +1343,7 @@ private fun CountdownField(
     var menuOpen by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     Box {
-        androidx.compose.material3.OutlinedTextField(
+        BasicTextField(
             value = shownText.ifBlank { padded(0) },
             onValueChange = { text ->
                 val held = own?.held ?: live
@@ -1351,20 +1352,24 @@ private fun CountdownField(
             },
             readOnly = !editable,
             singleLine = true,
-            isError = own?.let { parseCountdownComponent(it.text, field) == null } == true,
             textStyle = MaterialTheme.typography.titleMedium.copy(
                 textAlign = TextAlign.Center,
                 color =
                     if (running) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
             ),
-            colors =
-                androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    unfocusedTextColor = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
             modifier = Modifier
                 .width(56.dp)
+                .border(
+                    1.dp,
+                    if (own?.let { parseCountdownComponent(it.text, field) == null } == true) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.outline
+                    },
+                    RoundedCornerShape(4.dp),
+                )
+                .padding(horizontal = 6.dp, vertical = 8.dp)
                 // Edit mode ends on the first press outside the field, wherever it lands — a text field alone
                 // keeps the caret when the press hits something that takes no focus, and the held fields with it.
                 .leaveOnOutsidePress(own != null) {
