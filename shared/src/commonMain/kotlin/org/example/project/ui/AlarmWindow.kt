@@ -1342,7 +1342,7 @@ private fun CountdownField(
     var menuOpen by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     Box {
-        OutlinedTextField(
+        androidx.compose.material3.OutlinedTextField(
             value = shownText.ifBlank { padded(0) },
             onValueChange = { text ->
                 val held = own?.held ?: live
@@ -1358,6 +1358,11 @@ private fun CountdownField(
                     if (running) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
             ),
+            colors =
+                androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    unfocusedTextColor = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
             modifier = Modifier
                 .width(56.dp)
                 // Edit mode ends on the first press outside the field, wherever it lands — a text field alone
