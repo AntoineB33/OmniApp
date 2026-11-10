@@ -100,7 +100,8 @@ internal fun ConfigurationTreeArrow(
                     label = { Text("Search configuration") },
                     modifier = Modifier.weight(1f),
                 )
-                if (depth < 2) {
+                // Keep the nested configuration chain bounded, while retaining the arrow in the third popup.
+                if (depth < 3) {
                     ConfigurationTreeArrow(
                         state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs,
                         onPickOnCalendar, depth + 1,
