@@ -46,6 +46,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.datetime.DayOfWeek
@@ -1034,7 +1035,7 @@ private fun TimerRowEditor(
             }
             Spacer(Modifier.width(8.dp))
             if (running) {
-                TimerActionChip(text = "Pause", onClick = onPause)
+                TimerActionChip(text = "Pause", onClick = onPause, width = TIMER_RUN_BUTTON_WIDTH)
             } else {
                 // Resuming and starting are the same button: one continues from what a pause banked, the
                 // other from the full duration, and TimerDomain.started is what tells them apart. A countdown
@@ -1044,10 +1045,16 @@ private fun TimerRowEditor(
                     text = if (paused) "Resume" else "Start",
                     enabled = paused || parseDurationSeconds(row.durationText) != null,
                     onClick = onStart,
+                    width = TIMER_RUN_BUTTON_WIDTH,
                 )
             }
             Spacer(Modifier.width(6.dp))
-            TimerActionChip(text = "Reset", enabled = running || paused, onClick = onReset)
+            TimerActionChip(
+                text = "Reset",
+                enabled = running || paused,
+                onClick = onReset,
+                width = TIMER_RESET_BUTTON_WIDTH,
+            )
         }
         // PRD §18: the seconds, moved WITHOUT stopping the countdown. Typing into the seconds field cannot do
         // that — the digit is itself reading down, so a typed value only sticks if the row stops — which is
@@ -1336,7 +1343,7 @@ private fun CountdownField(
     val focusManager = LocalFocusManager.current
     Box {
         OutlinedTextField(
-            value = shownText,
+            value = shownText.ifBlank { padded(0) },
             onValueChange = { text ->
                 val held = own?.held ?: live
                 onDraftChange(CountdownDraft(field, text, held))
@@ -1414,6 +1421,7 @@ private fun TimerActionChip(
     text: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
+    width: Dp? = null,
 ) {
     val color =
         if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -1422,12 +1430,16 @@ private fun TimerActionChip(
             .clip(RoundedCornerShape(6.dp))
             .border(1.dp, color, RoundedCornerShape(6.dp))
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(width?.let { Modifier.width(it) } ?: Modifier)
             .padding(vertical = 4.dp, horizontal = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(text = text, style = MaterialTheme.typography.labelLarge, color = color)
     }
 }
+
+private val TIMER_RUN_BUTTON_WIDTH = 72.dp
+private val TIMER_RESET_BUTTON_WIDTH = 64.dp
 
 /** The in-window editing shape of one alarm (text fields kept raw so typing isn't reformatted). */
 private data class AlarmRow(
@@ -1552,4 +1564,3 @@ private val NUDGE_SECONDS = listOf(-10, -5, -1, 1, 5, 10)
  * the marker can never disagree about how long a timer is.
  */
 private fun formatDuration(seconds: Int): String = TimerDomain.formatDuration(seconds)
-
