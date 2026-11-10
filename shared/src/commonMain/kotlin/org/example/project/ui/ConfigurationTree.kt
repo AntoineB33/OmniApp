@@ -166,7 +166,10 @@ private fun ConfigurationTreeColumns(
         }
     }
     HighlightsSearch("") {
-        TreeColumn(tree, 0, path, { path = it }, leaf, query, onQueryChange)
+        TreeColumn(
+            tree, 0, path, { path = it }, leaf, query, onQueryChange,
+            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
+        )
     }
 }
 
@@ -203,6 +206,14 @@ private fun TreeColumn(
     leaf: @Composable (SearchDomain.Setting) -> Unit,
     query: String,
     onQueryChange: (String) -> Unit,
+    state: SchedulerState,
+    config: SearchDomain.Config,
+    openedConfig: SearchDomain.Config?,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    nowMillis: () -> Long,
+    windows: List<SearchDomain.WindowEntry>,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
 ) {
     val leaves = nodes.all { it is SearchDomain.ConfigurationLeaf }
     Column(
@@ -243,14 +254,29 @@ private fun TreeColumn(
                                         modifier = Modifier.width(TREE_CATEGORY_COLUMN_WIDTH).padding(8.dp),
                                         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
                                     ) {
-                                        OutlinedTextField(
-                                            value = query,
-                                            onValueChange = onQueryChange,
-                                            singleLine = true,
-                                            label = { Text("Search configuration") },
+                                        Row(
                                             modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            OutlinedTextField(
+                                                value = query,
+                                                onValueChange = onQueryChange,
+                                                singleLine = true,
+                                                label = { Text("Search configuration") },
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                            if (depth < 3) {
+                                                ConfigurationTreeArrow(
+                                                    state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs,
+                                                    onPickOnCalendar, depth + 1,
+                                                )
+                                            }
+                                        }
+                                        TreeColumn(
+                                            node.children, depth + 1, path, onPathChange, leaf, query, onQueryChange,
+                                            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
                                         )
-                                        TreeColumn(node.children, depth + 1, path, onPathChange, leaf, query, onQueryChange)
                                     }
                                 }
                             }
