@@ -108,7 +108,7 @@ internal fun ConfigurationTreeArrow(
                     )
                 }
             }
-            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, query, { query = it }, nowMillis, windows, claudeLogs) { which ->
+            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, query, nowMillis, windows, claudeLogs) { which ->
             open = false
             onPickOnCalendar(which)
             }
@@ -130,7 +130,6 @@ private fun ConfigurationTreeColumns(
     openedConfig: SearchDomain.Config?,
     onConfigChange: (SearchDomain.Config) -> Unit,
     query: String,
-    onQueryChange: (String) -> Unit,
     nowMillis: () -> Long,
     windows: List<SearchDomain.WindowEntry>,
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
@@ -167,15 +166,16 @@ private fun ConfigurationTreeColumns(
     }
     HighlightsSearch("") {
         TreeColumn(
-            tree, 0, path, { path = it }, leaf, query, onQueryChange,
+            tree, 0, path, { path = it }, leaf,
             state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
         )
     }
 }
 
-private fun List<SearchDomain.ConfigurationNode>.filterConfigurationNodes(
+/** The nodes whose label holds [query], with their ancestors; the leaves of [associatedKinds] alone, unless null. */
+internal fun List<SearchDomain.ConfigurationNode>.filterConfigurationNodes(
     query: String,
-    associatedKinds: Set<SearchDomain.Kind>,
+    associatedKinds: Set<SearchDomain.Kind>?,
 ): List<SearchDomain.ConfigurationNode> {
     val needle = query.trim()
     fun filter(nodes: List<SearchDomain.ConfigurationNode>): List<SearchDomain.ConfigurationNode> =
@@ -183,7 +183,7 @@ private fun List<SearchDomain.ConfigurationNode>.filterConfigurationNodes(
             when (node) {
                 is SearchDomain.ConfigurationLeaf ->
                     node.takeIf {
-                        (it.setting.section == null || it.setting.section in associatedKinds) &&
+                        (associatedKinds == null || it.setting.section == null || it.setting.section in associatedKinds) &&
                             (needle.isEmpty() || it.label.contains(needle, ignoreCase = true))
                     }
                 is SearchDomain.ConfigurationCategory -> {
@@ -204,8 +204,6 @@ private fun TreeColumn(
     path: List<String>,
     onPathChange: (List<String>) -> Unit,
     leaf: @Composable (SearchDomain.Setting) -> Unit,
-    query: String,
-    onQueryChange: (String) -> Unit,
     state: SchedulerState,
     config: SearchDomain.Config,
     openedConfig: SearchDomain.Config?,
@@ -268,14 +266,21 @@ private fun TreeColumn(
                                         modifier = Modifier.width(TREE_CATEGORY_COLUMN_WIDTH).padding(8.dp),
                                         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
                                     ) {
+                                        // Anomaly 2026-11-11: this field wrote into the parent pop-up's too — both
+                                        // were the root's one query. Each pop-up has its own, which narrows only what
+                                        // it shows (its category's children), and goes with it.
+                                        var childQuery by remember { mutableStateOf("") }
+                                        val children = remember(node.children, childQuery) {
+                                            node.children.filterConfigurationNodes(childQuery, associatedKinds = null)
+                                        }
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
                                         ) {
                                             OutlinedTextField(
-                                                value = query,
-                                                onValueChange = onQueryChange,
+                                                value = childQuery,
+                                                onValueChange = { childQuery = it },
                                                 singleLine = true,
                                                 label = { Text("Search configuration") },
                                                 modifier = Modifier.weight(1f),
@@ -288,7 +293,7 @@ private fun TreeColumn(
                                             }
                                         }
                                         TreeColumn(
-                                            node.children, depth + 1, path, onPathChange, leaf, query, onQueryChange,
+                                            children, depth + 1, path, onPathChange, leaf,
                                             state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
                                         )
                                     }

@@ -9,6 +9,7 @@ import org.example.project.scheduler.domain.SearchDomain.ConfigurationCategory
 import org.example.project.scheduler.domain.SearchDomain.ConfigurationLeaf
 import org.example.project.scheduler.domain.SearchDomain.ConfigurationNode
 import org.example.project.scheduler.domain.SearchDomain.Setting
+import org.example.project.ui.filterConfigurationNodes
 
 /**
  * User rule 2026-11-04: *"add a downward arrow at the right of the search bar. When hovering over it, it opens a pop-up
@@ -74,5 +75,20 @@ class ConfigurationTreeTest {
         val later = config.encode().replace("\"SearchText\"", "\"Telepathy\"")
         assertEquals(emptyMap(), SearchDomain.Config.decode(later)!!.settingsChangedAt)
         assertTrue(SearchDomain.sameSearchConfigurations(config.encode(), older))
+    }
+
+    /**
+     * Anomaly 2026-11-11: a letter typed in a child pop-up's search field was written in its parent's too. A child
+     * pop-up's field narrows its own category's children alone ([filterConfigurationNodes] with no kinds: they were
+     * narrowed to the window's kinds by the root already).
+     */
+    @Test
+    fun a_child_pop_up_query_narrows_its_own_children_alone() {
+        val first = SearchDomain.configurationTree(SearchDomain.Config()).first() as ConfigurationCategory
+        val needle = Setting.MatchCase.label
+        val narrowed = first.children.filterConfigurationNodes(needle, associatedKinds = null)
+        assertTrue(narrowed.isNotEmpty())
+        assertTrue(narrowed.all { (it as ConfigurationLeaf).label.contains(needle, ignoreCase = true) })
+        assertEquals(first.children, first.children.filterConfigurationNodes("", associatedKinds = null), "an empty field narrows nothing")
     }
 }
