@@ -5,7 +5,10 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import org.example.project.ui.MenuSide
+import org.example.project.ui.keepsSpot
 import org.example.project.ui.menuSpot
 
 /**
@@ -62,5 +65,19 @@ class MenuPlacementTest {
         assertEquals(IntOffset(200, 100), menuSpot(IntRect(50, 100, 200, 130), menu, screen, sub), "no room at the left: at its right")
         assertEquals(IntOffset(0, 130), menuSpot(IntRect(0, 100, 1000, 130), menu, screen, sub), "no room at either side: below")
         assertEquals(IntOffset(0, 300), menuSpot(IntRect(0, 600, 1000, 630), menu, screen, sub), "nor below: above")
+    }
+    /**
+     * Anomaly 2026-11-11: a letter typed in the search field of a configuration pop-up shrank its list, and the pop-up,
+     * placed again, slid down from under the pointer (y 177 → 285, the pointer at 230): the tree vanished. An open menu
+     * that changes size stays where it is while it fits on the screen and keeps off its anchor ([keepsSpot]).
+     */
+    @Test
+    fun an_open_menu_that_changes_size_stays_where_it_is_while_it_may() {
+        val row = IntRect(703, 400, 903, 430)
+        val shown = IntOffset(503, 177)
+        assertTrue(keepsSpot(shown, IntSize(200, 457), row, screen), "shrunk: it stays")
+        assertTrue(keepsSpot(shown, IntSize(200, 600), row, screen), "grown, still on the screen: it stays")
+        assertFalse(keepsSpot(shown, IntSize(200, 700), row, screen), "off the screen's bottom: placed again")
+        assertFalse(keepsSpot(shown, IntSize(250, 300), row, screen), "over its anchor: placed again")
     }
 }

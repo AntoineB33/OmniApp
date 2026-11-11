@@ -37,6 +37,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -104,6 +105,12 @@ actual fun AppDropdownMenu(
     }
     HangingMenu(owner, at = null, offset, properties.focusable, onDismissRequest, modifier, atPointer || ROW_MENUS_AT_POINTER_EVERYWHERE, content)
 }
+
+/**
+ * Left of and above it, a menu is out of sight, measured before it is shown ([MenuSession]'s first open, at -32000,
+ * which Windows clamps to -16384): never a place to keep.
+ */
+private const val OFF_SCREEN = -16000
 
 private val MENUS_ARE_WINDOWS: Boolean = System.getProperty("omniapp.menuWindows") != "false"
 
@@ -275,15 +282,18 @@ private class MenuSession(
             val fitted = Dimension(ceil(wanted.width / scale).toInt().coerceAtLeast(1), ceil(wanted.height / scale).toInt().coerceAtLeast(1))
             MenuWindows.lastSize[site] = fitted
             size = fitted
+            // Shown already: it stays where it is if it can ([keepsSpot]) — a menu never moves under the eye.
+            val shownAt = window.location.takeIf { window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN }
             if (window.size != fitted) window.size = fitted
-            place()
+            place(keeping = shownAt)
         }
     }
 
-    private fun place() {
+    /** Placed by its anchor, or kept at [keeping] (where it is shown) if it still may stand there ([keepsSpot]). */
+    private fun place(keeping: Point? = null) {
         val window = dialog ?: return
         if (size == null) return
-        val at = location()
+        val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping)
         if (window.location != at) window.location = at
     }
 
@@ -436,7 +446,15 @@ private fun pointerIn(owner: AwtWindow): Offset? =
  * anchor (the window bar's menu: the bar, at the pointer's x). The menu is a window of its own, so the room it has is
  * the SCREEN's, not the app window's: under a field near the bottom of a small window it still opens below.
  */
-private fun menuPlacement(owner: AwtWindow, anchor: Rect, offsetPx: Offset, size: Dimension, sides: List<MenuSide> = MenuSide.DEFAULT): Point {
+private fun menuPlacement(
+    owner: AwtWindow,
+    anchor: Rect,
+    offsetPx: Offset,
+    size: Dimension,
+    sides: List<MenuSide> = MenuSide.DEFAULT,
+    /** Where the menu is shown, kept if it still may stand there ([keepsSpot]); null for a menu placed afresh. */
+    keeping: Point? = null,
+): Point {
     val pane = (owner as? RootPaneContainer)?.contentPane
     val origin = runCatching { (pane ?: owner).locationOnScreen }.getOrNull() ?: owner.location
     val scale = owner.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
@@ -448,7 +466,9 @@ private fun menuPlacement(owner: AwtWindow, anchor: Rect, offsetPx: Offset, size
         bottom = origin.y + screen(anchor.bottom + offsetPx.y),
     )
     val area = workAreaAt(ScreenPoint(on.left, on.top)) ?: workAreaAt(ScreenPoint(origin.x, origin.y))
-        ?: return Point(on.left, on.bottom)
-    val spot = menuSpot(on, IntSize(size.width, size.height), IntRect(area.x, area.y, area.x + area.width, area.y + area.height), sides)
+        ?: return keeping ?: Point(on.left, on.bottom)
+    val screen = IntRect(area.x, area.y, area.x + area.width, area.y + area.height)
+    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, screen)) return keeping
+    val spot = menuSpot(on, IntSize(size.width, size.height), screen, sides)
     return Point(spot.x, spot.y)
 }

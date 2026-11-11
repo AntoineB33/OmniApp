@@ -31,6 +31,18 @@ internal fun menuSpot(anchor: IntRect, size: IntSize, area: IntRect, sides: List
     return IntOffset(slideX(anchor.left), slideY(anchor.bottom))
 }
 
+/**
+ * Anomaly 2026-11-11: **an open menu whose content changes size stays where it is** while it still fits on the screen
+ * ([area]) and stays off its [anchor]. Placed again, a menu pushed up to fit slid back down as a search typed in it
+ * shrank its list: the field left the pointer, which was then over nothing, and the configurations tree vanished
+ * ([MenuHoverTracker]). Where it no longer fits, or would cover its anchor, it is placed again ([menuSpot]).
+ */
+internal fun keepsSpot(current: IntOffset, size: IntSize, anchor: IntRect, area: IntRect): Boolean {
+    val at = IntRect(current.x, current.y, current.x + size.width, current.y + size.height)
+    val onScreen = at.left >= area.left && at.top >= area.top && at.right <= area.right && at.bottom <= area.bottom
+    return onScreen && !at.overlaps(anchor)
+}
+
 /** A side of its anchor a menu opens on ([menuSpot]), tried in the order a menu is given. */
 enum class MenuSide {
     Below, Above, Right, Left;
