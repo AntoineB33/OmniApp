@@ -15,6 +15,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.TimeZone
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.PROGRESSIVE_FIRST_STAGE_MILLIS
+import org.example.project.scheduler.engine.progressiveStageCapMillis
+import org.example.project.scheduler.engine.PROGRESSIVE_MIN_ADVANCE_MILLIS
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.state.SchedulerIntent
@@ -154,23 +156,34 @@ class PlanOffTheFrameLoopTest {
         // paragraphs above describe were the debounce's, which delays no run any more, 2026-10-07): the ten definitive
         // seconds first where the line is bare (§ *Progressive Calculation*, **first 10s**), then the stages, each
         // extending the last.
+        // Since 2026-11-11 (§ *Two paces*): the ten seconds are the instant schedule's, and every stage after them is a
+        // ten-minute step from the front ([progressiveStageCapMillis]).
         for (now in listOf(T0)) {
             val goal = SchedulerDomain.scheduleHorizonEndMillis(now, null, TimeZone.UTC)
-            var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
             var first = true
+            var reached = now
             if (SchedulerDomain.firstSecondsGapFillable(direct, now)) {
-                direct = SchedulerReducer.reduce(direct, SchedulerIntent.RefreshSchedule(now, now + SchedulerDomain.FIRST_DEFINITIVE_MILLIS))
+                direct = SchedulerReducer.reduce(
+                    direct,
+                    SchedulerIntent.RefreshSchedule(now, now + SchedulerDomain.FIRST_DEFINITIVE_MILLIS, instant = true),
+                )
+                reached = now + SchedulerDomain.FIRST_DEFINITIVE_MILLIS
                 first = false
             }
+            var emptySkip = 0L
             while (true) {
-                val cap = (now + stage).takeIf { it < goal }
+                val cap = (progressiveStageCapMillis(now, reached, 0L, first, 0.0) + emptySkip).takeIf { it < goal }
                 direct = SchedulerReducer.reduce(
                     direct,
                     if (first) SchedulerIntent.RefreshSchedule(now, cap) else SchedulerIntent.ExtendSchedule(now, cap),
                 )
                 first = false
+                val placedAny = direct.panels.any {
+                    it.auto && it.taskId != null && !it.isRestrictivePeriod && it.endEpochMillis > reached && it.startEpochMillis < (cap ?: goal)
+                }
+                emptySkip = if (placedAny) 0L else if (emptySkip == 0L) PROGRESSIVE_MIN_ADVANCE_MILLIS else 2 * emptySkip
+                reached = cap ?: goal
                 if (cap == null) break
-                stage *= 2
             }
         }
         assertEquals(direct.panels, vm.state.value.panels)

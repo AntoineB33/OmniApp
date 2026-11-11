@@ -11,6 +11,28 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Two paces: ten-minute deep steps, and the instant schedule for what is displayed — 2026-11-11
+
+`docs/scheduler_requirements.md` § *Two paces*, user choices 2026-11-11 ("fixed 10-min deep steps"; "the instantaneous
+scheduler schedules for the part of the timeline displayed on the app, and [now, now+10s]"), ported from line_manager.
+**The steps** (`SchedulerEngine.runProgressiveStages`, `progressiveStageCapMillis`): every stage extends the definitive
+front by exactly ten minutes and searches with the whole pace (7 s), its search reaching one decision window past it, up to
+$t_{goal}$ or the calculation limit (about twelve steps on the default two minutes); the stages no longer double. An
+extension steps on from the materialized front; a step that placed nothing makes the next reach further (`emptySkip`);
+where the line comes within two floors of where a stopped run reached, the stop is voided so the front stays ahead of the
+line (`calculationLimitFront`). **The instant schedule** (`InstantSchedule`, `ScheduleFill.Input.instant`,
+`fillSchedule(instant = true)`): the score's own base policy with the display rules (no panel of a block's own task
+against it, no sliver before a block, a cut panel finished first, nobody never), rolled by two-hour parts each scored from
+its own start, the best of three phases kept, nothing searched; the calendar shows it past the definitive front over the
+displayed span (`App`, off the UI thread), and the first 10 s of a run from scratch are laid by it
+(`RefreshSchedule.instant`). User rule 2026-11-11, *every task is schedulable*: a task inside a renamed parent's sub-tree
+the scheduler places is live and goes back to the server (`ForgottenHistoryTest`). Tests rewritten for the steps:
+`ProgressivePaceTest`, `PlanCalculationLimitTest`, `PlanOffTheFrameLoopTest`, `ScheduleStalenessRuleTest` (a two-second
+limit). `checkChange` green (start-up check: edits hold the UI thread ≤ 37 ms). `:shared:longTest -PlongScale=0.25`: the same
+figures as before this change and the same two red tests (the simulations drive the reducer, not the engine's steps nor
+the calendar). Not yet: the rest of the 2026-11-11 task model (parents schedulable beside their children, a target
+evolution per task in the Search window, no dated task trees). Client rebuild.
+
 ### The score: each task's own compensation length, rare tasks discounted over their own window — 2026-11-11
 
 `docs/scheduler_score.md` (2026-11-07) defined what `ScoreModel` did not score yet; found by scoring the same plans with

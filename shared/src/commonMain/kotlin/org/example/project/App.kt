@@ -3103,9 +3103,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // fill is dropped ("erased") — no retained multi-week memory. Nearer days need none of this: the
         // engine already fills exactly to the goal (`engine.setCalendarHorizon` above), so
         // `schedulerState.panels` covers the whole displayed span.
-        val nearHorizonEndMillis =
-            SchedulerDomain.scheduleHorizonEndMillis(nowMillis, visibleSpanEndMillis, tz)
-        val visibleSpanBeyondNearHorizon = goalEndMillis > nearHorizonEndMillis
+        // `docs/scheduler_requirements.md` § *Two paces*: the scheduler's steps make the schedule definitive ten minutes
+        // at a time, from the line; what the calendar shows past that front is the INSTANT schedule — *"the
+        // instantaneous scheduler schedules for the part of the timeline displayed"* (user, 2026-11-11). The front is
+        // where the plan's chain of panels from the line ends; it moves when a step publishes, not with the clock.
+        val definitiveFrontMillis = remember(schedulerState.panels) { SchedulerDomain.firstFreeMoment(schedulerState.panels, nowMillis) }
+        val visibleSpanBeyondNearHorizon = visibleSpanEndMillis > definitiveFrontMillis
         var farWeekPlan by remember { mutableStateOf<List<TaskPanel>?>(null) }
         var farWeekCalculating by remember { mutableStateOf(false) }
         // Keyed on the displayed END, not on `goalEndMillis`: beyond the ceiling the two are the same instant,
@@ -3120,7 +3123,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             )
         val farSignature = remember(schedulerState) { SchedulerDomain.schedulingSignature(schedulerState) }
         LaunchedEffect(
-            visibleSpanStartMillis, visibleSpanBeyondNearHorizon, visibleSpanEndMillis,
+            visibleSpanStartMillis, visibleSpanBeyondNearHorizon, visibleSpanEndMillis, definitiveFrontMillis,
             farSignature, farMode, frozenBreaks, observedNoScreenEvidence, inactiveSince, activeSince,
         ) {
             if (!visibleSpanBeyondNearHorizon) {
@@ -3137,12 +3140,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val fill =
                 withContext(Dispatchers.Default) {
                     SchedulerDomain.fillSchedule(
-                        schedulerState, nowMillis, timeZone = tz, horizonMillis = goalEndMillis,
+                        schedulerState, nowMillis, timeZone = tz, horizonMillis = maxOf(goalEndMillis, visibleSpanEndMillis),
                         liveRest = SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
                         noScreenEvidence = observedNoScreenEvidence,
-                        keepExistingUntilMillis = SchedulerDomain.firstFreeMoment(schedulerState.panels, nowMillis),
+                        keepExistingUntilMillis = definitiveFrontMillis,
                         tpMode = farMode,
                         frozenBreaks = frozenBreaks,
+                        // § *Two paces*: the instant schedule's decisions, no search.
+                        instant = true,
                     )
                 }
             farWeekPlan = fill

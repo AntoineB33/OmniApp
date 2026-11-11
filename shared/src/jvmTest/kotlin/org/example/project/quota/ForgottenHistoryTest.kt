@@ -107,7 +107,15 @@ class ForgottenHistoryTest {
         assertEquals(listOf(oldCell), desktop.state.lists[oldList]?.cellIds, "its sub-list whole")
         assertEquals(oldChild, desktop.state.cells[oldCell]?.taskId)
         assertEquals(oldList, desktop.state.tasks[oldParent]?.childListId, "and still the parent's: naming it again brings it back")
-        assertFalse(serverHas(server, oldList.value, "lists") || serverHas(server, oldCell.value, "cells") || serverHas(server, oldChild.value))
+        assertFalse(serverHas(server, oldList.value, "lists") || serverHas(server, oldCell.value, "cells"), "its tree rows stay forgotten")
+        // User rule 2026-11-11: every task is schedulable — the child inside the renamed parent's sub-tree too. Where the
+        // scheduler places it (the instant schedule serves the task furthest behind, which a task never served is), it is
+        // live again, and its row goes back with it; where it is not placed, it stays forgotten.
+        assertEquals(
+            desktop.state.panels.any { it.taskId == oldChild },
+            serverHas(server, oldChild.value),
+            "the child goes back to the server exactly when the scheduler placed it",
+        )
         val marker = assertNotNull(desktop.sync.forgotten.value, "it has the row standing for what was forgotten")
         assertEquals(t0, marker.untilMillis)
 

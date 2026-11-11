@@ -1025,6 +1025,11 @@ sealed interface SchedulerIntent {
          * supersede it — the in-reducer re-plans that answer a press.
          */
         val generation: Long = 0L,
+        /**
+         * `docs/scheduler_requirements.md` § *Two paces*: plan with the instant schedule ([SchedulerDomain.fillSchedule]'s
+         * `instant`) — the first 10 seconds of a run from scratch.
+         */
+        val instant: Boolean = false,
     ) : SchedulerIntent
 
     /**

@@ -48,6 +48,10 @@ class ScheduleStalenessRuleTest {
             scope = scope,
             deviceKind = DeviceKind.Desktop,
             screenActive = { true },
+            // Two seconds of real time per run (§ *Progressive Calculation*'s limit): since 2026-11-11 a run walks
+            // ten-minute steps towards the week's end, and with no search here each is a quick fill, so the default
+            // two minutes walked hundreds of them per simulated hour. What is pinned is WHEN the engine re-plans.
+            calculationLimitMillis = 2_000L,
         )
         return Harness(engine, vm)
     }

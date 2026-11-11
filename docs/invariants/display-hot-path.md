@@ -186,6 +186,11 @@ Global rules that always apply: `CLAUDE.md`.
   that stops short of an older, longer plan is routine; the old panels answer rules the fill may have replaced,
   and one abutting the new tail was read by the next extension as materialized and kept as definitive
   (`SchedulerFillTest.a_re_plan_shorter_than_the_old_plan_drops_the_old_plan_beyond_it`).
+- **Past the definitive front the calendar shows the INSTANT schedule** (requirements § *Two paces*, user rule
+  2026-11-11: *"the instantaneous scheduler schedules for the part of the timeline displayed"*): the same fill as below,
+  with `fillSchedule(instant = true)` — `InstantSchedule`, the score's own policy rolled by two-hour parts, nothing
+  searched — from the front (`firstFreeMoment` of the plan) to the displayed end, wherever that is, not only past the
+  ceiling (the steps now leave the front about two hours ahead). Re-derived when the front moves (a step published).
 - Beyond the ceiling, the far fill runs off the UI thread and is **never stored in `state.panels`**. It is keyed on
   the span AND on what the plan is a function of — the rules (`schedulingSignature`), the mode, the banked screen
   breaks, the observed evidence and the live pause's bounds — and given the same inputs the engine's own fills get:

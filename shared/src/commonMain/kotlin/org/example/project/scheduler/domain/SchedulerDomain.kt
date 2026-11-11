@@ -5913,6 +5913,8 @@ object SchedulerDomain {
         adoptedCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
         /** Lay only the repetition of the rules already returned ([ScheduleFill.Input.unrollOnly]). */
         unrollOnly: Boolean = false,
+        /** `docs/scheduler_requirements.md` § *Two paces*: the instant schedule's decisions ([ScheduleFill.Input.instant]). */
+        instant: Boolean = false,
         // `docs/scheduler_score.md` § *Degradation*: the wall time this fill may spend past its step-bounded passes —
         // the exhaustive search that certifies the best continuation, and the platform's solver. NONE for every fill
         // that answers a display or a press.
@@ -5942,7 +5944,7 @@ object SchedulerDomain {
                     keepExistingUntilMillis, tpMode, if (rulesSink == null) null else ({ ruleState = it }), cycleSink,
                     adoptedPlacements, adoptedCycle, searchBudget = searchBudget, extraSeeds = extraSeeds,
                     searchSink = searchSink, frozenBreaks = frozenBreaks,
-                    breaksObstruct = breaksObstruct, idleSink = idleSink, unrollOnly = unrollOnly,
+                    breaksObstruct = breaksObstruct, idleSink = idleSink, unrollOnly = unrollOnly, instant = instant,
                 )
             }
         // The returned set of rules is read off what the fill RETURNED, here, rather than collected inside
@@ -6336,6 +6338,8 @@ object SchedulerDomain {
         adoptedCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
         /** Lay only the repetition of the rules already returned ([ScheduleFill.Input.unrollOnly]). */
         unrollOnly: Boolean = false,
+        /** `docs/scheduler_requirements.md` § *Two paces*: the instant schedule's decisions ([ScheduleFill.Input.instant]). */
+        instant: Boolean = false,
         searchBudget: SearchBudget = SearchBudget.NONE,
         extraSeeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
         searchSink: ((SearchReport, Double?) -> Unit)? = null,
@@ -6713,6 +6717,7 @@ object SchedulerDomain {
                     ruleStates = timeline,
                     unrollOnly = unrollOnly,
                     minimumWeight = state.minimumTimeWeight,
+                    instant = instant,
                 ),
             )
         cycleSink?.invoke(filled.cycle)

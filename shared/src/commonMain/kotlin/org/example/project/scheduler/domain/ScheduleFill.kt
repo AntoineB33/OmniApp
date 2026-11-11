@@ -107,6 +107,13 @@ internal object ScheduleFill {
          * Where the cycle does not apply, nothing is laid.
          */
         val unrollOnly: Boolean = false,
+        /**
+         * `docs/scheduler_requirements.md` § *Two paces*: plan with [InstantSchedule] — the score's own policy rolled by
+         * parts, no search — rather than with [ScheduleOptimizer]. What the calendar shows past the definitive front,
+         * and the first 10 seconds of a run from scratch. The environment is built exactly as for a search (it is the
+         * same fill); only the decisions differ.
+         */
+        val instant: Boolean = false,
     )
 
     /** How finely the instant a moving rule state changes the first run is located. */
@@ -345,6 +352,13 @@ internal object ScheduleFill {
         val searchUntil = if (approximate) model.uAt(limit!!) else model.uEnd
         val emitU = model.uAt(emitEnd)
         val seeds = (input.seeds + listOfNotNull(adoptedSeed)).map { seedRuns(model, it, input.startMillis) }.filter { it.isNotEmpty() }
+        // § *Two paces*, the instant schedule: the score's policy, ruled and rolled by parts, nothing searched.
+        if (input.instant && !firstOnly) {
+            val runs = InstantSchedule(model).plan(cursor, emitU, forcedFirst, refusedFirst, among)
+            emit(model, runs, raw, emitU)
+            val laid = group(raw)
+            return Result(laid, null, idle = idleSpans(model, laid, input.startMillis, emitEnd))
+        }
         // The platform solver is resolved only for a fill given search time: on the desktop, resolving it loads
         // OR-Tools' native library (~1 s once), which a display fill on the UI thread must never pay.
         val optimizer = ScheduleOptimizer(model, solver = if (input.budget.expired()) null else platformScheduleSolver())

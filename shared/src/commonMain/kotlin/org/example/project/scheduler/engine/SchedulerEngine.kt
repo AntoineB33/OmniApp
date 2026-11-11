@@ -134,32 +134,29 @@ internal const val PROGRESSIVE_MIN_ADVANCE_MILLIS: Long = 10L * 60 * 1_000
 private const val PROGRESSIVE_PACE_MARGIN_MILLIS: Long = 3_000
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation*: **where the next stage of a progressive fill ends.**
+ * `docs/scheduler_requirements.md` § *Two paces*, *10 minutes steps from the $now line$*: **where the next step of a
+ * progressive fill ends** — exactly [PROGRESSIVE_MIN_ADVANCE_MILLIS] past the front already made definitive
+ * ([reachedMillis]; the line, for the first step). *"Each of its steps has 10 seconds to work deeply on the schedule
+ * and deliver the best possible schedule for the 10 minutes it focuses on: step n is focused on [now + 10min·(n+1),
+ * now + 10min·(n+2)]"* — the search of each step reaches one decision window past it
+ * ([ScheduleOptimizer.searchMarginMillis], hours: the big picture first), and emits its ten minutes.
  *
- * The first stage re-plans [stageMillis] ahead of [nowMillis]. Every later one doubles, but never reaches further
- * past the front already made definitive ([reachedMillis]) than this device fills in [PROGRESSIVE_PACE_MILLIS]
- * less [PROGRESSIVE_PACE_MARGIN_MILLIS] at its measured [planHoursPerSecond] — nor less far than the requirement's
- * own [PROGRESSIVE_MIN_ADVANCE_MILLIS]. Doubling alone holds the pace on average and breaks it at the stage that
- * matters: a stage costs in proportion to its length, so the one published after a 64-hour extension on a device
- * filling an hour in 0.2 s arrives 13 s after the one before it, while the front has to move ten minutes every
- * ten seconds. Before the device has measured itself the doubling is left as it is.
+ * Until 2026-11-11 the stages DOUBLED (1 h, 2 h, 4 h … to the end of the week), each searching what the pace left; the
+ * front now moves ten minutes per step and what lies past it is the instant schedule's (§ *Two paces*,
+ * `InstantSchedule`). [stageMillis], [first] and [planHoursPerSecond] are kept for the callers' shape.
  */
+@Suppress("UNUSED_PARAMETER")
 internal fun progressiveStageCapMillis(
     nowMillis: Long,
     reachedMillis: Long,
     stageMillis: Long,
     first: Boolean,
     planHoursPerSecond: Double,
-): Long {
-    val doubled = nowMillis + stageMillis
-    if (first || planHoursPerSecond <= 0.0) return doubled
-    val affordable =
-        (planHoursPerSecond * 3_600_000.0 * (PROGRESSIVE_PACE_MILLIS - PROGRESSIVE_PACE_MARGIN_MILLIS) / 1_000.0).toLong()
-    return minOf(doubled, reachedMillis + maxOf(affordable, PROGRESSIVE_MIN_ADVANCE_MILLIS))
-}
+): Long = (if (first) nowMillis else maxOf(reachedMillis, nowMillis)) + PROGRESSIVE_MIN_ADVANCE_MILLIS
 
-// The longest a stage searches for the best score, whatever the pace would allow.
-internal const val PROGRESSIVE_STAGE_SEARCH_MILLIS: Long = 5_000
+// The longest a step searches for the best score: the pace less what is kept back for its own passes
+// (§ *Two paces*: "each of its steps has 10 seconds to work deeply").
+internal const val PROGRESSIVE_STAGE_SEARCH_MILLIS: Long = PROGRESSIVE_PACE_MILLIS - PROGRESSIVE_PACE_MARGIN_MILLIS
 
 /**
  * `docs/scheduler_requirements.md` § *Progressive Calculation*: **the CALCULATION TIME LIMIT** — the third way
@@ -2691,8 +2688,8 @@ class SchedulerEngine(
         /** A stage is found: the elected device tells the others. */
         open fun published(index: Int) {}
 
-        /** The calculation time limit stopped the run short of [goal]. */
-        open fun stoodDown(goal: Long) {}
+        /** The calculation time limit stopped the run short of [goal], its definitive front at [front]. */
+        open fun stoodDown(goal: Long, front: Long) {}
     }
 
     /** The stored state: its sets of rules are applied to it ([runPlan]) and, where this device leads, published. */
@@ -2703,8 +2700,9 @@ class SchedulerEngine(
         override fun published(index: Int) {
             runLead?.let { coordinator?.publish(rulesMessage(it.election, index)) }
         }
-        override fun stoodDown(goal: Long) {
+        override fun stoodDown(goal: Long, front: Long) {
             calculationLimitStop = SchedulerDomain.schedulingSignature(vm.state.value) to goal
+            calculationLimitFront = front
         }
     }
 
@@ -2718,15 +2716,25 @@ class SchedulerEngine(
         var stage = PROGRESSIVE_FIRST_STAGE_MILLIS
         var first = true
         var index = 0
-        var reached = clock.nowMillis()
+        var emptySkip = 0L
+        // An EXTENSION steps on from where the plan already reaches (the materialized front), never from the line:
+        // stepping from the line walked ten-minute steps over the whole plan already held, at every refill (hundreds
+        // of fills a minute on a plan reaching the week's end, 2026-11-11).
+        var reached =
+            if (replan) clock.nowMillis()
+            else maxOf(
+                clock.nowMillis(),
+                target.state.panels.asSequence().filter { it.auto && it.taskId != null && !it.isRestrictivePeriod }
+                    .maxOfOrNull { it.endEpochMillis } ?: Long.MIN_VALUE,
+            )
         // § *Progressive Calculation*, the calculation time limit: REAL time, not the clock the fill plans
         // against — a debug leap must not spend the budget, and a device asleep mid-fill has not computed.
         val calculationMark = TimeSource.Monotonic.markNow()
         // Read as the fill starts: a limit changed mid-fill governs the next one.
         val limitMillis = calculationLimitMillis ?: (target.state.planCalculationLimitSeconds * 1_000L)
-        // A stage whose search ran out of time without certifying the best (and without the solver finding
-        // anything) tells the bigger stages after it that they cannot either: they stop paying for it.
-        var searchUseful = planSearch
+        // Every step searches (§ *Two paces*: each works deeply on its ten minutes). Until the steps were fixed, a stage
+        // whose search ran out told the BIGGER stages after it to stop searching; steps are all the same size.
+        val searchUseful = planSearch
         // The seeds compete in the first stage that searches a continuation, which the ten seconds are not.
         var seedsPending = true
         // § *Progressive Calculation*, **first 10s**: *"When there is a change that will make the scheduler engine
@@ -2737,7 +2745,8 @@ class SchedulerEngine(
         if (first && replan && SchedulerDomain.firstSecondsGapFillable(target.state, reached, tpModeNow())) {
             val now = clock.nowMillis()
             val cap = now + SchedulerDomain.FIRST_DEFINITIVE_MILLIS
-            target.run(SchedulerIntent.RefreshSchedule(now, cap, 0L, seeds, generation))
+            // § *Two paces*: the instant scheduler schedules [now, now + 10 s].
+            target.run(SchedulerIntent.RefreshSchedule(now, cap, 0L, seeds, generation, instant = true))
             target.stage(cap)
             target.published(index)
             reached = cap
@@ -2747,7 +2756,11 @@ class SchedulerEngine(
         while (true) {
             val now = clock.nowMillis()
             val goal = scheduleHorizonEndMillis(now)
-            val cap = progressiveStageCapMillis(now, reached, stage, first, planHoursPerSecond)
+            // A step that placed nothing (nothing may run there, or there is nothing to run) is certain and costs
+            // nothing to look at: the next reaches [emptySkip] further, doubling while they stay empty, back to the
+            // ten-minute step as soon as one places a task. Without it an account the plan cannot reach far walked
+            // every ten minutes to the week's end at every refill.
+            val cap = progressiveStageCapMillis(now, reached, stage, first && replan, planHoursPerSecond) + emptySkip
             stage = cap - now
             val capOrNull = cap.takeIf { it < goal }
             val span = (capOrNull ?: goal) - if (first) now else reached
@@ -2761,9 +2774,12 @@ class SchedulerEngine(
             target.run(intent)
             target.stage(capOrNull ?: goal)
             val search = lastPlanSearch
-            if (search != null && search.exhausted && !search.solverImproved) searchUseful = false
             // The device's speed is what its OWN passes cost: the search spends whatever it was granted.
             notePlanRate(span, mark.elapsedNow().inWholeMilliseconds - (search?.searchMillis ?: 0L))
+            val placedAny = target.state.panels.any {
+                it.auto && it.taskId != null && !it.isRestrictivePeriod && it.endEpochMillis > reached && it.startEpochMillis < (capOrNull ?: goal)
+            }
+            emptySkip = if (placedAny) 0L else if (emptySkip == 0L) PROGRESSIVE_MIN_ADVANCE_MILLIS else 2 * emptySkip
             reached = capOrNull ?: goal
             seedsPending = false
             // `docs/invariants/scheduler.md` § *One device plans*: every stage the elected device publishes is a
@@ -2776,7 +2792,7 @@ class SchedulerEngine(
             // the front stays where this stage left it, and [extensionStoodDown] keeps it there until the
             // rules change or $t_{goal}$ grows past what was given up on.
             if (calculationMark.elapsedNow().inWholeMilliseconds >= limitMillis) {
-                target.stoodDown(goal)
+                target.stoodDown(goal, reached)
                 break
             }
             stage *= 2
@@ -2794,6 +2810,13 @@ class SchedulerEngine(
     private var calculationLimitStop: Pair<Int, Long>? = null
 
     /**
+     * Where the run the limit stopped had made the schedule definitive. Measured where the run REACHED, never off the
+     * panels' chain from the line: a plan holding a stretch no task can fill ends that chain early, and the line read
+     * as "near the front" there voided the stop at every poll — a run of the limit's length each time.
+     */
+    private var calculationLimitFront: Long = Long.MAX_VALUE
+
+    /**
      * Whether an extension must stand down: a fill gave up at this $t_{goal}$ or further, under rules that have
      * not changed since. The two things that void it are the two the requirement names — a rule change, and a
      * goal that has GROWN past what was abandoned (the calendar scrolled out, or the week rolling over).
@@ -2805,6 +2828,14 @@ class SchedulerEngine(
     private fun extensionStoodDown(now: Long): Boolean {
         val (signature, goal) = calculationLimitStop ?: return false
         if (signature != SchedulerDomain.schedulingSignature(vm.state.value)) {
+            calculationLimitStop = null
+            return false
+        }
+        // § *Two paces*: the steps move the front ten minutes at a time, so the limit stops a run hours before the
+        // week's end, and the line reaches that front long before the goal grows. The front must stay ahead of the
+        // line (the definitive schedule is found for any t < now + 10 min): where the line comes within two floors of
+        // it, the stop is voided and the steps go on from there (one limit's worth of steps per time it is reached).
+        if (calculationLimitFront - now < 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS) {
             calculationLimitStop = null
             return false
         }
@@ -3889,9 +3920,11 @@ class SchedulerEngine(
                 // this watcher through `panels`); the goal outgrows the one abandoned at the week's rollover or
                 // once the rolling floor passes it — both instants the stop itself names.
                 if (!extensionStoodDown(now)) break
+                // ...and when the line comes within two floors of the front ([extensionStoodDown]).
+                val nearFront = calculationLimitFront - 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS
                 val outgrownAt =
                     calculationLimitStop?.second
-                        ?.let { goal -> minOf(weekEnd, goal - 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS) }
+                        ?.let { goal -> minOf(weekEnd, goal - 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS, nearFront) }
                 if (outgrownAt != null && outgrownAt > now) sleepUntil(outgrownAt) else tickDelay(pollInterval())
             }
             // Floor the refill RATE as well as its due instant. The due instant alone is not enough: when a

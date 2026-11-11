@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.TimeZone
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.engine.PROGRESSIVE_FIRST_STAGE_MILLIS
+import org.example.project.scheduler.engine.PROGRESSIVE_MIN_ADVANCE_MILLIS
 import org.example.project.scheduler.engine.SchedulerEngine
 import org.example.project.scheduler.platform.DeviceKind
 import org.example.project.scheduler.state.SchedulerIntent
@@ -92,12 +93,20 @@ class PlanCalculationLimitTest {
             "more than one stage ran under a zero limit (reached ${(stopped - T0) / 60_000} min in)",
         )
 
-        // …and it STAYS there. The plan is short of $t_{goal}$, which is exactly the shortfall the
-        // rolling-horizon watcher is built to close: half an hour of polling must not walk the stages on
-        // again under a limit that has already been spent.
-        advanceTimeBy(30 * 60_000L)
+        // …and it does not walk on to $t_{goal}$. The plan is short of the goal, which is exactly the shortfall the
+        // rolling-horizon watcher is built to close: minutes of polling must not walk the stages on again under a
+        // limit that has already been spent. Since 2026-11-11 (§ *Two paces*) the stages are ten-minute steps and
+        // the front must stay ahead of the line, so the stop is lifted while the line is within two floors of where
+        // the run reached — and only that far: the front is kept two floors ahead, never walked to the goal.
+        advanceTimeBy(5 * 60_000L)
         runCurrent()
-        assertEquals(stopped, planFront(vm), "an extension resumed the fill the calculation limit had stopped")
+        val now = T0 + 5 * 60_000L + DEBOUNCE_MILLIS + 1
+        val kept = planFront(vm)
+        assertTrue(kept < goal, "the steps walked on to the goal after the limit: $kept, goal $goal")
+        assertTrue(
+            kept <= now + 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS + 2 * PROGRESSIVE_MIN_ADVANCE_MILLIS,
+            "more than the front two floors ahead of the line: ${(kept - now) / 60_000} min ahead",
+        )
     }
 
     @Test

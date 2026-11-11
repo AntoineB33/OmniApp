@@ -13,8 +13,9 @@ import org.example.project.scheduler.engine.progressiveStageCapMillis
  * t < t1, then 10 seconds later the definitive schedule must be found for any t < t1 + 10 minutes."*
  *
  * The pace binds EVERY stage. Doubling the stages held it only on average: a stage costs in proportion to its
- * length, so the stage after a long one arrived too late on any device that was not very fast. What is pinned here
- * is that no stage reaches further past the definitive front than the device fills inside the pace.
+ * length, so the stage after a long one arrived too late on any device that was not very fast. Since 2026-11-11 the
+ * stages are the requirement's own ten-minute steps (§ *Two paces*), so no stage reaches further than that past the
+ * definitive front.
  */
 class ProgressivePaceTest {
 
@@ -49,16 +50,22 @@ class ProgressivePaceTest {
         }
     }
 
+    /**
+     * `docs/scheduler_requirements.md` § *Two paces* (2026-11-11): every step moves the definitive front by exactly the
+     * requirement's ten minutes, whatever the device — the first from the line, every next one from the front. A fast
+     * device no longer doubles: it spends the pace working deeply on its ten minutes instead.
+     */
     @Test
-    fun a_fast_device_keeps_doubling() {
-        // A device that fills 100 h a second is nowhere near the pace, so nothing is taken from the doubling.
-        assertEquals(NOW + 8 * HOUR, progressiveStageCapMillis(NOW, NOW + 4 * HOUR, 8 * HOUR, first = false, planHoursPerSecond = 100.0))
-    }
-
-    @Test
-    fun the_first_stage_and_an_unmeasured_device_are_left_alone() {
-        assertEquals(NOW + HOUR, progressiveStageCapMillis(NOW, NOW, HOUR, first = true, planHoursPerSecond = 0.01))
-        assertEquals(NOW + 64 * HOUR, progressiveStageCapMillis(NOW, NOW + 32 * HOUR, 64 * HOUR, first = false, planHoursPerSecond = 0.0))
+    fun every_step_moves_the_front_by_ten_minutes() {
+        assertEquals(NOW + PROGRESSIVE_MIN_ADVANCE_MILLIS, progressiveStageCapMillis(NOW, NOW, HOUR, first = true, planHoursPerSecond = 0.01))
+        assertEquals(
+            NOW + 4 * HOUR + PROGRESSIVE_MIN_ADVANCE_MILLIS,
+            progressiveStageCapMillis(NOW, NOW + 4 * HOUR, 8 * HOUR, first = false, planHoursPerSecond = 100.0),
+        )
+        assertEquals(
+            NOW + 32 * HOUR + PROGRESSIVE_MIN_ADVANCE_MILLIS,
+            progressiveStageCapMillis(NOW, NOW + 32 * HOUR, 64 * HOUR, first = false, planHoursPerSecond = 0.0),
+        )
     }
 
     @Test

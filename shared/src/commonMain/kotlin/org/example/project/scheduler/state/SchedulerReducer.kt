@@ -661,7 +661,7 @@ object SchedulerReducer {
                 abandonable(state) {
                     reduceRefreshSchedule(
                         state, intent.nowMillis, intent.horizonCapMillis, intent.searchMillis, intent.seeds,
-                        intent.generation,
+                        intent.generation, intent.instant,
                     )
                 }
             is SchedulerIntent.ExtendSchedule ->
@@ -3396,6 +3396,7 @@ object SchedulerReducer {
         searchMillis: Long = 0,
         seeds: List<List<RulePlacement>> = emptyList(),
         generation: Long = 0L,
+        instant: Boolean = false,
     ): SchedulerState {
         // Superseded before it even got the CPU (a burst of edits, a stage queued behind a longer one):
         // stop before the advance rather than at the first checkpoint inside the search.
@@ -3423,6 +3424,7 @@ object SchedulerReducer {
                 idleSink = { idle = it },
                 searchBudget = SearchBudget.of(searchMillis) { abandoned(generation) },
                 extraSeeds = seeds,
+                instant = instant,
                 searchSink = { report, cost ->
                     search = report
                     score = cost

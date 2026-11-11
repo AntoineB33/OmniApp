@@ -698,11 +698,23 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
      calculated for too long"* — and § *Strict Requirements*' exception 2 bounds the computing power a plan may take.
   How the rolling floor is kept from re-triggering itself, and the 168 h ceiling, are in `display-hot-path.md`.
   Each extension keeps the head, so a run the line is in continues to its minimum across them.
-- **The engine fills in DOUBLING STAGES** (`SchedulerEngine.dispatchProgressivePlan`): a re-plan (or an
-  extension) to `PROGRESSIVE_FIRST_STAGE_MILLIS` (1 h) ahead, then `ExtendSchedule` to 2 h, 4 h, … up to
-  $t_{goal}$, each capped through the intents' `horizonCapMillis`. An extension keeps everything materialized, so
-  every published stage is **definitive** until a rule change
+- **The engine fills in TEN-MINUTE STEPS** (requirements § *Two paces*, user choice 2026-11-11;
+  `SchedulerEngine.runProgressiveStages`, `progressiveStageCapMillis`): after the first 10 s (below), each step extends
+  the definitive front by exactly `PROGRESSIVE_MIN_ADVANCE_MILLIS` (10 min), searching one decision window past it (the
+  big picture, `ScheduleOptimizer.searchMarginMillis`, hours) with the whole pace, and emitting its ten minutes, up to
+  $t_{goal}$ or the calculation limit — on the default two minutes, about twelve steps, two hours. An extension keeps
+  everything materialized, so every published step is **definitive** until a rule change
   (`SchedulerFillTest.progressive_stages_never_rewrite_what_an_earlier_stage_made_definitive`).
+  - **An extension steps on from the materialized front**, never from the line: from the line it walked the whole plan
+    already held, ten minutes at a time, at every refill (hundreds of fills a minute, 2026-11-11).
+  - **A step that placed nothing is certain**: the next reaches further (`emptySkip`, doubling while they stay empty),
+    back to ten minutes as soon as one places a task. Without it, an account the plan cannot reach far walked every ten
+    minutes to the week's end at every refill.
+  - **The front stays ahead of the line.** With ten-minute steps the limit stops a run hours before the week's end,
+    and the line reaches that front long before $t_{goal}$ grows: where it comes within two floors of where the stopped
+    run REACHED (`calculationLimitFront`, never the chain of panels from the line, which a stretch no task can fill
+    ends early), the stop is voided and the steps go on (`extensionStoodDown`, `PlanCalculationLimitTest`).
+  - **Past the front the calendar shows the instant schedule** (`display-hot-path.md`).
 - **First 10 s** (requirements § *Progressive Calculation*, 2026-10-03). Before the first stage of a re-plan from
   scratch, `dispatchProgressivePlan` asks `SchedulerDomain.firstSecondsGapFillable`: do the next
   `FIRST_DEFINITIVE_MILLIS` (10 s) of the schedule on screen hold a stretch no task panel covers — a panel the old
@@ -712,6 +724,8 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   next 10 s are covered (the usual priority edit), nothing extra runs. When the run starts is the next
   bullet's. Extensions (`replan = false`) and the reducer's in-line re-plans (already synchronous) do not take it.
   `FirstTenSecondsTest` (the stages are read through `SchedulerEngine.stageSink`).
+  **Those ten seconds are the instant schedule's** (§ *Two paces*, 2026-11-11: *"the instantaneous scheduler schedules
+  … [now, now + 10 s]"*): `RefreshSchedule(instant = true)`.
   **The check reads the periods as the rules give them at the line in the line's mode** (anomaly 2026-10-07): a
   period that gives way to a mode-1 line (`retractsAtLine`: it is or carries "no screen" — the schedule's Sleep
   window) restricts nothing over those ten seconds, exactly as the fill holds a task at such a line. Read as stored
@@ -781,21 +795,17 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
     task's record ten seconds after every run from scratch. **The breaks' dues are published when what places the
     breaks changed** (`breakInputsAt`), not each time the plan's panels were rewritten.
   - `FirstTenSecondsTest` (a tree edit, a dragged panel at night, a held block), `PlanOffTheFrameLoopTest`.
-- **Doubling, CAPPED BY THE PACE** (`progressiveStageCapMillis`, `ProgressivePaceTest`). The pace binds every
-  stage, not the average: with the front at `t1` when a stage is published, the next must be published within 10 s
-  and reach `t1 + 10 min`. A stage costs in proportion to its length, so pure doubling broke it at the long stages
-  (a 64-h stage on a device filling an hour in 0.2 s is 12.8 s of work) — the claim that it held "for any device
-  under ~15 s an hour" was wrong. So a stage after the first reaches no further past the front than this device
-  fills in `PROGRESSIVE_PACE_MILLIS − PROGRESSIVE_PACE_MARGIN_MILLIS` at its measured `planHoursPerSecond`, and
-  never less than the requirement's own 10 minutes. A single fill to the goal would hold the pace only while the
-  whole fill takes < 10 s (60 tasks over 8 days: 5.4 s on the desktop, 2026-09-16).
+- **The pace binds every step** (`ProgressivePaceTest`): with the front at `t1` when a step is published, the next
+  must be published within 10 s and reach `t1 + 10 min` — which a ten-minute step does by construction. (Until
+  2026-11-11 the stages doubled, capped by what the device filled inside the pace: pure doubling had broken the pace
+  at the long stages, a 64-h stage on a device filling an hour in 0.2 s being 12.8 s of work.)
 - **A newer request cancels the stages the older one has not reached**, and the horizon watchers stand aside while
   a progressive fill is in flight (its own stages are not a gap).
 - **A stage spends the pace it is not using on reaching the best score** (`SchedulerEngine.stageSearchMillis`): the
   requirement's pace is a stage within `PROGRESSIVE_PACE_MILLIS` (10 s) of the previous one, so a stage's search gets
   that minus `PROGRESSIVE_PACE_MARGIN_MILLIS` minus this device's measured cost of the stage's own passes, capped at
-  `PROGRESSIVE_STAGE_SEARCH_MILLIS`. A stage whose search ran out without certifying (and without the solver finding
-  anything) stops the later, larger stages of the same fill from searching: they could not finish either. The
+  `PROGRESSIVE_STAGE_SEARCH_MILLIS` (the pace less the margin: 7 s). Every step searches: the latch that stopped the
+  later, LARGER stages of a fill from searching once one ran out went with the doubling, steps being all one size. The
   device's measured speed (`planHoursPerSecond`, which ranks it in elections) excludes the search time. Tests reduce
   on a virtual clock, so `SchedulerEngine.planSearch` is off unless a host turns it on (both do).
 - **A stage searches one decision window past its horizon** (`ScheduleOptimizer.searchMarginMillis`,
