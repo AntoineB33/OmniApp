@@ -156,9 +156,9 @@ fun rememberMenuHoverTracker(parent: MenuHoverTracker? = null, onLeft: () -> Uni
  * the walk shows and hides the pop-up as many times (anomaly 2026-11-11: two openings of one pop-up were one position,
  * and the window between them none).
  *
- * They come before the app's own positions (`SchedulerIntent.UndoPosition`): while none of those was recorded or walked
- * since the newest of them ([stampNow], `SchedulerReducer.positionStamp`); past the oldest, the walk goes on in the
- * app's history. In this run only; a pop-up that left the screen with what holds it is no position any more ([forget]).
+ * They come before the app's own positions (`SchedulerIntent.UndoPosition`): while the app's history stands where it
+ * stood after the newest of them ([stampNow], `SchedulerReducer.positionStamp`); past the oldest, the walk goes on in
+ * the app's history, and forward comes back through it to them. In this run only; a pop-up that left the screen with what holds it is no position any more ([forget]).
  */
 class PopupPositions(private val stampNow: () -> Any?) {
     /** A position: a pop-up ([owner]), or the app's window (no owner). */
@@ -243,15 +243,13 @@ class PopupPositions(private val stampNow: () -> Any?) {
         return true
     }
 
-    /** Whether these positions are the newest of the app's — none recorded or walked in its history since. */
-    private fun current(): Boolean {
-        if (entries.isEmpty()) return false
-        if (stampNow() != stamp) {
-            clear()
-            return false
-        }
-        return true
-    }
+    /**
+     * Whether these positions are the newest of the app's — its history stands where it stood after the newest of them.
+     * Walked elsewhere (back past the oldest, into the app's own positions), they wait, kept: forward redoes the app's
+     * history back to where it stood, then goes on through them (anomaly 2026-11-11: thrown away there, Ctrl+Alt+→
+     * never showed the pop-up again). A new position recorded meanwhile starts them anew ([focused]).
+     */
+    private fun current(): Boolean = entries.isNotEmpty() && stampNow() == stamp
 
     private fun bring(entry: Entry): Boolean {
         expected = entry.owner ?: AppWindow

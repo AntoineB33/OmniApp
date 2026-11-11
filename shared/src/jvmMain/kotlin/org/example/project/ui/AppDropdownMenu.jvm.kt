@@ -307,9 +307,9 @@ private class MenuSession(
                     override fun windowGainedFocus(event: WindowEvent) = tracker.windowFocused()
                     override fun windowLostFocus(event: WindowEvent) = Unit
                 }
-                tracker.focusWindow = { window.toFront(); window.requestFocus() }
+                tracker.focusWindow = { window.giveKeyboard() }
                 // The app's window at the root of the menus it hangs from.
-                tracker.focusAppWindow = { generateSequence(window.owner) { it.owner }.lastOrNull()?.let { it.toFront(); it.requestFocus() } }
+                tracker.focusAppWindow = { generateSequence(window.owner) { it.owner }.lastOrNull()?.giveKeyboard() }
                 window.addWindowFocusListener(focus)
                 if (window.isFocused) tracker.windowFocused()
                 onDispose {
@@ -378,6 +378,17 @@ private class MenuSession(
         MenuWindows.give(owner, window)
         if (hadFocus) generateSequence(owner) { it.owner }.firstOrNull { it.isShowing }?.toFront()
     }
+}
+
+/**
+ * The keyboard given to this window: to the front, and the keyboard to what held it last in it. Anomaly 2026-11-11
+ * (measured): `requestFocus()` on the window itself made the bare frame the focus owner, not the Compose surface in it,
+ * and from then on no key reached the app — the walk through the positions stopped after giving the app's window back
+ * the keyboard.
+ */
+private fun AwtWindow.giveKeyboard() {
+    toFront()
+    (mostRecentFocusOwner ?: this).requestFocus()
 }
 
 /** What a menu's window shows: material's menu surface, measured without bounds so that it says the size it wants. */

@@ -164,8 +164,23 @@ class MenuHoverTrackerTest {
         repeat(6) { assertTrue(positions.forward(), "forward ${it + 1}") }
         assertEquals(listOf("popup", "window", "popup", "window", "popup", "window"), shown)
         assertFalse(positions.forward())
-        // A position of the app after them: forgotten.
+        // Back past the oldest into the app's own history (its stamp moves): they wait; once the app's history is
+        // redone to where it stood, forward goes on through them (anomaly 2026-11-11).
+        repeat(6) { positions.back() }
+        assertFalse(positions.back())
         stamp++
+        assertFalse(positions.forward(), "the app's history is redone first")
+        stamp--
+        shown.clear()
+        assertTrue(positions.forward())
+        assertEquals(listOf("popup"), shown)
+        // A new position after the app's history moved starts them anew.
+        stamp++
+        ui.open = true
+        ui.opened()
+        assertFalse(positions.forward())
+        assertTrue(positions.back(), "the window it was opened from")
+        assertFalse(ui.open)
         assertFalse(positions.back())
     }
 

@@ -348,6 +348,10 @@ means.
     top pop-up closes (`PopupPositions.appFocused`) — back to it gives it the keyboard
     (`MenuHoverTracker.focusAppWindow`), which closes the pop-ups, pinned or not. Hovering in and out N times leaves N
     pop-up / window pairs, which the walk shows and hides N times (anomaly 2026-11-11: it showed the pop-up once).
+    Back past the oldest walks the app's history; the pop-up positions wait, kept, and forward redoes that history
+    to where it stood, then goes on through them. A window is given the keyboard through what held it last in it
+    (`giveKeyboard`), never `requestFocus()` on the window itself: that made the bare frame the focus owner, and no key
+    reached the app any more (measured 2026-11-11).
     They are newer than the app's history only while no position of it was recorded or walked since
     (`SchedulerReducer.positionStamp`). A pop-up holding the keyboard is a window of its own, so it forwards those
     chords to the app (`LocalMenuKeyForward`); `App.walkPositions` is the one answer to them. They are taken from AWT
