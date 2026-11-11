@@ -348,7 +348,10 @@ means.
     (`MenuHoverTracker.focusAppWindow`), which closes the pop-ups, pinned or not.
     They are newer than the app's history only while no position of it was recorded or walked since
     (`SchedulerReducer.positionStamp`). A pop-up holding the keyboard is a window of its own, so it forwards those
-    chords to the app (`LocalMenuKeyForward`); `App.walkPositions` is the one answer to them. In this run only; a
+    chords to the app (`LocalMenuKeyForward`); `App.walkPositions` is the one answer to them. They are taken from AWT
+    for the pop-up's window (`MenuSession.keyDispatcher`), never from its Compose content: a pop-up brought back holds
+    the keyboard with nothing of it focused, and then no key reaches its content nor the window's own key handler
+    (measured 2026-11-11). In this run only; a
     pop-up that left the screen with the one holding it is no position any more.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
     (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree.

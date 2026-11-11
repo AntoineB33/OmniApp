@@ -253,7 +253,8 @@ val LocalPopupPositions = compositionLocalOf<PopupPositions?> { null }
 
 /**
  * What the app does with a key its own windows would have heard, given to the pop-ups: a pop-up is a window of its own
- * holding the keyboard, and the chords that walk every window (user rule 2026-11-11) must work from it too. True when
- * taken. Null where nothing gives it.
+ * holding the keyboard, and the chords that walk every window (user rule 2026-11-11) must work from it too. The key and
+ * its modifiers (Ctrl or Cmd, Shift, Alt), as `undoRedoIntentFor` reads them; true when taken. Null where nothing gives
+ * it.
  */
-val LocalMenuKeyForward = compositionLocalOf<((androidx.compose.ui.input.key.KeyEvent) -> Boolean)?> { null }
+val LocalMenuKeyForward = compositionLocalOf<((androidx.compose.ui.input.key.Key, Boolean, Boolean, Boolean) -> Boolean)?> { null }

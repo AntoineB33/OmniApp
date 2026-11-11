@@ -242,7 +242,26 @@ private class MenuSession(
     }
 
     /** What the app makes of a key its windows would have heard ([LocalMenuKeyForward]): the chords that walk every window. */
-    var keyForward: ((androidx.compose.ui.input.key.KeyEvent) -> Boolean)? = null
+    var keyForward: ((Key, Boolean, Boolean, Boolean) -> Boolean)? = null
+
+    /**
+     * Anomaly 2026-11-11 (*"it still didn't close it"*, measured): a pop-up brought back holds the keyboard with nothing
+     * of it focused, and then no key reaches its content, nor the window's own key handler — Ctrl+Alt+← struck there was
+     * heard by nothing. So the keys the app walks its positions with are taken here, from AWT, for this window, before
+     * Compose: the arrows, handed to [keyForward] with their modifiers.
+     */
+    private val keyDispatcher = java.awt.KeyEventDispatcher { event ->
+        if (event.id != java.awt.event.KeyEvent.KEY_PRESSED || dialog == null) return@KeyEventDispatcher false
+        val source = event.component
+        val window = source as? AwtWindow ?: source?.let { javax.swing.SwingUtilities.getWindowAncestor(it) }
+        if (window !== dialog) return@KeyEventDispatcher false
+        val key = when (event.keyCode) {
+            java.awt.event.KeyEvent.VK_LEFT -> Key.DirectionLeft
+            java.awt.event.KeyEvent.VK_RIGHT -> Key.DirectionRight
+            else -> return@KeyEventDispatcher false
+        }
+        keyForward?.invoke(key, event.isControlDown || event.isMetaDown, event.isShiftDown, event.isAltDown) ?: false
+    }
 
     /** A menu opened from this one is not "outside" it. */
     private fun ours(other: AwtWindow?): Boolean = generateSequence(other) { it.owner }.any { it === dialog }
@@ -274,7 +293,7 @@ private class MenuSession(
                     dismiss.value()
                     true
                 } else {
-                    keyForward?.invoke(event) ?: false
+                    false
                 }
             },
         ) {
@@ -309,7 +328,10 @@ private class MenuSession(
         // for a menu that holds the keyboard, as the menu losing it.
         owner.addWindowListener(ownerListener)
         window.addWindowFocusListener(focusListener)
-        if (focusable) KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("activeWindow", activeListener)
+        if (focusable) {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("activeWindow", activeListener)
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(keyDispatcher)
+        }
         window.isVisible = true
         if (focusable) {
             window.toFront()
@@ -349,6 +371,7 @@ private class MenuSession(
         owner.removeWindowListener(ownerListener)
         window.removeWindowFocusListener(focusListener)
         KeyboardFocusManager.getCurrentKeyboardFocusManager().removePropertyChangeListener("activeWindow", activeListener)
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(keyDispatcher)
         // A menu closed while it holds the keyboard (a hover pop-up vanishing, which no press outside ended) gives it back
         // to the nearest window still on screen: hidden with the keyboard, it left none of the app's windows active.
         val hadFocus = focusable && window.isActive

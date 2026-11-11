@@ -1325,13 +1325,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // The one answer to the chords that walk every window's positions: the pop-ups' first, then the app's history.
         // Whether [intent] was one of them (then taken).
-        fun walkPositions(intent: SchedulerIntent?): Boolean =
-            when (intent) {
+        fun walkPositions(intent: SchedulerIntent?): Boolean {
+            return when (intent) {
                 SchedulerIntent.UndoPosition -> { if (!popupPositions.back()) vm.dispatch(intent); true }
                 SchedulerIntent.RedoPosition -> { if (!popupPositions.forward()) vm.dispatch(intent); true }
                 else -> false
             }
-        val menuKeyForward: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { event -> walkPositions(undoRedoIntentFor(event)) }
+        }
+        val menuKeyForward: (androidx.compose.ui.input.key.Key, Boolean, Boolean, Boolean) -> Boolean = { key, ctrl, shift, alt ->
+            walkPositions(undoRedoIntentFor(key, keyDown = true, ctrlOrMeta = ctrl, shift = shift, alt = alt))
+        }
         val cellEditPopups = remember { org.example.project.ui.CellEditPopupHost() }
         // The window bar's tab names (user rule 2026-10-01): loaded once, keeping only the windows that come back —
         // a row the user closed since is not visible — and written whenever a button names a tab.
