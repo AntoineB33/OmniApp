@@ -22,7 +22,15 @@ import kotlinx.coroutines.launch
  * The grace is the pointer crossing from one part to the next, which leaves the first before it enters the second.
  * Event-driven: one wait per time the pointer leaves the last part, cancelled by the next entry, never a poll.
  */
-class MenuHoverTracker(private val scope: CoroutineScope, private val onLeft: () -> Unit) {
+class MenuHoverTracker(
+    private val scope: CoroutineScope,
+    /**
+     * The pop-up this one is a branch of (a child pop-up of the configurations tree), or null: each part of this one is
+     * a part of [parent] too, so the pointer in the branch holds the whole pop-up.
+     */
+    private val parent: MenuHoverTracker? = null,
+    private val onLeft: () -> Unit,
+) {
     private val inside = HashSet<Any>()
     private var pending: Job? = null
 
@@ -30,6 +38,7 @@ class MenuHoverTracker(private val scope: CoroutineScope, private val onLeft: ()
     val held: Boolean get() = inside.isNotEmpty()
 
     fun enter(part: Any) {
+        parent?.enter(part)
         inside += part
         pending?.cancel()
         pending = null
@@ -37,6 +46,7 @@ class MenuHoverTracker(private val scope: CoroutineScope, private val onLeft: ()
 
     /** [part] left by the pointer, or gone from the screen with the pointer over it. */
     fun exit(part: Any) {
+        parent?.exit(part)
         if (!inside.remove(part) || inside.isNotEmpty()) return
         pending?.cancel()
         pending = scope.launch {
@@ -80,10 +90,10 @@ fun Modifier.reportsHover(tracker: MenuHoverTracker?): Modifier =
         }
     }
 
-/** [MenuHoverTracker] for a pop-up whose composition holds it, calling the latest [onLeft]. */
+/** [MenuHoverTracker] for a pop-up whose composition holds it, a branch of [parent] if any, calling the latest [onLeft]. */
 @Composable
-fun rememberMenuHoverTracker(onLeft: () -> Unit): MenuHoverTracker {
+fun rememberMenuHoverTracker(parent: MenuHoverTracker? = null, onLeft: () -> Unit): MenuHoverTracker {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val latest by rememberUpdatedState(onLeft)
-    return remember(scope) { MenuHoverTracker(scope) { latest() } }
+    return remember(scope, parent) { MenuHoverTracker(scope, parent) { latest() } }
 }

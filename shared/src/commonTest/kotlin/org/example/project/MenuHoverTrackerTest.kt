@@ -64,4 +64,36 @@ class MenuHoverTrackerTest {
         runCurrent()
         assertEquals(1, left)
     }
+
+    /**
+     * Anomaly 2026-11-11: a category's child pop-up stood while the pointer rested on its parent pop-up's background.
+     * The child is a branch ([MenuHoverTracker.parent]): it goes once the pointer has left its row and it, while the
+     * pointer still on the parent holds the whole tree.
+     */
+    @Test
+    fun a_branch_goes_when_the_pointer_is_back_on_its_parent_and_holds_the_parent_while_over_it() = runTest {
+        var treeLeft = 0
+        var branchLeft = 0
+        val tree = MenuHoverTracker(this) { treeLeft++ }
+        val branch = MenuHoverTracker(this, parent = tree) { branchLeft++ }
+        val parentPopup = Any()
+        val row = Any()
+        val childPopup = Any()
+        tree.enter(parentPopup)
+        branch.enter(row)
+        // Row → child pop-up, a seam apart: the parent pop-up's window is left meanwhile.
+        branch.exit(row)
+        tree.exit(parentPopup)
+        advanceTimeBy(grace / 3)
+        branch.enter(childPopup)
+        advanceTimeBy(grace * 3)
+        runCurrent()
+        assertEquals(0 to 0, treeLeft to branchLeft, "the child pop-up holds both")
+        // Back onto the parent pop-up's background: the child goes, the tree stays.
+        branch.exit(childPopup)
+        tree.enter(parentPopup)
+        advanceTimeBy(grace + 1)
+        runCurrent()
+        assertEquals(0 to 1, treeLeft to branchLeft)
+    }
 }

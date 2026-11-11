@@ -229,6 +229,13 @@ private fun TreeColumn(
                 is SearchDomain.ConfigurationCategory -> {
                     val revealing = path.getOrNull(depth) == node.id
                     val reveal = { if (!revealing) onPathChange(path.take(depth) + node.id) }
+                    // Anomaly 2026-11-11: the child pop-up stood while the pointer rested on its parent's background
+                    // (its padding, its search field: no row of it), since only another row's hover closed it. It is
+                    // a hover pop-up of its own: it goes once the pointer has left its row, it and its descendants
+                    // ([MenuHoverTracker], the grace being the crossing from the row to it), a branch of the tree's.
+                    val branch = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
+                        if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
+                    }
                     Box {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -236,6 +243,7 @@ private fun TreeColumn(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(if (revealing) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                                .reportsHover(branch)
                                 .onHoverEnter(reveal)
                                 .clickable(onClick = reveal)
                                 .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -244,10 +252,16 @@ private fun TreeColumn(
                             Text("◂", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (revealing) {
-                            androidx.compose.runtime.CompositionLocalProvider(LocalMenuSides provides MenuSide.SUBMENU) {
+                            androidx.compose.runtime.CompositionLocalProvider(
+                                LocalMenuSides provides MenuSide.SUBMENU,
+                                LocalMenuHover provides branch,
+                            ) {
                                 AppDropdownMenu(
                                     expanded = true,
                                     onDismissRequest = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) },
+                                    // The whole pop-up is the branch, its search field and padding included, wherever the
+                                    // platform's menu does not report its surface itself.
+                                    modifier = Modifier.reportsHover(branch),
                                     properties = PopupProperties(focusable = true),
                                 ) {
                                     Column(
