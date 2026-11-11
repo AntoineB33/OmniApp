@@ -951,6 +951,17 @@ object SchedulerReducer {
      * takes the chord before the focused element: a text field would answer it with its own undo, and the change
      * was not made there (anomaly 2026-11-01: a menu Reset no Ctrl+Z could reach from the Search field).
      */
+    /**
+     * User rule 2026-11-11: **where this device's position history stands** (the units [SchedulerIntent.UndoPosition]
+     * walks) — equal at two moments only if no position was recorded, undone or redone between them. What a hover
+     * pop-up closed by the pointer is stamped with: `Ctrl+Alt+←` brings it back only while nothing came after it.
+     */
+    fun positionStamp(state: SchedulerState): Any {
+        val me = deviceId()
+        val mine = POSITIONS.categories.flatMap { state.histories.forCategory(it).units }.filter { it.ownedBy(me) }
+        return Triple(mine.size, mine.count { it.undone }, mine.maxOfOrNull { it.deviceSeq } ?: 0L)
+    }
+
     fun nextChangeIsAppWide(state: SchedulerState, undo: Boolean): Boolean {
         if (state.editSession != null) return false
         val walk = changesOf(state)

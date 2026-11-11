@@ -58,9 +58,13 @@ class UndoRedoChordTest {
         assertEquals(SchedulerIntent.RedoSelection, chord(Key.DirectionRight, ctrlOrMeta = false, alt = true))
         assertEquals(SchedulerIntent.UndoPosition, chord(Key.DirectionLeft, ctrlOrMeta = false, shift = true, alt = true))
         assertEquals(SchedulerIntent.RedoPosition, chord(Key.DirectionRight, ctrlOrMeta = false, shift = true, alt = true))
-        // Not an arrow, or Ctrl held as well (the system-wide chords are Ctrl+Shift+Alt): not a history chord.
+        // User rule 2026-11-11: Ctrl+Alt+arrows walk every position too.
+        assertEquals(SchedulerIntent.UndoPosition, chord(Key.DirectionLeft, alt = true))
+        assertEquals(SchedulerIntent.RedoPosition, chord(Key.DirectionRight, alt = true))
+        // Not an arrow, or Ctrl+Shift+Alt (the system-wide chords): not a history chord.
         assertNull(chord(Key.DirectionUp, ctrlOrMeta = false, alt = true))
-        assertNull(chord(Key.DirectionLeft, alt = true))
+        assertNull(chord(Key.DirectionUp, alt = true))
+        assertNull(chord(Key.DirectionLeft, shift = true, alt = true))
         assertNull(chord(Key.Z, shift = true, alt = true))
         // A bare arrow moves a selection; it walks nothing.
         assertNull(chord(Key.DirectionLeft, ctrlOrMeta = false))

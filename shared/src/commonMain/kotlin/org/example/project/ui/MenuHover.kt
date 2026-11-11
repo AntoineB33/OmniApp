@@ -37,6 +37,28 @@ class MenuHoverTracker(
     /** Whether the pointer is over some part now. */
     val held: Boolean get() = inside.isNotEmpty()
 
+    /**
+     * User rule 2026-11-11: *"Clicking on the background of a window that is supposed to disappear when hovering outside
+     * must make the window stay open until the user brings the focus on another window that is not in its
+     * descendants."* — a press in the pop-up pins it, and every pop-up it is a branch of: the pointer leaving no longer
+     * closes them. What closes them then is the keyboard going to a window outside the tree (the menu's own dismissal).
+     */
+    var pinned: Boolean = false
+        private set
+
+    /** Pinned ([pinned]), it and its ancestors. A wait already running for the pointer gone is dropped. */
+    fun pin() {
+        parent?.pin()
+        pinned = true
+        pending?.cancel()
+        pending = null
+    }
+
+    /** The pop-up closed: the next opening is a hover pop-up again, until a press pins it. */
+    fun unpin() {
+        pinned = false
+    }
+
     fun enter(part: Any) {
         parent?.enter(part)
         inside += part
@@ -49,9 +71,10 @@ class MenuHoverTracker(
         parent?.exit(part)
         if (!inside.remove(part) || inside.isNotEmpty()) return
         pending?.cancel()
+        if (pinned) return
         pending = scope.launch {
             delay(GRACE_MILLIS)
-            if (inside.isEmpty()) onLeft()
+            if (inside.isEmpty() && !pinned) onLeft()
         }
     }
 
@@ -71,7 +94,10 @@ class MenuHoverTracker(
  */
 val LocalMenuHover = compositionLocalOf<MenuHoverTracker?> { null }
 
-/** This element as one part of [tracker]'s pop-up: the pointer entering and leaving it, and it going while held. */
+/**
+ * This element as one part of [tracker]'s pop-up: the pointer entering and leaving it, it going while held, and a press
+ * on it pinning the pop-up ([MenuHoverTracker.pin]) — whatever is pressed, its background or a control in it.
+ */
 fun Modifier.reportsHover(tracker: MenuHoverTracker?): Modifier =
     if (tracker == null) this else composed {
         val part = remember { Any() }
@@ -83,6 +109,7 @@ fun Modifier.reportsHover(tracker: MenuHoverTracker?): Modifier =
                     when (awaitPointerEvent().type) {
                         PointerEventType.Enter -> latest.enter(part)
                         PointerEventType.Exit -> latest.exit(part)
+                        PointerEventType.Press -> latest.pin()
                         else -> Unit
                     }
                 }
@@ -97,3 +124,45 @@ fun rememberMenuHoverTracker(parent: MenuHoverTracker? = null, onLeft: () -> Uni
     val latest by rememberUpdatedState(onLeft)
     return remember(scope, parent) { MenuHoverTracker(scope, parent) { latest() } }
 }
+
+/**
+ * User rule 2026-11-11: *"If a Search window disappears because the user hovered outside, ctrl+alt+<- brings it back,
+ * and does like the user clicked on the background"* — **the hover pop-ups the pointer closed**, newest last, each
+ * stamped with where the position history stood ([stampNow], `SchedulerReducer.positionStamp`). Back through the
+ * positions ([reopenLatest]) first reopens the newest of them, pinned, while no position was recorded or walked since
+ * it closed; after one was, it is older than what the walk goes back to, and all of them are forgotten.
+ *
+ * Local to this run and to the pop-ups still able to come back: one that left the screen with what holds it (a pop-up
+ * inside a pop-up that closed too) takes its entry with it ([forget]).
+ */
+class HoverClosedPopups(private val stampNow: () -> Any?) {
+    private class Entry(val owner: Any, val stamp: Any?, val reopen: () -> Unit)
+
+    private val entries = ArrayList<Entry>()
+
+    /** [owner]'s pop-up closed by the pointer; [reopen] brings it back, pinned. */
+    fun closed(owner: Any, reopen: () -> Unit) {
+        entries.removeAll { it.owner === owner }
+        entries += Entry(owner, stampNow(), reopen)
+    }
+
+    /** [owner] opened again some other way, or left the screen: nothing to bring back. */
+    fun forget(owner: Any) {
+        entries.removeAll { it.owner === owner }
+    }
+
+    /** Reopens the newest pop-up the pointer closed since the last position, if any: whether one came back. */
+    fun reopenLatest(): Boolean {
+        val latest = entries.lastOrNull() ?: return false
+        if (latest.stamp != stampNow()) {
+            entries.clear()
+            return false
+        }
+        entries.removeAt(entries.lastIndex)
+        latest.reopen()
+        return true
+    }
+}
+
+/** The app's [HoverClosedPopups], null where nothing gives it (a test scene): nothing is then brought back. */
+val LocalHoverClosedPopups = compositionLocalOf<HoverClosedPopups?> { null }

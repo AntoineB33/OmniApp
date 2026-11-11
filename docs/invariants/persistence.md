@@ -172,7 +172,7 @@ by ctrl+z, ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history unit
 - **Every chord is relative to the focused window** (user rule, 2026-09-25; `SchedulerReducer.undoIn` over a
   `HistoryWalk`): `Ctrl+Z`/`Ctrl+Y`/`Ctrl+Shift+Z` walk the Main and Calendar units stamped with the focused window
   (the Edit stack while a session is open); `Alt+←/→` the Selection units whose delta is the focused window's (and,
-  for a per-copy selection, the focused copy's); `Shift+Alt+←/→` every Selection and WindowNav unit. A walk over
+  for a per-copy selection, the focused copy's); `Ctrl+Alt+←/→` and `Shift+Alt+←/→` every Selection and WindowNav unit. A walk over
   two stacks orders them by `deviceSeq`, which is why `chronoId` is counted across **every** category: a press
   moves the focus and selects in one millisecond, and the two must still be walked in the order made.
 - **Every window's selection is a unit** — the tree's (`SetSelectionDelta`), the projected windows'

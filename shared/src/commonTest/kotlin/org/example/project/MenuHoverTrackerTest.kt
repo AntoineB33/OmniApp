@@ -2,9 +2,12 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.example.project.ui.HoverClosedPopups
 import org.example.project.ui.MenuHoverTracker
 
 /**
@@ -95,5 +98,59 @@ class MenuHoverTrackerTest {
         advanceTimeBy(grace + 1)
         runCurrent()
         assertEquals(0 to 1, treeLeft to branchLeft)
+    }
+
+    /**
+     * User rule 2026-11-11: a press in a hover pop-up pins it and every pop-up it is a branch of — the pointer leaving
+     * no longer closes them — until it closes some other way ([MenuHoverTracker.unpin]).
+     */
+    @Test
+    fun a_pinned_pop_up_and_its_ancestors_stay_when_the_pointer_leaves() = runTest {
+        var treeLeft = 0
+        var branchLeft = 0
+        val tree = MenuHoverTracker(this) { treeLeft++ }
+        val branch = MenuHoverTracker(this, parent = tree) { branchLeft++ }
+        val child = Any()
+        branch.enter(child)
+        branch.pin()
+        branch.exit(child)
+        advanceTimeBy(grace * 5)
+        runCurrent()
+        assertEquals(0 to 0, treeLeft to branchLeft, "pinned, both stay")
+        // Closed some other way, then opened again: a hover pop-up again.
+        branch.unpin()
+        tree.unpin()
+        branch.enter(child)
+        branch.exit(child)
+        advanceTimeBy(grace + 1)
+        runCurrent()
+        assertEquals(1 to 1, treeLeft to branchLeft)
+    }
+
+    /**
+     * User rule 2026-11-11: back through every window first brings back the newest pop-up the pointer closed, while no
+     * position was recorded or walked since; after one was, none comes back and the walk goes on.
+     */
+    @Test
+    fun a_pop_up_closed_by_the_pointer_comes_back_while_no_position_came_after_it() {
+        var stamp = 0
+        val closed = HoverClosedPopups { stamp }
+        val reopened = mutableListOf<String>()
+        closed.closed("tree") { reopened += "tree" }
+        closed.closed("branch") { reopened += "branch" }
+        assertTrue(closed.reopenLatest())
+        assertTrue(closed.reopenLatest())
+        assertEquals(listOf("branch", "tree"), reopened, "newest first")
+        assertFalse(closed.reopenLatest(), "nothing left: the walk goes on")
+        // A position after the close: older than the walk, forgotten.
+        closed.closed("tree") { reopened += "tree again" }
+        stamp++
+        assertFalse(closed.reopenLatest())
+        stamp--
+        assertFalse(closed.reopenLatest(), "forgotten for good")
+        // One opened again by the hand, or gone from the screen, is not brought back.
+        closed.closed("tree") { reopened += "never" }
+        closed.forget("tree")
+        assertFalse(closed.reopenLatest())
     }
 }

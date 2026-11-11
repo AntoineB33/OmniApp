@@ -278,5 +278,9 @@ when, never for how long — see `scheduler.md` for why it does not grow on its 
   whichever surface has the focus.
 - `Alt + ← / →` (selection history) is a separate rule and lives on the tree, which is the only surface with
   a selection to walk.
+- `Ctrl + Alt + ← / →` (user rule 2026-11-11) and `Shift + Alt + ← / →` walk every window's positions
+  (`UndoPosition`/`RedoPosition`), read in `undoRedoIntentFor` like the rest. Back first brings back a hover pop-up
+  the pointer closed since the last position (`HoverClosedPopups`, `popups.md`). `Ctrl + Shift + Alt` stays the
+  system-wide chords'.
 
 ---

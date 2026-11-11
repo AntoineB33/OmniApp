@@ -16,6 +16,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,10 +71,35 @@ internal fun ConfigurationTreeArrow(
     var open by remember { mutableStateOf(false) }
     // The configuration of the search this pop-up IS (user rule 2026-11-11, [SearchDomain.CONFIGURATION_SEARCH]).
     var own by remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
+    // The category revealing its children at each depth, by id — held here, so a pop-up brought back
+    // ([HoverClosedPopups]) comes back with the categories it showed.
+    var path by remember { mutableStateOf(listOf<String>()) }
+    // User rule 2026-11-11: brought back by Ctrl+Alt+←, it is as if its background had been clicked: pinned.
+    var pinOnOpen by remember { mutableStateOf(false) }
+    val closedPopups = LocalHoverClosedPopups.current
+    val token = remember { Any() }
+    DisposableEffect(Unit) { onDispose { closedPopups?.forget(token) } }
     // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
     // An arrow inside a pop-up of the tree is one of that pop-up's descendants, it and its own pop-up (anomaly
     // 2026-11-11: its own tracker alone, the pointer on its pop-up was outside the tree, and the whole tree vanished).
-    val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { open = false }
+    val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
+        val shownPath = path
+        open = false
+        closedPopups?.closed(token) {
+            path = shownPath
+            pinOnOpen = true
+            open = true
+        }
+    }
+    LaunchedEffect(open) {
+        if (!open) hover.unpin() else if (pinOnOpen) { hover.pin(); pinOnOpen = false }
+    }
+    // Opened by the hand: a fresh pop-up, with nothing of one the pointer closed to bring back.
+    fun openFresh() {
+        closedPopups?.forget(token)
+        path = emptyList()
+        open = true
+    }
     Box {
         Text(
             "▾",
@@ -81,8 +108,8 @@ internal fun ConfigurationTreeArrow(
             modifier = Modifier
                 .clip(RoundedCornerShape(6.dp))
                 .reportsHover(hover)
-                .onHoverEnter { open = true }
-                .clickable { open = !open }
+                .onHoverEnter { if (!open) openFresh() }
+                .clickable { if (open) open = false else openFresh() }
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
         androidx.compose.runtime.CompositionLocalProvider(LocalMenuHover provides hover) {
@@ -92,7 +119,7 @@ internal fun ConfigurationTreeArrow(
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
         ) {
             TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
-            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, nowMillis, windows, claudeLogs, depth) { which ->
+            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth) { which ->
             open = false
             onPickOnCalendar(which)
             }
@@ -154,6 +181,9 @@ private fun ConfigurationTreeColumns(
     openedConfig: SearchDomain.Config?,
     onConfigChange: (SearchDomain.Config) -> Unit,
     query: String,
+    /** The category revealing its children at each depth, by id. */
+    path: List<String>,
+    onPathChange: (List<String>) -> Unit,
     nowMillis: () -> Long,
     windows: List<SearchDomain.WindowEntry>,
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
@@ -174,8 +204,6 @@ private fun ConfigurationTreeColumns(
     val tree = remember(shown.settingsChangedAt, query) {
         SearchDomain.configurationTree(shown).filterConfigurationNodes(query)
     }
-    // The category revealing its children at each depth, by id.
-    var path by remember { mutableStateOf(listOf<String>()) }
     val leaf: @Composable (SearchDomain.Setting) -> Unit = { setting ->
         SettingRow(setting.label) {
             SettingEditor(
@@ -192,7 +220,7 @@ private fun ConfigurationTreeColumns(
     }
     HighlightsSearch("") {
         TreeColumn(
-            tree, 0, path, { path = it }, leaf,
+            tree, 0, path, onPathChange, leaf,
             state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar, level,
         )
     }
@@ -252,13 +280,34 @@ private fun TreeColumn(
             when (node) {
                 is SearchDomain.ConfigurationCategory -> {
                     val revealing = path.getOrNull(depth) == node.id
-                    val reveal = { if (!revealing) onPathChange(path.take(depth) + node.id) }
                     // Anomaly 2026-11-11: the child pop-up stood while the pointer rested on its parent's background
                     // (its padding, its search field: no row of it), since only another row's hover closed it. It is
                     // a hover pop-up of its own: it goes once the pointer has left its row, it and its descendants
                     // ([MenuHoverTracker], the grace being the crossing from the row to it), a branch of the tree's.
+                    // User rule 2026-11-11: closed by the pointer, it is one Ctrl+Alt+← brings back, pinned.
+                    val closedPopups = LocalHoverClosedPopups.current
+                    val token = remember { Any() }
+                    var pinOnReveal by remember { mutableStateOf(false) }
+                    DisposableEffect(Unit) { onDispose { closedPopups?.forget(token) } }
                     val branch = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
-                        if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
+                        if (path.getOrNull(depth) == node.id) {
+                            val shownPath = path
+                            onPathChange(path.take(depth))
+                            closedPopups?.closed(token) {
+                                pinOnReveal = true
+                                onPathChange(shownPath)
+                            }
+                        }
+                    }
+                    LaunchedEffect(revealing) {
+                        if (!revealing) branch.unpin() else if (pinOnReveal) { branch.pin(); pinOnReveal = false }
+                    }
+                    // Revealed by the hand: nothing of one the pointer closed to bring back.
+                    val reveal = {
+                        if (!revealing) {
+                            closedPopups?.forget(token)
+                            onPathChange(path.take(depth) + node.id)
+                        }
                     }
                     Box {
                         Row(

@@ -28,8 +28,10 @@ import org.example.project.scheduler.state.SchedulerIntent
  *    the changes made in the focused window;
  *  - **Alt+←** / **Alt+→** → [SchedulerIntent.UndoSelection] / [SchedulerIntent.RedoSelection]: the
  *    selections of the focused window;
- *  - **Shift+Alt+←** / **Shift+Alt+→** → [SchedulerIntent.UndoPosition] / [SchedulerIntent.RedoPosition]:
- *    every position — every window's selections and every move of the focus between windows.
+ *  - **Ctrl+Alt+←** / **Ctrl+Alt+→** (user rule 2026-11-11), and **Shift+Alt+←** / **Shift+Alt+→** →
+ *    [SchedulerIntent.UndoPosition] / [SchedulerIntent.RedoPosition]: every position — every window's selections and
+ *    every move of the focus between windows. Back, it first brings back a hover pop-up the pointer closed since the
+ *    last position ([HoverClosedPopups], read by `App`'s root).
  *  - **Ctrl+Page Up** / **Ctrl+Page Down** → [SchedulerIntent.UndoFocus] / [SchedulerIntent.RedoFocus]: the moves
  *    of the focus between windows alone — read by `TabWalk.moveFor` with the window bar's chords, on the app root's
  *    preview pass, so a text field cannot take them.
@@ -61,12 +63,20 @@ fun undoRedoIntentFor(
     alt: Boolean = false,
 ): SchedulerIntent? {
     if (!keyDown) return null
-    // Alt without Ctrl: the positions. With Ctrl as well it is some other chord (the system-wide ones are all
-    // Ctrl+Shift+Alt), never this.
+    // Alt without Ctrl: the positions — of the focused window, or with Shift of every window.
     if (alt && !ctrlOrMeta) {
         return when (key) {
             Key.DirectionLeft -> if (shift) SchedulerIntent.UndoPosition else SchedulerIntent.UndoSelection
             Key.DirectionRight -> if (shift) SchedulerIntent.RedoPosition else SchedulerIntent.RedoSelection
+            else -> null
+        }
+    }
+    // User rule 2026-11-11: Ctrl+Alt+← / → walk every window's, as Shift+Alt does. With Shift as well it is another
+    // chord (the system-wide ones are all Ctrl+Shift+Alt), never this.
+    if (alt && ctrlOrMeta && !shift) {
+        return when (key) {
+            Key.DirectionLeft -> SchedulerIntent.UndoPosition
+            Key.DirectionRight -> SchedulerIntent.RedoPosition
             else -> null
         }
     }
@@ -223,16 +233,18 @@ object KeyboardShortcutCatalog {
             ),
             KeyboardShortcutGroup(
                 title = "History",
-                note = "In every window. Each chord is relative to the focused window, except Shift + Alt, " +
-                    "which walks every window.",
+                note = "In every window. Each chord is relative to the focused window, except Ctrl + Alt and " +
+                    "Shift + Alt, which walk every window.",
                 shortcuts = listOf(
                     KeyboardShortcut("Ctrl + Z", "Undo the last change made in the focused window"),
                     KeyboardShortcut("Ctrl + Shift + Z / Ctrl + Y", "Redo it"),
                     KeyboardShortcut("Alt + ← / Alt + →", "Go back / forward through the focused window's selections"),
                     KeyboardShortcut(
-                        "Shift + Alt + ← / Shift + Alt + →",
-                        "Go back / forward through every selection and every move between windows",
+                        "Ctrl + Alt + ← / Ctrl + Alt + →",
+                        "Go back / forward through every selection and every move between windows — back first " +
+                            "brings back a pop-up the pointer closed by leaving it, kept open until another window takes the keyboard",
                     ),
+                    KeyboardShortcut("Shift + Alt + ← / Shift + Alt + →", "Same as Ctrl + Alt + ← / →"),
                 ),
             ),
             KeyboardShortcutGroup(

@@ -333,7 +333,17 @@ means.
     (`LocalMenuSides`, `menuSpot`'s `sides`; the configurations tree's children: left, right, below, above), a menu's
     own content being given back the default.
   - **A hover pop-up vanishes once the pointer has left it and all of its descendants** (`MenuHoverTracker`,
-    `LocalMenuHover`: the configurations tree's), the menus opened inside it being its descendants.
+    `LocalMenuHover`: the configurations tree's), the menus opened inside it being its descendants — a category's
+    child pop-up and the arrow in a pop-up's bar each a branch of the pop-up they stand in (`parent`).
+  - **A press in a hover pop-up pins it and its ancestors** (user rule 2026-11-11, `MenuHoverTracker.pin`, read by
+    `reportsHover`): the pointer leaving no longer closes them; the keyboard going to a window outside the tree does
+    (the menu window's own dismissal). Closed, it is a hover pop-up again.
+  - **A pop-up the pointer closed comes back, pinned, by `Ctrl+Alt+←`** (or `Shift+Alt+←`; user rule 2026-11-11,
+    `HoverClosedPopups`, taken on `App`'s root preview pass before the position walk), the categories it showed with
+    it — while no position was recorded or walked since it closed (`SchedulerReducer.positionStamp`). In this run
+    only; a pop-up that left the screen with the one holding it is not brought back on its own.
+  - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
+    (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree.
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
 - **A right-click on a window's HEAD opens its menu, at the pointer** (user rule 2026-10-15: *"The user can modify
   the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove from
