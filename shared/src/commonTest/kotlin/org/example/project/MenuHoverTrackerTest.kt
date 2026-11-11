@@ -138,17 +138,23 @@ class MenuHoverTrackerTest {
         val positions = PopupPositions { stamp }
         val open = mutableMapOf("tree" to true, "branch" to true)
         val brought = mutableListOf<String>()
-        fun focus(name: String) = positions.focused(name, { open.getValue(name) }) { brought += name; open[name] = true }
+        fun focus(name: String) =
+            positions.focused(name, { open.getValue(name) }, { brought += "app" }) { brought += name; open[name] = true }
         focus("tree")
         focus("branch")
         // In the branch, back: the tree gets the keyboard; its focus is no new position.
         assertTrue(positions.back())
         focus("tree")
         assertEquals(listOf("tree"), brought)
+        // Before the first pop-up: the app's window, given the keyboard back; then the app's own history.
+        assertTrue(positions.back())
+        assertEquals(listOf("tree", "app"), brought)
         assertFalse(positions.back(), "nothing older: the app's own history is walked")
         assertTrue(positions.forward())
+        focus("tree")
+        assertTrue(positions.forward())
         focus("branch")
-        assertEquals(listOf("tree", "branch"), brought)
+        assertEquals(listOf("tree", "app", "tree", "branch"), brought)
         // The pointer closed the pop-up the keyboard was in: back brings it back first.
         open["branch"] = false
         assertTrue(positions.back())

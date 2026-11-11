@@ -344,6 +344,8 @@ means.
     the keyboard comes to (`MenuHoverTracker.windowFocused`, told by the desktop menu window) is a new position, and
     `Ctrl+Alt+←/→` (or `Shift+Alt`) walk them before the app's own history — the keyboard brought back to one still
     open, or one that closed (the pointer leaving it, most often) brought back pinned with the categories it showed.
+    Before the first pop-up stands the app's window the keyboard came from: back to it gives it the keyboard
+    (`MenuHoverTracker.focusAppWindow`), which closes the pop-ups, pinned or not.
     They are newer than the app's history only while no position of it was recorded or walked since
     (`SchedulerReducer.positionStamp`). A pop-up holding the keyboard is a window of its own, so it forwards those
     chords to the app (`LocalMenuKeyForward`); `App.walkPositions` is the one answer to them. In this run only; a

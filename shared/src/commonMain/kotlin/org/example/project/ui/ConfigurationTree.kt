@@ -96,7 +96,7 @@ internal fun ConfigurationTreeArrow(
     // keyboard again, or comes back as it was, pinned.
     DisposableEffect(hover, positions) {
         hover.onFocused = {
-            positions?.focused(token, { open }) {
+            positions?.focused(token, { open }, { hover.focusAppWindow?.invoke() }) {
                 if (open) {
                     hover.pin()
                     hover.focusWindow?.invoke()
@@ -312,7 +312,7 @@ private fun TreeColumn(
                     DisposableEffect(branch, positions) {
                         branch.onFocused = {
                             val shown = latestPath
-                            positions?.focused(token, { latestPath.getOrNull(depth) == node.id }) {
+                            positions?.focused(token, { latestPath.getOrNull(depth) == node.id }, { branch.focusAppWindow?.invoke() }) {
                                 if (latestPath.getOrNull(depth) == node.id) {
                                     branch.pin()
                                     branch.focusWindow?.invoke()

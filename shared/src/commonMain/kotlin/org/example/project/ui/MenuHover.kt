@@ -65,6 +65,12 @@ class MenuHoverTracker(
      */
     var focusWindow: (() -> Unit)? = null
 
+    /**
+     * Gives the keyboard back to the app's window the pop-up hangs from — given by the platform's menu: the position
+     * before the first pop-up ([PopupPositions.back]).
+     */
+    var focusAppWindow: (() -> Unit)? = null
+
     /** What the pop-up's owner does when the keyboard comes to it ([PopupPositions.focused]). */
     var onFocused: (() -> Unit)? = null
 
@@ -145,7 +151,8 @@ fun rememberMenuHoverTracker(parent: MenuHoverTracker? = null, onLeft: () -> Uni
  * pop-ups the keyboard went to, as positions of the app**: each one the keyboard comes to is a new position
  * ([focused]); back and forward ([back], [forward]) walk them, bringing the keyboard back to one still open, or bringing
  * one back, pinned, that closed (the pointer leaving it, most often). A walk lands on the pop-up the keyboard is in only
- * when that one closed meanwhile: then back reopens it first.
+ * when that one closed meanwhile: then back reopens it first. Before the first pop-up stands the app's window the
+ * keyboard came from: back to it gives it the keyboard, which closes the pop-ups.
  *
  * They come before the app's own positions (`SchedulerIntent.UndoPosition`): while none of those was recorded or walked
  * since the newest pop-up position ([stampNow], `SchedulerReducer.positionStamp`); past the oldest, the walk goes on in
@@ -153,7 +160,7 @@ fun rememberMenuHoverTracker(parent: MenuHoverTracker? = null, onLeft: () -> Uni
  * ([forget]).
  */
 class PopupPositions(private val stampNow: () -> Any?) {
-    private class Entry(val owner: Any, val isOpen: () -> Boolean, val bringBack: () -> Unit)
+    private class Entry(val owner: Any, val isOpen: () -> Boolean, val bringBack: () -> Unit, val leave: () -> Unit)
 
     private val entries = ArrayList<Entry>()
     private var index = -1
@@ -162,8 +169,11 @@ class PopupPositions(private val stampNow: () -> Any?) {
     /** The pop-up a walk is bringing the keyboard to: its focus is no new position. */
     private var expected: Any? = null
 
-    /** The keyboard came to [owner]'s pop-up; [bringBack] brings it back to it (reopened and pinned if it closed). */
-    fun focused(owner: Any, isOpen: () -> Boolean, bringBack: () -> Unit) {
+    /**
+     * The keyboard came to [owner]'s pop-up; [bringBack] brings it back to it (reopened and pinned if it closed), [leave]
+     * gives it back to the app's window it came from.
+     */
+    fun focused(owner: Any, isOpen: () -> Boolean, leave: () -> Unit = {}, bringBack: () -> Unit) {
         if (expected === owner) {
             expected = null
             return
@@ -172,7 +182,7 @@ class PopupPositions(private val stampNow: () -> Any?) {
         if (stampNow() != stamp) clear()
         while (entries.size > index + 1) entries.removeAt(entries.lastIndex)
         if (entries.lastOrNull()?.owner === owner) entries.removeAt(entries.lastIndex)
-        entries += Entry(owner, isOpen, bringBack)
+        entries += Entry(owner, isOpen, bringBack, leave)
         index = entries.lastIndex
         stamp = stampNow()
     }
@@ -187,15 +197,23 @@ class PopupPositions(private val stampNow: () -> Any?) {
             }
             i--
         }
-        if (index < 0 && entries.isNotEmpty()) index = 0
+        index = index.coerceIn(-1, entries.lastIndex)
     }
 
     /** Back one pop-up position: whether there was one (else the app's own positions are walked). */
     fun back(): Boolean {
-        if (!current()) return false
+        // Before the first pop-up: the app's own positions.
+        if (!current() || index < 0) return false
         val here = entries[index]
         if (!here.isOpen()) return bring(here)
-        if (index == 0) return false
+        if (index == 0) {
+            // The position before the first pop-up is the app's window the keyboard came from (user rule 2026-11-11):
+            // given the keyboard back, it closes the pop-ups, pinned or not — none of them is its descendant.
+            index = -1
+            expected = null
+            here.leave()
+            return true
+        }
         index--
         return bring(entries[index])
     }

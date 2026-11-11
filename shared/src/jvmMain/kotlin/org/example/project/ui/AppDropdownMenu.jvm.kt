@@ -289,11 +289,14 @@ private class MenuSession(
                     override fun windowLostFocus(event: WindowEvent) = Unit
                 }
                 tracker.focusWindow = { window.toFront(); window.requestFocus() }
+                // The app's window at the root of the menus it hangs from.
+                tracker.focusAppWindow = { generateSequence(window.owner) { it.owner }.lastOrNull()?.let { it.toFront(); it.requestFocus() } }
                 window.addWindowFocusListener(focus)
                 if (window.isFocused) tracker.windowFocused()
                 onDispose {
                     window.removeWindowFocusListener(focus)
                     tracker.focusWindow = null
+                    tracker.focusAppWindow = null
                 }
             }
             // Inside, a menu opened is this window's, and opens by the default sides unless its call site says otherwise.
