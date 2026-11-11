@@ -128,52 +128,66 @@ class MenuHoverTrackerTest {
     }
 
     /**
-     * User rule 2026-11-11: the pop-ups the keyboard went to are positions, walked before the app's own: back gives the
-     * keyboard to the one before, or brings back, pinned, the one it was in if that closed; forward goes the other way;
-     * and once a position of the app comes after them, they are forgotten.
+     * User rule 2026-11-11: the pop-ups the keyboard went to, and the app's window it went back to, are positions walked
+     * before the app's own. Anomaly 2026-11-11: hovered in and out several times, the walk showed the pop-up once, hid
+     * it, and never showed it again — two openings of one pop-up were one position, the window between them none.
      */
     @Test
-    fun the_pop_ups_the_keyboard_went_to_are_walked_back_and_forward() {
+    fun hovering_in_and_out_leaves_as_many_positions_as_the_walk_shows_and_hides() {
         var stamp = 0
         val positions = PopupPositions { stamp }
-        val open = mutableMapOf("tree" to true, "branch" to true)
-        val brought = mutableListOf<String>()
-        fun focus(name: String) =
-            positions.focused(name, { open.getValue(name) }, { brought += "app" }) { brought += name; open[name] = true }
-        focus("tree")
-        focus("branch")
-        // In the branch, back: the tree gets the keyboard; its focus is no new position.
-        assertTrue(positions.back())
-        focus("tree")
-        assertEquals(listOf("tree"), brought)
-        // Before the first pop-up: the app's window, given the keyboard back; then the app's own history.
-        assertTrue(positions.back())
-        assertEquals(listOf("tree", "app"), brought)
+        val shown = mutableListOf<String>()
+        // What the platform does: the pop-up taking the keyboard as it opens, the app's window as it closes.
+        val ui = object {
+            var open = false
+            fun opened() {
+                positions.focused("popup", { open }, { hide() }) { if (!open) { open = true; shown += "popup"; opened() } }
+            }
+            fun hide() {
+                if (open) { open = false; shown += "window"; closed() }
+            }
+            fun closed() = positions.appFocused { hide() }
+        }
+        repeat(3) {
+            ui.open = true
+            ui.opened()
+            ui.open = false
+            ui.closed()
+        }
+        // Back: the pop-up, the window, the pop-up, the window, the pop-up, the window it was first opened from.
+        repeat(6) { assertTrue(positions.back(), "step ${it + 1}") }
+        assertEquals(listOf("popup", "window", "popup", "window", "popup", "window"), shown)
+        assertFalse(ui.open)
         assertFalse(positions.back(), "nothing older: the app's own history is walked")
-        assertTrue(positions.forward())
-        focus("tree")
-        assertTrue(positions.forward())
-        focus("branch")
-        assertEquals(listOf("tree", "app", "tree", "branch"), brought)
-        // The pointer closed the pop-up the keyboard was in: back brings it back first.
-        open["branch"] = false
-        assertTrue(positions.back())
-        assertEquals("branch", brought.last())
-        assertTrue(open.getValue("branch"))
-        // A new position after a walk drops what was ahead of it.
-        assertTrue(positions.back())
-        focus("tree")
-        open["other"] = true
-        focus("other")
+        // Forward again, as far as it went.
+        shown.clear()
+        repeat(6) { assertTrue(positions.forward(), "forward ${it + 1}") }
+        assertEquals(listOf("popup", "window", "popup", "window", "popup", "window"), shown)
         assertFalse(positions.forward())
         // A position of the app after them: forgotten.
         stamp++
         assertFalse(positions.back())
-        stamp--
-        assertFalse(positions.back(), "forgotten for good")
-        // One gone from the screen is no position.
+    }
+
+    /** A pop-up closed while the keyboard was in it, with no window position after it: back brings it back first. */
+    @Test
+    fun the_pop_up_the_keyboard_was_in_comes_back_first_and_one_gone_is_no_position() {
+        val positions = PopupPositions { 0 }
+        val open = mutableMapOf("tree" to true, "branch" to true)
+        val brought = mutableListOf<String>()
+        fun focus(name: String) = positions.focused(name, { open.getValue(name) }) { brought += name; open[name] = true }
         focus("tree")
+        focus("branch")
+        open["branch"] = false
+        assertTrue(positions.back())
+        assertEquals(listOf("branch"), brought)
+        // Back: the tree gets the keyboard; its focus is no new position.
+        assertTrue(positions.back())
+        focus("tree")
+        assertEquals(listOf("branch", "tree"), brought)
+        // One gone from the screen is no position.
         positions.forget("tree")
-        assertFalse(positions.back())
+        positions.forget("branch")
+        assertFalse(positions.back(), "left at the app's window they hung from: the app's own history is walked")
     }
 }

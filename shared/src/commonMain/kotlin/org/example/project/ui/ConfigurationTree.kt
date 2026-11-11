@@ -81,14 +81,21 @@ internal fun ConfigurationTreeArrow(
     val positions = LocalPopupPositions.current
     val token = remember { Any() }
     DisposableEffect(Unit) { onDispose { positions?.forget(token) } }
+    // The tracker, made below from [close]: what gives the keyboard back to the app's window.
+    val tracker = remember { arrayOfNulls<MenuHoverTracker>(1) }
     fun close() {
+        if (!open) return
         pathAtClose = path
         open = false
+        // The keyboard goes back to the app's window (a pop-up opened from a pop-up gives it back to that one, which
+        // says so itself): a position of its own (user rule 2026-11-11).
+        if (depth == 0) positions?.appFocused { tracker[0]?.focusAppWindow?.invoke() }
     }
     // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
     // An arrow inside a pop-up of the tree is one of that pop-up's descendants, it and its own pop-up (anomaly
     // 2026-11-11: its own tracker alone, the pointer on its pop-up was outside the tree, and the whole tree vanished).
     val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { close() }
+    tracker[0] = hover
     LaunchedEffect(open) {
         if (!open) hover.unpin() else if (pinOnOpen) { hover.pin(); pinOnOpen = false }
     }

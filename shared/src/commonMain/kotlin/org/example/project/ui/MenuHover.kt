@@ -148,43 +148,50 @@ fun rememberMenuHoverTracker(parent: MenuHoverTracker? = null, onLeft: () -> Uni
 /**
  * User rule 2026-11-11: *"ctrl+alt+->/<- does the same but forall windows"*, and *"If a Search window disappears because
  * the user hovered outside, ctrl+alt+<- brings it back, and does like the user clicked on the background"* — **the
- * pop-ups the keyboard went to, as positions of the app**: each one the keyboard comes to is a new position
- * ([focused]); back and forward ([back], [forward]) walk them, bringing the keyboard back to one still open, or bringing
- * one back, pinned, that closed (the pointer leaving it, most often). A walk lands on the pop-up the keyboard is in only
- * when that one closed meanwhile: then back reopens it first. Before the first pop-up stands the app's window the
- * keyboard came from: back to it gives it the keyboard, which closes the pop-ups.
+ * pop-ups the keyboard went to, and the app's window it went back to, as positions of the app**. Each pop-up the
+ * keyboard comes to is a new position ([focused]), and so is the app's window each time the keyboard goes back to it
+ * as the pop-ups close ([appFocused]) — and before the first pop-up. Back and forward ([back], [forward]) walk them: a
+ * pop-up gets the keyboard back if open, or comes back, pinned, if it closed; the app's window gets the keyboard back,
+ * which closes the pop-ups. Hovering over the arrow and out again and again leaves as many pop-up / window pairs, and
+ * the walk shows and hides the pop-up as many times (anomaly 2026-11-11: two openings of one pop-up were one position,
+ * and the window between them none).
  *
  * They come before the app's own positions (`SchedulerIntent.UndoPosition`): while none of those was recorded or walked
- * since the newest pop-up position ([stampNow], `SchedulerReducer.positionStamp`); past the oldest, the walk goes on in
- * the app's history. In this run only; a pop-up that left the screen with what holds it is no position any more
- * ([forget]).
+ * since the newest of them ([stampNow], `SchedulerReducer.positionStamp`); past the oldest, the walk goes on in the
+ * app's history. In this run only; a pop-up that left the screen with what holds it is no position any more ([forget]).
  */
 class PopupPositions(private val stampNow: () -> Any?) {
-    private class Entry(val owner: Any, val isOpen: () -> Boolean, val bringBack: () -> Unit, val leave: () -> Unit)
+    /** A position: a pop-up ([owner]), or the app's window (no owner). */
+    private class Entry(val owner: Any?, val isOpen: () -> Boolean, val bringBack: () -> Unit)
+
+    private object AppWindow
 
     private val entries = ArrayList<Entry>()
     private var index = -1
     private var stamp: Any? = null
 
-    /** The pop-up a walk is bringing the keyboard to: its focus is no new position. */
+    /** Where a walk is bringing the keyboard: its coming there is no new position. */
     private var expected: Any? = null
 
     /**
      * The keyboard came to [owner]'s pop-up; [bringBack] brings it back to it (reopened and pinned if it closed), [leave]
-     * gives it back to the app's window it came from.
+     * gives it back to the app's window the pop-up hangs from.
      */
     fun focused(owner: Any, isOpen: () -> Boolean, leave: () -> Unit = {}, bringBack: () -> Unit) {
-        if (expected === owner) {
-            expected = null
-            return
+        if (arrived(owner)) return
+        // The first pop-up of a walk: the app's window the keyboard came from stands before it.
+        if (entries.isEmpty() || stampNow() != stamp) {
+            clear()
+            add(Entry(null, { true }, leave))
         }
-        expected = null
-        if (stampNow() != stamp) clear()
-        while (entries.size > index + 1) entries.removeAt(entries.lastIndex)
-        if (entries.lastOrNull()?.owner === owner) entries.removeAt(entries.lastIndex)
-        entries += Entry(owner, isOpen, bringBack, leave)
-        index = entries.lastIndex
-        stamp = stampNow()
+        add(Entry(owner, isOpen, bringBack))
+    }
+
+    /** The keyboard went back to the app's window as the pop-ups closed; [leave] gives it the keyboard again. */
+    fun appFocused(leave: () -> Unit) {
+        if (arrived(AppWindow)) return
+        if (entries.isEmpty() || stampNow() != stamp) return
+        add(Entry(null, { true }, leave))
     }
 
     /** [owner] left the screen with what holds it: nothing of it to bring back. */
@@ -200,32 +207,43 @@ class PopupPositions(private val stampNow: () -> Any?) {
         index = index.coerceIn(-1, entries.lastIndex)
     }
 
-    /** Back one pop-up position: whether there was one (else the app's own positions are walked). */
+    /** Back one position: whether there was one (else the app's own positions are walked). */
     fun back(): Boolean {
-        // Before the first pop-up: the app's own positions.
+        expected = null
         if (!current() || index < 0) return false
         val here = entries[index]
-        if (!here.isOpen()) return bring(here)
-        if (index == 0) {
-            // The position before the first pop-up is the app's window the keyboard came from (user rule 2026-11-11):
-            // given the keyboard back, it closes the pop-ups, pinned or not — none of them is its descendant.
-            index = -1
-            expected = null
-            here.leave()
-            return true
-        }
+        // The pop-up the keyboard is in closed meanwhile: back brings it back first.
+        if (here.owner != null && !here.isOpen()) return bring(here)
+        if (index == 0) return false
         index--
         return bring(entries[index])
     }
 
-    /** Forward one pop-up position: whether there was one. */
+    /** Forward one position: whether there was one. */
     fun forward(): Boolean {
+        expected = null
         if (!current() || index >= entries.lastIndex) return false
         index++
         return bring(entries[index])
     }
 
-    /** Whether the pop-up positions are the newest of the app's — none recorded or walked in its history since. */
+    private fun add(entry: Entry) {
+        while (entries.size > index + 1) entries.removeAt(entries.lastIndex)
+        // The same position twice in a row is one.
+        if (entries.isNotEmpty() && entries.last().owner === entry.owner) entries.removeAt(entries.lastIndex)
+        entries += entry
+        index = entries.lastIndex
+        stamp = stampNow()
+    }
+
+    /** Whether [where] is where a walk is bringing the keyboard — then its coming there is no new position. */
+    private fun arrived(where: Any): Boolean {
+        if (expected !== where) return false
+        expected = null
+        return true
+    }
+
+    /** Whether these positions are the newest of the app's — none recorded or walked in its history since. */
     private fun current(): Boolean {
         if (entries.isEmpty()) return false
         if (stampNow() != stamp) {
@@ -236,7 +254,7 @@ class PopupPositions(private val stampNow: () -> Any?) {
     }
 
     private fun bring(entry: Entry): Boolean {
-        expected = entry.owner
+        expected = entry.owner ?: AppWindow
         entry.bringBack()
         return true
     }
