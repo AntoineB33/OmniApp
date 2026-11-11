@@ -316,4 +316,53 @@ class ScheduleScoreTest {
         val alone = model(listOf(task("A", 1.0, 20)), 12)
         assertTrue(ScheduleOptimizer(alone).plan(alone.cursor(), HOUR.toDouble()).runs.all { it.alternative == -1 })
     }
+
+    /**
+     * `docs/scheduler_score.md` § *The target share* (2026-11-07): each task's compensation length is
+     * `λ + 3(τ_i − λ)⁺` — `λ` (4h) for a task recurring at least every 4h, about three of its own periods beyond.
+     */
+    @Test
+    fun each_task_has_its_own_compensation_length() {
+        // A: 10min at 50% (τ 20min) keeps 4h; B: 30min at 2.5% (τ 20h) gets 4h + 3·16h = 52h
+        val m = model(listOf(task("A", 0.5, 10), task("B", 0.0125, 30)), 6)
+        val share = ScoreModel.sharesOf(m.tasks)
+        assertEquals(4.0 * HOUR, m.compLength[0], 1e-6)
+        val tauB = 30.0 * MIN / share[1]
+        assertEquals(4.0 * HOUR + 3.0 * (tauB - 4.0 * HOUR), m.compLength[1], 1e-6)
+    }
+
+    /**
+     * § *Notation* (2026-11-07): a task with `τ_i` over 168h is RARE: discounted over its own window, and `Θ` is taken
+     * over the ordinary tasks alone (a panel every few weeks no longer stretches every other task's discount).
+     */
+    @Test
+    fun a_rare_task_is_discounted_over_its_own_window() {
+        val m = model(listOf(task("A", 1.0, 30), task("B", 0.001, 30)), 6)
+        val share = ScoreModel.sharesOf(m.tasks)
+        val tauA = 30.0 * MIN / share[0]
+        val tauB = 30.0 * MIN / share[1]
+        assertTrue(tauB > ScoreModel.RARE_AFTER_MILLIS)
+        assertEquals(tauA, m.theta, 1e-6)
+        assertEquals(tauA, m.discount[0], 1e-6)
+        assertEquals(tauB, m.discount[1], 1e-6)
+    }
+
+    /**
+     * A window that ends in a stretch no task may run in, after a block of the user's: the last schedulable stretch (the
+     * block) does not go on forever past the window — what comes after is the night. Read as forever, B was deprived by
+     * A's hour forever and its target before the block rose with it; it must be the same as with a window reaching past
+     * the night (found against line_manager's score, 2026-11-08).
+     */
+    @Test
+    fun a_window_ending_in_a_night_after_a_block_does_not_read_the_block_forever() {
+        val tasks = listOf(task("A", 0.5, 10), task("B", 0.5, 10))
+        val block = listOf(PlanBlock(TaskId("A"), HOUR, 2 * HOUR))
+        val night = listOf(PlanWindow(2 * HOUR, 10 * HOUR, emptyMap(), defaultMultiplier = 0.0))
+        val ending = ScoreModel(tasks, block, night, 0L, 6 * HOUR)
+        val past = ScoreModel(tasks, block, night, 0L, 30 * HOUR)
+        val u = 0.5 * HOUR
+        val short = ending.targetAt(u)[1]
+        val long = past.targetAt(u)[1]
+        assertTrue(abs(short - long) < 0.02 * long, "B's target before the block: $short read to the night, $long past it")
+    }
 }

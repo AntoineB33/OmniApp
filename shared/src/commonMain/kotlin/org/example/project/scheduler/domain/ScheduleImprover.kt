@@ -218,7 +218,7 @@ internal class ScheduleImprover(
         if (run < 0) return 0.0
         val s = model.minimum[run] - runLen
         if (s <= ScoreModel.EPS) return 0.0
-        return exp(-(atU - start.originU) / model.theta) * model.shortfallCost(run, s)
+        return exp(-(atU - start.originU) / model.discount[run]) * model.shortfallCost(run, s)
     }
 
     private companion object {

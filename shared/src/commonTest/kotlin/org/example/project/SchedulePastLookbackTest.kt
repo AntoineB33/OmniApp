@@ -137,12 +137,14 @@ class SchedulePastLookbackTest {
 
     /**
      * `docs/invariants/scheduler.md`: *everything the score measures is on the SCHEDULABLE clock*. A night buys the
-     * window no lag, so the walk reaches past it: the span returned holds at least `4*Theta` of schedulable time,
-     * whatever the account sleeps.
+     * window no lag, so the walk reaches past it: the span returned holds at least `4 * max lambda_i` of schedulable
+     * time (`docs/scheduler_score.md` § *How far back*, 2026-11-07: each task reads its own past back to `4 lambda_i`),
+     * whatever the account sleeps. A 1.5 % task (`tau` 33h, `lambda` 91h, four of them 15 days): the 0.15 % one of the
+     * other tests now reads back past the 90-day cap, which would hide what this checks.
      */
     @Test
     fun the_window_is_measured_on_the_schedulable_clock() {
-        val ts = tasks()
+        val ts = tasks(rarePercent = 1.5)
         val nights = (1..120).map {
             val wake = NOW - it * DAY
             RestrictivePeriod(wake - 8 * HOUR, wake, PeriodKinds.SLEEP, "Sleep")
@@ -154,7 +156,7 @@ class SchedulePastLookbackTest {
         assertTrue(slept >= bare * 4 / 3, "…by the sleep it has to reach past: ${slept / DAY}d")
 
         val model = ScoreModel(ts, emptyList(), ScheduleFill.windowsFor(nights, ts, NOW - slept, NOW), NOW - slept, NOW)
-        val need = SchedulerDomain.SCHEDULE_PAST_LOOKBACK_WINDOWS * ScoreModel.thetaOf(ts)
-        assertTrue(model.uAt(NOW) >= need - MIN, "the span holds 4*Theta of schedulable time: ${model.uAt(NOW)} vs $need")
+        val need = SchedulerDomain.SCHEDULE_PAST_LOOKBACK_WINDOWS * ScoreModel.readBackOf(ts)
+        assertTrue(model.uAt(NOW) >= need - MIN, "the span holds 4 max lambda_i of schedulable time: ${model.uAt(NOW)} vs $need")
     }
 }

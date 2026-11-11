@@ -4,10 +4,12 @@
 defining the score, and leaves the definition to the implementation. This document is that definition. It adds no
 requirement: it only fixes what "best" means. Every § below names a section of `docs/scheduler_requirements.md`.
 
-**Not implemented yet (2026-11-07).** The requirements of 2026-11-07 are defined here, but the code still scores
-the previous definition: one $\lambda$ for every task, the past read back at most 90 days, no maximum execution time,
-no quantity by a date, no rare task, no formula of the target ratio or of the minimum and maximum times. The sections
-that change are marked *(2026-11-07)*.
+**Implemented in part (2026-11-08).** `ScoreModel` now scores each task's own compensation length $\lambda_i$, the
+rare tasks discounted over their own $\tau_i$ (and $\Theta$ over the ordinary ones), and reads each task's past back to
+$4 \max \lambda_i$ (still under the 90-day cap of § *How far back*). Not yet: the maximum execution time, the quantities
+by a date, the formulas (each needs a field of the task the account does not hold yet), the rare tasks placed on the
+cycle in closed form, and the past beyond the cap. line_manager's score (`tests/cross_score_cases.py` there) agrees with
+`ScoreModel` within 0.7 % on 60 cases with tasks from 20 minutes to 1100 hours of period.
 
 ## Notation
 

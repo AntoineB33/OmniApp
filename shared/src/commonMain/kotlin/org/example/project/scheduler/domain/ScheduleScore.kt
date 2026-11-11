@@ -101,8 +101,25 @@ class ScoreModel(
     /** `τ_i = max(M_i, 1 min) / π_i` — task `i`'s smallest window; `Θ` for a task with no share. */
     val tau: DoubleArray
 
-    /** `Θ = max τ_i` over the tasks with a share — the discount horizon. */
+    /**
+     * `Θ = max τ_i` over the ORDINARY tasks with a share (`docs/scheduler_score.md` § *Notation*, rare tasks) — the
+     * discount horizon of every ordinary task, and the window the repetition is looked for in.
+     */
     val theta: Double
+
+    /**
+     * `Θ_i`, task `i`'s own discount horizon (§ *Notation*, *(2026-11-07)*): [theta] for an ordinary task, its own `τ_i`
+     * for a RARE one (`τ_i >` [RARE_AFTER_MILLIS]: a panel every few weeks or years, which a discount over the ordinary
+     * tasks' `Θ` would weigh as nothing).
+     */
+    val discount: DoubleArray
+
+    /**
+     * `λ_i`, task `i`'s compensation length (§ *The target share*, *(2026-11-07)*): `λ + 3(τ_i − λ)⁺`, `λ` being
+     * [COMPENSATION_LENGTH_MILLIS]. A task recurring at least every `λ` keeps `λ`; one recurring less often is repaid over
+     * about three of its own periods instead of forgetting a blockage long before its next panel.
+     */
+    val compLength: DoubleArray
 
     // --- wall segments -------------------------------------------------------------------------------
     private val wallStart: LongArray
@@ -135,6 +152,8 @@ class ScoreModel(
         val windowOf = windowsOf(tasks)
         theta = thetaOf(windowOf)
         tau = DoubleArray(n) { i -> if (windowOf[i].isNaN()) theta else windowOf[i] }
+        discount = DoubleArray(n) { i -> if (!windowOf[i].isNaN() && windowOf[i] > RARE_AFTER_MILLIS) windowOf[i] else theta }
+        compLength = DoubleArray(n) { i -> compensationLength(if (windowOf[i].isNaN()) 0.0 else windowOf[i]) }
 
         // --- cut the wall timeline at every edge
         val edgeSet = HashSet<Long>()
@@ -232,7 +251,7 @@ class ScoreModel(
         pieceHasComp = BooleanArray(pieceCount)
         for (i in 0 until n) {
             if (share[i] <= 0.0) continue
-            val t = COMPENSATION_LENGTH_MILLIS
+            val t = compLength[i]
             val reach = COMP_REACH_LENGTHS * t
             // Only a piece where the multiplier is below 1 can deprive anyone.
             val depr = (0 until pieceCount).filter { pieceMult[it][i] < 1.0 }
@@ -276,8 +295,11 @@ class ScoreModel(
         }
     }
 
+    // (the last piece goes on forever past the model's end only where it reaches that end: a window ending in a night
+    // after a block of the user's read the block as going on forever, every other task deprived by it forever, where
+    // the definition reads what comes after; found against line_manager's score, 2026-11-08)
     private fun pieceLenForComp(p: Int): Double =
-        if (p == pieceCount - 1 && wallEnd.isNotEmpty() && wallEnd.last() >= toMillis) Double.POSITIVE_INFINITY
+        if (p == pieceCount - 1 && wallEnd.isNotEmpty() && wallEnd.last() >= toMillis && wallSchedulable.last()) Double.POSITIVE_INFINITY
         else pieceULen[p]
 
     private fun localShares(mult: DoubleArray, fixed: Int): DoubleArray {
@@ -308,8 +330,8 @@ class ScoreModel(
         }
         val len = pieceULen[p]
         var c = 0.0
-        val t = COMPENSATION_LENGTH_MILLIS
         for (i in 0 until n) {
+            val t = compLength[i]
             var ci = 0.0
             val a = compA[p][i]
             if (a != 0.0) ci += a * exp(-v / t)
@@ -529,7 +551,7 @@ class ScoreModel(
     }
 
     private fun compOf(i: Int, p: Int, v: Double): Double {
-        val t = COMPENSATION_LENGTH_MILLIS
+        val t = compLength[i]
         var c = 0.0
         val a = compA[p][i]
         if (a != 0.0) c += a * exp(-v / t)
@@ -675,12 +697,12 @@ class ScoreModel(
     private fun integrateOne(cursor: ScoreCursor, i: Int, x: Double, f: Double, u: Double, h: Double) {
         if (h <= 0.0) return
         val t = tau[i]
-        val kd = 1.0 / theta
+        val kd = 1.0 / discount[i]
         val lInf = (x - f) * t
         val d = cursor.lag[i] - lInf
         val acc = lInf * lInf * integral(kd, h) + 2.0 * lInf * d * integral(kd + 1.0 / t, h) +
             d * d * integral(kd + 2.0 / t, h)
-        cursor.cost += lagWeight[i] * exp(-(u - cursor.originU) / theta) * acc
+        cursor.cost += lagWeight[i] * exp(-(u - cursor.originU) / discount[i]) * acc
         cursor.lag[i] = lInf + d * exp(-h / t)
     }
 
@@ -739,7 +761,7 @@ class ScoreModel(
         if (run < 0) return
         val s = minimum[run] - cursor.runLen
         if (s <= EPS) return
-        cursor.cost += exp(-(cursor.u - cursor.originU) / theta) * shortfallCost(run, s)
+        cursor.cost += exp(-(cursor.u - cursor.originU) / discount[run]) * shortfallCost(run, s)
     }
 
     /**
@@ -759,13 +781,13 @@ class ScoreModel(
         val span = untilU - fromU
         val l0 = abs(lag)
         if (span <= 0.0 || l0 <= 0.0) return 0.0
-        val kd = 1.0 / theta
+        val kd = 1.0 / discount[i]
         val t = tau[i]
         // |L|(w) ≥ (l0 + τ)e^(−w/τ) − τ, which reaches 0 at w0 = τ·ln(1 + l0/τ).
         val w0 = minOf(span, t * ln(1.0 + l0 / t))
         val a = l0 + t
         val acc = a * a * integral(kd + 2.0 / t, w0) - 2.0 * a * t * integral(kd + 1.0 / t, w0) + t * t * integral(kd, w0)
-        return lagWeight[i] * exp(-(fromU - originU) / theta) * acc.coerceAtLeast(0.0)
+        return lagWeight[i] * exp(-(fromU - originU) / discount[i]) * acc.coerceAtLeast(0.0)
     }
 
     /** The lower bound of every task's criterion 1 from a settled [cursor] to [untilU]. */
@@ -820,8 +842,30 @@ class ScoreModel(
             }
         }
 
-        /** `Theta = max tau_i` over the tasks with a share — the discount horizon, and the longest window any task needs. */
-        fun thetaOf(windows: DoubleArray): Double = windows.filter { !it.isNaN() }.maxOrNull() ?: MIN_WINDOW_MILLIS
+        /**
+         * `Theta = max tau_i` over the ORDINARY tasks with a share (`tau_i ≤` [RARE_AFTER_MILLIS]) — the discount horizon;
+         * every task's window when all of them are rare.
+         */
+        fun thetaOf(windows: DoubleArray): Double {
+            val known = windows.filter { !it.isNaN() }
+            return known.filter { it <= RARE_AFTER_MILLIS }.maxOrNull() ?: known.maxOrNull() ?: MIN_WINDOW_MILLIS
+        }
+
+        /** `λ_i = λ + 3(τ_i − λ)⁺` for a task of window [tau] (§ *The target share*, *(2026-11-07)*). */
+        fun compensationLength(tau: Double): Double =
+            COMPENSATION_LENGTH_MILLIS + 3.0 * maxOf(0.0, tau - COMPENSATION_LENGTH_MILLIS)
+
+        /**
+         * How far back [tasks] read their own past, in `λ_i` (§ *How far back*, *(2026-11-07)*): `max λ_i` — a task's lag
+         * forgets over `τ_i ≤ λ_i` and its compensation reaches over `λ_i`, so a number of these covers both.
+         */
+        fun readBackOf(tasks: List<PlanTask>): Double {
+            val w = windowsOf(tasks)
+            return w.filter { !it.isNaN() }.maxOfOrNull { compensationLength(it) } ?: compensationLength(0.0)
+        }
+
+        /** `H`: a task whose `tau_i` is longer is RARE (§ *Notation*): discounted over its own window. */
+        const val RARE_AFTER_MILLIS: Double = 168 * 3_600_000.0
 
         /** `Theta` for [tasks]. */
         fun thetaOf(tasks: List<PlanTask>): Double = thetaOf(windowsOf(tasks))

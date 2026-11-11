@@ -840,7 +840,9 @@ internal object ScheduleFill {
         capMillis: Long,
     ): Long {
         if (tasks.isEmpty()) return floorMillis
-        val need = windows * ScoreModel.thetaOf(tasks)
+        // (each task reads its own past back to 4 λ_i, `docs/scheduler_score.md` § *How far back*, 2026-11-07: λ_i ≥ τ_i,
+        // so this covers the lag's 4 τ_i the previous reading asked for, and the compensation's reach too)
+        val need = windows * ScoreModel.readBackOf(tasks)
         if (need <= floorMillis.toDouble()) return floorMillis
         if (need >= capMillis.toDouble()) return capMillis
         val earliest = nowMillis - capMillis

@@ -196,7 +196,6 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
             objective.setMinimization()
             fun addObj(v: MPVariable, c: Double) = objective.setCoefficient(v, objective.getCoefficient(v) + c)
             var offset = 0.0
-            val theta = model.theta
             val origin = start.originU
             val cutMin = DoubleArray(cuts.size) { cuts[it] / UNIT }
 
@@ -225,7 +224,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                         val short = m - length
                         if (charged && short > 0.0) {
                             val endU = if (joinOut) tailEnd else cuts[q + 1]
-                            addObj(v, model.lagWeight[i] * model.minimumWeight * exp(-(endU - origin) / theta) * tau * short * (2.0 * m + short))
+                            addObj(v, model.lagWeight[i] * model.minimumWeight * exp(-(endU - origin) / model.discount[i]) * tau * short * (2.0 * m + short))
                         }
                     }
                 }
@@ -257,7 +256,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                 val t = tasks.indexOf(runIn)
                 val m = model.minimum[runIn] / UNIT
                 val short = m - runInLen / UNIT
-                val c = model.lagWeight[runIn] * model.minimumWeight * exp(-(a - origin) / theta) * (model.tau[runIn] / UNIT) * short * (2.0 * m + short)
+                val c = model.lagWeight[runIn] * model.minimumWeight * exp(-(a - origin) / model.discount[runIn]) * (model.tau[runIn] / UNIT) * short * (2.0 * m + short)
                 offset += c
                 y[t][0]?.forEach { v -> v?.let { addObj(it, -c) } }
             }
@@ -267,7 +266,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                 val t = tasks.indexOf(j)
                 val m = model.minimum[j] / UNIT
                 val short = m - tailLen / UNIT
-                val c = model.lagWeight[j] * model.minimumWeight * exp(-(tailEnd - origin) / theta) * (model.tau[j] / UNIT) * short * (2.0 * m + short)
+                val c = model.lagWeight[j] * model.minimumWeight * exp(-(tailEnd - origin) / model.discount[j]) * (model.tau[j] / UNIT) * short * (2.0 * m + short)
                 offset += c
                 for (p in 0 until K) y[t][p]?.get(K - 1)?.let { addObj(it, -c) }
             }
@@ -275,7 +274,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
             // --- criterion 1: the lag dynamics, exact per slot, and its square bounded by tangents
             for ((t, i) in tasks.withIndex()) {
                 val tau = model.tau[i] / UNIT
-                val thetaMin = theta / UNIT
+                val thetaMin = model.discount[i] / UNIT
                 var lagVar: MPVariable? = null
                 var lagConst = atA.lag[i] / UNIT
                 var incLag = lagConst
@@ -287,7 +286,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                     val xInc = if (incumbentTask[k] == i) 1.0 else 0.0
                     val decay = exp(-h / tau)
                     // The task's own unit ([ScoreModel.lagWeight]), on every term of its criterion 1.
-                    val disc = model.lagWeight[i] * exp(-(s.from - origin) / theta)
+                    val disc = model.lagWeight[i] * exp(-(s.from - origin) / model.discount[i])
                     val i0 = integral(1.0 / thetaMin, h)
                     val i1 = integral(1.0 / thetaMin + 1.0 / tau, h)
                     val i2 = integral(1.0 / thetaMin + 2.0 / tau, h)

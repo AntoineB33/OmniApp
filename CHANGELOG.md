@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The score: each task's own compensation length, rare tasks discounted over their own window — 2026-11-11
+
+`docs/scheduler_score.md` (2026-11-07) defined what `ScoreModel` did not score yet; found by scoring the same plans with
+`ScoreModel` and line_manager's score (line_manager's `tests/cross_score_cases.py`): on the real account its small tasks
+(τ ≈ 113 h) were repaid over 4 h where the definition says hundreds of hours. Now: `λ_i = λ + 3(τ_i − λ)⁺`
+(`ScoreModel.compLength`), a task with `τ_i > 168 h` discounted over its own `τ_i` and `Θ` taken over the ordinary tasks
+(`ScoreModel.discount`, used by the improver and the MIP solver too), the past replayed back to `4 · max λ_i`
+(`ScoreModel.readBackOf`, still under the 90-day cap). And a window ending in a night after a block of the user's no longer
+reads the block as going on forever (`pieceLenForComp`). The two scores agree within 0.7 % on 60 cases from 20 min to
+1100 h of `τ`. `ScheduleScoreTest` (three new), `SchedulePastLookbackTest` (its schedulable-clock case on a 1.5 % task:
+the 0.15 % one now reads back past the cap). Not yet: the maximum time, quantities by a date, formulas (task fields the
+account does not hold), rare tasks placed on the cycle in closed form. `:shared:longTest -PlongScale=0.25`: red before and
+after (the same two tests); per week the least served task moves both ways (120 tasks, minor changes: 0.73x→0.66x week 1,
+0.84x→0.69x week 4; 200 tasks, an upheaval: 0.56x→0.54x, 0.58x→0.68x, 0.64x→0.70x, nobody 6.4 %→3.3 % and 8.2 %→4.4 %).
+Client rebuild.
+
 ### A line reaching bedtime still at a screen is on a task: the rules carry it ahead — 2026-11-06
 
 Anomaly (account 3): Inactivity from 00:07 to 02:29:27 while the user worked at the computer, mode 1, the whole time. The evening's plan planned around the wind-down hour (00:07) and the night (01:07) — the user is expected to go to bed — so it held no run for a line that got there at a screen; the check at the line only reports, nothing re-plans on time passing, nothing was banked, and the calendar drew the stretch as Inactivity. User rule: in mode 1 the Sleep period reaching the line is eaten by it, and the line must be on a task, banked behind it as it moves. The mode-1 fill now searches each no-screen carrier ahead (a night, the hour before bed) once more from its start, as a line inside it reads it, and lays those runs held at the line where the plan left nobody (`SchedulerDomain.lineBranchPanels`, `isLineBranch`, ids `line/…`, step-bounded passes only). Not part of the plan the score continues from: never a seed, never published to a peer, never the plan a flip leaves; nothing of them is drawn before the line gets there. `SleepWindowNoIdlingTest`. `:shared:longTest -PlongScale=0.25` is red BEFORE and AFTER the change with the very same figures (the simulation's nights are a custom kind carrying no "no screen", so the branch never runs there): 120 tasks, T18 0.73x its lower target (at least 0.75x); 200 tasks, T27 0.56x, T17 0.71x, T46 0.74x; 6–9 % of the schedulable time left to nobody. Client rebuild only.
