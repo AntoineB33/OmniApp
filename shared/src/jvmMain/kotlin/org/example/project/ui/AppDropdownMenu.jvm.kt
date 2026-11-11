@@ -216,12 +216,33 @@ private class MenuSession(
             if (!ours(event.oppositeWindow)) dismiss.value()
         }
     }
+    private var heldKeyboard = false
     private val focusListener = object : WindowFocusListener {
-        override fun windowGainedFocus(event: WindowEvent) = Unit
+        override fun windowGainedFocus(event: WindowEvent) {
+            heldKeyboard = true
+        }
         override fun windowLostFocus(event: WindowEvent) {
             if (focusable && !ours(event.oppositeWindow)) dismiss.value()
         }
     }
+
+    /**
+     * User rule 2026-11-11: a menu that holds the keyboard stays only while a window of ITS tree is the active one (it,
+     * or a menu opened from it). A pinned hover pop-up whose child held the keyboard never lost it itself, so the user
+     * going to another application left it on screen; now any change of the active window is asked, once the queue has
+     * settled (between two of the app's windows there is a moment with none).
+     */
+    private val activeListener = java.beans.PropertyChangeListener {
+        EventQueue.invokeLater {
+            // Not before it has held the keyboard once: opening, the app's window is still the active one.
+            if (closed || dialog == null || !heldKeyboard) return@invokeLater
+            val active = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
+            if (!ours(active)) dismiss.value()
+        }
+    }
+
+    /** What the app makes of a key its windows would have heard ([LocalMenuKeyForward]): the chords that walk every window. */
+    var keyForward: ((androidx.compose.ui.input.key.KeyEvent) -> Boolean)? = null
 
     /** A menu opened from this one is not "outside" it. */
     private fun ours(other: AwtWindow?): Boolean = generateSequence(other) { it.owner }.any { it === dialog }
@@ -253,10 +274,28 @@ private class MenuSession(
                     dismiss.value()
                     true
                 } else {
-                    false
+                    keyForward?.invoke(event) ?: false
                 }
             },
         ) {
+            keyForward = LocalMenuKeyForward.current
+            // The pop-up as a position of the app (user rule 2026-11-11): what its tracker hears of the keyboard coming to
+            // it, and how a walk through the positions brings the keyboard back to it ([MenuHoverTracker.focusWindow]).
+            val tracker = LocalMenuHover.current
+            DisposableEffect(tracker) {
+                if (tracker == null) return@DisposableEffect onDispose { }
+                val focus = object : WindowFocusListener {
+                    override fun windowGainedFocus(event: WindowEvent) = tracker.windowFocused()
+                    override fun windowLostFocus(event: WindowEvent) = Unit
+                }
+                tracker.focusWindow = { window.toFront(); window.requestFocus() }
+                window.addWindowFocusListener(focus)
+                if (window.isFocused) tracker.windowFocused()
+                onDispose {
+                    window.removeWindowFocusListener(focus)
+                    tracker.focusWindow = null
+                }
+            }
             // Inside, a menu opened is this window's, and opens by the default sides unless its call site says otherwise.
             androidx.compose.runtime.CompositionLocalProvider(LocalMenuWindow provides window, LocalMenuSides provides MenuSide.DEFAULT) {
                 MenuSurface(owner, modifier.value, content.value, ::fit)
@@ -267,6 +306,7 @@ private class MenuSession(
         // for a menu that holds the keyboard, as the menu losing it.
         owner.addWindowListener(ownerListener)
         window.addWindowFocusListener(focusListener)
+        if (focusable) KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("activeWindow", activeListener)
         window.isVisible = true
         if (focusable) {
             window.toFront()
@@ -305,6 +345,7 @@ private class MenuSession(
         dialog = null
         owner.removeWindowListener(ownerListener)
         window.removeWindowFocusListener(focusListener)
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().removePropertyChangeListener("activeWindow", activeListener)
         // A menu closed while it holds the keyboard (a hover pop-up vanishing, which no press outside ended) gives it back
         // to the nearest window still on screen: hidden with the keyboard, it left none of the app's windows active.
         val hadFocus = focusable && window.isActive

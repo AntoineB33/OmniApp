@@ -30,8 +30,7 @@ import org.example.project.scheduler.state.SchedulerIntent
  *    selections of the focused window;
  *  - **Ctrl+Alt+←** / **Ctrl+Alt+→** (user rule 2026-11-11), and **Shift+Alt+←** / **Shift+Alt+→** →
  *    [SchedulerIntent.UndoPosition] / [SchedulerIntent.RedoPosition]: every position — every window's selections and
- *    every move of the focus between windows. Back, it first brings back a hover pop-up the pointer closed since the
- *    last position ([HoverClosedPopups], read by `App`'s root).
+ *    every move of the focus between windows, the pop-ups the keyboard went to first ([PopupPositions], read by `App`).
  *  - **Ctrl+Page Up** / **Ctrl+Page Down** → [SchedulerIntent.UndoFocus] / [SchedulerIntent.RedoFocus]: the moves
  *    of the focus between windows alone — read by `TabWalk.moveFor` with the window bar's chords, on the app root's
  *    preview pass, so a text field cannot take them.
@@ -241,8 +240,8 @@ object KeyboardShortcutCatalog {
                     KeyboardShortcut("Alt + ← / Alt + →", "Go back / forward through the focused window's selections"),
                     KeyboardShortcut(
                         "Ctrl + Alt + ← / Ctrl + Alt + →",
-                        "Go back / forward through every selection and every move between windows — back first " +
-                            "brings back a pop-up the pointer closed by leaving it, kept open until another window takes the keyboard",
+                        "Go back / forward through every selection and every move between windows, the pop-ups the " +
+                            "keyboard went to first — one that closed comes back, kept open until another window takes the keyboard",
                     ),
                     KeyboardShortcut("Shift + Alt + ← / Shift + Alt + →", "Same as Ctrl + Alt + ← / →"),
                 ),

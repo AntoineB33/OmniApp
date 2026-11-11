@@ -59,6 +59,20 @@ class MenuHoverTracker(
         pinned = false
     }
 
+    /**
+     * Brings the keyboard to the pop-up's own window, while it is on screen — given by the platform's menu (the
+     * desktop's windows), null where a menu is drawn in the app's window.
+     */
+    var focusWindow: (() -> Unit)? = null
+
+    /** What the pop-up's owner does when the keyboard comes to it ([PopupPositions.focused]). */
+    var onFocused: (() -> Unit)? = null
+
+    /** The keyboard came to the pop-up's window — told by the platform's menu. */
+    fun windowFocused() {
+        onFocused?.invoke()
+    }
+
     fun enter(part: Any) {
         parent?.enter(part)
         inside += part
@@ -126,43 +140,102 @@ fun rememberMenuHoverTracker(parent: MenuHoverTracker? = null, onLeft: () -> Uni
 }
 
 /**
- * User rule 2026-11-11: *"If a Search window disappears because the user hovered outside, ctrl+alt+<- brings it back,
- * and does like the user clicked on the background"* — **the hover pop-ups the pointer closed**, newest last, each
- * stamped with where the position history stood ([stampNow], `SchedulerReducer.positionStamp`). Back through the
- * positions ([reopenLatest]) first reopens the newest of them, pinned, while no position was recorded or walked since
- * it closed; after one was, it is older than what the walk goes back to, and all of them are forgotten.
+ * User rule 2026-11-11: *"ctrl+alt+->/<- does the same but forall windows"*, and *"If a Search window disappears because
+ * the user hovered outside, ctrl+alt+<- brings it back, and does like the user clicked on the background"* — **the
+ * pop-ups the keyboard went to, as positions of the app**: each one the keyboard comes to is a new position
+ * ([focused]); back and forward ([back], [forward]) walk them, bringing the keyboard back to one still open, or bringing
+ * one back, pinned, that closed (the pointer leaving it, most often). A walk lands on the pop-up the keyboard is in only
+ * when that one closed meanwhile: then back reopens it first.
  *
- * Local to this run and to the pop-ups still able to come back: one that left the screen with what holds it (a pop-up
- * inside a pop-up that closed too) takes its entry with it ([forget]).
+ * They come before the app's own positions (`SchedulerIntent.UndoPosition`): while none of those was recorded or walked
+ * since the newest pop-up position ([stampNow], `SchedulerReducer.positionStamp`); past the oldest, the walk goes on in
+ * the app's history. In this run only; a pop-up that left the screen with what holds it is no position any more
+ * ([forget]).
  */
-class HoverClosedPopups(private val stampNow: () -> Any?) {
-    private class Entry(val owner: Any, val stamp: Any?, val reopen: () -> Unit)
+class PopupPositions(private val stampNow: () -> Any?) {
+    private class Entry(val owner: Any, val isOpen: () -> Boolean, val bringBack: () -> Unit)
 
     private val entries = ArrayList<Entry>()
+    private var index = -1
+    private var stamp: Any? = null
 
-    /** [owner]'s pop-up closed by the pointer; [reopen] brings it back, pinned. */
-    fun closed(owner: Any, reopen: () -> Unit) {
-        entries.removeAll { it.owner === owner }
-        entries += Entry(owner, stampNow(), reopen)
+    /** The pop-up a walk is bringing the keyboard to: its focus is no new position. */
+    private var expected: Any? = null
+
+    /** The keyboard came to [owner]'s pop-up; [bringBack] brings it back to it (reopened and pinned if it closed). */
+    fun focused(owner: Any, isOpen: () -> Boolean, bringBack: () -> Unit) {
+        if (expected === owner) {
+            expected = null
+            return
+        }
+        expected = null
+        if (stampNow() != stamp) clear()
+        while (entries.size > index + 1) entries.removeAt(entries.lastIndex)
+        if (entries.lastOrNull()?.owner === owner) entries.removeAt(entries.lastIndex)
+        entries += Entry(owner, isOpen, bringBack)
+        index = entries.lastIndex
+        stamp = stampNow()
     }
 
-    /** [owner] opened again some other way, or left the screen: nothing to bring back. */
+    /** [owner] left the screen with what holds it: nothing of it to bring back. */
     fun forget(owner: Any) {
-        entries.removeAll { it.owner === owner }
+        var i = entries.size - 1
+        while (i >= 0) {
+            if (entries[i].owner === owner) {
+                entries.removeAt(i)
+                if (i <= index) index--
+            }
+            i--
+        }
+        if (index < 0 && entries.isNotEmpty()) index = 0
     }
 
-    /** Reopens the newest pop-up the pointer closed since the last position, if any: whether one came back. */
-    fun reopenLatest(): Boolean {
-        val latest = entries.lastOrNull() ?: return false
-        if (latest.stamp != stampNow()) {
-            entries.clear()
+    /** Back one pop-up position: whether there was one (else the app's own positions are walked). */
+    fun back(): Boolean {
+        if (!current()) return false
+        val here = entries[index]
+        if (!here.isOpen()) return bring(here)
+        if (index == 0) return false
+        index--
+        return bring(entries[index])
+    }
+
+    /** Forward one pop-up position: whether there was one. */
+    fun forward(): Boolean {
+        if (!current() || index >= entries.lastIndex) return false
+        index++
+        return bring(entries[index])
+    }
+
+    /** Whether the pop-up positions are the newest of the app's — none recorded or walked in its history since. */
+    private fun current(): Boolean {
+        if (entries.isEmpty()) return false
+        if (stampNow() != stamp) {
+            clear()
             return false
         }
-        entries.removeAt(entries.lastIndex)
-        latest.reopen()
         return true
+    }
+
+    private fun bring(entry: Entry): Boolean {
+        expected = entry.owner
+        entry.bringBack()
+        return true
+    }
+
+    private fun clear() {
+        entries.clear()
+        index = -1
+        expected = null
     }
 }
 
-/** The app's [HoverClosedPopups], null where nothing gives it (a test scene): nothing is then brought back. */
-val LocalHoverClosedPopups = compositionLocalOf<HoverClosedPopups?> { null }
+/** The app's [PopupPositions], null where nothing gives it (a test scene): no pop-up is then a position. */
+val LocalPopupPositions = compositionLocalOf<PopupPositions?> { null }
+
+/**
+ * What the app does with a key its own windows would have heard, given to the pop-ups: a pop-up is a window of its own
+ * holding the keyboard, and the chords that walk every window (user rule 2026-11-11) must work from it too. True when
+ * taken. Null where nothing gives it.
+ */
+val LocalMenuKeyForward = compositionLocalOf<((androidx.compose.ui.input.key.KeyEvent) -> Boolean)?> { null }

@@ -1319,10 +1319,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Every right-click MENU registers here: the host keeps at most one open and closes it on the first
         // press outside it. Windows do not — nothing takes a window away any more (see `PopupWindows.kt`).
         val transientMenus = remember { TransientMenuHost() }
-        // User rule 2026-11-11: the hover pop-ups the pointer closed, which back through every window brings back first.
-        val hoverClosedPopups = remember {
-            org.example.project.ui.HoverClosedPopups { SchedulerReducer.positionStamp(vm.state.value) }
+        // User rule 2026-11-11: the pop-ups the keyboard went to, positions walked before the app's own.
+        val popupPositions = remember {
+            org.example.project.ui.PopupPositions { SchedulerReducer.positionStamp(vm.state.value) }
         }
+        // The one answer to the chords that walk every window's positions: the pop-ups' first, then the app's history.
+        // Whether [intent] was one of them (then taken).
+        fun walkPositions(intent: SchedulerIntent?): Boolean =
+            when (intent) {
+                SchedulerIntent.UndoPosition -> { if (!popupPositions.back()) vm.dispatch(intent); true }
+                SchedulerIntent.RedoPosition -> { if (!popupPositions.forward()) vm.dispatch(intent); true }
+                else -> false
+            }
+        val menuKeyForward: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { event -> walkPositions(undoRedoIntentFor(event)) }
         val cellEditPopups = remember { org.example.project.ui.CellEditPopupHost() }
         // The window bar's tab names (user rule 2026-10-01): loaded once, keeping only the windows that come back —
         // a row the user closed since is not visible — and written whenever a button names a tab.
@@ -4223,7 +4232,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             org.example.project.ui.LocalPatternExceptionDispatch provides patternExceptionDispatch,
             org.example.project.ui.LocalHeldCalendarRecords provides heldCalendarRecords,
             LocalTransientMenuHost provides transientMenus,
-            org.example.project.ui.LocalHoverClosedPopups provides hoverClosedPopups,
+            org.example.project.ui.LocalPopupPositions provides popupPositions,
+            org.example.project.ui.LocalMenuKeyForward provides menuKeyForward,
             org.example.project.ui.LocalCellEditPopupHost provides cellEditPopups,
             LocalWindowFrameHost provides windowFrames,
             LocalHeadObstacle provides menuToggleBounds,
@@ -4239,10 +4249,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var keyboardHeld by remember { mutableStateOf(false) }
         LocalAppKeyFallback.current?.onKey = { event ->
             if (keyboardHeld) false
-            else undoRedoIntentFor(event)?.let { intent ->
-                if (!(intent == SchedulerIntent.UndoPosition && hoverClosedPopups.reopenLatest())) vm.dispatch(intent)
-                true
-            } ?: false
+            else undoRedoIntentFor(event)?.let { intent -> walkPositions(intent) || run { vm.dispatch(intent); true } } ?: false
         }
         // The Sleep / Work press undone or redone: the server hears of it as it heard of the press.
         LaunchedEffect(schedulerState.sleepingUntilMillis) { vm.sleepModeChanged(schedulerState.sleepingUntilMillis) }
@@ -4267,9 +4274,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // User rule 2026-11-01: a change made outside every window is undone from whichever has the focus,
                     // so its chord is taken before the focused element — a text field would answer with its own undo.
                     val chord = undoRedoIntentFor(event)
-                    // User rule 2026-11-11: back through every window first brings back a hover pop-up the pointer
-                    // closed since the last position — taken here, before a surface walks the history with it.
-                    if (chord == SchedulerIntent.UndoPosition && hoverClosedPopups.reopenLatest()) return@onPreviewKeyEvent true
+                    // User rule 2026-11-11: the walk through every window's positions goes through the pop-ups first —
+                    // taken here, before a surface walks the history with it.
+                    if (walkPositions(chord)) return@onPreviewKeyEvent true
                     if ((chord == SchedulerIntent.Undo || chord == SchedulerIntent.Redo) &&
                         SchedulerReducer.nextChangeIsAppWide(vm.state.value, undo = chord == SchedulerIntent.Undo)
                     ) {

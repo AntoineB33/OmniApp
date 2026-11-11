@@ -7,7 +7,7 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import org.example.project.ui.HoverClosedPopups
+import org.example.project.ui.PopupPositions
 import org.example.project.ui.MenuHoverTracker
 
 /**
@@ -128,29 +128,46 @@ class MenuHoverTrackerTest {
     }
 
     /**
-     * User rule 2026-11-11: back through every window first brings back the newest pop-up the pointer closed, while no
-     * position was recorded or walked since; after one was, none comes back and the walk goes on.
+     * User rule 2026-11-11: the pop-ups the keyboard went to are positions, walked before the app's own: back gives the
+     * keyboard to the one before, or brings back, pinned, the one it was in if that closed; forward goes the other way;
+     * and once a position of the app comes after them, they are forgotten.
      */
     @Test
-    fun a_pop_up_closed_by_the_pointer_comes_back_while_no_position_came_after_it() {
+    fun the_pop_ups_the_keyboard_went_to_are_walked_back_and_forward() {
         var stamp = 0
-        val closed = HoverClosedPopups { stamp }
-        val reopened = mutableListOf<String>()
-        closed.closed("tree") { reopened += "tree" }
-        closed.closed("branch") { reopened += "branch" }
-        assertTrue(closed.reopenLatest())
-        assertTrue(closed.reopenLatest())
-        assertEquals(listOf("branch", "tree"), reopened, "newest first")
-        assertFalse(closed.reopenLatest(), "nothing left: the walk goes on")
-        // A position after the close: older than the walk, forgotten.
-        closed.closed("tree") { reopened += "tree again" }
+        val positions = PopupPositions { stamp }
+        val open = mutableMapOf("tree" to true, "branch" to true)
+        val brought = mutableListOf<String>()
+        fun focus(name: String) = positions.focused(name, { open.getValue(name) }) { brought += name; open[name] = true }
+        focus("tree")
+        focus("branch")
+        // In the branch, back: the tree gets the keyboard; its focus is no new position.
+        assertTrue(positions.back())
+        focus("tree")
+        assertEquals(listOf("tree"), brought)
+        assertFalse(positions.back(), "nothing older: the app's own history is walked")
+        assertTrue(positions.forward())
+        focus("branch")
+        assertEquals(listOf("tree", "branch"), brought)
+        // The pointer closed the pop-up the keyboard was in: back brings it back first.
+        open["branch"] = false
+        assertTrue(positions.back())
+        assertEquals("branch", brought.last())
+        assertTrue(open.getValue("branch"))
+        // A new position after a walk drops what was ahead of it.
+        assertTrue(positions.back())
+        focus("tree")
+        open["other"] = true
+        focus("other")
+        assertFalse(positions.forward())
+        // A position of the app after them: forgotten.
         stamp++
-        assertFalse(closed.reopenLatest())
+        assertFalse(positions.back())
         stamp--
-        assertFalse(closed.reopenLatest(), "forgotten for good")
-        // One opened again by the hand, or gone from the screen, is not brought back.
-        closed.closed("tree") { reopened += "never" }
-        closed.forget("tree")
-        assertFalse(closed.reopenLatest())
+        assertFalse(positions.back(), "forgotten for good")
+        // One gone from the screen is no position.
+        focus("tree")
+        positions.forget("tree")
+        assertFalse(positions.back())
     }
 }

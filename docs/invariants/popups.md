@@ -336,12 +336,18 @@ means.
     `LocalMenuHover`: the configurations tree's), the menus opened inside it being its descendants — a category's
     child pop-up and the arrow in a pop-up's bar each a branch of the pop-up they stand in (`parent`).
   - **A press in a hover pop-up pins it and its ancestors** (user rule 2026-11-11, `MenuHoverTracker.pin`, read by
-    `reportsHover`): the pointer leaving no longer closes them; the keyboard going to a window outside the tree does
-    (the menu window's own dismissal). Closed, it is a hover pop-up again.
-  - **A pop-up the pointer closed comes back, pinned, by `Ctrl+Alt+←`** (or `Shift+Alt+←`; user rule 2026-11-11,
-    `HoverClosedPopups`, taken on `App`'s root preview pass before the position walk), the categories it showed with
-    it — while no position was recorded or walked since it closed (`SchedulerReducer.positionStamp`). In this run
-    only; a pop-up that left the screen with the one holding it is not brought back on its own.
+    `reportsHover`): the pointer leaving no longer closes them; the keyboard going to a window outside the tree does.
+    A menu that holds the keyboard stays only while a window of ITS tree is the active one (`activeListener`, once it
+    has held the keyboard): a pinned pop-up whose child held it stood on screen after the user went to another
+    application. Closed, it is a hover pop-up again.
+  - **The pop-ups the keyboard went to are positions of the app** (user rule 2026-11-11, `PopupPositions`): each one
+    the keyboard comes to (`MenuHoverTracker.windowFocused`, told by the desktop menu window) is a new position, and
+    `Ctrl+Alt+←/→` (or `Shift+Alt`) walk them before the app's own history — the keyboard brought back to one still
+    open, or one that closed (the pointer leaving it, most often) brought back pinned with the categories it showed.
+    They are newer than the app's history only while no position of it was recorded or walked since
+    (`SchedulerReducer.positionStamp`). A pop-up holding the keyboard is a window of its own, so it forwards those
+    chords to the app (`LocalMenuKeyForward`); `App.walkPositions` is the one answer to them. In this run only; a
+    pop-up that left the screen with the one holding it is no position any more.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
     (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree.
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).

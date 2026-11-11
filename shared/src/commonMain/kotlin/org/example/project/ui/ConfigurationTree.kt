@@ -72,31 +72,45 @@ internal fun ConfigurationTreeArrow(
     // The configuration of the search this pop-up IS (user rule 2026-11-11, [SearchDomain.CONFIGURATION_SEARCH]).
     var own by remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
     // The category revealing its children at each depth, by id — held here, so a pop-up brought back
-    // ([HoverClosedPopups]) comes back with the categories it showed.
+    // ([PopupPositions]) comes back with the categories it showed.
     var path by remember { mutableStateOf(listOf<String>()) }
+    // What it showed as it closed: a walk through the positions brings it back so (user rule 2026-11-11).
+    var pathAtClose by remember { mutableStateOf(listOf<String>()) }
     // User rule 2026-11-11: brought back by Ctrl+Alt+←, it is as if its background had been clicked: pinned.
     var pinOnOpen by remember { mutableStateOf(false) }
-    val closedPopups = LocalHoverClosedPopups.current
+    val positions = LocalPopupPositions.current
     val token = remember { Any() }
-    DisposableEffect(Unit) { onDispose { closedPopups?.forget(token) } }
+    DisposableEffect(Unit) { onDispose { positions?.forget(token) } }
+    fun close() {
+        pathAtClose = path
+        open = false
+    }
     // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
     // An arrow inside a pop-up of the tree is one of that pop-up's descendants, it and its own pop-up (anomaly
     // 2026-11-11: its own tracker alone, the pointer on its pop-up was outside the tree, and the whole tree vanished).
-    val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
-        val shownPath = path
-        open = false
-        closedPopups?.closed(token) {
-            path = shownPath
-            pinOnOpen = true
-            open = true
-        }
-    }
+    val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { close() }
     LaunchedEffect(open) {
         if (!open) hover.unpin() else if (pinOnOpen) { hover.pin(); pinOnOpen = false }
     }
-    // Opened by the hand: a fresh pop-up, with nothing of one the pointer closed to bring back.
+    // User rule 2026-11-11: the keyboard coming to the pop-up is a position of the app; walked back to, it gets the
+    // keyboard again, or comes back as it was, pinned.
+    DisposableEffect(hover, positions) {
+        hover.onFocused = {
+            positions?.focused(token, { open }) {
+                if (open) {
+                    hover.pin()
+                    hover.focusWindow?.invoke()
+                } else {
+                    path = pathAtClose
+                    pinOnOpen = true
+                    open = true
+                }
+            }
+        }
+        onDispose { hover.onFocused = null }
+    }
+    // Opened by the hand: a fresh pop-up.
     fun openFresh() {
-        closedPopups?.forget(token)
         path = emptyList()
         open = true
     }
@@ -109,18 +123,18 @@ internal fun ConfigurationTreeArrow(
                 .clip(RoundedCornerShape(6.dp))
                 .reportsHover(hover)
                 .onHoverEnter { if (!open) openFresh() }
-                .clickable { if (open) open = false else openFresh() }
+                .clickable { if (open) close() else openFresh() }
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
         androidx.compose.runtime.CompositionLocalProvider(LocalMenuHover provides hover) {
-        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
+        AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
         Column(
             modifier = Modifier.width(320.dp).padding(8.dp),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
         ) {
             TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
             ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth) { which ->
-            open = false
+            close()
             onPickOnCalendar(which)
             }
         }
@@ -284,31 +298,36 @@ private fun TreeColumn(
                     // (its padding, its search field: no row of it), since only another row's hover closed it. It is
                     // a hover pop-up of its own: it goes once the pointer has left its row, it and its descendants
                     // ([MenuHoverTracker], the grace being the crossing from the row to it), a branch of the tree's.
-                    // User rule 2026-11-11: closed by the pointer, it is one Ctrl+Alt+← brings back, pinned.
-                    val closedPopups = LocalHoverClosedPopups.current
+                    val branch = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
+                        if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
+                    }
+                    // User rule 2026-11-11: the keyboard coming to it is a position of the app; walked back to, it gets
+                    // the keyboard again, or comes back with the categories shown then, pinned.
+                    val positions = LocalPopupPositions.current
                     val token = remember { Any() }
                     var pinOnReveal by remember { mutableStateOf(false) }
-                    DisposableEffect(Unit) { onDispose { closedPopups?.forget(token) } }
-                    val branch = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
-                        if (path.getOrNull(depth) == node.id) {
-                            val shownPath = path
-                            onPathChange(path.take(depth))
-                            closedPopups?.closed(token) {
-                                pinOnReveal = true
-                                onPathChange(shownPath)
+                    val latestPath by rememberUpdatedState(path)
+                    val latestPathChange by rememberUpdatedState(onPathChange)
+                    DisposableEffect(Unit) { onDispose { positions?.forget(token) } }
+                    DisposableEffect(branch, positions) {
+                        branch.onFocused = {
+                            val shown = latestPath
+                            positions?.focused(token, { latestPath.getOrNull(depth) == node.id }) {
+                                if (latestPath.getOrNull(depth) == node.id) {
+                                    branch.pin()
+                                    branch.focusWindow?.invoke()
+                                } else {
+                                    pinOnReveal = true
+                                    latestPathChange(shown)
+                                }
                             }
                         }
+                        onDispose { branch.onFocused = null }
                     }
                     LaunchedEffect(revealing) {
                         if (!revealing) branch.unpin() else if (pinOnReveal) { branch.pin(); pinOnReveal = false }
                     }
-                    // Revealed by the hand: nothing of one the pointer closed to bring back.
-                    val reveal = {
-                        if (!revealing) {
-                            closedPopups?.forget(token)
-                            onPathChange(path.take(depth) + node.id)
-                        }
-                    }
+                    val reveal = { if (!revealing) onPathChange(path.take(depth) + node.id) }
                     Box {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
