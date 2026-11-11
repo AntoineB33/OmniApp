@@ -67,7 +67,8 @@ internal fun ConfigurationTreeArrow(
     depth: Int = 0,
 ) {
     var open by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    // The configuration of the search this pop-up IS (user rule 2026-11-11, [SearchDomain.CONFIGURATION_SEARCH]).
+    var own by remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
     // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
     // An arrow inside a pop-up of the tree is one of that pop-up's descendants, it and its own pop-up (anomaly
     // 2026-11-11: its own tracker alone, the pointer on its pop-up was outside the tree, and the whole tree vanished).
@@ -90,27 +91,8 @@ internal fun ConfigurationTreeArrow(
             modifier = Modifier.width(320.dp).padding(8.dp),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
-            ) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
-                    label = { Text("Search configuration") },
-                    modifier = Modifier.weight(1f),
-                )
-                // Keep the nested configuration chain bounded, while retaining the arrow in the third popup.
-                if (depth < 3) {
-                    ConfigurationTreeArrow(
-                        state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs,
-                        onPickOnCalendar, depth + 1,
-                    )
-                }
-            }
-            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, query, nowMillis, windows, claudeLogs) { which ->
+            TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
+            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, nowMillis, windows, claudeLogs, depth) { which ->
             open = false
             onPickOnCalendar(which)
             }
@@ -119,6 +101,46 @@ internal fun ConfigurationTreeArrow(
         }
     }
 }
+
+/**
+ * The bar of a pop-up of the tree: its search field, the search text of [own] — the configuration of the search the
+ * pop-up is — and the arrow that opens the tree of [own] itself, one level down (user rule 2026-11-11: *"this is the
+ * search configuration of the search configuration of the default search window"*), bounded at [MAX_TREE_DEPTH].
+ */
+@Composable
+private fun TreePopupBar(
+    own: SearchDomain.Config,
+    onOwnChange: (SearchDomain.Config) -> Unit,
+    state: SchedulerState,
+    nowMillis: () -> Long,
+    windows: List<SearchDomain.WindowEntry>,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
+    depth: Int,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
+    ) {
+        OutlinedTextField(
+            value = own.query,
+            onValueChange = { onOwnChange(own.copy(query = it)) },
+            singleLine = true,
+            label = { Text("Search configuration") },
+            modifier = Modifier.weight(1f),
+        )
+        if (depth < MAX_TREE_DEPTH) {
+            ConfigurationTreeArrow(
+                state, own, SearchDomain.CONFIGURATION_SEARCH, onOwnChange, nowMillis, windows, claudeLogs,
+                onPickOnCalendar, depth + 1,
+            )
+        }
+    }
+}
+
+/** How deep the arrows go: each opens the configuration of the pop-up it stands in, which has its own arrow. */
+private const val MAX_TREE_DEPTH = 3
 
 /**
  * The tree from its root: one pop-up per level. A category hovered shows its children in a pop-up of their own, hung from
@@ -135,6 +157,8 @@ private fun ConfigurationTreeColumns(
     nowMillis: () -> Long,
     windows: List<SearchDomain.WindowEntry>,
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    /** The arrow level of this tree ([TreePopupBar]): what its pop-ups' own arrows count from. */
+    level: Int,
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
 ) {
     // The pop-ups are windows of their own: what they write reaches the Search window and comes back a frame or more
@@ -169,7 +193,7 @@ private fun ConfigurationTreeColumns(
     HighlightsSearch("") {
         TreeColumn(
             tree, 0, path, { path = it }, leaf,
-            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
+            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar, level,
         )
     }
 }
@@ -212,6 +236,8 @@ private fun TreeColumn(
     windows: List<SearchDomain.WindowEntry>,
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
+    /** The arrow level of the tree this column is of ([TreePopupBar]). */
+    level: Int,
 ) {
     val leaves = nodes.all { it is SearchDomain.ConfigurationLeaf }
     Column(
@@ -267,34 +293,16 @@ private fun TreeColumn(
                                         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
                                     ) {
                                         // Anomaly 2026-11-11: this field wrote into the parent pop-up's too — both
-                                        // were the root's one query. Each pop-up has its own, which narrows only what
-                                        // it shows (its category's children), and goes with it.
-                                        var childQuery by remember { mutableStateOf("") }
-                                        val children = remember(node.children, childQuery) {
-                                            node.children.filterConfigurationNodes(childQuery)
+                                        // were the root's one query. Each pop-up is a search of its own over its
+                                        // category's children ([SearchDomain.CONFIGURATION_SEARCH]), which goes with it.
+                                        var own by remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
+                                        val children = remember(node.children, own.query) {
+                                            node.children.filterConfigurationNodes(own.query)
                                         }
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
-                                        ) {
-                                            OutlinedTextField(
-                                                value = childQuery,
-                                                onValueChange = { childQuery = it },
-                                                singleLine = true,
-                                                label = { Text("Search configuration") },
-                                                modifier = Modifier.weight(1f),
-                                            )
-                                            if (depth < 3) {
-                                                ConfigurationTreeArrow(
-                                                    state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs,
-                                                    onPickOnCalendar, depth + 1,
-                                                )
-                                            }
-                                        }
+                                        TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, level)
                                         TreeColumn(
                                             children, depth + 1, path, onPathChange, leaf,
-                                            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
+                                            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar, level,
                                         )
                                     }
                                 }

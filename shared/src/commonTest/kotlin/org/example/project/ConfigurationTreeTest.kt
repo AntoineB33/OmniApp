@@ -9,6 +9,7 @@ import org.example.project.scheduler.domain.SearchDomain.ConfigurationCategory
 import org.example.project.scheduler.domain.SearchDomain.ConfigurationLeaf
 import org.example.project.scheduler.domain.SearchDomain.ConfigurationNode
 import org.example.project.scheduler.domain.SearchDomain.Setting
+import org.example.project.scheduler.state.SchedulerState
 import org.example.project.ui.filterConfigurationNodes
 
 /**
@@ -116,5 +117,21 @@ class ConfigurationTreeTest {
         for (needle in listOf("t", "ti", "zzz", "time", Setting.MatchCase.label)) {
             for (category in categories(tree.filterConfigurationNodes(needle))) assertTrue(category.children.isNotEmpty(), "$needle: ${category.label}")
         }
+    }
+    /**
+     * User rule 2026-11-11: *"this is the search configuration of the search configuration of the default search
+     * window"* — the arrow in a pop-up's bar opens the configuration of the search that pop-up is: its type, the
+     * search configuration alone, and every configuration one of its elements.
+     */
+    @Test
+    fun the_tree_is_a_search_over_search_configurations() {
+        val level = SearchDomain.CONFIGURATION_SEARCH
+        assertEquals(setOf(SearchDomain.Kind.SearchConfiguration), level.searchedKinds)
+        assertEquals("", level.query)
+        val rows = SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.SearchConfiguration), "")
+        assertEquals(Setting.entries.map { it.name }.toSet(), rows.map { (it as SearchDomain.ItemResult).id }.toSet())
+        // Its search text finds configurations by name, as the pop-up's field does.
+        val found = SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.SearchConfiguration), Setting.MatchCase.label)
+        assertTrue(found.isNotEmpty() && found.all { it.name.contains(Setting.MatchCase.label, ignoreCase = true) })
     }
 }

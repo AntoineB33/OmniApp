@@ -348,8 +348,9 @@ data class SearchRowOpeners(
             SearchDomain.Kind.Quota -> onOpenQuota(item.id)
             SearchDomain.Kind.HistoryUnit -> onOpenHistoryUnit(item.id)
             // A notification is a fact that happened: it has nothing to open. Nor has a log entry — its actions show it.
+            // A search configuration is set in the configurations tree, where it stands with its control.
             SearchDomain.Kind.Notification, SearchDomain.Kind.ClaudePrompt, SearchDomain.Kind.ClaudeAnswer,
-            SearchDomain.Kind.ClaudeReasoning -> Unit
+            SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.SearchConfiguration -> Unit
             SearchDomain.Kind.WorkplaceSetup -> onApplyWorkplaceSetup(item.id)
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }

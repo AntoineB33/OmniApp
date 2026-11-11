@@ -158,6 +158,14 @@ object SearchDomain {
         ClaudeReasoning("reasoning chain"),
 
         /**
+         * User rule 2026-11-11: **a search configuration** ([Setting]) — what the configurations tree lists. The tree a
+         * Search window's arrow opens is itself a search over search configurations, so the arrow in ITS bar opens the
+         * configuration of that search, whose type is this one alone ([CONFIGURATION_SEARCH]): *"this is the search
+         * configuration of the search configuration of the default search window"*.
+         */
+        SearchConfiguration("search configuration"),
+
+        /**
          * One CREATION row per kind of element the user can make ([CREATABLE]): opening it makes a new one, as that
          * kind's own "+ New …" does, and opens its window (user spec 2026-09-26). History units and task relations
          * are not made by the user, so they have none. A new keyboard shortcut is a chord for a window (user rule
@@ -1525,6 +1533,7 @@ object SearchDomain {
         PromptSort(Kind.ClaudePrompt, "Sort by", sorts = true),
         AnswerSort(Kind.ClaudeAnswer, "Sort by", sorts = true),
         ReasoningSort(Kind.ClaudeReasoning, "Sort by", sorts = true),
+        SearchConfigurationSort(Kind.SearchConfiguration, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
         TaskSchedulable(Kind.Task, "Schedulable"),
         TaskCategory(Kind.Task, "Category"),
@@ -1623,6 +1632,13 @@ object SearchDomain {
         }
         return listOf(ConfigurationCategory("recent", "Recently changed", recent), general) + pages
     }
+
+    /**
+     * User rule 2026-11-11: **the search configuration of a pop-up of the configurations tree** as it opens — the tree is
+     * a search over search configurations, so its type is [Kind.SearchConfiguration] alone. Its search text is the
+     * pop-up's search field; the arrow in that pop-up's bar opens the tree of THIS configuration, one level down.
+     */
+    val CONFIGURATION_SEARCH: Config by lazy { Config(kinds = setOf(Kind.SearchConfiguration)) }
 
     /** [next], what [previous] became by a change of [settings] at [nowMillis]: their change times written ([Config.settingsChangedAt]). */
     fun withChanged(previous: Config, next: Config, settings: Collection<Setting>, nowMillis: Long): Config =
@@ -2486,6 +2502,10 @@ object SearchDomain {
                 Kind.AppSetting -> AppSettingEntry.entries.map { setting ->
                     ItemResult(kind, setting.name, setting.title, appSettingDetail(state, setting, claudeLogs))
                 }
+                // Every configuration of a Search window, named by its label, the type it is about beside it.
+                Kind.SearchConfiguration -> Setting.entries.map { setting ->
+                    ItemResult(kind, setting.name, setting.label, setting.section?.label ?: "general")
+                }
             }
         return items
             .mapNotNull { item -> matchRank(item.name, query)?.let { it to item } }
@@ -2806,7 +2826,7 @@ object SearchDomain {
                         ))
             }
             is ItemResult -> when (result.kind) {
-                Kind.Task, Kind.WorkplaceSetup -> true
+                Kind.Task, Kind.WorkplaceSetup, Kind.SearchConfiguration -> true
                 Kind.Category ->
                     tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
                 Kind.RestrictivePeriod -> when (filters.periodOrigin) {
