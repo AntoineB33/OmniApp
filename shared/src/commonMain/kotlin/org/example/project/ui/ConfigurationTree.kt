@@ -69,7 +69,9 @@ internal fun ConfigurationTreeArrow(
     var open by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
-    val hover = rememberMenuHoverTracker { open = false }
+    // An arrow inside a pop-up of the tree is one of that pop-up's descendants, it and its own pop-up (anomaly
+    // 2026-11-11: its own tracker alone, the pointer on its pop-up was outside the tree, and the whole tree vanished).
+    val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { open = false }
     Box {
         Text(
             "▾",
@@ -145,8 +147,8 @@ private fun ConfigurationTreeColumns(
         val echo = written.indexOf(config)
         if (echo >= 0) repeat(echo + 1) { written.removeFirst() } else { written.clear(); shown = config }
     }
-    val tree = remember(shown.settingsChangedAt, shown.searchedKinds, query) {
-        SearchDomain.configurationTree(shown).filterConfigurationNodes(query, shown.searchedKinds)
+    val tree = remember(shown.settingsChangedAt, query) {
+        SearchDomain.configurationTree(shown).filterConfigurationNodes(query)
     }
     // The category revealing its children at each depth, by id.
     var path by remember { mutableStateOf(listOf<String>()) }
@@ -172,25 +174,23 @@ private fun ConfigurationTreeColumns(
     }
 }
 
-/** The nodes whose label holds [query], with their ancestors; the leaves of [associatedKinds] alone, unless null. */
-internal fun List<SearchDomain.ConfigurationNode>.filterConfigurationNodes(
-    query: String,
-    associatedKinds: Set<SearchDomain.Kind>?,
-): List<SearchDomain.ConfigurationNode> {
+/**
+ * What a search field of the tree leaves of it: a node whose label holds [query] with ALL it holds, and the ancestors of
+ * one. Anomaly 2026-11-11 (*"Task Scheduler then timer, but the final Search window is empty"*): the leaves were also
+ * cut to the kinds the Search window searches, while their categories stayed — empty — and a category found by its
+ * own label kept only the children found too, none as often as not. User rule 2026-11-04: every configuration is in
+ * the tree; nothing but the field narrows it, and a category is never shown empty.
+ */
+internal fun List<SearchDomain.ConfigurationNode>.filterConfigurationNodes(query: String): List<SearchDomain.ConfigurationNode> {
     val needle = query.trim()
+    if (needle.isEmpty()) return this
     fun filter(nodes: List<SearchDomain.ConfigurationNode>): List<SearchDomain.ConfigurationNode> =
         nodes.mapNotNull { node ->
-            when (node) {
-                is SearchDomain.ConfigurationLeaf ->
-                    node.takeIf {
-                        (associatedKinds == null || it.setting.section == null || it.setting.section in associatedKinds) &&
-                            (needle.isEmpty() || it.label.contains(needle, ignoreCase = true))
-                    }
-                is SearchDomain.ConfigurationCategory -> {
-                    val children = filter(node.children)
-                    node.takeIf { node.label.contains(needle, ignoreCase = true) || children.isNotEmpty() }
-                        ?.copy(children = children)
-                }
+            when {
+                node.label.contains(needle, ignoreCase = true) -> node
+                node is SearchDomain.ConfigurationCategory ->
+                    filter(node.children).takeIf { it.isNotEmpty() }?.let { node.copy(children = it) }
+                else -> null
             }
         }
     return filter(this)
@@ -271,7 +271,7 @@ private fun TreeColumn(
                                         // it shows (its category's children), and goes with it.
                                         var childQuery by remember { mutableStateOf("") }
                                         val children = remember(node.children, childQuery) {
-                                            node.children.filterConfigurationNodes(childQuery, associatedKinds = null)
+                                            node.children.filterConfigurationNodes(childQuery)
                                         }
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),

@@ -79,16 +79,42 @@ class ConfigurationTreeTest {
 
     /**
      * Anomaly 2026-11-11: a letter typed in a child pop-up's search field was written in its parent's too. A child
-     * pop-up's field narrows its own category's children alone ([filterConfigurationNodes] with no kinds: they were
-     * narrowed to the window's kinds by the root already).
+     * pop-up's field narrows its own category's children alone ([filterConfigurationNodes]).
      */
     @Test
     fun a_child_pop_up_query_narrows_its_own_children_alone() {
         val first = SearchDomain.configurationTree(SearchDomain.Config()).first() as ConfigurationCategory
         val needle = Setting.MatchCase.label
-        val narrowed = first.children.filterConfigurationNodes(needle, associatedKinds = null)
+        val narrowed = first.children.filterConfigurationNodes(needle)
         assertTrue(narrowed.isNotEmpty())
         assertTrue(narrowed.all { (it as ConfigurationLeaf).label.contains(needle, ignoreCase = true) })
-        assertEquals(first.children, first.children.filterConfigurationNodes("", associatedKinds = null), "an empty field narrows nothing")
+        assertEquals(first.children, first.children.filterConfigurationNodes(""), "an empty field narrows nothing")
+    }
+
+    /**
+     * Anomaly 2026-11-11: *"Task Scheduler then timer, but the final Search window is empty"* — the tree was cut to the
+     * kinds the Search window searches, its categories left standing empty. Nothing but a search field narrows it, a
+     * category found by its own label keeps all it holds, and none is ever shown empty.
+     */
+    @Test
+    fun the_tree_holds_every_configuration_and_no_category_is_ever_empty() {
+        // A window searching one kind alone still finds every configuration in its tree.
+        val tree = SearchDomain.configurationTree(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task)))
+        fun leaves(nodes: List<ConfigurationNode>): List<Setting> = nodes.flatMap {
+            when (it) { is ConfigurationLeaf -> listOf(it.setting); is ConfigurationCategory -> leaves(it.children) }
+        }
+        assertEquals(Setting.entries.toSet(), leaves(tree.filterConfigurationNodes("")).toSet())
+        fun categories(nodes: List<ConfigurationNode>): List<ConfigurationCategory> =
+            nodes.filterIsInstance<ConfigurationCategory>().flatMap { listOf(it) + categories(it.children) }
+        // Every kind with configurations has them under its category.
+        for (category in categories(tree)) assertTrue(category.children.isNotEmpty(), category.label)
+        // Found by its own label, a category keeps everything under it.
+        val timer = categories(tree).first { it.id == "kind/" + SearchDomain.Kind.Timer.name }
+        val found = categories(tree.filterConfigurationNodes(timer.label)).first { it.id == timer.id }
+        assertEquals(timer.children, found.children)
+        // Whatever is typed, no category is left empty.
+        for (needle in listOf("t", "ti", "zzz", "time", Setting.MatchCase.label)) {
+            for (category in categories(tree.filterConfigurationNodes(needle))) assertTrue(category.children.isNotEmpty(), "$needle: ${category.label}")
+        }
     }
 }
