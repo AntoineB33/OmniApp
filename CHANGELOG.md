@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The actions section: rows of actions, closed by default, laid out by three search configurations — 2026-11-12
+
+User rule: the actions section is a Search window whose results are actions — group rows (their actions as children)
+and action rows (their controls as children), none open by default. New search configurations in the ▾ tree's General
+category: "Group by the added elements involved" (on), "Expand the results" (off), "Search sorts, hides nothing" (on —
+off, the bar filters). The open state is now kept as the rows toggled from the default (`Config.toggledActionRows`);
+the old retracted groups (`collapsedActionGroups`, open by default) are dropped on decode. `ActionRowsTest`. Local view
+state only; no migration.
+
 ### A tree drawn takes the keyboard only when it may — 2026-11-12
 
 Anomaly: typing in the action section's "Search an action" kept only the first letter — the letter re-sorted the

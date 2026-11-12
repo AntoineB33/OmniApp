@@ -2,6 +2,7 @@ package org.example.project
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -466,13 +467,27 @@ class SearchAddedElementsTest {
         assertEquals(listOf("all", "kind/Quota", "element/Quota/q1", "element/Alarm/x", "element/Quota/q2"), mixed.map { it.id })
         val ids = two.mapTo(HashSet()) { it.id }
         val retracted = SearchDomain.withActionGroupToggled(SearchDomain.Config(), "element/Quota/q1", ids)
-        assertEquals(setOf("element/Quota/q1"), retracted.collapsedActionGroups)
+        assertEquals(setOf("element/Quota/q1"), retracted.toggledActionRows)
         assertEquals(retracted, SearchDomain.Config.decode(retracted.encode()))
         // A second press opens it again; a group the section no longer lists is forgotten on the way.
-        assertEquals(emptySet(), SearchDomain.withActionGroupToggled(retracted, "element/Quota/q1", ids).collapsedActionGroups)
-        assertEquals(setOf("kind/Quota"), SearchDomain.withActionGroupToggled(retracted, "kind/Quota", ids - "element/Quota/q1").collapsedActionGroups)
-        // A configuration stored before the arrows: every group open.
-        assertEquals(emptySet(), SearchDomain.Config.decode(SearchDomain.Config().encode().replace("\"collapsedActionGroups\":[],", ""))?.collapsedActionGroups)
+        assertEquals(emptySet(), SearchDomain.withActionGroupToggled(retracted, "element/Quota/q1", ids).toggledActionRows)
+        assertEquals(setOf("kind/Quota"), SearchDomain.withActionGroupToggled(retracted, "kind/Quota", ids - "element/Quota/q1").toggledActionRows)
+        // User rule 2026-11-12: every row closed by default; a toggled one open.
+        assertFalse(SearchDomain.isActionRowOpen(SearchDomain.Config(), "kind/Quota", top = true))
+        assertTrue(SearchDomain.isActionRowOpen(retracted, "element/Quota/q1", top = true))
+        // A configuration stored before the rows (2026-11-12): its retracted groups meant "open by default" — dropped,
+        // every row at today's default; the layout settings at theirs (grouped, closed, the bar sorting).
+        val older = SearchDomain.Config.decode(
+            SearchDomain.Config().encode()
+                .replace("\"toggledActionRows\":[],", "\"collapsedActionGroups\":[\"kind/Quota\"],")
+                .replace("\"actionsGrouped\":true,", "")
+                .replace("\"actionsExpanded\":false,", "")
+                .replace("\"actionSearchSortsOnly\":true,", ""),
+        )!!
+        assertEquals(emptySet(), older.toggledActionRows)
+        assertTrue(older.actionsGrouped)
+        assertFalse(older.actionsExpanded)
+        assertTrue(older.actionSearchSortsOnly)
 
         // Nothing added (the window of every configuration): one group per kind, as before.
         val sections = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet())
@@ -1294,17 +1309,18 @@ class SearchAddedElementsTest {
         // The default configuration inside the quotas' group was retracted, B's own group too: the first keeps its
         // arrow, the second is opened, and so is every group whose actions can apply to B (user rule 2026-11-02); the
         // others are retracted, and the section starts at the first.
-        val before = SearchDomain.Config(collapsedActionGroups = setOf("default/Quota", ownOfB, "gone"))
+        // User rule 2026-11-12: rows are closed by default, so the ones opened are what is written; what is inside a
+        // group (its default configuration) keeps what the user did to it.
+        val before = SearchDomain.Config(toggledActionRows = setOf("default/Quota", ownOfB, "gone"))
         val (after, id) = SearchDomain.withOnlyGroupsOf(before, added, b)!!
         assertEquals("all", id)
-        assertEquals(
-            setOf("element/" + SearchDomain.keyOf(a), "element/" + SearchDomain.keyOf(x), "default/Quota"),
-            after.collapsedActionGroups,
-        )
+        assertEquals(setOf("all", "kind/Quota", ownOfB, "default/Quota"), after.toggledActionRows)
+        for (group in listOf("all", "kind/Quota", ownOfB)) assertTrue(SearchDomain.isActionRowOpen(after, group, top = true), group)
+        for (group in listOf(a, x)) assertFalse(SearchDomain.isActionRowOpen(after, "element/" + SearchDomain.keyOf(group), top = true))
         // One element alone: its one group, opened.
-        val (lone, loneId) = SearchDomain.withOnlyGroupsOf(SearchDomain.Config(collapsedActionGroups = setOf("element/" + SearchDomain.keyOf(a))), listOf(a), a)!!
+        val (lone, loneId) = SearchDomain.withOnlyGroupsOf(SearchDomain.Config(), listOf(a), a)!!
         assertEquals("element/" + SearchDomain.keyOf(a), loneId)
-        assertTrue(lone.collapsedActionGroups.isEmpty())
+        assertTrue(SearchDomain.isActionRowOpen(lone, loneId, top = true))
         // Not in the list: nothing to show.
         assertNull(SearchDomain.withOnlyGroupsOf(before, listOf(a, x), b))
     }

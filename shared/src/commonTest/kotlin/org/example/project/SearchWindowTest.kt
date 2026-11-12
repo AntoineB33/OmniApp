@@ -810,6 +810,10 @@ class SearchWindowTest {
                 SearchDomain.Setting.CalendarAt,
                 SearchDomain.Setting.ExcludedElements,
                 SearchDomain.Setting.IncludedElements,
+                // User rule 2026-11-12: how the results are laid out (today the actions section's).
+                SearchDomain.Setting.GroupByAddedElements,
+                SearchDomain.Setting.ExpandResults,
+                SearchDomain.Setting.SearchSortsOnly,
                 SearchDomain.Setting.SortResults,
             ),
             sections.first().second,
@@ -823,7 +827,10 @@ class SearchWindowTest {
         assertFalse(SearchDomain.Filters().isOn(SearchDomain.Setting.ResetSearch))
         // Every kind's section ends with how its rows are ordered, and "sort" finds every ordering.
         assertTrue(sections.drop(1).all { (_, settings) -> settings.last().sorts })
-        assertEquals(1 + SearchDomain.Kind.entries.size, SearchDomain.configurations("sort", every).sumOf { it.second.size })
+        val sortFound = SearchDomain.configurations("sort", every).flatMap { it.second }
+        assertEquals(1 + SearchDomain.Kind.entries.size, sortFound.count { it.sorts })
+        // …and the switch of the bar that sorts and hides nothing (user rule 2026-11-12), which is no ordering.
+        assertEquals(listOf(SearchDomain.Setting.SearchSortsOnly), sortFound.filterNot { it.sorts })
         // The bar finds configurations by name; a section with nothing left is dropped.
         val state = SearchDomain.configurations("state", every)
         assertEquals(

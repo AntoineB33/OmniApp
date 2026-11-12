@@ -627,10 +627,30 @@ object SearchDomain {
          */
         val actionQuery: String = "",
         /**
-         * User rule 2026-10-10: the groups of the actions section retracted to their heading, by [ActionGroup.id] —
-         * each group has its expansion arrow. Kept with the rest of the window's configuration.
+         * User rule 2026-11-12: **the rows of the actions section whose open state is not the default one**, by
+         * [ActionGroup.id] or [microGroupId] — every row has its expansion arrow, and opens or closes against the default
+         * ([isActionRowOpen]: every row closed, but the top ones while [actionsExpanded]). Kept with the rest of the
+         * window's configuration. It replaced the retracted groups of 2026-10-10, which were open by default.
          */
-        val collapsedActionGroups: Set<String> = emptySet(),
+        val toggledActionRows: Set<String> = emptySet(),
+        /**
+         * User rule 2026-11-12, a search configuration ([Setting.GroupByAddedElements]): **the actions grouped by the
+         * added elements they act on**, from the largest set of them to the smallest — each group a row whose children
+         * are its actions ([actionGroups]). Off: one flat list of action rows, each naming the elements it acts on.
+         */
+        val actionsGrouped: Boolean = true,
+        /**
+         * User rule 2026-11-12, a search configuration ([Setting.ExpandResults]): **the top rows open by default**, not
+         * their children. Off (the default): every row closed until its arrow opens it.
+         */
+        val actionsExpanded: Boolean = false,
+        /**
+         * User rule 2026-11-12, a search configuration ([Setting.SearchSortsOnly]): **the section's search bar sorts,
+         * and hides nothing** — the behaviour of 2026-10-11 ([sortedByActionSearch]: the groups never filtered, the
+         * actions sorted inside them, the list back to its top). Off: it filters as a search does — an action listed
+         * only if it answers, a group only while one of its actions does.
+         */
+        val actionSearchSortsOnly: Boolean = true,
         /**
          * User rule 2026-10-11: **the actions section's own search bar**. It SORTS — inside each group of elements
          * (a macro group), the actions (the micro groups, each under its title) that answer it come first, the best
@@ -764,7 +784,10 @@ object SearchDomain {
                     periodBoxesUntilMillis = filters.periodBoxesUntil,
                     added = added,
                     actionQuery = actionQuery,
-                    collapsedActionGroups = collapsedActionGroups.sorted(),
+                    toggledActionRows = toggledActionRows.sorted(),
+                    actionsGrouped = actionsGrouped,
+                    actionsExpanded = actionsExpanded,
+                    actionSearchSortsOnly = actionSearchSortsOnly,
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
                     pickedTimers = pickedTimers.sorted(),
@@ -882,7 +905,12 @@ object SearchDomain {
                     // index named whichever unit had shifted into it, so the key no longer means what was added.
                     added = stored.added.distinct().filterNot(::isLegacyHistoryUnitKey),
                     actionQuery = stored.actionQuery,
-                    collapsedActionGroups = stored.collapsedActionGroups.toSet(),
+                    // The retracted groups an older build kept ([Stored.collapsedActionGroups]) were open by default:
+                    // read as rows toggled from today's default (closed), they would open what was closed. Dropped.
+                    toggledActionRows = stored.toggledActionRows.toSet(),
+                    actionsGrouped = stored.actionsGrouped,
+                    actionsExpanded = stored.actionsExpanded,
+                    actionSearchSortsOnly = stored.actionSearchSortsOnly,
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
                     pickedTimers = stored.pickedTimers.toSet(),
@@ -1435,7 +1463,7 @@ object SearchDomain {
             sortFollowsDefault = false,
             added = emptyList(),
             actionQuery = "",
-            collapsedActionGroups = emptySet(),
+            toggledActionRows = emptySet(),
             actionSearch = "",
             pickedBlocks = emptySet(),
             pickedTimers = emptySet(),
@@ -1532,6 +1560,12 @@ object SearchDomain {
         /** The elements kept out of the list ([Filters.excludedElements]) and those always in it ([Filters.includedElements]). */
         ExcludedElements(null, "Excluded elements"),
         IncludedElements(null, "Included elements"),
+        /** User rule 2026-11-12: the results grouped by the added elements they involve ([Config.actionsGrouped]). */
+        GroupByAddedElements(null, "Group by the added elements involved"),
+        /** User rule 2026-11-12: the top rows of the results open by default, not their children ([Config.actionsExpanded]). */
+        ExpandResults(null, "Expand the results"),
+        /** User rule 2026-11-12: the search bar sorts and hides nothing ([Config.actionSearchSortsOnly]). */
+        SearchSortsOnly(null, "Search sorts, hides nothing"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -1903,8 +1937,14 @@ object SearchDomain {
         val added: List<String> = emptyList(),
         /** New 2026-10-01: absent from an older build's = no filter, the first period. */
         val actionQuery: String = "",
-        /** New 2026-10-10: absent from an older build's = every group of actions open. */
+        /** New 2026-10-10: absent from an older build's = every group of actions open. Read no more since 2026-11-12. */
         val collapsedActionGroups: List<String> = emptyList(),
+        /** New 2026-11-12: absent = every row of the actions section at its default ([Config.toggledActionRows]). */
+        val toggledActionRows: List<String> = emptyList(),
+        /** New 2026-11-12: absent = the actions grouped, closed, the bar sorting ([Config.actionsGrouped]…). */
+        val actionsGrouped: Boolean = true,
+        val actionsExpanded: Boolean = false,
+        val actionSearchSortsOnly: Boolean = true,
         /** New 2026-10-11: absent from an older build's = the actions in their own order. */
         val actionSearch: String = "",
         /** New 2026-10-11: absent = no block picked in "Blocks on the calendar". */
@@ -3936,9 +3976,16 @@ object SearchDomain {
      * set never outgrows the section.
      */
     fun withActionGroupToggled(config: Config, id: String, listed: Set<String>): Config {
-        val kept = config.collapsedActionGroups.filterTo(HashSet()) { it in listed }
-        return config.copy(collapsedActionGroups = if (id in kept) kept - id else kept + id)
+        val kept = config.toggledActionRows.filterTo(HashSet()) { it in listed }
+        return config.copy(toggledActionRows = if (id in kept) kept - id else kept + id)
     }
+
+    /**
+     * User rule 2026-11-12: whether the row [id] of the actions section is open — closed by default, but a [top] row
+     * while [Config.actionsExpanded] — once its arrow has been pressed ([Config.toggledActionRows]) the other way.
+     */
+    fun isActionRowOpen(config: Config, id: String, top: Boolean): Boolean =
+        (top && config.actionsExpanded) != (id in config.toggledActionRows)
 
     /**
      * User rule 2026-11-01, **a new element added to a window, and the added elements' "show only its actions"** (the same
@@ -3953,8 +4000,10 @@ object SearchDomain {
         val first = its.firstOrNull() ?: return null
         val macro = groups.mapTo(HashSet()) { it.id }
         val inside = listedGroupIds(groups) - macro
-        val retracted = (macro - its.mapTo(HashSet()) { it.id }) + config.collapsedActionGroups.filter { it in inside }
-        return config.copy(collapsedActionGroups = retracted) to first.id
+        // The groups holding it open, every other closed: each written as a toggle where that is not the default.
+        val open = its.mapTo(HashSet()) { it.id }
+        val toggled = macro.filter { (it in open) != config.actionsExpanded } + config.toggledActionRows.filter { it in inside }
+        return config.copy(toggledActionRows = toggled.toSet()) to first.id
     }
 
     /**
@@ -4168,6 +4217,30 @@ object SearchDomain {
             return group.copy(actions = group.actions.filterNot { it == contentActionOf(element.kind) })
         }
         return contents + groups.map { sorted(without(it)) }
+    }
+
+    /**
+     * User rule 2026-11-12: **the groups the actions section lists for [config]** — [actionGroups] sorted by its search
+     * bar, and, unless the bar sorts only ([Config.actionSearchSortsOnly]), filtered as a search is: an action listed
+     * only if it answers ([actionSearchRank]), a group only while one of its actions or of its inner groups does — or
+     * its own title does, and then all of it. A group of contents ([ActionGroup.contents]) is there because it answered.
+     */
+    fun shownActionGroups(
+        sections: List<Pair<Kind?, List<AddedAction>>>,
+        added: List<Result>,
+        config: Config,
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+    ): List<ActionGroup> {
+        val search = config.actionSearch
+        val groups = actionGroups(sections, added, search, claudeLogs)
+        if (config.actionSearchSortsOnly || search.isBlank()) return groups
+        fun filtered(group: ActionGroup): ActionGroup? {
+            if (group.contents || actionSearchRank(group.title, search) != null) return group
+            val inner = group.inner.mapNotNull(::filtered)
+            val actions = group.actions.filter { actionSearchRank(it, search) != null }
+            return if (actions.isEmpty() && inner.isEmpty()) null else group.copy(actions = actions, inner = inner)
+        }
+        return groups.mapNotNull(::filtered)
     }
 
     /**

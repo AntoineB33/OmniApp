@@ -409,6 +409,13 @@ internal fun SettingEditor(
         // User rule 2026-11-04: on, the type selector offers the window's page's types alone ([SearchDomain.Config.pageTypesOnly]).
         SearchDomain.Setting.PageTypes ->
             androidx.compose.material3.Switch(checked = config.pageTypesOnly, onCheckedChange = { onChange(config.copy(pageTypesOnly = it)) })
+        // User rule 2026-11-12: how the results are laid out — today the actions section's ([SearchDomain.Config.actionsGrouped]…).
+        SearchDomain.Setting.GroupByAddedElements ->
+            androidx.compose.material3.Switch(checked = config.actionsGrouped, onCheckedChange = { onChange(config.copy(actionsGrouped = it)) })
+        SearchDomain.Setting.ExpandResults ->
+            androidx.compose.material3.Switch(checked = config.actionsExpanded, onCheckedChange = { onChange(config.copy(actionsExpanded = it)) })
+        SearchDomain.Setting.SearchSortsOnly ->
+            androidx.compose.material3.Switch(checked = config.actionSearchSortsOnly, onCheckedChange = { onChange(config.copy(actionSearchSortsOnly = it)) })
         // The Search window's Reset, the same button with the same rule; this window's own Reset (top section)
         // clears this window's search instead.
         SearchDomain.Setting.ResetSearch -> {

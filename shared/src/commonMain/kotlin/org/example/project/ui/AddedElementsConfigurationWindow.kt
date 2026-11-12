@@ -403,7 +403,8 @@ private fun AddedActionList(
     // User rule 2026-10-10: the groups from the widest reach to the narrowest — every element, each kind holding
     // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
     // …and, inside each, the actions that answer the section's search bar first (user rule 2026-10-11).
-    val groups = SearchDomain.actionGroups(sections, added, config.actionSearch, handlers.claudeLogs())
+    // User rule 2026-11-12: the bar sorts and hides nothing ([SearchDomain.Config.actionSearchSortsOnly]), else filters.
+    val groups = SearchDomain.shownActionGroups(sections, added, config, handlers.claudeLogs())
     val listed = SearchDomain.listedGroupIds(groups)
     val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(config, id, listed)) }
     // User rule 2026-10-13: the added elements' "show only its actions" scrolls the section to this group — once the
@@ -423,9 +424,31 @@ private fun AddedActionList(
             // By the group's id, so that the groups before one coming and going do not make it anew. Two groups
             // sharing an id (an element added twice by an older build) must not take the list down.
             val seen = HashSet<String>()
-            groups.forEachIndexed { index, group ->
-                item(key = if (seen.add(group.id)) group.id else group.id + "#" + index) {
-                    ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle)
+            if (config.actionsGrouped) {
+                // User rule 2026-11-12: each group a row, its actions its children — every row closed by default.
+                groups.forEachIndexed { index, group ->
+                    item(key = if (seen.add(group.id)) group.id else group.id + "#" + index) {
+                        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = true)
+                    }
+                }
+            } else {
+                // Not grouped: one flat list of action rows, each naming the elements it acts on — a group inside a group
+                // (a kind's default configuration) still a row of its own.
+                groups.forEachIndexed { index, group ->
+                    for (entry in SearchDomain.microGroups(group, if (config.actionSearchSortsOnly) config.actionSearch else "")) {
+                        val id = when (entry) {
+                            is SearchDomain.MicroGroup.One -> SearchDomain.microGroupId(group, entry.action)
+                            is SearchDomain.MicroGroup.Inner -> entry.group.id
+                        }
+                        item(key = if (seen.add(id)) id else "$id#$index") {
+                            when (entry) {
+                                is SearchDomain.MicroGroup.One ->
+                                    ActionRow(group, entry.action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = true, nested = false, about = group.title)
+                                is SearchDomain.MicroGroup.Inner ->
+                                    ActionGroupBlock(entry.group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = true)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -452,9 +475,11 @@ private fun ActionGroupBlock(
     onToggle: (String) -> Unit,
     /** A group INSIDE a group of elements (the default configuration of its kind): titled as an action is ([MicroGroupTitle]). */
     micro: Boolean = false,
+    /** A row of the list itself, not a child: open by default while the results are expanded ([SearchDomain.isActionRowOpen]). */
+    top: Boolean = false,
 ) {
     val added = group.members
-    val collapsed = group.id in config.collapsedActionGroups
+    val collapsed = !SearchDomain.isActionRowOpen(config, group.id, top)
     // One box per group, spaced as the section spaces its rows.
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
     // A group inside a group of elements is titled as a micro group is: set as far right ([MICRO_TITLE_INDENT]).
@@ -473,65 +498,100 @@ private fun ActionGroupBlock(
         }
     }
     if (collapsed) return@Column
-    // Every action goes through the app's own intents ([SearchDomain.addedIntents]).
+    // What a field remembers (a draft being typed) belongs to the group's elements, not to its place in the list.
+    androidx.compose.runtime.key(group.id, added.map(SearchDomain::keyOf)) {
+        // Its micro groups — each action, and what it holds inside it (the default configuration of its kind, with its
+        // own arrow) — in the order the section's search bar asks for ([SearchDomain.microGroups]).
+        for (entry in SearchDomain.microGroups(group, if (config.actionSearchSortsOnly) config.actionSearch else "")) {
+            if (entry is SearchDomain.MicroGroup.Inner) {
+                ActionGroupBlock(entry.group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, onToggle, micro = true)
+                continue
+            }
+            ActionRow(group, (entry as SearchDomain.MicroGroup.One).action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, onToggle, top = false, nested = micro)
+        }
+    }
+    }
+}
+
+/**
+ * User rule 2026-11-12: **one action as a row of the actions section** — the section is a Search window whose results are
+ * actions. Its arrow and title; its controls are its children, closed by default ([SearchDomain.isActionRowOpen]: a [top]
+ * row of an ungrouped list opens with the results expanded). [about]: the elements it acts on, said beside its title where
+ * no group row says it (the list not grouped). Every action goes through the app's own intents
+ * ([SearchDomain.addedIntents]), over [group]'s elements.
+ */
+@Composable
+private fun ActionRow(
+    group: SearchDomain.ActionGroup,
+    action: SearchDomain.AddedAction,
+    state: SchedulerState,
+    config: SearchDomain.Config,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    handlers: AddedActionHandlers,
+    onIntent: (SchedulerIntent) -> Unit,
+    nowMillis: () -> Long,
+    onOpenEach: (List<SearchDomain.Result>) -> Unit,
+    onClear: (List<SearchDomain.Result>) -> Unit,
+    onToggle: (String) -> Unit,
+    top: Boolean,
+    /** Inside a micro group (the default configuration of a kind): a level below it. */
+    nested: Boolean,
+    about: String? = null,
+) {
+    val added = group.members
     val run = { command: SearchDomain.AddedCommand ->
         SearchDomain.addedIntents(state, added, command, nowMillis()).forEach(onIntent)
     }
     val openEach = { onOpenEach(added) }
     val clear = { onClear(added) }
-    // What a field remembers (a draft being typed) belongs to the group's elements, not to its place in the list.
-    androidx.compose.runtime.key(group.id, added.map(SearchDomain::keyOf)) {
-        // Its micro groups — each action, and what it holds inside it (the default configuration of its kind, with its
-        // own arrow) — in the order the section's search bar asks for ([SearchDomain.microGroups]).
-        for (entry in SearchDomain.microGroups(group, config.actionSearch)) {
-            if (entry is SearchDomain.MicroGroup.Inner) {
-                ActionGroupBlock(entry.group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, onToggle, micro = true)
-                continue
-            }
-            val action = (entry as SearchDomain.MicroGroup.One).action
-            // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add
-            // in the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
-            AddableAction(action, added, config) {
-                // User rule 2026-10-11: *"give to every micro group the same typo … Put them all in micro groups. A
-                // micro group can have only one action."* — EVERY action is a micro group: its title on a line of its
-                // own, in the one title style ([MicroGroupTitle]), and its editor under it. Until then an editor short
-                // enough sat beside its label, in the label's font, and only the tall ones had a title.
-                // Inside a micro group (the default configuration of a kind), set a little to the right of its title.
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
-                    modifier = if (micro) Modifier.padding(start = NESTED_ACTION_INDENT) else Modifier,
-                ) {
-                    // One action writes its own title: it has buttons on that line ([LowestCountdownEditor]).
-                    val ownTitle =
-                        action == SearchDomain.AddedAction.TimerLowestCountdown || action == SearchDomain.AddedAction.ChronoHighestCount
-                    // User rule 2026-10-18: *"every micro group retracts"* — its arrow, and a press on its title, as a
-                    // group's ([SearchDomain.microGroupId], kept with the window's configuration).
-                    val microId = SearchDomain.microGroupId(group, action)
-                    val microCollapsed = microId in config.collapsedActionGroups
-                    if (microCollapsed || !ownTitle) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
-                            SectionArrow(microCollapsed) { onToggle(microId) }
-                            // Inside a micro group (the default configuration of a kind), a level below it.
-                            Box(Modifier.togglesSection { onToggle(microId) }) { MicroGroupTitle(action.label, nested = micro) }
-                        }
-                    }
-                    if (!microCollapsed) {
-                        if (ownTitle) {
-                            // Its title line is its own: the arrow stands before it.
-                            Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
-                                SectionArrow(false) { onToggle(microId) }
-                                Box(Modifier.weight(1f)) {
-                                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = true)
-                                }
-                            }
-                        } else {
-                            AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = false)
-                        }
+    // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add
+    // in the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
+    AddableAction(action, added, config) {
+        // User rule 2026-10-11: *"give to every micro group the same typo … Put them all in micro groups. A
+        // micro group can have only one action."* — EVERY action is a micro group: its title on a line of its
+        // own, in the one title style ([MicroGroupTitle]), and its editor under it. Until then an editor short
+        // enough sat beside its label, in the label's font, and only the tall ones had a title.
+        // Inside a micro group (the default configuration of a kind), set a little to the right of its title.
+        Column(
+            verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
+            modifier = if (nested) Modifier.padding(start = NESTED_ACTION_INDENT) else Modifier,
+        ) {
+            // One action writes its own title: it has buttons on that line ([LowestCountdownEditor]).
+            val ownTitle =
+                action == SearchDomain.AddedAction.TimerLowestCountdown || action == SearchDomain.AddedAction.ChronoHighestCount
+            // User rule 2026-10-18: *"every micro group retracts"* — its arrow, and a press on its title, as a
+            // group's ([SearchDomain.microGroupId], kept with the window's configuration).
+            val microId = SearchDomain.microGroupId(group, action)
+            val microCollapsed = !SearchDomain.isActionRowOpen(config, microId, top)
+            if (microCollapsed || !ownTitle) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
+                    SectionArrow(microCollapsed) { onToggle(microId) }
+                    // Inside a micro group (the default configuration of a kind), a level below it.
+                    Box(Modifier.togglesSection { onToggle(microId) }) { MicroGroupTitle(action.label, nested = nested) }
+                    // Not grouped: the elements it acts on, beside its title.
+                    if (about != null) {
+                        Text(
+                            "  ·  " + about,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
+            if (!microCollapsed) {
+                if (ownTitle) {
+                    // Its title line is its own: the arrow stands before it.
+                    Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
+                        SectionArrow(false) { onToggle(microId) }
+                        Box(Modifier.weight(1f)) {
+                            AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = true)
+                        }
+                    }
+                } else {
+                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = false)
+                }
+            }
         }
-    }
     }
 }
 

@@ -1056,6 +1056,21 @@ suggestions before it was ever entered.
     the list's order — its own configuration, **what says where it stands first** (`LEADING_ACTIONS`: a quota's target
     progression, a timer's or chrono's run, an alarm's state), then its title and the rest — with its kind's set
     actions when it is the only one of its kind.
+  - **The section is a Search window whose results are actions** (user rule 2026-11-12: *"The action section is
+    simply a Search window with the two other sections hidden, a header hidden, and the right-click menu giving the
+    right-click menu of the Search window it is embedded in. All the actions are action elements, so they must be rows,
+    some have children, but none are expanded by default."*; `ActionRowsTest`). Each group is a row whose children are
+    its actions; each action a row whose children are its controls (`ActionRow`; a timer's or chrono's lowest one keeps
+    its buttons on its title line). **Every row is closed by default**: what is kept is the rows toggled from that
+    default (`Config.toggledActionRows`, `SearchDomain.isActionRowOpen`) — it replaced the retracted groups of
+    2026-10-10 (`collapsedActionGroups`, read no more), which were open by default. "Show only its actions" opens the
+    groups holding the element and closes the others, written as toggles. Three **search configurations** of the ▾ tree
+    (General) lay it out, kept with the window: **Group by the added elements involved** (`actionsGrouped`, on: the
+    groups from the largest set of added elements to the smallest; off: one flat list of action rows, each naming its
+    elements beside its title), **Expand the results** (`actionsExpanded`, off: on, the top rows open, never their
+    children) and **Search sorts, hides nothing** (`actionSearchSortsOnly`, on: the behaviour below; off, the bar
+    filters — an action listed only if it answers, a group while one of its actions or its own title does,
+    `SearchDomain.shownActionGroups`). A right-click on its background is the enclosing Search window's menu.
   - **The section has a SEARCH BAR, which sorts the actions inside each group and moves no group** (user rule
     2026-10-11: *"The actions are separated into macro groups (for each set of elements the actions will apply to)
     and micro groups ('add to calendar' actions, 'Combinations' actions (for periods), etc…). The search bar sorts

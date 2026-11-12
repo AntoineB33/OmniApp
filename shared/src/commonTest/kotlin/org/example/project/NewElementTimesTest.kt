@@ -142,9 +142,9 @@ class NewElementTimesTest {
         assertTrue(time != SearchDomain.microGroupId(second, SearchDomain.AddedAction.AlarmTime))
         var config = SearchDomain.withActionGroupToggled(SearchDomain.Config(), time, listed)
         config = SearchDomain.withActionGroupToggled(config, second.id, listed)
-        assertEquals(setOf(time, second.id), config.collapsedActionGroups)
+        assertEquals(setOf(time, second.id), config.toggledActionRows)
         // "Show only its actions" retracts the groups of elements, not what the user retracted inside them.
         val (only, _) = SearchDomain.withOnlyGroupsOf(config, two, two.first())!!
-        assertTrue(time in only.collapsedActionGroups)
+        assertTrue(time in only.toggledActionRows)
     }
 }

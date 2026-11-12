@@ -35,11 +35,11 @@ class NewElementJoinsWindowTest {
         val config = SearchDomain.Config(added = added.map(SearchDomain::keyOf))
         val (next, first) = assertNotNull(SearchDomain.withOnlyGroupsOf(config, added, added.last()))
         val all = groups(next, added)
-        val open = all.filter { it.id !in next.collapsedActionGroups }
+        val open = all.filter { SearchDomain.isActionRowOpen(next, it.id, top = true) }
         assertTrue(open.isNotEmpty())
         assertTrue(open.all { group -> group.members.any { SearchDomain.keyOf(it) == "Timer/new" } }, "open: ${open.map { it.id }}")
         assertEquals(all.filter { group -> group.members.any { SearchDomain.keyOf(it) == "Timer/new" } }.map { it.id }, open.map { it.id })
-        assertTrue(all.any { it.id in next.collapsedActionGroups }, "the others are retracted")
+        assertTrue(all.any { !SearchDomain.isActionRowOpen(next, it.id, top = true) }, "the others are retracted")
         // The section starts at the first of them, in the order the groups are listed.
         assertEquals(open.first().id, first)
     }
@@ -49,15 +49,18 @@ class NewElementJoinsWindowTest {
         val added = listOf(timer("t1"), timer("new"))
         val before = SearchDomain.Config(added = added.map(SearchDomain::keyOf))
         val own = groups(before, added).first { group -> group.members.any { SearchDomain.keyOf(it) == "Timer/new" } }.id
-        val (next, _) = assertNotNull(SearchDomain.withOnlyGroupsOf(before.copy(collapsedActionGroups = setOf(own)), added, added.last()))
-        assertFalse(own in next.collapsedActionGroups)
+        // Retracted by hand with the results expanded (user rule 2026-11-12: a row toggled from that default).
+        val retracted = before.copy(actionsExpanded = true, toggledActionRows = setOf(own))
+        assertFalse(SearchDomain.isActionRowOpen(retracted, own, top = true))
+        val (next, _) = assertNotNull(SearchDomain.withOnlyGroupsOf(retracted, added, added.last()))
+        assertTrue(SearchDomain.isActionRowOpen(next, own, top = true))
     }
 
     @Test
     fun the_only_element_is_shown() {
         val added = listOf(timer("new"))
         val (next, first) = assertNotNull(SearchDomain.withOnlyGroupsOf(SearchDomain.Config(added = listOf("Timer/new")), added, added.single()))
-        assertFalse(first in next.collapsedActionGroups)
+        assertTrue(SearchDomain.isActionRowOpen(next, first, top = true))
     }
 
     private fun host(vararg ids: String): WindowFrameHost {
