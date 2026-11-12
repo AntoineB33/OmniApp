@@ -521,8 +521,11 @@ internal fun TaskTreeView(
             LocalTransientMenuHost.current?.anyOpen != true &&
             LocalWindowFrameHost.current?.keyboardClaimed != true
 
+    // Only a tree that may have the keyboard takes it as it appears. Anomaly 2026-11-12 (*"I tried to type something in
+    // the search bar of the action section, but only the first character got there"*): a Search sub-tree drawn anew —
+    // the "Children" action re-sorted under the letter typed — took the keyboard from the bar it was typed in.
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        if (keyboardActive) focusRequester.requestFocus()
     }
 
     // `keyboardOwned` is a key so the tree takes the keyboard BACK the moment it is handed over.

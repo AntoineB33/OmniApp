@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A tree drawn takes the keyboard only when it may — 2026-11-12
+
+Anomaly: typing in the action section's "Search an action" kept only the first letter — the letter re-sorted the
+actions, the "Children" action's sub-tree was drawn anew, and every task tree drawing took the keyboard as it appeared
+(`TaskTreeView`'s first `requestFocus`). It now does only with `keyboardActive`. `TreeAppearsWithoutKeyboardTest`.
+
 ### The rename / change-id switch is a tree cell's alone — 2026-11-12
 
 User rule: the switch shows in the Edit Mode of a tree cell — a child shown under its expanded parent in a Search
