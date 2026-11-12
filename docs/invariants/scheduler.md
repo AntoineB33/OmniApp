@@ -273,7 +273,9 @@ model exists to prevent.
     slept — `ScheduleCycleTest` caught it). **What a line reaching bedtime still at a
     screen is on there is in the rules already** (user rule 2026-11-06, `SchedulerDomain.isLineBranch`,
     `lineBranchPanels`): the mode-1 fill searches each carrier ahead once more from its start, the carrier given up as
-    it is to a line inside it, the plan before it as its past (step-bounded passes only), and lays those runs held at
+    it is to a line inside it, the plan before it as its past — read back by `ScheduleFill.pastLookbackMillis` from the
+    carrier's OWN start, never from the line's, or every night re-replays the whole plan before it and a fill costs
+    O(nights × distance) (2026-11-12) — (step-bounded passes only), and lays those runs held at
     the line where the plan left nobody. They are never a seed, never published, never the plan a flip leaves — every
     mode-1 fill makes them again, the one laid at a flip included — and nothing is drawn of them before the line gets
     there. Account 3, 2026-11-06: without them the line walked into the wind-down hour at 00:07 with no run, nothing

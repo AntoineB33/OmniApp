@@ -5932,6 +5932,10 @@ object SchedulerDomain {
         // cannot know — so it runs straight through them, and the flip that lays it lays it on the schedulable clock of
         // the timeline it lands on, where every one of them suspends a run instead of leaving a hole nothing decided.
         breaksObstruct: Boolean = true,
+        // `docs/scheduler_requirements.md` § *Two paces*, Example 3: a DISPLAY fill of a stretch far past the definitive
+        // front ([instantDisplayPlan]) starts at [nowMillis] with every lag at its target — no frozen past replayed, no
+        // forced switch or start — so what it costs is bounded by the stretch, not by its distance from the line.
+        noPast: Boolean = false,
     ): List<TaskPanel> {
         var ruleState: List<String> = emptyList()
         // Only the fill itself is measured: describing it is a diagnostic the two plan reductions ask for,
@@ -5945,6 +5949,7 @@ object SchedulerDomain {
                     adoptedPlacements, adoptedCycle, searchBudget = searchBudget, extraSeeds = extraSeeds,
                     searchSink = searchSink, frozenBreaks = frozenBreaks,
                     breaksObstruct = breaksObstruct, idleSink = idleSink, unrollOnly = unrollOnly, instant = instant,
+                    noPast = noPast,
                 )
             }
         // The returned set of rules is read off what the fill RETURNED, here, rather than collected inside
@@ -5958,6 +5963,61 @@ object SchedulerDomain {
         )
         return panels
     }
+
+    /**
+     * `docs/scheduler_requirements.md` § *Two paces*: **the instant schedule the calendar shows over the displayed span
+     * `[windowStartMillis, windowEndMillis)` past the definitive front** — the one place that question is answered.
+     *
+     * The requirement is about what is SHOWN: *"the user goes to see thousands of years in the future: the schedule
+     * displayed doesn't break any rules, and the ratio targets and minimum lengths are roughly respected"*. So its cost
+     * follows the window, never its distance from the line (CLAUDE.md, *cost follows the screen*):
+     * - **a window starting within [INSTANT_DETACH_AFTER_MILLIS] of the front** continues the plan: an extension from the
+     *   front ([fillSchedule] `keepExistingUntilMillis`), so the days the definitive schedule runs into follow on from it;
+     * - **a window further out** is planned from [INSTANT_WARM_UP_MILLIS] before its start, as if the line stood there
+     *   with every lag at its target ([fillSchedule] `noPast`) — nothing between the front and it is walked. Walked from
+     *   the front, a calendar two years out took 140 s on a real account (2026-11-12) and showed no task meanwhile.
+     */
+    fun instantDisplayPlan(
+        state: SchedulerState,
+        nowMillis: Long,
+        frontMillis: Long,
+        windowStartMillis: Long,
+        windowEndMillis: Long,
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        liveRest: LiveRest? = null,
+        noScreenEvidence: List<TaskTimeRange> = emptyList(),
+        tpMode: Int = DynamicPeriods.MODE_AT_SCREEN,
+        frozenBreaks: FrozenScreenBreaks? = null,
+    ): List<TaskPanel> {
+        val horizon = maxOf(windowEndMillis, scheduleGoalEndMillis(nowMillis, windowEndMillis, timeZone))
+        if (!instantDisplayDetached(frontMillis, windowStartMillis)) {
+            return fillSchedule(
+                state, nowMillis, timeZone = timeZone, horizonMillis = horizon,
+                liveRest = liveRest,
+                noScreenEvidence = noScreenEvidence,
+                keepExistingUntilMillis = frontMillis,
+                tpMode = tpMode,
+                frozenBreaks = frozenBreaks,
+                instant = true,
+            )
+        }
+        return fillSchedule(
+            state, windowStartMillis - INSTANT_WARM_UP_MILLIS, timeZone = timeZone, horizonMillis = windowEndMillis,
+            tpMode = tpMode,
+            instant = true,
+            noPast = true,
+        )
+    }
+
+    /** Is the window [instantDisplayPlan] is asked for planned on its own, rather than walked to from [frontMillis]? */
+    fun instantDisplayDetached(frontMillis: Long, windowStartMillis: Long): Boolean =
+        windowStartMillis - INSTANT_WARM_UP_MILLIS > frontMillis + INSTANT_DETACH_AFTER_MILLIS
+
+    /** How far past the definitive front a displayed window is still reached by continuing the plan ([instantDisplayPlan]). */
+    const val INSTANT_DETACH_AFTER_MILLIS: Long = SCHEDULE_HORIZON_MILLIS
+
+    /** What a window planned on its own is planned from before its start, so its first day is not the walk's first part. */
+    const val INSTANT_WARM_UP_MILLIS: Long = 24L * 60 * 60 * 1000
 
     /**
      * **A run the scheduler placed** — an auto panel of a task that nobody pinned, no reminder tag and no period.
@@ -6346,6 +6406,7 @@ object SchedulerDomain {
         frozenBreaks: FrozenScreenBreaks? = null,
         breaksObstruct: Boolean = true,
         idleSink: ((List<TaskTimeRange>) -> Unit)? = null,
+        noPast: Boolean = false,
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
         // `docs/scheduler_requirements.md`: the pre-placed tasks and restrictive periods can be in infinite patterns.
@@ -6632,7 +6693,7 @@ object SchedulerDomain {
         // forward and backward"*. How far back is not a wall-time constant — it is four of the longest task window
         // `Theta`, measured on the schedulable clock, so a task rare enough to need a month of it gets one
         // ([ScheduleFill.pastLookbackMillis] holds the whole rule and its reasons).
-        val scoreFrom = nowMillis - ScheduleFill.pastLookbackMillis(
+        val scoreFrom = if (noPast) nowMillis else nowMillis - ScheduleFill.pastLookbackMillis(
             tasks = planTasks,
             periods = restrictions,
             nowMillis = nowMillis,
@@ -6667,8 +6728,8 @@ object SchedulerDomain {
         // PRD §7 "Switch task" and PRD §13 "start this task now" are the README's alternative schedule put to use:
         // the refused task may not be the first run, the requested one must be. Both are about the line itself, so
         // an extension (which starts past the kept head) carries neither.
-        val refusedHere = liveForcedSwitchTask(state.forcedSwitch, pastBlocks, nowMillis)
-        val forcedStartTask = liveForcedStartTask(state.forcedStart, pastBlocks, nowMillis)
+        val refusedHere = if (noPast) null else liveForcedSwitchTask(state.forcedSwitch, pastBlocks, nowMillis)
+        val forcedStartTask = if (noPast) null else liveForcedStartTask(state.forcedStart, pastBlocks, nowMillis)
 
         // --- the rule state: `R(now)` — exact inside a task-tree transition (the minimum in millis, not rounded to a
         // minute) — and, where it changes over this fill, the timeline the fill walks (`docs/scheduler_requirements.md`
@@ -6872,8 +6933,25 @@ object SchedulerDomain {
             // of it too, every other carrier as it stands.
             val givenUp = mergeOccupied(retractedAtLineSpans(standingRestrictions, from, DynamicPeriods.MODE_AT_SCREEN, config) + span)
             val periods = retractAtLine(standingRestrictions, givenUp, span.endEpochMillis - 1, config)
+            val branchTasks = ruleStateAt(from)
+            // How far back the branch reads its past is the fill's own rule ([ScheduleFill.pastLookbackMillis]) taken
+            // at the branch's start, never the line's `scoreFrom`: read from the line, every night re-replayed the whole
+            // plan before it, so a fill cost O(nights × distance) — a two-year calendar view took 140 s (2026-11-12).
+            val branchFrom =
+                maxOf(
+                    scoreFrom,
+                    from - ScheduleFill.pastLookbackMillis(
+                        tasks = branchTasks,
+                        periods = periods,
+                        nowMillis = from,
+                        windows = SCHEDULE_PAST_LOOKBACK_WINDOWS,
+                        floorMillis = SCHEDULE_PAST_LOOKBACK_FLOOR_MILLIS,
+                        capMillis = SCHEDULE_PAST_LOOKBACK_CAP_MILLIS,
+                    ),
+                )
             val history =
                 planBefore.mapNotNull { b ->
+                    if (b.endMillis <= branchFrom || b.startMillis >= from) return@mapNotNull null
                     PlanBlock(b.taskId, b.startMillis, minOf(b.endMillis, from)).takeIf { it.endMillis > it.startMillis }
                 }
             val branch =
@@ -6881,8 +6959,8 @@ object SchedulerDomain {
                     ScheduleFill.Input(
                         startMillis = from,
                         horizonMillis = span.endEpochMillis,
-                        lookbackMillis = from - scoreFrom,
-                        ruleState = ruleStateAt(from),
+                        lookbackMillis = from - branchFrom,
+                        ruleState = branchTasks,
                         periods = periods,
                         blocks = pinnedBlocks,
                         history = history,

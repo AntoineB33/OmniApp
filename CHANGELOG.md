@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A calendar far ahead is planned on its own, at once — 2026-11-12
+
+Anomaly: the calendar two years ahead showed no task. The instant schedule walked to the window from the definitive
+front (140 s on account 3, restarted whenever the front moved) and the window was drawn empty meanwhile. Requirement
+§ *Two paces*, Example 3: however far ahead, the window shown is not obviously wrong. Now
+`SchedulerDomain.instantDisplayPlan` plans a window more than 168 h past the front from 24 h before it, lags at their
+targets (`fillSchedule(noPast = true)`); the last plan stays drawn while the next computes; and each mode-1 night
+branch (`lineBranchPanels`) reads its past back from its own start, not the line's (it was O(nights × distance)).
+`InstantDisplayPlanTest`. No migration.
+
 ### The actions section: rows of actions, closed by default, laid out by three search configurations — 2026-11-12
 
 User rule: the actions section is a Search window whose results are actions — group rows (their actions as children)

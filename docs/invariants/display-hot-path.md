@@ -191,6 +191,15 @@ Global rules that always apply: `CLAUDE.md`.
   with `fillSchedule(instant = true)` — `InstantSchedule`, the score's own policy rolled by two-hour parts, nothing
   searched — from the front (`firstFreeMoment` of the plan) to the displayed end, wherever that is, not only past the
   ceiling (the steps now leave the front about two hours ahead). Re-derived when the front moves (a step published).
+- **What that costs follows the WINDOW, never its distance from the line** (requirements § *Two paces*, Example 3:
+  *thousands of years in the future*, nothing obviously wrong). The one funnel is `SchedulerDomain.instantDisplayPlan`:
+  a window starting within `INSTANT_DETACH_AFTER_MILLIS` (168 h) of the front is the extension from the front; one
+  further out is planned **on its own**, from `INSTANT_WARM_UP_MILLIS` (24 h) before its start with every lag at its
+  target (`fillSchedule(noPast = true)`), nothing between walked. Walked from the front, a window two years out took
+  140 s on account 3 (2026-11-12) and was drawn empty all along (`InstantDisplayPlanTest`). A window planned on its own
+  is keyed on the span, the rules and the mode only — the front moving and the line's live inputs do not re-run it.
+- **The window is never drawn empty while its plan computes**: the last plan's runs past the front stay drawn beside
+  what the state holds now (a dragged block where it is dragged) until the next one lands.
 - Beyond the ceiling, the far fill runs off the UI thread and is **never stored in `state.panels`**. It is keyed on
   the span AND on what the plan is a function of — the rules (`schedulingSignature`), the mode, the banked screen
   breaks, the observed evidence and the live pause's bounds — and given the same inputs the engine's own fills get:

@@ -3101,32 +3101,35 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 awayDeclared = userAway || accountAway,
             )
         val farSignature = remember(schedulerState) { SchedulerDomain.schedulingSignature(schedulerState) }
+        // § *Two paces*, Example 3: a window far past the front is planned on its own
+        // ([SchedulerDomain.instantDisplayPlan]), so neither the front moving nor the live inputs of the line re-run it.
+        val farDetached = SchedulerDomain.instantDisplayDetached(definitiveFrontMillis, visibleSpanStartMillis)
+        val farLiveKey: List<Any?> =
+            if (farDetached) emptyList() else listOf(definitiveFrontMillis, frozenBreaks, observedNoScreenEvidence, inactiveSince, activeSince)
         LaunchedEffect(
-            visibleSpanStartMillis, visibleSpanBeyondNearHorizon, visibleSpanEndMillis, definitiveFrontMillis,
-            farSignature, farMode, frozenBreaks, observedNoScreenEvidence, inactiveSince, activeSince,
+            visibleSpanStartMillis, visibleSpanBeyondNearHorizon, visibleSpanEndMillis, farDetached, farLiveKey,
+            farSignature, farMode,
         ) {
             if (!visibleSpanBeyondNearHorizon) {
                 farWeekPlan = null
                 farWeekCalculating = false
                 return@LaunchedEffect
             }
-            farWeekPlan = null
+            // The plan already drawn stays drawn until the next one lands: a window emptied while it computes is the
+            // obviously wrong schedule the instant schedule exists to prevent.
             farWeekCalculating = true
-            // An EXTENSION of the materialized plan, never a re-plan: the far week is the continuation of the
-            // rules already returned. When those rules repeat (`schedulerState.scheduleCycle`,
-            // `docs/scheduler_score.md` § *The rules repeat*) the tail is unrolled, not searched, so a far week
-            // costs a walk over the environment rather than an optimization.
             val fill =
                 withContext(Dispatchers.Default) {
-                    SchedulerDomain.fillSchedule(
-                        schedulerState, nowMillis, timeZone = tz, horizonMillis = maxOf(goalEndMillis, visibleSpanEndMillis),
+                    SchedulerDomain.instantDisplayPlan(
+                        schedulerState, nowMillis,
+                        frontMillis = definitiveFrontMillis,
+                        windowStartMillis = visibleSpanStartMillis,
+                        windowEndMillis = visibleSpanEndMillis,
+                        timeZone = tz,
                         liveRest = SchedulerDomain.liveRestGap(inactiveSince, activeSince, nowMillis),
                         noScreenEvidence = observedNoScreenEvidence,
-                        keepExistingUntilMillis = definitiveFrontMillis,
                         tpMode = farMode,
                         frozenBreaks = frozenBreaks,
-                        // § *Two paces*: the instant schedule's decisions, no search.
-                        instant = true,
                     )
                 }
             farWeekPlan = fill
@@ -3136,7 +3139,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // (falling back to the near panels while it is still computing, so past/pinned blocks stay visible).
         // `docs/scheduler_requirements.md`: pre-placed tasks and restrictive periods can repeat for ever, so every
         // occurrence of one over the displayed span is drawn — derived here like everywhere else it is asked for.
-        val planPanels = if (visibleSpanBeyondNearHorizon) farWeekPlan ?: schedulerState.panels else schedulerState.panels
+        // While the next fill computes, what the state holds now (a block being dragged where it is dragged) and the
+        // last plan's own runs past the front, so the window is never drawn empty meanwhile.
+        val planPanels =
+            remember(visibleSpanBeyondNearHorizon, farWeekPlan, farWeekCalculating, schedulerState.panels, definitiveFrontMillis) {
+                val far = farWeekPlan
+                when {
+                    !visibleSpanBeyondNearHorizon || far == null -> schedulerState.panels
+                    !farWeekCalculating -> far
+                    else ->
+                        schedulerState.panels +
+                            far.filter { SchedulerDomain.isPlanRun(it) && it.startEpochMillis >= definitiveFrontMillis }
+                }
+            }
         // Held on what it reads, so the memos keyed on this list see the same instance until one of those moves.
         val workPlanPanels =
             remember(planPanels, visibleSpanStartMillis, visibleSpanEndMillis, tz) {
