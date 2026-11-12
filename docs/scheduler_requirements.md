@@ -1,119 +1,92 @@
-# Scheduler System Specifications
+There is an infinite line from −∞ on the left to ∞ on the right.
 
-### System Overview
+There is a 0-dimensional chip on the line that moves to the right, with a mathematically continuous movement. If the program was put to sleep, when it wakes up, the chip is at the position it would have been if it had moved continuously while the program was asleep.
+There are different kinds of elements. A state of the line is a set of intervals each associated to an element type and a percentage. The same element type can't be present several times at the same position on the line. An element with 0% is considered absent.
 
-The scheduler returns a set of rules output defining the timeline task schedule to satisfy constraints and the optimization goals below (target ratios, minimum and maximum execution times, quantities by a date). 
+Example of a state of the line:
+- A at [$x_1$, $x_2$) 100%
+- A at $x_2$ 50%
+- B at $x_3$ 100%
+- C at $x_1$ 100%
 
-#### Rule Structure:
-* **Event-Driven / Cursor-Based Evaluation:** Rules must be structured as sequential local branches and trigger boundaries (e.g., active `if...then...else...` clauses for the current interval, paired with an alarm/trigger for the next transition at $t$, at $now line$ mode switch, at history being rewritten by a program etc...).
-* **No Global Lookups:** The runtime interpreter must never execute timeline-wide filtering, dynamic sorting, or interval-tree traversals. As the $now\ line$ moves forward, it simply evaluates the active local condition and advances a forward cursor to the next armed trigger point.
+There are several modes, and only one is applied for one position of the chip on the line. Every bounded stretch of the line contains finitely many mode transitions. The mode transitions are given externally.
 
-### Core Constraints & Task Allocation
+There are "percentage rules". Each element have a set of possible percentages with conditions. The conditions describe the specific elements that can be present at the same position on the line, and their percentages.
 
-#### Priority, Granularity and Compensation
-* Each task has a **target priority percentage** (its target ratio). One optimization goal is to match these percentages across the smallest possible time window, avoiding unnecessarily large monolithic blocks (e.g., alternating two 50% tasks in 10-minute intervals rather than 1-hour intervals). The time windows must be as small as possible while still allowing for the task's minimum execution time to be respected (e.g., task A 30min 33%, task B 15min 33%, task C 15min 33% => task A 30min, task B 15min, task C 15min, task B 15min, task C 15min...).
-* **Any target ratio is reached, however small.** A task whose ratio and minimum execution time give it one panel every few years appears once every few years, at that average, for as long as its ratio stays the same. Nothing about how far back the past is read may make a task drift from its ratio: a memory limit on the frozen history (§ *Strict Requirements*) may summarize the past, but it keeps what each task's ratio needs from it (how much the task was served, and when) for as far back as that task's compensation reads it.
-* **The ratio adapts to the state of the timeline.** It applies to the time the task may have: its resilience to the restrictive periods present scales it (§ *Restrictive Period*), and the time it is excluded from creates a deficit (below). Every panel of the task counts as serving it, whoever placed it: the scheduler, the user, or a pre-placed task.
-* Pre-placed tasks or restrictive periods can create priority deficits for excluded tasks. To prevent massive, disruptive overcompensation and ensure the timeline rapidly returns to a normal schedule, the priority optimization uses an **exponential decay** model. 
-* The influence of debt repayment decays over the distance from the blockage (both backward and forward in time). Because the influence decays exponentially with distance, a long blockage's compensation is bounded rather than proportional to its length. The goal is to avoid repaying debts indefinitely in favor of stabilizing the schedule.
-* **The distance over which it decays is each task's own.** It is never shorter than a default compensation length the user can change, and for a task that recurs less often than that, it spans a few of the task's own periods (the time in which its ratio gives it one panel of its minimum execution time). The user can also set it per task. So a frequent task returns to its normal schedule within hours, and a task due once a month is repaid over months instead of being forgotten after a few hours.
-* In an ideal situation where the timeline is cleared from pre-placed tasks or restrictive periods, this exponential decay is not needed.
-* The timeline is infinite forward and backward, and the pre-placed tasks and restrictive periods can be in infinite patterns.
+Examples:
+A is always 100%
+B can be:
+- 100%
+- 20% with other elements that have a total sum of 80%
+C can be:
+- 100%
+- 80% with only B
 
-#### Soft Minimum and Maximum Execution Time
-Each task has a defined minimum execution time. Another optimization goal is to reach the minimum execution time for any task appearing in the timeline. The ideal situation is that each task panels spans at least its minimum execution time without interruption.
-Each task may also have a maximum execution time (none by default). Another optimization goal is that no panel of the task spans more than its maximum without interruption: three hours on the same task in one panel are worth less than the same time in shorter panels. Like the minimum, it is soft: a panel longer than its maximum is allowed only where the other goals gain more than it costs.
+There are "element rules". In an element rules, there are two sides:
+- The left side is a boolean expression manipulating element types and percentages.
+- The right side is an expression with "and", "or" and intervals of elements with percentages. The position of those intervals are relative to either the position p where the left side is met, or the l left edge (bound or unbound) of the largest continuous interval that meets the left side and includes p.
 
-#### Quantity by a date
-* A task can have **quantities to reach by a date**: a total time of presence Q within an interval [a, b] of the timeline (for example, 10 hours of "moving" before Friday).
-* Inside [a, b], the task's target ratio is raised to what spreads the part of Q still missing over the time still available to the task in [a, b] (its resilience, the pre-placed tasks and the restrictive periods counted). The quantity is spread as evenly as the other goals allow, not left to the end of [a, b].
-* Missing part of Q at b outweighs every other optimization goal: whenever the constraints leave enough time for Q, it is reached.
-* Outside [a, b], the quantity has no effect.
+Examples:
+- A → B 100%
+- A → B 0%
+- A & B → C 45% 3 units on the left
+- A or B → C 100% 2 units on the right of l or D 100% 3 units on the left
 
-#### Balance of the goals
-The user sets the balance between the optimization goals (target ratios, minimum and maximum execution times). A quantity by a date is above that balance, as said above. The constraints are never traded for any goal.
+The rules must not have a cycle dependency.
 
-#### Restrictive Period
-* The user can define restrictive periods, which are types of periods that can be placed in any time intervals on the timeline. The user can place them manually, or define rules to place them automatically. The user can also define that a period must be accompanied by others, for example whenever there is period A, then there is also period B.
-* Each task has a resilience value for each kind of restrictive period from 0 to 1. It is a multiplier for the task's priority percentage during that restrictive period. A resilience of 0 means the task is forbidden during that restrictive period. For example, for the "no screen" period, "homework" has a resilience of 0.5, "video games" has a resilience of 0, and "read a book" has a resilience of 1. If "no screen" occupies the whole timeline and every other task has resilience 1 to "no screen", then "homework" would require twice as much presence.
+The rules must be deterministic.
+If there is an "or" on the right side of the element rule, the leftmost operand (leftmost in the expression) that can be chosen is chosen. The position that choses first is the closest to 0, and the one to the right if two positions are equally close to 0.
 
-### $now line$
-* **$now line$:** Some of the rules returned by the scheduler are parameterized by two variables that can unpredictably change value anytime during the test: $now line$ (the present) and the $now line$ mode. Every t such that t <= $now line$ are the previous values of the $now line$ variable. This means that the $now line$ moves continuously forward in time.
-* **$now line$ 3 modes:**
-    * **Mode 1:** $now line$ must not be covered by the period "no screen".
-    * **Mode 2 & 3:** $now line$ must be covered by the period "no screen".
-        * **Mode 2:** $now line$ is in both "no computer unlocked" and "no phone unlocked" periods.
-        * **Mode 3:** $now line$ is in either "not on a computer" or "not on a phone" periods. "not on a computer" can't be with "no computer unlocked", same with the phone.
-    * **Mode switching:** The current $now line$ mode can be decided anytime by a program, but can't go in mode 1 during a "20s screen break" restrictive period. When $now line$ enters a "20s screen break" restrictive period in mode 1, it gets in mode 3, and when it leaves it, it gets in mode 1 unless the user wanted it to stay in mode 3, or unless it is in mode 2.
-* **frozen past:** The schedule at t < $now line$ never changes as $now line$ increases, with only two exceptions:
-    * When the user or a program wants to rewrite history.
-    * When a "screen break" period needs to get removed to satisfy its restrictive period rules.
+A position is a rational number x or x + kε, with k a non-zero integer and ε an infinitely small positive distance: x + ε is after x and before every real number greater than x. When a rule needs the first position after x, it uses x + ε.
+Example: "A → B or C", "B → E", "B → no E on (0, 1] of l", A on [0, 2]: B is at 0 and at 1 + ε.
 
-### Default restrictive periods
-* **existing periods:** By default, there are already defined periods with automatic placement rules. For example, the "no screen" periods, the "sleep" period that is always accompanied by the "no screen" period, is placed at the same times every day, and allows no task (a task has a 0 resilience to it by default). The "before bed" period that is always placed on the hour before a "sleep" period. There are also the three "screen breaks" periods.
-* **screen breaks:** There are the 20s, 5min and 15min screen break periods, always accompanied by the "no screen" period. The 20s screen break allows no task. The 5min break is accompanied by two periods: the first minute that allow no tasks and the 4 next minutes. The three screen breaks are placed everywhere in the future part of the timeline as earliest as possible where it doesn't violate the frozen past rule and the rules below.
-    * A screen break period lasts as long as its name implies.
-    * The $now line$ must be in mode 1 or 3 before entering the 20s break.
-    * After the end of a 20s break, no 20s break in the next **20 minutes**.
-    * After a $\ge 5$-minute of "no screen", no 5min break in the next **1 hour**.
-    * After a $\ge 15$-minute of "no screen", no 15min break in the next **2 hours**.
-    * Where the five rules above allow a continuous chain of 5min and 15min breaks, then the interval of the whole chain only contains one screen break, which is the longest screen break of the chain brought to the start of the interval.
-    * In a "no screen" period, if $t_b$ is in a screen break, where $t_b$ is the start of a screen break, and that $now line$ < $t_b$, then this screen break must now start at max($now line$, $t_s$), where $t_s$ is the start of the continuous "no screen" period, even if it contradicts with the five first screen break rules.
-    * A 20s break can only be crossed by the $now line$ in mode 3.
+If an interval that stretches to +infinity must be placed at -infinity and vice versa, then it is placed on the whole line.
 
-### Example behaviors
-Here are some example situations resulting from the rules described above.
-* If the $now line$ reaches a 20s break in mode 2, this 20s break becomes ]$now line$; $now line$ + 20s], because the $now line$ must be in mode 1 or 3 before entering the 20s break. 
-* If the $now line$ reaches a 5min break in mode 1, this 5min break becomes ]$now line$; $now line$ + 5min].
-* When the $now line$ is in mode 1 and has dragged a 5min break until the break's end edge touches a 15min break, the 15min break teleports 5 minutes backward, starting right after $now line$, the 5min break is removed, and the 5-minute gap created at the end of the 15min break is filled with task panels given the set of rules output parameterized by $now line$ and $now line$ mode and returned by the scheduler.
-* If $now line$ is in mode 2 and reaches the end of a 15min break, the gap between the end of the 15min break and $now line$ is covered by a period "no screen", filled with tasks that have a non-zero resilience to the kind "no screen", or no task if none have such resilience.
-* When the $now line$ is in mode 1 and reaches a "no screen" period that extends to [t1;t2], I want the "no screen" period to become ]$now line$;t2] when $now line$ is in [t1;t2[. When $now line$ >= t2, then this "no screen" period is removed.
-* If the $now line$ reaches a "no screen" period in mode 1, if it is accompanied by a 20s break then it gets in mode 3, otherwise the "no screen" period now starts at $now line$ not included and gets retracted as time goes by.
-* If the $now line$ reaches a 20s break in mode 2, then the 20s break is dragged by the $now line$. It starts at $now line$ not included.
+A "mode rule" is the same as an element rule, but can add or remove elements only at the position of the chip.
 
-### Alternative Schedules:
-The returned set of rules output must also give for every $now line$ the task that must be scheduled if the task scheduled by the scheduler is refused by the user. When it happens, a program would simply read the rules, set this alternative task starting at [$now line$, $now line$+d], with d defined beforehand (like 10 minutes), and run the scheduler again with this new schedule.
+Example:
+- mode 1 → D 100% & E 100%
 
-### Rule state input evolution
-* **Rule State Input Definition:** A rule state input is the set of tasks and their associated priority percentages, minimum and maximum execution times, quantities by a date and resilience values for every periods at a given moment in time.
-* **New Schedule:** The scheduler engine starts a new run from scratch each time when the context is different and calculating a new set of rules output would be relevant. Each time the user manually edits the timeline,  changes the rule state inputs (with a debounce time for some cases) or switch to a new task at $now line$, it triggers a run.
-For some changes in the input for the scheduler engine, it wouldn't be relevant to start a new run. If a run was triggered each time $now line$ changes, it would trigger a new run that has 0 calculation time because interrupted by the next run an infinitesimal time afterward. For the same reason, if the phone is locked, the $now line$ is constantly extending the "no phone unlocked" period and shouldn't always trigger a new run. The scheduler engine must decide when those changes should actually trigger a new run.
-* **Rule State Input Evolution:** The rule state input can change continuously through transition, or via discrete switches on the timeline. For example, if there is a switch from RSI A to RSI B at $t_s$, then the perfect schedule for the period with t < $t_s$ is the part where t < $t_s$ in the perfect schedule if RSI A is the only RSI in the whole timeline. Backward compensation is still applied. The perfect schedule for the period with t > $t_s$ is the part where t > $t_s$ in the perfect schedule if RSI B is the only RSI in the whole timeline, with the currently best schedule found for t < $t_s$ as a frozen past. Since RSI change at $t_s$ represents a fundamental shift in optimizations and constraints, backward compensation from RSI B must not leak into RSI A. Instead, hypothetical backward compensation from RSI A at t > $t_s$ must leak into t < $t_s$. It also means that a new rule state should dynamically "catch up" or compensate for how the past deviated from its newly established goals. If the transition was continuous, then the same logic is taken to infinitesimals. 
-* **When not the same task ids:** If a task id is missing in the other rule state input, then in the continuous evolution of the rule state input the priority starts or ends at 0, but the minimum execution time and the resilience value don't change.
-* **Formulas over the timeline:** The user can define each task's target ratio, minimum execution time and maximum execution time as a formula of the position on the timeline (not of the $now line$): a constant, a value per interval, a linear change, a periodic pattern (for example, higher in the mornings), or any other formula. A formula is an evolution of the rule state input and follows the rule above. If a target ratio r is r1 on (-inf, 0] and r2 on (0, inf), then the result of the scheduler on (-inf, 0] is the same as if r were r1 at all times, and its result on (0, inf) is the same as if r were r2 at all times, wherever the $now line$ is. If the formula evolves linearly, it is the same, the intervals being infinitesimal.
+A set of rules that is impossible to satisfy is refused. If the rules imply to put something at infinity, it is considered possible. Some possible sets of rules are refused too, as this problem is undecidable in general.
+
+The state of the line can be modified only by the user, the mode rules, the "generated script" and the memory limit managers.
+
+The "rules generator" takes the current state of the line and the chip's position and produces a "generated script" to solve optimization problems and satisfy constraints.
+A generated script must never:
+- Change the left side of the chip.
+- Remove elements added by the user. It can however remove elements indirectly added by the user through the rules, without removing the user-added elements themselves.
+At the absolute start of the program, the generated script is only an instruction to run the rules generator once as soon as possible. The generated script is changed only when the generator finds a new one or the user or the generated script itself edits it. If the generator is called to run again while it is already running, the previous run is cancelled and the new one starts.
+
+The rules generator must be able to resume its run after a program sleep.
+
+For different machines, if the same generated script get published at the same time and the same accepted user edits and mode switches occur at the same time, then at any point, if the chip stops and the user does nothing, the same line state must be found, if adding a few more loop iterations on the scripts.
+
+The "allocated resources quantity" hyperparameter q in [0, 1] balances between resource usage economy (0) and optimization problem-solving (1). When q is lower, then a rules generator run will be faster and use less CPU resources to solve the optimization problems, and the current generated script will trigger less frequently a new rules generator run. At 1, the generator uses all the time the pace allows finding the best arrangement.
+
+A run of the rules generator is progressive: it publishes a series of generated scripts, each replacing the previous one, and ends after publishing the last one (or never ends if there is no last one). The generated script is "definitive" up to a position x when every next script of the same run gives the same resulting line for the chip's positions before x, whatever the modes. If a run has made the script definitive up to x, then 10 seconds later it must have made it definitive up to x + 10 units, using an approximation if resources are limited. An approximation may lower the optimization score but never breaks a constraint. At the start of a run, the generator must nearly instantly publish a new script that is definitive on the 10 units on the right of the chip. If the chip is beyond the definitiveness (because the program was put to sleep), then the generator must quickly catch up and publish a new script that is definitive on the 10 units on the right of the chip. The duration of a run of the rules generator depends on q.
+To satisfy this pace, the generator can look at the current generated script.
+
+The "probability finder" program is used to find probability rules in the mode transitions pattern. This helps the rules generator being more performant with a low q.
+
+Edits from the user (including mode switches) win over what is on the line. The fewest older elements are changed. If a result cannot be computed in reasonable time, the edit is refused. If the edit leads to a contradiction with the constraints the generated script must satisfy, the edit is refused. For example:
+"A → B 100% or C 100%"
+A and B at [1, 2]
+user edit: remove B at 1.5
+Now A at [1, 2], B at [1, 1.5)U(1.5, 2] and C at 1.5.
 
 
-### Two paces
-There are two paces: the instant schedule, and the scheduler going 10 minutes at a time from the $now line$ (§ *Progressive Calculation*).
-* **Instant schedule:** prevents displaying obviously wrong schedules.
-    * Example 1: the user adds a big block of A, creating an excess of A in the area close to it. As the user drags the block, the schedule around it is instantly adjusted to have less A.
-    * Example 2: the user changes the rules, so the displayed calendar instantly gets a schedule that doesn't break the rules and roughly matches the new target ratios and minimum lengths.
-    * Example 3: the user goes to see thousands of years in the future: the schedule displayed doesn't break any rules, and the ratio targets and minimum lengths are roughly respected. There would be nothing obviously wrong, so for example no inactivity area where a task with a ratio target can fit in.
-* The display window on the calendar and the first 10 minutes after the $now line$ are almost instantly corrected, for example if the rules or optimization parameters are changed.
-* **10 minutes steps from the $now line$:** the scheduler of § *Progressive Calculation*. Where it has made the schedule definitive, its schedule is the one displayed. When triggered, each of its steps has 10 seconds to work deeply on the schedule and deliver the best possible schedule for the 10 minutes it focuses on: step n is focused on [$now line$ + 10min·(n+1), $now line$ + 10min·(n+2)], with $now line$ where it is when the scheduler starts. A step first looks at the schedule in a big picture, then more and more precisely, until it perfects the area it focuses on.
-* **What is shown stays, unless a new schedule changes it:** if the user sees the calendar at t, a few years in the future, then goes back to the present, what was computed almost instantly stays saved: if the user goes back to check at t, they see the same thing. A schedule the scheduler publishes while focused on a 10-minute step doesn't necessarily change only that interval, nor a fixed interval after it: since it looks at the big picture first, it may change anything beyond. For example, if in the 10-minute interval it is focused on, the scheduler decides that A, an element that appears every few years and appears at t, is better appearing in it, then it publishes a new schedule where A isn't at t anymore, and when the user goes back to check at t, the scheduled elements are different.
-* Visually, there is no distinction between elements on the timeline that are scheduled definitively and those that are beyond the definitive limit.
+The line is computed from all the user's edits, kept in the order they were made.
+Where edits contradict each other, directly or through the rules, the newer one wins.
+An older edit gives way only where, and as long as, it contradicts newer ones: when that contradiction disappears, it applies again.
+When a change on the line is due to element rules triggered by a user edit and has no other reasons to be there, then when this reason disappears, the change is removed. For example:
+"A → B"
+line empty
+user edit 1: add A at 1
+user edit 2: remove A at 1
+Now the line is empty again.
 
-### Progressive Calculation:
-The scheduler doesn't need to calculate the right schedule for the entire timeline, but if the definitive schedule is found for any t < $t_1$, then 10 seconds later the definitive schedule must be found for any t < $t_1$ + 10 minutes. When the schedule is definitive for any t < $t_1$, it means that for all the next set of rules output the scheduler will return until it is done, they will all indicate the same schedule rules for any t < $t_1$ (task panel scheduling parameterized by $now line$ and $now line$ mode as well as the "alternative schedule"). As time passes, the scheduler returns one set of rule output after the other to satisfy this pace. If exact schedules cannot be found in time, approved approximation strategies must be used.
-The scheduler can have a time $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop. It will also stop if the set of rules output became too heavy, or if it calculated for too long.
-* **first 10s:** When the scheduler engine starts, it must firstly check if in the next 10 seconds there are gaps with no task and if there are tasks that can be scheduled in those gaps. If so, then almost instantly, a new set of rules output is returned and the first 10 seconds are definitive.
-* **direct consequence:** If the device bearing the running process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward (in epsilon time) in mode 2 to the current date. If the current date is beyond the definitive schedule, then it is similar to a case where no CPU were available during this period and the current set of rules output, parameterized by $now line$ and $now line$ mode, is used to define the schedule as the $now line$ does its fast move, while no better set of rules output was found.
 
-### Strict Requirements
-All of the above requirements must be strictly adhered to, with only two acceptable exceptions:
+Every calculation, except for the run of the rules generator, must be considered instantaneous for the state of the line. If the user does an edit that takes time to compute, then when done the state of the line is shown as if the edit was instantaneous. During the calculation, the display of the line doesn't stop and continues to update smoothly, then when it is complete it updates as if the calculation happened instantly. For example, the user changes a mode that must cut the element the chip was pushing forward, but it takes time. So the chip continues to push the element forward, and when the calculation is done, the element has a hole behind the chip as if it started to cut the element at the chip's position when the mode was changed.
+For the rules generator however, when a new generated script is published, it is applied and doesn't revert the display. When the rules generator starts, it takes a snapshot of the current state of the line and the chip's position, and uses it to compute the generated script. That means that if it returns a new script, it could be that the current state already disrupts the new plans so much, that the new script instantly triggers a new run.
 
-1. Get as close as possible to the optimal score for the optimization goals, without actually reaching it, in order to save time or computing power, or if necessary to maintain the required pace. However, if the optimal score is achievable within the given time and with acceptable computing power, it must be achieved.
-
-2. Other limits may be imposed to conserve memory, computing power, or CPU usage over time, as appropriate. For example, a limit may be imposed on the memory for the frozen timeline history.
-
-Even if the optimization score is not perfect for all infinite paths, the scheduler game search for the best set of rules output with its limited time and CPU resources and came out with a valid result, which is the expected behavior.
-
-### Use of the set of rules output
-
-* A re-run of the scheduler engine would make it take a screenshot of the schedule without what is deduced from the current set of rules output but not saved in history, and find a good schedule from the current rule state inputs. The calendar stays with the previous set of rules output, until the scheduler finds one. Then, it removes everything deduced from the previous set of rules output but not saved in history, and apply the set of rules output. It will do it again when a better set of rules output is found.
-
-### Manual editing
-
-If the user adds an element, then removes it, the state of the line is the same as before the addition.
-If the user moves some elements, then moves them back to their original place, the state of the line is the same as before the move.
+When memory limit is reached, the furthest elements in the left of the chip get flattened (so the reverse logic is degraded there). Even further, the elements are removed.
