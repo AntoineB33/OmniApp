@@ -196,10 +196,15 @@ data class SearchSplits(
     val searchRemoved: Boolean = false,
     val actionsRemoved: Boolean = false,
     val addedRemoved: Boolean = false,
+    /**
+     * User rule 2026-11-12: the search bar taken off by the background menu — the bar and its configurations arrow (▾) —
+     * the rest of the search section staying ([SearchPart.Bar]).
+     */
+    val barRemoved: Boolean = false,
 ) {
-    /** The flags as [WindowSections.hidden] keeps them: the three retracted, then the four removed. */
+    /** The flags as [WindowSections.hidden] keeps them: the three retracted, then the four removed, then the bar. */
     val hiddenFlags: List<Boolean>
-        get() = listOf(searchHidden, actionsHidden, addedHidden, headerRemoved, searchRemoved, actionsRemoved, addedRemoved)
+        get() = listOf(searchHidden, actionsHidden, addedHidden, headerRemoved, searchRemoved, actionsRemoved, addedRemoved, barRemoved)
 
     companion object {
         /** Read back from [hiddenFlags]; a flag an older build did not write is off. */
@@ -213,6 +218,7 @@ data class SearchSplits(
                 searchRemoved = hidden.getOrNull(4) ?: false,
                 actionsRemoved = hidden.getOrNull(5) ?: false,
                 addedRemoved = hidden.getOrNull(6) ?: false,
+                barRemoved = hidden.getOrNull(7) ?: false,
             )
     }
 }
@@ -382,7 +388,7 @@ data class SearchRowOpeners(
             // A notification is a fact that happened: it has nothing to open. Nor has a log entry — its actions show it.
             // A search configuration is set in the configurations tree, where it stands with its control.
             SearchDomain.Kind.Notification, SearchDomain.Kind.ClaudePrompt, SearchDomain.Kind.ClaudeAnswer,
-            SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.SearchConfiguration -> Unit
+            SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.SearchConfiguration, SearchDomain.Kind.Option -> Unit
             SearchDomain.Kind.WorkplaceSetup -> onApplyWorkplaceSetup(item.id)
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }
@@ -486,6 +492,11 @@ fun SearchWindow(
      * of its own; the query is the field's, through [config].
      */
     barOutside: Boolean = false,
+    /**
+     * User rule 2026-11-12: **a drop-down's list** ([OptionSearchMenu]): its rows are these options ([SearchDomain.Kind.Option]),
+     * not the account's elements, a click on one ticking or picking it.
+     */
+    options: SearchOptions? = null,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -523,6 +534,7 @@ fun SearchWindow(
     // A picker given nothing opens as the cell's Edit Mode shows it: its search section alone.
     val shownSplits = splits ?: CellEditPopupHost.PICKER_SPLITS.takeIf { picker != null }
     var headerRemoved by remember { mutableStateOf(shownSplits?.headerRemoved == true) }
+    var barRemoved by remember { mutableStateOf(shownSplits?.barRemoved == true) }
     var searchRemoved by remember { mutableStateOf(shownSplits?.searchRemoved == true) }
     var actionsRemoved by remember { mutableStateOf(shownSplits?.actionsRemoved == true) }
     var addedRemoved by remember { mutableStateOf(shownSplits?.addedRemoved == true) }
@@ -571,7 +583,10 @@ fun SearchWindow(
         remember(searchesTasks, state.cells, state.lists, state.tasks, state.taskTrees, state.activeTaskTreeId) {
             if (searchesTasks) SearchDomain.allPathsInAnyTree(state) else emptyMap()
         }
-    val results =
+    val results: List<SearchDomain.Result> =
+        if (options != null) {
+            remember(options.options, options.checked, query) { SearchDomain.optionResults(options.options, query, options.checked) }
+        } else
         remember(
             kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
             state.panels, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations,
@@ -651,6 +666,14 @@ fun SearchWindow(
     val stayAtTop = atTop
     LaunchedEffect(results.firstOrNull()?.let(::resultKey)) { if (stayAtTop) listState.scrollToItem(0) }
     LaunchedEffect(selected) { minTimeEditTaskId = null }
+    // A drop-down's list with no end ([SearchOptions.onNearEnd]): more is asked as its last rows come in view.
+    val latestOnNearEnd by rememberUpdatedState(options?.onNearEnd)
+    LaunchedEffect(listState, options?.onNearEnd != null) {
+        if (options?.onNearEnd == null) return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow { listState.layoutInfo.let { info -> (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= info.totalItemsCount - 3 } }
+            .distinctUntilChanged()
+            .collect { near -> if (near) latestOnNearEnd?.invoke() }
+    }
     // The task tree's rule: the list scrolls only when the selection would leave what is on screen — by just
     // enough to bring it to the nearer edge. Scrolling the selected row to the top on every move made the list
     // jump under a selection that was already in view.
@@ -678,8 +701,21 @@ fun SearchWindow(
 
     val currentState by rememberUpdatedState(state)
     val latestConfig by rememberUpdatedState(config)
+    /** A drop-down's option clicked ([options]): ticked or picked, or "Select all" over the options listed. */
+    fun actOnOption(id: String) {
+        val given = options ?: return
+        if (id == SearchDomain.SELECT_ALL_OPTION) {
+            given.onSelectAll(results.mapNotNull { (it as? SearchDomain.ItemResult)?.id?.takeIf { row -> row != SearchDomain.SELECT_ALL_OPTION } })
+        } else {
+            given.onClick(id)
+        }
+    }
     fun openSelected() {
         val row = results.getOrNull(selected) ?: return
+        if (options != null) {
+            (row as? SearchDomain.ItemResult)?.let { actOnOption(it.id) }
+            return
+        }
         if (picker == null) openers.open(state, row)
         else if (picker.canPick && row is SearchDomain.TaskResult) picker.onPick(row.taskId)
         else if (row.kind == SearchDomain.Kind.Creation) picker.onNewTask?.invoke()
@@ -892,6 +928,7 @@ fun SearchWindow(
               actionsCollapsed = it.actionsHidden
               addedCollapsed = it.addedHidden
               headerRemoved = it.headerRemoved
+              barRemoved = it.barRemoved
               searchRemoved = it.searchRemoved
               actionsRemoved = it.actionsRemoved
               addedRemoved = it.addedRemoved
@@ -905,12 +942,13 @@ fun SearchWindow(
               expandedTasks.mapTo(HashSet()) { it.value }, expandedAdded.mapTo(HashSet()) { it.value }, expandedElements,
               scrolls = listOf(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, addedScroll.first, addedScroll.second),
               headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved,
+              barRemoved = barRemoved,
           )
       // A section retracted or brought back, a row opened or closed, a list come to rest after a scroll, is told as a
       // dragged line is (user rule 2026-11-05: the scrolls are the window's state too). Event-driven: on the scroll's end.
       LaunchedEffect(
           searchCollapsed, actionsCollapsed, addedCollapsed, expandedTasks, expandedAdded, expandedElements, addedScroll,
-          headerRemoved, searchRemoved, actionsRemoved, addedRemoved,
+          headerRemoved, searchRemoved, actionsRemoved, addedRemoved, barRemoved,
       ) { onSplitsChange(splitsNow()) }
       LaunchedEffect(listState) {
           androidx.compose.runtime.snapshotFlow {
@@ -967,10 +1005,11 @@ fun SearchWindow(
       SearchPartsMenu(
           open = backgroundMenu,
           onDismiss = { backgroundMenu = false },
-          removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved),
+          removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved, barRemoved = barRemoved),
       ) { part ->
           val next = part.toggled(splitsNow())
           headerRemoved = next.headerRemoved
+          barRemoved = next.barRemoved
           searchRemoved = next.searchRemoved
           actionsRemoved = next.actionsRemoved
           addedRemoved = next.addedRemoved
@@ -1026,7 +1065,7 @@ fun SearchWindow(
             val barEditor = rememberFocusOutsidePressEditor(fieldFocused)
             // User rule 2026-11-04: a picker's bar IS the task cell being edited (its cross included, the same
             // `SearchBarCross`): no second bar here, so the completion list comes first, under the cell's switch.
-            if (picker == null && !barOutside)
+            if (picker == null && !barOutside && !barRemoved)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1253,6 +1292,9 @@ fun SearchWindow(
                                         .then(picker?.onNewTask?.let { make -> Modifier.pickOnClick(make) } ?: Modifier),
                                 ) {
                                     val elementKey = RESULT_SURFACE + resultKey(result)
+                                    // User rule 2026-11-12: a drop-down's option — ticked or picked at a click.
+                                    val option = options?.takeIf { result.kind == SearchDomain.Kind.Option }
+                                    val selectAll = result.id == SearchDomain.SELECT_ALL_OPTION
                                     ItemResultRow(
                                         kindWidth = resultKindWidth,
                                         item = result,
@@ -1263,17 +1305,28 @@ fun SearchWindow(
                                         selected = rowSelected(index),
                                         inSelection = rowInSelection(index),
                                         onSelect = {
-                                            clickRow(index, pressModifiers.ctrl, pressModifiers.shift, keepIfSelected = false)
+                                            if (option != null) {
+                                                select(index)
+                                                actOnOption(result.id)
+                                            } else {
+                                                clickRow(index, pressModifiers.ctrl, pressModifiers.shift, keepIfSelected = false)
+                                            }
                                         },
                                         onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
+                                        // An option's right-click: that one alone, the list closed — on the release.
+                                        onSecondaryRelease = option?.takeIf { !selectAll }?.let { given -> { given.onSolo(result.id) } },
                                         onOpen = { openers.open(state, result) },
                                         // User rule 2026-10-01: a double-click ADDS the element (a task row's enters
                                         // Edit Mode, the tree's rule) — never opens another window on it. A "creation"
                                         // row and a workplace setup are the exceptions: commands, not elements to add.
                                         onDoubleClick = {
-                                            if (SearchRowOpeners.doubleClickOpens(result.kind)) openers.open(state, result)
+                                            if (option != null) Unit
+                                            else if (SearchRowOpeners.doubleClickOpens(result.kind)) openers.open(state, result)
                                             else addKeys(listOf(resultKey(result)))
                                         },
+                                        checkBox = option?.checked?.takeIf { !selectAll }?.let { result.id in it },
+                                        leading = option?.leading?.takeIf { !selectAll }?.let { draw -> { draw(result.id) } },
+                                        hasMenu = option == null,
                                         onAdd = { addSelected() },
                                         onAddReplacing = { addSelected(replacing = true) },
                                         timerRun = if (result.kind == SearchDomain.Kind.Timer) {
@@ -1508,6 +1561,81 @@ fun SearchWindow(
 }
 
 /**
+ * User rule 2026-11-12: **what a drop-down gives the Search window that is its list** ([OptionSearchMenu]): its [options]
+ * (id and name, in order), which are ticked ([checked]; null: a one-choice list, no check boxes), what a click on one does
+ * ([onClick]), "Select all" over those listed ([onSelectAll]), a right-click ([onSolo]: that one alone, the list closed),
+ * a mark drawn before a name ([leading]) and, for a list with no end, [onNearEnd].
+ */
+class SearchOptions(
+    val options: List<Pair<String, String>>,
+    val checked: Set<String>?,
+    val onClick: (String) -> Unit,
+    val onSelectAll: (List<String>) -> Unit = {},
+    val onSolo: (String) -> Unit = onClick,
+    val leading: (@Composable (String) -> Unit)? = null,
+    val onNearEnd: (() -> Unit)? = null,
+)
+
+/** What a drop-down's Search window opens on nothing: it opens no element ([OptionSearchMenu]). */
+private val OPTION_OPENERS =
+    SearchRowOpeners(onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {})
+
+private val OPTION_HANDLERS =
+    AddedActionHandlers(
+        onStartNow = {}, onEdit = {}, onGoToTaskTree = {}, onDeepCopyCell = {}, onOpenResilienceSearch = {}, onOpenKindSearch = {},
+        timerRun = { _, _ -> }, reminderEditor = {}, onCreate = {}, onDuplicate = { _, _ -> emptyList() }, onPlaceOnCalendar = {},
+    )
+
+/** The widest and tallest a drop-down's Search window is; it is as tall as its rows below that. */
+private val OPTION_MENU_WIDTH = 320.dp
+private val OPTION_MENU_MAX_HEIGHT = 420.dp
+private val OPTION_MENU_BAR_HEIGHT = 56.dp
+
+/**
+ * User rule 2026-11-12: *"All the drop-down menus of the app must be Search windows as well."* **The list a drop-down opens
+ * is a Search window** — the very [SearchWindow], its search section alone ([EMBEDDED_SEARCH_SPLITS]: no head, no actions,
+ * no added elements), its rows the drop-down's [options] ([SearchDomain.optionResults]), the bar finding among them, its
+ * background menu showing its other parts. In the drop-down's own pop-up, focusable so the bar takes typing, as the
+ * configurations tree's are; a fixed size, which the menu measures without asking the list.
+ */
+@Composable
+internal fun OptionSearchMenu(
+    open: Boolean,
+    onDismiss: () -> Unit,
+    options: SearchOptions,
+    modifier: Modifier = Modifier,
+    width: Dp = OPTION_MENU_WIDTH,
+) {
+    transientMenuDismissal(open, onDismiss)
+    AppDropdownMenu(expanded = open, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true), modifier = modifier) {
+        var config by remember { mutableStateOf(SearchDomain.OPTION_SEARCH) }
+        var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
+        // No account is searched: the options are the rows.
+        val nothing = remember { SchedulerState.empty() }
+        val rows = options.options.size + if (options.checked != null) 1 else 0
+        val height = (OPTION_MENU_BAR_HEIGHT + RESULT_ROW_HEIGHT * rows.coerceAtLeast(1)).coerceAtMost(OPTION_MENU_MAX_HEIGHT)
+        SearchWindow(
+            state = nothing,
+            openers = OPTION_OPENERS,
+            onStartTaskNow = {},
+            onGoToTaskTree = { _, _ -> },
+            onDeepCopyCell = {},
+            actionHandlers = OPTION_HANDLERS,
+            onIntent = {},
+            onDismiss = onDismiss,
+            config = config,
+            onConfigChange = { config = it },
+            onOpenConfigurations = {},
+            splits = splits,
+            onSplitsChange = { splits = it },
+            embedded = true,
+            options = options,
+            modifier = Modifier.width(width).height(height),
+        )
+    }
+}
+
+/**
  * User rule 2026-11-12: **what a Search window drawn inside another asks of `App`** ([LocalEmbeddedSearch]): its
  * configuration, held by the caller, and what its drop buttons do.
  */
@@ -1618,6 +1746,8 @@ internal fun SearchPopupHead(title: String, onClose: () -> Unit) {
  */
 internal enum class SearchPart(private val label: String) {
     Header("the header"),
+    /** User rule 2026-11-12: the search bar with its down arrow ([SearchSplits.barRemoved]). */
+    Bar("the search bar"),
     Search("the search"),
     Actions("the actions"),
     Added("the added elements");
@@ -1625,6 +1755,7 @@ internal enum class SearchPart(private val label: String) {
     fun isRemoved(splits: SearchSplits): Boolean =
         when (this) {
             Header -> splits.headerRemoved
+            Bar -> splits.barRemoved
             Search -> splits.searchRemoved
             Actions -> splits.actionsRemoved
             Added -> splits.addedRemoved
@@ -1638,6 +1769,7 @@ internal enum class SearchPart(private val label: String) {
         val show = isRemoved(splits)
         return when (this) {
             Header -> splits.copy(headerRemoved = !show)
+            Bar -> splits.copy(barRemoved = !show)
             Search -> if (show) splits.copy(searchRemoved = false, searchHidden = false) else splits.copy(searchRemoved = true)
             Actions -> if (show) splits.copy(actionsRemoved = false, actionsHidden = false) else splits.copy(actionsRemoved = true)
             Added -> if (show) splits.copy(addedRemoved = false, addedHidden = false) else splits.copy(addedRemoved = true)
@@ -2085,15 +2217,6 @@ internal fun <T> CheckBoxDropDown(
 ) {
     var open by remember { mutableStateOf(false) }
     val range = rememberCheckRange<T>()
-    val listScroll = androidx.compose.foundation.rememberScrollState()
-    val latestOnNearEnd by rememberUpdatedState(onNearEnd)
-    LaunchedEffect(listScroll, open) {
-        if (!open) return@LaunchedEffect
-        // At the bottom (or with a list too short to scroll): ask for more. Each answer lengthens the list, which
-        // takes the bottom away again until the user scrolls on.
-        androidx.compose.runtime.snapshotFlow { listScroll.maxValue - listScroll.value }
-            .collect { left -> if (left <= NEAR_END_PX) latestOnNearEnd?.invoke() }
-    }
     val latestOnDeployed by rememberUpdatedState(onDeployed)
     LaunchedEffect(deploy) {
         if (!deploy) return@LaunchedEffect
@@ -2113,63 +2236,34 @@ internal fun <T> CheckBoxDropDown(
                 .menuToggleClickable(open) { open = it }
                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
         )
-        transientMenuDismissal(open) { open = false }
-        AppDropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            properties = PopupProperties(focusable = false),
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]); the options by their place in [options].
+        val latestOnChange by rememberUpdatedState(onChange)
+        val latestChecked by rememberUpdatedState(checked)
+        val latestOptions by rememberUpdatedState(options)
+        fun optionAt(id: String): T? = id.toIntOrNull()?.let { latestOptions.getOrNull(it) }
+        OptionSearchMenu(
+            open = open,
+            onDismiss = { open = false },
             modifier = Modifier.checkRangeShift(range),
-        ) {
-            // User rule 2026-10-11: *"Add a vertical scroll bar to this drop-down menu when it is long enough to be
-            // scrollable."* The list scrolls in a column of its own, no taller than [DROP_DOWN_LIST_MAX_HEIGHT], with
-            // the bar beside it ([DropDownScrollbar]) — the menu's own column never scrolls then, and shows no bar.
-            Box(Modifier.heightIn(max = DROP_DOWN_LIST_MAX_HEIGHT)) {
-            Column(Modifier.verticalScroll(listScroll).padding(end = if (listScroll.maxValue > 0) DROP_DOWN_SCROLLBAR_WIDTH else 0.dp)) {
-            SelectAllMenuItem(
-                allChecked = checked.containsAll(options),
-                onSelectAll = { onChange(options.toSet()) },
-                onDeselectAll = { onChange(emptySet()) },
-            )
-            val latestOnChange by rememberUpdatedState(onChange)
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(label(option)) },
-                    leadingIcon = { Checkbox(checked = option in checked, onCheckedChange = null) },
-                    onClick = { onChange(range.toggle(options, checked, option)) },
-                    // A right-click picks this option ALONE and closes the list — the one-choice shortcut of
-                    // a list that otherwise stays open to be ticked in turn.
-                    modifier =
-                        Modifier.pointerInput(option) {
-                            // On the RELEASE, the whole click consumed here (anomaly 2026-10-15: *"I right-clicked on
-                            // the element type drop-down menu in the Search window, and it opened a menu as if I
-                            // right-clicked on the element in the result list"*). On the desktop the list is a window
-                            // of its own: closed on the press, it vanished under a button still held, and the rest of
-                            // the click reached the result row under it — which Compose completed with the press it
-                            // had not seen, and the row opened its menu.
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val press = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                                    if (press.type != androidx.compose.ui.input.pointer.PointerEventType.Press ||
-                                        !press.buttons.isSecondaryPressed
-                                    ) {
-                                        continue
-                                    }
-                                    press.changes.forEach { it.consume() }
-                                    do {
-                                        val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                                        event.changes.forEach { it.consume() }
-                                    } while (event.changes.any { it.pressed })
-                                    latestOnChange(setOf(option))
-                                    open = false
-                                }
-                            }
-                        },
-                )
-            }
-            }
-            DropDownScrollbar(listScroll, Modifier.align(Alignment.CenterEnd))
-            }
-        }
+            options = SearchOptions(
+                options = options.mapIndexed { i, option -> i.toString() to label(option) },
+                checked = options.indices.filterTo(HashSet()) { options[it] in checked }.mapTo(HashSet()) { it.toString() },
+                // Ticking one leaves the list open, so several are ticked in turn; Shift ticks a range.
+                onClick = { id -> optionAt(id)?.let { latestOnChange(range.toggle(latestOptions, latestChecked, it)) } },
+                onSelectAll = { ids ->
+                    val listed = ids.mapNotNull(::optionAt)
+                    val current = latestChecked
+                    latestOnChange(if (current.containsAll(listed)) current - listed.toSet() else current + listed)
+                },
+                // A right-click picks this option ALONE and closes the list — the one-choice shortcut of a list that
+                // otherwise stays open to be ticked in turn.
+                onSolo = { id ->
+                    optionAt(id)?.let { latestOnChange(setOf(it)) }
+                    open = false
+                },
+                onNearEnd = onNearEnd,
+            ),
+        )
     }
 }
 
@@ -2255,19 +2349,20 @@ internal fun <T> ChoiceDropDown(
                 color = if (usable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        transientMenuDismissal(open) { open = false }
-        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(label(option)) },
-                    leadingIcon = leading?.let { draw -> { draw(option) } },
-                    onClick = {
-                        open = false
-                        onSelect(option)
-                    },
-                )
-            }
-        }
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]), closing on the one picked.
+        OptionSearchMenu(
+            open = open,
+            onDismiss = { open = false },
+            options = SearchOptions(
+                options = options.mapIndexed { i, option -> i.toString() to label(option) },
+                checked = null,
+                onClick = { id ->
+                    open = false
+                    id.toIntOrNull()?.let(options::getOrNull)?.let(onSelect)
+                },
+                leading = leading?.let { draw -> { id -> id.toIntOrNull()?.let(options::getOrNull)?.let { draw(it) } } },
+            ),
+        )
     }
 }
 
@@ -2336,6 +2431,31 @@ private fun Modifier.resultRowGestures(
         // Innermost, so it sees the press first and consumes a right-click before the tap detector does.
         .then(contextMenuModifier(enabled = true, key = key, onSelect = onSecondarySelect, onOpen = onOpenMenu))
 }
+
+/**
+ * Anomaly 2026-10-15 (*"I right-clicked on the element type drop-down menu in the Search window, and it opened a menu as
+ * if I right-clicked on the element in the result list"*): **a drop-down option's right-click acts on the RELEASE**, the
+ * whole click consumed here, before the row's own gestures see it. On the desktop the list is a window of its own: closed
+ * on the press, it vanished under a button still held, and the rest of the click reached the row under it.
+ */
+private fun Modifier.pickOnSecondaryRelease(key: Any, onRelease: () -> Unit): Modifier =
+    composed {
+        val latest by rememberUpdatedState(onRelease)
+        pointerInput(key) {
+            awaitPointerEventScope {
+                while (true) {
+                    val press = awaitPointerEvent(PointerEventPass.Initial)
+                    if (press.type != PointerEventType.Press || !press.buttons.isSecondaryPressed) continue
+                    press.changes.forEach { it.consume() }
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        event.changes.forEach { it.consume() }
+                    } while (event.changes.any { it.pressed })
+                    latest()
+                }
+            }
+        }
+    }
 
 /**
  * The colour of ALL the text of a Claude Code log entry's row, the results' and the added elements' (user rule
@@ -2962,6 +3082,14 @@ private fun ItemResultRow(
     onAddReplacing: () -> Unit,
     /** The timer's live countdown and controls, rendered in the same compact row as timer action runs. */
     timerRun: (@Composable () -> Unit)? = null,
+    /** A drop-down's option with a check box: whether it is ticked ([SearchOptions.checked]); null: no box. */
+    checkBox: Boolean? = null,
+    /** Drawn before the name: a drop-down's own mark of an option (a period drawing's swatch). */
+    leading: (@Composable () -> Unit)? = null,
+    /** False for a drop-down's option: its right-click is its own ([SearchOptions.onSolo]), no menu. */
+    hasMenu: Boolean = true,
+    /** A drop-down's option: what its right-click does, on the RELEASE ([pickOnSecondaryRelease]). */
+    onSecondaryRelease: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val workplaceRuns = LocalWorkplaceRuns.current
@@ -2971,6 +3099,7 @@ private fun ItemResultRow(
     val currentOnDoubleClick by rememberUpdatedState(onDoubleClick)
     Box(
         modifier = resultRowModifier(selected, inSelection)
+            .then(onSecondaryRelease?.let { Modifier.pickOnSecondaryRelease(item.id, it) } ?: Modifier)
             .resultRowGestures(
                 key = item.kind.name + "/" + item.id,
                 onSelect = { currentOnSelect() },
@@ -2978,7 +3107,7 @@ private fun ItemResultRow(
                 onOpen = { currentOnDoubleClick() },
                 // Every row's right-click opens its menu — a "creation" row's too (anomaly 2026-10-03: it made its
                 // element straight away, so the row could not be ADDED, which is how a default configuration is edited).
-                onOpenMenu = { menuOpen = true },
+                onOpenMenu = { if (hasMenu) menuOpen = true },
             ),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -2987,9 +3116,13 @@ private fun ItemResultRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            KindSection(item.kind, kindWidth)
-            // User rule 2026-11-02: every element has its arrow. A "creation" row is a command, and no element.
-            if (item.kind != SearchDomain.Kind.Creation) SectionArrow(!expanded, onToggleExpand)
+            // A drop-down lists options alone: no column saying so on each row.
+            if (item.kind != SearchDomain.Kind.Option) KindSection(item.kind, kindWidth)
+            // User rule 2026-11-02: every element has its arrow. A "creation" row is a command, and an option a choice:
+            // neither is an element.
+            if (item.kind != SearchDomain.Kind.Creation && item.kind != SearchDomain.Kind.Option) SectionArrow(!expanded, onToggleExpand)
+            if (checkBox != null) Checkbox(checked = checkBox, onCheckedChange = null)
+            leading?.invoke()
             if (timerRun != null) {
                 timerRun()
             } else {

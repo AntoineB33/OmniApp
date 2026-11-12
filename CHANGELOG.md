@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Drop-downs are Search windows; "Select all" an element; the search bar can be hidden — 2026-11-12
+
+User rules: *"All the drop-down menus of the app must be Search windows as well. Add the element 'Select all' that when
+clicked selects all the elements of the same list that have a check box."* and, in the Search window's background menu,
+*"the option to hide the search bar with the down arrow"*. New kind `Kind.Option` (a drop-down's options, none in the
+account) with its "Sort by"; `SearchDomain.optionResults` lists them, first "Select all" / "Deselect all"
+(`SELECT_ALL_OPTION`, `selectAllApplied`: over the options listed) where they have check boxes. `OptionSearchMenu` draws
+the list as the real `SearchWindow` (`options = SearchOptions(...)`, search section alone, focusable pop-up, fixed size):
+a click ticks or picks (`ItemResultRow`'s `checkBox`/`leading`/`hasMenu`), a right-click picks one alone on the release
+(`pickOnSecondaryRelease`, anomaly 2026-10-15 kept). `CheckBoxDropDown`, `ChoiceDropDown` and `KindsDropDown` open it.
+`SearchPart.Bar` / `SearchSplits.barRemoved` (eighth hidden flag; absent = shown) hides the bar and its ▾, in the Search
+window and the configurations tree's pop-ups. No migration.
+
 ### "Parents": its two fields are its children directly — 2026-11-12
 
 User rule: no titled row with an arrow around "list of parents" nor "add a parent"; each field's grey text names it

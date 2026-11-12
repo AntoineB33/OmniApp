@@ -164,7 +164,7 @@ internal fun ConfigurationTreeArrow(
         ) {
         AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
         SearchPopupParts(SearchDomain.windowTitle(own), 320.dp, parts, { parts = it }, onClose = { close() }) {
-            TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
+            if (!parts.barRemoved) TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
             ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth) { which ->
             close()
             onPickOnCalendar(which)
@@ -416,7 +416,7 @@ private fun TreeColumn(
                                         SearchDomain.windowTitle(own), TREE_CATEGORY_COLUMN_WIDTH, parts, { parts = it },
                                         onClose = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) },
                                     ) {
-                                        TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, level)
+                                        if (!parts.barRemoved) TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, level)
                                         TreeColumn(
                                             children, depth + 1, path, onPathChange, leaf,
                                             state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar, level,

@@ -60,8 +60,10 @@ class SearchPartsMenuTest {
 
     @Test
     fun the_flags_round_trip_and_an_older_payload_removes_nothing() {
-        val splits = SearchSplits(0.3f, 0.6f, searchHidden = true, headerRemoved = true, addedRemoved = true)
+        val splits = SearchSplits(0.3f, 0.6f, searchHidden = true, headerRemoved = true, addedRemoved = true, barRemoved = true)
         assertEquals(splits, SearchSplits.of(0.3f, 0.6f, splits.hiddenFlags))
+        // What a build before 2026-11-12 kept: seven flags, the bar shown.
+        assertFalse(SearchSplits.of(0.5f, 0.5f, splits.hiddenFlags.take(7)).barRemoved)
         // What a build before 2026-11-11 kept: the three retracted flags alone.
         val older = SearchSplits.of(0.5f, 0.5f, listOf(false, true, false))
         assertTrue(older.actionsHidden)
@@ -78,6 +80,7 @@ class SearchPartsMenuTest {
         val cases =
             listOf(
                 SearchSplits(headerRemoved = true),
+                SearchSplits(barRemoved = true),
                 SearchSplits(searchRemoved = true),
                 SearchSplits(actionsRemoved = true),
                 SearchSplits(addedRemoved = true),

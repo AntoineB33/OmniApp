@@ -15,6 +15,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerButtons
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -61,8 +64,11 @@ class DropDownRightClickTest {
             var time = 0L
             fun frames() = repeat(20) { time += 16_000_000L; scene.render(time) }
             frames()
-            // "Select all", then the options, 48 px each under the field: the middle of "Kind number 1".
-            val at = Offset(60f, 30f + 8f + 48f * 2 + 24f)
+            // The list is a Search window (user rule 2026-11-12): its bar, "Select all", then the options — found by text.
+            val node =
+                scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                    .first { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == "Kind number 1" } == true }
+            val at = node.boundsInWindow.center
             val secondary = PointerButtons(isSecondaryPressed = true)
             scene.sendPointerEvent(PointerEventType.Move, at)
             scene.sendPointerEvent(PointerEventType.Press, at, buttons = secondary, button = PointerButton.Secondary)

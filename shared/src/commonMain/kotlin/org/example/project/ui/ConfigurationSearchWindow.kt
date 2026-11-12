@@ -628,6 +628,7 @@ internal fun SettingEditor(
         SearchDomain.Setting.CreationSort,
         SearchDomain.Setting.PromptSort, SearchDomain.Setting.AnswerSort, SearchDomain.Setting.ReasoningSort,
         SearchDomain.Setting.SearchConfigurationSort,
+        SearchDomain.Setting.OptionSort,
         -> SortMethodPicker(setting.section, config.sorts) { onChange(config.copy(sorts = it)) }
     }
 }

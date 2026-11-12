@@ -174,6 +174,13 @@ object SearchDomain {
         SearchConfiguration("search configuration"),
 
         /**
+         * User rule 2026-11-12: *"All the drop-down menus of the app must be Search windows as well."* **An option of a
+         * drop-down** — what the field it opens from lists ([optionResults]); no element of the account, so a search of
+         * the kind elsewhere lists none. With check boxes, the list starts with "Select all" ([SELECT_ALL_OPTION]).
+         */
+        Option("option"),
+
+        /**
          * One CREATION row per kind of element the user can make ([CREATABLE]): opening it makes a new one, as that
          * kind's own "+ New …" does, and opens its window (user spec 2026-09-26). History units and task relations
          * are not made by the user, so they have none. A new keyboard shortcut is a chord for a window (user rule
@@ -207,6 +214,30 @@ object SearchDomain {
 
     /** The kinds of the Claude Code logs, in the drop-down's order. */
     val CLAUDE_KINDS: List<Kind> = listOf(Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning)
+
+    /** The id of the "Select all" row of a drop-down whose options have check boxes ([optionResults]). */
+    const val SELECT_ALL_OPTION: String = "select-all"
+
+    /**
+     * User rule 2026-11-12: **the rows of a drop-down's Search window** — its [options] (id and name, in the drop-down's
+     * order) that answer [query], and, where they have check boxes ([checked] not null), first, the element **"Select
+     * all"**: *"when clicked selects all the elements of the same list that have a check box"* — those listed. Once they
+     * all are, it reads "Deselect all" ([selectAllApplied]).
+     */
+    fun optionResults(options: List<Pair<String, String>>, query: String, checked: Set<String>?): List<ItemResult> {
+        val listed = options.filter { (_, name) -> query.isBlank() || matchRank(name, query) != null }
+        val rows = listed.map { (id, name) -> ItemResult(Kind.Option, id, name, "") }
+        if (checked == null || listed.isEmpty()) return rows
+        val all = listed.all { it.first in checked }
+        return listOf(ItemResult(Kind.Option, SELECT_ALL_OPTION, if (all) "Deselect all" else "Select all", "")) + rows
+    }
+
+    /** What "Select all" leaves checked: every [listed] option, or none of them once they all were. */
+    fun selectAllApplied(checked: Set<String>, listed: List<String>): Set<String> =
+        if (checked.containsAll(listed)) checked - listed.toSet() else checked + listed
+
+    /** The drop-down's Search window as it opens: its options, its bar empty, the order they were given in. */
+    val OPTION_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Option)) }
 
     /** The kinds of the settings page: the app's settings, whose actions are their controls ([AppSettingEntry]). */
     val SETTINGS_KINDS: List<Kind> = listOf(Kind.AppSetting, Kind.WorkplaceSetup)
@@ -1658,6 +1689,8 @@ object SearchDomain {
         AnswerSort(Kind.ClaudeAnswer, "Sort by", sorts = true),
         ReasoningSort(Kind.ClaudeReasoning, "Sort by", sorts = true),
         SearchConfigurationSort(Kind.SearchConfiguration, "Sort by", sorts = true),
+        /** User rule 2026-11-12: a drop-down's options, sorted as any kind's rows are. */
+        OptionSort(Kind.Option, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
         TaskSchedulable(Kind.Task, "Schedulable"),
         TaskCategory(Kind.Task, "Category"),
@@ -2651,6 +2684,8 @@ object SearchDomain {
                 }
                 Kind.Calendar -> listOf(calendarResult())
                 // Every configuration of a Search window, named by its label, the type it is about beside it.
+                // Only what a drop-down gives: the account holds none ([optionResults]).
+                Kind.Option -> emptyList()
                 Kind.SearchConfiguration -> Setting.entries.map { setting ->
                     ItemResult(kind, setting.name, setting.label, setting.section?.label ?: "general")
                 }
@@ -2999,7 +3034,7 @@ object SearchDomain {
                         ))
             }
             is ItemResult -> when (result.kind) {
-                Kind.Task, Kind.WorkplaceSetup, Kind.SearchConfiguration -> true
+                Kind.Task, Kind.WorkplaceSetup, Kind.SearchConfiguration, Kind.Option -> true
                 Kind.Category ->
                     tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
                 Kind.RestrictivePeriod -> when (filters.periodOrigin) {
