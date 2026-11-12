@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Any element under a task; the root task found by a "no task parent" search — 2026-11-12
+
+User rules: *"The root task must be found when the search configurations are only tasks and must not have parents of type
+[task]."* and *"The task element can only have other task elements as children, but in the action section, any element can
+be linked to any element."* `ElementTree.canLink` keeps a task under a task as the tree's (the tree holds tasks alone) and
+lets any other element under a task as an `ElementLink` ("Add a parent"); a task under a task-cell category stays refused
+(an occurrence carries it, not the task). New global filter "Has no parent of the types" (`Filters.noParentOfKinds`,
+stored config field `noParentOfKinds`, absent = none): rows with a parent of a checked kind are dropped, read off
+`ElementTree.parentIndex` (one tree walk); with Task checked the task list also offers the root task. No migration.
+
 ### The actions section lays out every row: its scrollbar is exact from the start — 2026-11-12
 
 User rule: the section knows all it lists, so its scrollbar must be right without scrolling. `AddedActionList` is a plain

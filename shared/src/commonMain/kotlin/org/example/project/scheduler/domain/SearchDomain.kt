@@ -840,6 +840,7 @@ object SearchDomain {
                     blocksOf = filters.blocksOf.sorted(),
                     excludedElements = filters.excludedElements.sorted(),
                     includedElements = filters.includedElements.sorted(),
+                    noParentOfKinds = Kind.entries.filter { it in filters.noParentOfKinds }.map { it.name },
                     placeStartMillis = placement.startMillis,
                     placeEndByDelta = placement.endByDelta,
                     placeStatedLengthMillis = placement.lengthMillis,
@@ -929,6 +930,7 @@ object SearchDomain {
                         blocksOf = stored.blocksOf.toSet(),
                         excludedElements = stored.excludedElements.toSet(),
                         includedElements = stored.includedElements.toSet(),
+                        noParentOfKinds = kindsNamed(stored.noParentOfKinds),
                         claudeProject = stored.claudeProject,
                         claudeFrom = stored.claudeFromMillis,
                         claudeUntil = stored.claudeUntilMillis,
@@ -1266,6 +1268,13 @@ object SearchDomain {
          */
         val includedElements: Set<String> = emptySet(),
         /**
+         * User rule 2026-11-12: **only the elements with no parent of these kinds** ([ElementTree.parentsOf]); empty = any.
+         * GLOBAL, about every row. With [Kind.Task] in it, the task list also offers the root task ([taskResults]): the one
+         * task no task stands above, so *"the root task must be found when the search configurations are only tasks and
+         * must not have parents of type [task]"*.
+         */
+        val noParentOfKinds: Set<Kind> = emptySet(),
+        /**
          * The Claude Code logs' filters (user rule 2026-10-18), one for the three kinds: only the entries of this project
          * (null = any), and only those written in `[claudeFrom, claudeUntil]` (a null bound asks nothing on its side).
          */
@@ -1366,6 +1375,7 @@ object SearchDomain {
                 Setting.BlockElements -> blocksOf.isNotEmpty()
                 Setting.ExcludedElements -> excludedElements.isNotEmpty()
                 Setting.IncludedElements -> includedElements.isNotEmpty()
+                Setting.NoParentOfKinds -> noParentOfKinds.isNotEmpty()
                 Setting.NotificationSourceSetting -> notificationSources.isNotEmpty()
                 Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject -> claudeProject != null
                 Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom -> claudeFrom != null
@@ -1597,6 +1607,8 @@ object SearchDomain {
         /** The elements kept out of the list ([Filters.excludedElements]) and those always in it ([Filters.includedElements]). */
         ExcludedElements(null, "Excluded elements"),
         IncludedElements(null, "Included elements"),
+        /** User rule 2026-11-12: only the elements with no parent of the checked kinds ([Filters.noParentOfKinds]). */
+        NoParentOfKinds(null, "Has no parent of the types"),
         /** User rule 2026-11-12: the results grouped by the added elements they involve ([Config.actionsGrouped]). */
         GroupByAddedElements(null, "Group by the added elements involved"),
         /** User rule 2026-11-12: the top rows of the results open by default, not their children ([Config.actionsExpanded]). */
@@ -2018,6 +2030,8 @@ object SearchDomain {
         /** New 2026-11-02: absent = no element kept out, none always in. */
         val excludedElements: List<String> = emptyList(),
         val includedElements: List<String> = emptyList(),
+        /** New 2026-11-12: absent = no parent filter; a kind this build does not know is dropped. */
+        val noParentOfKinds: List<String> = emptyList(),
         val placeStartMillis: Long? = null,
         val placeEndByDelta: Boolean = true,
         val placeEndMillis: Long? = null,
@@ -2400,14 +2414,16 @@ object SearchDomain {
     /**
      * Every task of the account the search can name: the live tree's tasks (a tombstone and a detached
      * parent among them — alive on their records, not in any tree) and the tasks only a stored tree holds.
-     * Never the root task, never an untitled task. [allPaths] is [allPathsInAnyTree], passed in because it is
-     * a walk of every tree and the window computes it once per change of the trees, not once per keystroke
+     * Never an untitled task, and the root task only [withRoot] (the search for what has no task parent,
+     * [Filters.noParentOfKinds]): it is in the tree, with no path above it. [allPaths] is [allPathsInAnyTree], passed in
+     * because it is a walk of every tree and the window computes it once per change of the trees, not once per keystroke
      * in the search bar.
      */
     fun taskResults(
         state: SchedulerState,
         query: String,
         allPaths: Map<TaskId, List<List<String>>> = allPathsInAnyTree(state),
+        withRoot: Boolean = false,
     ): List<TaskResult> {
         val inTree = shortestPathsInAnyTree(state)
         val lastPaths = lastPaths(state)
@@ -2420,9 +2436,10 @@ object SearchDomain {
         candidates.putAll(state.tasks)
         return candidates.values
             .asSequence()
-            .filter { !SchedulerDomain.isRootTask(it.id) && it.title.isNotBlank() }
+            .filter { (withRoot || !SchedulerDomain.isRootTask(it.id)) && it.title.isNotBlank() }
             .mapNotNull { task -> matchRank(task.title, query)?.let { rank -> rank to task } }
             .map { (rank, task) ->
+                if (SchedulerDomain.isRootTask(task.id)) return@map rank to TaskResult(task.id, task.title, emptyList(), inTaskTree = true)
                 val held = task.id in inTree
                 val paths =
                     if (held) {
@@ -2731,7 +2748,7 @@ object SearchDomain {
                 .filter { it in kinds }
                 .flatMap { kind ->
                     if (kind == Kind.Task) {
-                        taskResults(state, kindQuery, allPaths())
+                        taskResults(state, kindQuery, allPaths(), withRoot = Kind.Task in filters.noParentOfKinds)
                     } else if (kind in CLAUDE_KINDS) {
                         claudeResults(kind, kindQuery, claudeLogs, filters, timeZone)
                     } else {
@@ -2751,6 +2768,12 @@ object SearchDomain {
                     }
                 }
                 .filter { passes(state, it, filters, calendar) }
+                .let { rows ->
+                    // User rule 2026-11-12: no parent of the checked kinds — every element's parents read once.
+                    if (filters.noParentOfKinds.isEmpty()) return@let rows
+                    val parents = ElementTree.parentIndex(state)
+                    rows.filter { row -> parents[keyOf(row)].orEmpty().none { ElementTree.kindOf(it) in filters.noParentOfKinds } }
+                }
                 .let { rows ->
                     // The blocks of the given elements: each block's element read once, not once per row.
                     if (filters.blocksOf.isEmpty() || rows.none { it.kind == Kind.CalendarBlock }) return@let rows

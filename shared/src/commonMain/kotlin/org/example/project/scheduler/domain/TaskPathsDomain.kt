@@ -73,6 +73,22 @@ object TaskPathsDomain {
     }
 
     /**
+     * Every task's parents in the live tree, in one walk: [occurrences]' `parentTaskId` of every task at once (the root
+     * task is no parent, a top-level task has none). For a question about many tasks ([ElementTree.parentIndex]).
+     */
+    fun liveParents(state: SchedulerState): Map<TaskId, Set<TaskId>> {
+        val walk = LiveWalk(state)
+        val out = HashMap<TaskId, MutableSet<TaskId>>()
+        for (cellId in walk.cellPath.keys) {
+            val cell = state.cells[cellId] ?: continue
+            val taskId = cell.taskId ?: continue
+            val parent = SchedulerDomain.parentTaskIdOfList(state, cell.parentListId)?.takeUnless { SchedulerDomain.isRootTask(it) } ?: continue
+            out.getOrPut(taskId, ::LinkedHashSet).add(parent)
+        }
+        return out
+    }
+
+    /**
      * Whether [taskId] may be added under [parentTaskId] (null = the top level): the tree's own assignment rule,
      * asked of the bottom placeholder of that list. A parent that has no list yet is given one when the path is
      * added, and is asked again then.

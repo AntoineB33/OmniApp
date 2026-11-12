@@ -81,15 +81,66 @@ class ElementTreeTest {
         assertEquals(listOf(b, c), ElementTree.childrenOf(s.copy(elementLinks = s.elementLinks.reversed()), a))
     }
 
+    /**
+     * User rule 2026-11-12: *"The task element can only have other task elements as children, but in the action section,
+     * any element can be linked to any element."* The tree holds tasks alone; any other element under a task is a link.
+     */
     @Test
-    fun a_task_has_task_children_alone() {
+    fun any_element_is_linked_under_a_task_and_the_tree_holds_tasks_alone() {
         val s = withTasks("One", "Two")
         val one = taskKey(s, "One")
         val two = taskKey(s, "Two")
-        assertFalse(ElementTree.canLink(s, one, a), "a task has task children alone")
+        assertTrue(ElementTree.canLink(s, one, a), "the actions section links any element under a task")
         assertTrue(ElementTree.canLink(s, one, two))
-        assertTrue(ElementTree.canLink(s, a, one), "the rule is about the children of a task, not its parents")
-        assertEquals(emptyList(), link(s, one, a).elementLinks)
+        assertTrue(ElementTree.canLink(s, a, one))
+        val linked = link(s, one, a)
+        assertEquals(listOf(ElementLink(ElementTree.linkId(one, a), one, a, 1.0)), linked.elementLinks)
+        assertTrue(a in ElementTree.childrenOf(linked, one))
+        assertEquals(listOf(one), ElementTree.parentsOf(linked, a))
+        assertEquals(s.cells.size, linked.cells.size, "the tree holds no chrono")
+        assertFalse(ElementTree.canLink(linked, a, one), "no loop through a link either")
+        assertTrue(ElementTree.canUnlink(linked, one, a))
+        assertEquals(emptyList(), run(linked, ElementTree.parentIntents(linked, listOf(a), one, on = false)).elementLinks)
+    }
+
+    @Test
+    fun the_parent_index_is_parents_of_every_element() {
+        val category = Category(CategoryId("health"), "Health")
+        var s = withTasks("One", "Two").copy(categories = listOf(category))
+        val one = taskKey(s, "One")
+        val two = taskKey(s, "Two")
+        s = link(link(link(link(s, one, two), one, a), ElementTree.categoryKey(category.id), b), ElementTree.categoryKey(category.id), two)
+        val index = ElementTree.parentIndex(s)
+        val keys = s.tasks.keys.map(SearchDomain::taskKey) + listOf(a, b, c)
+        for (key in keys) assertEquals(ElementTree.parentsOf(s, key).toSet(), index[key].orEmpty(), key)
+    }
+
+    /** User rule 2026-11-12: *"The root task must be found when the search configurations are only tasks and must not have parents of type [task]."* */
+    @Test
+    fun the_root_task_is_found_by_a_task_search_with_no_task_parent() {
+        val tasks = withTasks("One", "Two")
+        val s = link(tasks, taskKey(tasks, "One"), taskKey(tasks, "Two"))
+        val root = SearchDomain.taskKey(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK)
+        fun keys(filters: SearchDomain.Filters) = SearchDomain.results(s, setOf(Kind.Task), "", filters = filters).map(SearchDomain::keyOf)
+        assertFalse(root in keys(SearchDomain.Filters()), "the root task is no result of an ordinary search")
+        val tops = keys(SearchDomain.Filters(noParentOfKinds = setOf(Kind.Task)))
+        assertTrue(root in tops)
+        assertTrue(taskKey(s, "One") in tops)
+        assertFalse(taskKey(s, "Two") in tops, "Two stands under One")
+        // The filter about another kind keeps every task, and offers no root.
+        assertFalse(root in keys(SearchDomain.Filters(noParentOfKinds = setOf(Kind.Chrono))))
+        val linked = link(s, a, taskKey(s, "One"))
+        assertFalse(taskKey(s, "One") in SearchDomain.results(linked, setOf(Kind.Task), "", filters = SearchDomain.Filters(noParentOfKinds = setOf(Kind.Chrono))).map(SearchDomain::keyOf))
+    }
+
+    @Test
+    fun the_parent_filter_survives_the_store_and_an_older_configuration_has_none() {
+        val config = SearchDomain.Config(filters = SearchDomain.Filters(noParentOfKinds = setOf(Kind.Task)))
+        val back = SearchDomain.Config.decode(config.encode())!!
+        assertEquals(setOf(Kind.Task), back.filters.noParentOfKinds)
+        assertTrue(back.filters.isOn(SearchDomain.Setting.NoParentOfKinds))
+        assertEquals(emptySet(), SearchDomain.Config.decode("{}")!!.filters.noParentOfKinds)
+        assertEquals(emptySet(), SearchDomain.Config.decode("""{"noParentOfKinds":["Gone","Task"]}""")!!.filters.noParentOfKinds - Kind.Task)
     }
 
     @Test
@@ -139,10 +190,11 @@ class ElementTreeTest {
     }
 
     @Test
-    fun a_task_cell_category_has_no_child() {
+    fun a_task_cell_category_is_carried_by_no_task_but_links_any_other_element() {
         val category = Category(CategoryId("place"), "Place", kind = CategoryKind.TaskCell)
-        val s = chronos.copy(categories = listOf(category))
-        assertFalse(ElementTree.canLink(s, ElementTree.categoryKey(category.id), a))
+        val s = withTasks("One").copy(categories = listOf(category))
+        assertFalse(ElementTree.canLink(s, ElementTree.categoryKey(category.id), taskKey(s, "One")), "one occurrence carries it, not the task")
+        assertTrue(ElementTree.canLink(s, ElementTree.categoryKey(category.id), a), "any element can be linked to any element")
     }
 
     @Test

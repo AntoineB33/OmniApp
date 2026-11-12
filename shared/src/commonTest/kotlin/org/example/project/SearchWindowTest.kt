@@ -810,6 +810,7 @@ class SearchWindowTest {
                 SearchDomain.Setting.CalendarAt,
                 SearchDomain.Setting.ExcludedElements,
                 SearchDomain.Setting.IncludedElements,
+                SearchDomain.Setting.NoParentOfKinds,
                 // User rule 2026-11-12: how the results are laid out (today the actions section's).
                 SearchDomain.Setting.GroupByAddedElements,
                 SearchDomain.Setting.ExpandResults,

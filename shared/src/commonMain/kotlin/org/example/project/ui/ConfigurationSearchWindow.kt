@@ -496,6 +496,15 @@ internal fun SettingEditor(
             ElementsDropDown(state, f.excludedElements, windows) { filters(f.copy(excludedElements = it)) }
         SearchDomain.Setting.IncludedElements ->
             ElementsDropDown(state, f.includedElements, windows) { filters(f.copy(includedElements = it)) }
+        // User rule 2026-11-12: the kinds no parent of a listed element may be — the app's one check-box drop-down.
+        SearchDomain.Setting.NoParentOfKinds ->
+            CheckBoxDropDown(
+                options = SearchDomain.Kind.entries.filter(org.example.project.scheduler.domain.ElementTree::isElement),
+                checked = f.noParentOfKinds,
+                face = if (f.noParentOfKinds.isEmpty()) "any parent" else SearchDomain.Kind.entries.filter { it in f.noParentOfKinds }.joinToString(", ") { it.label },
+                label = { it.label },
+                onChange = { filters(f.copy(noParentOfKinds = it)) },
+            )
         SearchDomain.Setting.CategoryHasRules ->
             Choices(SearchDomain.Tri.entries, f.categoryHasRules, { it.label }) { filters(f.copy(categoryHasRules = it)) }
         SearchDomain.Setting.PeriodOriginSetting ->

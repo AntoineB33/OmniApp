@@ -88,6 +88,19 @@ object ElementTree {
         return (parents + categories + links).distinct()
     }
 
+    /**
+     * [parentsOf] of every element at once, as sets: what a filter over a whole list asks ([SearchDomain.Filters.noParentOfKinds]),
+     * the tree walked once instead of once per row. An element with no parent has no entry.
+     */
+    fun parentIndex(state: SchedulerState): Map<String, Set<String>> {
+        val out = HashMap<String, MutableSet<String>>()
+        fun add(child: String, parent: String) = out.getOrPut(child, ::LinkedHashSet).add(parent)
+        for ((task, parents) in TaskPathsDomain.liveParents(state)) parents.forEach { add(SearchDomain.taskKey(task), SearchDomain.taskKey(it)) }
+        for (task in state.tasks.values) task.categoryIds.forEach { add(SearchDomain.taskKey(task.id), categoryKey(it)) }
+        for (link in state.elementLinks) add(link.child, link.parent)
+        return out
+    }
+
     /** Everything under [key] at any depth, nearest first, each once; [key] itself only where a merge made a loop. */
     fun descendantsOf(state: SchedulerState, key: String): List<String> {
         val seen = LinkedHashSet<String>()
@@ -100,21 +113,25 @@ object ElementTree {
     }
 
     /**
-     * **What may be a child of what**, the one rule. An element is no child of itself, nor of what stands under it. A task
-     * has task children alone, through the tree's own assignment rule. A task cell category is carried by one occurrence of
-     * a task, so nothing is its child. [below] is what stands under [child], for a caller asking about several parents.
+     * **What may be a child of what**, the one rule. An element is no child of itself, nor of what stands under it.
+     *
+     * User rule 2026-11-12: *"The task element can only have other task elements as children, but in the action section, any
+     * element can be linked to any element."* So a task under a task is the tree's, through its own assignment rule — the
+     * tree holds tasks alone — and any other element under a task is a link, which the actions section's "Add a parent"
+     * makes ([childrenOf] lists both). A task under a category is carried by the task ([parentIntents]), and a task cell
+     * category is carried by one occurrence of a task, never by the task: no task is its child. [below] is what stands
+     * under [child], for a caller asking about several parents.
      */
     fun canLink(state: SchedulerState, parent: String, child: String, below: Collection<String> = descendantsOf(state, child)): Boolean {
         val parentKind = kindOf(parent) ?: return false
         val childKind = kindOf(child) ?: return false
         if (!isElement(parentKind) || !isElement(childKind) || parent == child || parent in below) return false
-        if (parentKind == Kind.Task) {
-            val taskId = taskIdOf(child)?.takeIf { childKind == Kind.Task } ?: return false
-            return TaskPathsDomain.canAddUnder(state, taskId, TaskId(idOf(parent)))
+        if (parentKind == Kind.Task && childKind == Kind.Task) {
+            return TaskPathsDomain.canAddUnder(state, TaskId(idOf(child)), TaskId(idOf(parent)))
         }
         if (parentKind == Kind.Category) {
             val category = state.categories.firstOrNull { it.id.value == idOf(parent) } ?: return false
-            if (category.kind != CategoryKind.TaskId) return false
+            if (childKind == Kind.Task && category.kind != CategoryKind.TaskId) return false
             if (child in childrenOf(state, parent)) return false
         }
         return state.elementLinks.none { it.parent == parent && it.child == child }
