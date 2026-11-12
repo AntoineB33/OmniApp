@@ -2368,7 +2368,13 @@ private fun ElementParentsEditor(
                                 eligible = eligible,
                                 canPick = true,
                                 onPick = { taskId ->
-                                    run(SearchDomain.AddedCommand.ElementParent(SearchDomain.taskKey(taskId), on = true))
+                                    val parent = SearchDomain.taskKey(taskId)
+                                    // Anomaly 2026-11-13 (a pick that added no parent): what each pick asked and made.
+                                    val intents = tree.parentIntents(state, children, parent, on = true)
+                                    org.example.project.scheduler.platform.Diagnostics.log(
+                                        "[parents] pick $parent for $children: ${intents.map { it::class.simpleName }}",
+                                    )
+                                    run(SearchDomain.AddedCommand.ElementParent(parent, on = true))
                                     addConfig = addConfig.copy(query = "")
                                     close()
                                 },

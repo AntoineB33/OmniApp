@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Parents" fields: the Search bar's look; picks logged; the list follows the links — 2026-11-13
+
+Anomaly: *"in List of parents, when I hover over the down arrow, the search bar looks different than the search bar of
+other search windows"* — `PopupSearchField` had its ▾ inside the field (hovering it lit the field) and a placeholder; it is
+now laid out as the Search window's bar: the field named by its label, its cross inside, the configurations arrow beside
+it. Anomaly: *"I clicked New task 2 in add a parent, then clicked list of parents and the list was empty"* — the try
+account's data showed no parent added; not reproduced headlessly (`ParentsActionTest`: a task picked as a chrono's or a
+task's parent is listed, the list opened before or after). Each field's opening and closing and each pick (with the
+intents it made) now go to `diagnostics.log` (`[field]`, `[parents]`). Found on the way: a Search window's results did not
+follow `elementLinks`, so a parent that is a link stayed listed after its drop; now keyed on them. No migration.
+
 ### The actions section is a Search window — 2026-11-12
 
 User rule: *"The action section is a Search window (hiding its header and its own action and added elements list

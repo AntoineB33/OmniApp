@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.platform.Diagnostics
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.state.CellEditMode
@@ -350,46 +351,56 @@ internal fun PopupSearchField(
     var bounds by remember { mutableStateOf<Rect?>(null) }
     val focusManager = LocalFocusManager.current
     val close = {
+        if (open) Diagnostics.log("[field] close “$placeholder”")
         open = false
         focusManager.clearFocus()
     }
     val region = rememberOutsidePressEditor(active = open) { close() }
-    OutlinedTextField(
-        value = config.query,
-        onValueChange = {
-            onConfigChange(config.copy(query = it))
-            open = true
-        },
-        singleLine = true,
-        placeholder = { Text(placeholder) },
-        trailingIcon = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SearchBarCross(config.query) { onConfigChange(config.copy(query = "")) }
-                ConfigurationTreeArrow(
-                    state = state,
-                    config = config,
-                    openedConfig = openedConfig,
-                    onConfigChange = onConfigChange,
-                    nowMillis = LocalAppNowMillis.current,
-                    windows = emptyList(),
-                    claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
-                )
-            }
-        },
-        modifier = modifier
-            .outsidePressPart(region)
-            .onGloballyPositioned { bounds = it.boundsInWindow() }
-            // A click on it gives it the caret: that is what opens the window.
-            .onFocusChanged { if (it.isFocused) open = true }
-            .onPreviewKeyEvent { event ->
-                if (open && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                    close()
-                    true
-                } else {
-                    false
-                }
+    // Anomaly 2026-11-13 (*"when I hover over the down arrow, the search bar looks different than the search bar of other
+    // search windows"*): the very layout of the Search window's bar — the field named by its label (grey in the empty
+    // field), its cross inside it, and the configurations arrow BESIDE it, outside the field.
+    Row(
+        modifier = modifier.outsidePressPart(region).onGloballyPositioned { bounds = it.boundsInWindow() },
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = config.query,
+            onValueChange = {
+                onConfigChange(config.copy(query = it))
+                open = true
             },
-    )
+            singleLine = true,
+            label = { Text(placeholder) },
+            trailingIcon = { SearchBarCross(config.query) { onConfigChange(config.copy(query = "")) } },
+            modifier = Modifier
+                .weight(1f)
+                // A click on it gives it the caret: that is what opens the window.
+                .onFocusChanged {
+                    if (it.isFocused && !open) {
+                        open = true
+                        Diagnostics.log("[field] open “$placeholder”")
+                    }
+                }
+                .onPreviewKeyEvent { event ->
+                    if (open && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                        close()
+                        true
+                    } else {
+                        false
+                    }
+                },
+        )
+        ConfigurationTreeArrow(
+            state = state,
+            config = config,
+            openedConfig = openedConfig,
+            onConfigChange = onConfigChange,
+            nowMillis = LocalAppNowMillis.current,
+            windows = emptyList(),
+            claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
+        )
+    }
     if (!open || search == null || host == null) return
     val request =
         FieldSearchPopupRequest(
