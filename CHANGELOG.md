@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A list's scrollbar reads the sum of its rows' heights — 2026-11-12
+
+User rule: the content's height is the sum of the rows' heights, changing when a row expands, collapses or is resized,
+or the list changes — never as it scrolls. `ListScrollbar` remembers each row's height by key as it is shown
+(`RowHeights`) and counts a row never shown at the average of the known ones; it was the visible rows' average times
+the count, so the actions section's thumb grew and shrank as the calendar's row came and went. `RowHeightsTest`.
+
 ### The calendar element, after a third look — 2026-11-12
 
 The gap between the separator line and the actions section scrolls it (the padding moved inside the area that takes the
