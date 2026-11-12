@@ -11,10 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
-### "Parents": the field "list of parents" is its child directly — 2026-11-12
+### "Parents": its two fields are its children directly — 2026-11-12
 
-User rule: no titled row with an arrow around the list's field; its grey text names it (`ParentsChild.titled`). "Add a
-parent" keeps its row. No migration.
+User rule: no titled row with an arrow around "list of parents" nor "add a parent"; each field's grey text names it
+(`ParentsChild.placeholder`; the child rows' ids of the day before are gone, an id kept in `toggledActionRows` is
+pruned on the next toggle). The "Add <source>" button, dropped by mistake when "add a parent" became a field, is back
+beside it (`ElementSourceButton`). No migration.
 
 ### "Parents": its two rows are fields opening a headless Search window — 2026-11-12
 

@@ -3578,7 +3578,7 @@ object SearchDomain {
          */
         /**
          * User rule 2026-11-12: *"In any element, there must be a parent action, and among the children there must be the
-         * [list of parents] and a field to add new parents."* Its children rows are [ParentsChild]: the parents as a
+         * [list of parents] and a field to add new parents."* Its children are the fields of [ParentsChild]: the parents as a
          * Search window of its search section alone, each with its drop button ([parentsListConfig]), and the field of
          * "Add a parent". It replaced the two actions below, retired ([RETIRED_ACTIONS]).
          */
@@ -4006,15 +4006,11 @@ object SearchDomain {
      */
     val ADD_PARENT_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Task), sorts = PICKER_SORTS, sortFollowsDefault = false) }
 
-    /** The children rows of "Parents" ([AddedAction.ElementParents]), each opened by its arrow ([actionChildId]). */
-    enum class ParentsChild(val label: String, val titled: Boolean) {
-        /** User rule 2026-11-12: the field itself is the child of "Parents", its grey text its name — no row around it. */
-        List("List of parents", titled = false),
-        Add("Add a parent", titled = true),
-    }
-
-    /** The id of the child row [child] of the action row [microId]: what its arrow is remembered under ([Config.toggledActionRows]). */
-    fun actionChildId(microId: String, child: ParentsChild): String = microId + "/" + child.name
+    /**
+     * The children of "Parents" ([AddedAction.ElementParents]), in their order. User rule 2026-11-12: each is a field, the
+     * child of "Parents" directly, named by its grey text ([placeholder]) — no row of its own around it.
+     */
+    enum class ParentsChild(val placeholder: String) { List("list of parents"), Add("add a parent") }
 
     /**
      * User rule 2026-11-12: **the Search window of the "List of parents"** of [children]: every element kind a parent can
@@ -4363,11 +4359,7 @@ object SearchDomain {
         val out = HashSet<String>()
         fun walk(group: ActionGroup) {
             out += group.id
-            group.actions.forEach { action ->
-                val micro = microGroupId(group, action)
-                out += micro
-                if (action == AddedAction.ElementParents) ParentsChild.entries.filter { it.titled }.forEach { out += actionChildId(micro, it) }
-            }
+            group.actions.forEach { out += microGroupId(group, it) }
             group.inner.forEach(::walk)
         }
         groups.forEach(::walk)

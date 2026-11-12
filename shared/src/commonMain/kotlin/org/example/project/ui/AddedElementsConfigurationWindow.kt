@@ -2589,9 +2589,9 @@ private fun ElementChooser(cellId: String, options: List<Pair<String, String>>, 
 private const val MAX_CHOOSER_ROWS: Int = 50
 
 /**
- * User rule 2026-11-12: **"Parents", the parent action of any element** — its children rows, each with its arrow
- * ([SearchDomain.ParentsChild], closed by default, [SearchDomain.isActionRowOpen]), each a field with its grey text that
- * opens a headless Search window under it ([PopupSearchField]): the **List of parents** — the parents of the added
+ * User rule 2026-11-12: **"Parents", the parent action of any element** — its children are two fields, each directly
+ * under it and named by its grey text ([SearchDomain.ParentsChild]), each opening a headless Search window under it
+ * ([PopupSearchField]): the **List of parents** — the parents of the added
  * elements, each with the button that drops it ([SearchDomain.parentsListConfig]); and **Add a parent** — the tasks
  * ([SearchDomain.ADD_PARENT_SEARCH]), a click making one a parent.
  */
@@ -2614,25 +2614,13 @@ private fun ElementParentsEditor(
     val eligible = remember(below, state.cells) {
         state.tasks.keys.filterTo(HashSet()) { id -> children.any { tree.canLink(state, SearchDomain.taskKey(id), it, below.getValue(it)) } }
     }
+    // User rule 2026-11-12: each field is a child of "Parents" directly, named by its grey text.
     for (child in SearchDomain.ParentsChild.entries) {
-        val id = SearchDomain.actionChildId(rowId, child)
-        // User rule 2026-11-12: the field "list of parents" is a child of "Parents" directly — no row of its own around it.
-        val open = !child.titled || SearchDomain.isActionRowOpen(config, id, top = false)
-        val toggle = {
-            onConfigChange(config.copy(toggledActionRows = if (id in config.toggledActionRows) config.toggledActionRows - id else config.toggledActionRows + id))
-        }
-        if (child.titled) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = NESTED_ACTION_INDENT)) {
-                SectionArrow(!open, toggle)
-                Box(Modifier.togglesSection(toggle)) { MicroGroupTitle(child.label, nested = true) }
-            }
-        }
-        if (!open) continue
-        Box(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT * if (child.titled) 2 else 1)) {
+        Box(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT)) {
             when (child) {
                 SearchDomain.ParentsChild.List ->
                     PopupSearchField(
-                        placeholder = "list of parents",
+                        placeholder = child.placeholder,
                         state = state,
                         config = SearchDomain.parentsListConfig(children, listConfig),
                         onConfigChange = { listConfig = it },
@@ -2644,13 +2632,14 @@ private fun ElementParentsEditor(
                         canDrop = { parent -> children.any { tree.canUnlink(state, SearchDomain.keyOf(parent), it) } },
                     )
                 SearchDomain.ParentsChild.Add ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PopupSearchField(
-                        placeholder = "add a parent",
+                        placeholder = child.placeholder,
                         state = state,
                         config = addConfig,
                         onConfigChange = { addConfig = it },
                         openedConfig = SearchDomain.ADD_PARENT_SEARCH,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.weight(1f),
                         picker = { close ->
                             SearchPicker(
                                 eligible = eligible,
@@ -2665,6 +2654,9 @@ private fun ElementParentsEditor(
                             )
                         },
                     )
+                    // User rule 2026-11-02: beside it, the button adding the element this window comes from.
+                    ElementSourceButton(state, added, config, run)
+                    }
             }
         }
     }
@@ -2686,19 +2678,35 @@ private fun ElementParentEditor(
     val below = remember(children, state.elementLinks, state.lists, state.tasks) { children.associateWith { tree.descendantsOf(state, it) } }
     fun allowed(parent: String) = children.any { tree.canLink(state, parent, it, below.getValue(it)) }
     val options = remember(below, state.categories, state.periodKinds, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.taskTrees, state.workplaceSetups) { tree.pickable(state).filter { allowed(it.first) } }
-    val source = config.elementSource
-    val sourceName = remember(source, state.tasks, state.timers, state.alarms, state.chronos, state.workplaceSetups) {
-        source?.let { SearchDomain.resolve(state, listOf(it), { emptyMap() }).singleOrNull()?.name }
-    }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.weight(1f)) {
             ElementChooser("search/element-add-parent", options) { run(SearchDomain.AddedCommand.ElementParent(it, on = true)) }
         }
-        if (source != null && sourceName != null) {
-            FrameButton("Add " + sourceName, enabled = allowed(source)) {
-                run(SearchDomain.AddedCommand.ElementParent(source, on = true))
-            }
-        }
+        ElementSourceButton(state, added, config, run)
+    }
+}
+
+/**
+ * User rule 2026-11-02: the button making the element this Search window comes from ([SearchDomain.Config.elementSource]) a
+ * parent of the added elements, greyed where it cannot be one of any ([ElementTree.canLink]). Nothing without a source.
+ */
+@Composable
+private fun ElementSourceButton(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    config: SearchDomain.Config,
+    run: (SearchDomain.AddedCommand) -> Unit,
+) {
+    val tree = org.example.project.scheduler.domain.ElementTree
+    val source = config.elementSource ?: return
+    val sourceName = remember(source, state.tasks, state.timers, state.alarms, state.chronos, state.workplaceSetups) {
+        SearchDomain.resolve(state, listOf(source), { emptyMap() }).singleOrNull()?.name
+    } ?: return
+    val allowed = remember(source, added, state.elementLinks, state.lists, state.tasks) {
+        added.any { tree.canLink(state, source, SearchDomain.keyOf(it)) }
+    }
+    FrameButton("Add " + sourceName, enabled = allowed) {
+        run(SearchDomain.AddedCommand.ElementParent(source, on = true))
     }
 }
 

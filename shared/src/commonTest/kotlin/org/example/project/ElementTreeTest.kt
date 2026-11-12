@@ -377,20 +377,10 @@ class ElementTreeTest {
     private fun listedIn(state: SchedulerState, config: SearchDomain.Config) =
         SearchDomain.results(state, config.searchedKinds, config.query, filters = config.filters).map(SearchDomain::keyOf).toSet()
 
+    /** User rule 2026-11-12: the two fields are children of "Parents" directly, named by their grey text. */
     @Test
-    fun the_parents_rows_are_children_of_the_action_and_keep_their_arrows() {
-        val added = SearchDomain.resolve(chronos, listOf(a), { emptyMap() })
-        val groups = SearchDomain.actionGroups(SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet()), added), added)
-        val listed = SearchDomain.listedGroupIds(groups)
-        val group = groups.first { AddedAction.ElementParents in it.actions }
-        val micro = SearchDomain.microGroupId(group, AddedAction.ElementParents)
-        val list = SearchDomain.actionChildId(micro, SearchDomain.ParentsChild.Add)
-        assertFalse(SearchDomain.actionChildId(micro, SearchDomain.ParentsChild.List) in listed, "the list field has no row of its own")
-        assertTrue(list in listed)
-        val config = SearchDomain.Config(toggledActionRows = setOf(list))
-        assertTrue(SearchDomain.isActionRowOpen(config, list, top = false))
-        // Another row's arrow keeps it open.
-        assertTrue(list in SearchDomain.withActionGroupToggled(config, micro, listed).toggledActionRows)
+    fun the_parents_children_are_two_fields_with_their_grey_text() {
+        assertEquals(listOf("list of parents", "add a parent"), SearchDomain.ParentsChild.entries.map { it.placeholder })
     }
 
     @Test
