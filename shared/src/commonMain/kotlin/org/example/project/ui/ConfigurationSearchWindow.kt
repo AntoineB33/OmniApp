@@ -436,17 +436,15 @@ internal fun SettingEditor(
                 var statesOpen by remember { mutableStateOf(false) }
                 androidx.compose.foundation.layout.Box {
                     FrameButton(f.calendarAddFilter.label + " ▾") { statesOpen = true }
-                    org.example.project.ui.AppDropdownMenu(expanded = statesOpen, onDismissRequest = { statesOpen = false }) {
-                        SearchDomain.CalendarAddFilter.entries.forEach { choice ->
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { androidx.compose.material3.Text((if (choice == f.calendarAddFilter) "● " else "○ ") + choice.label) },
-                                onClick = {
-                                    statesOpen = false
-                                    filters(f.withCalendarAddFilter(choice))
-                                },
-                            )
-                        }
-                    }
+                    // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
+                    OptionSearchMenu(
+                        open = statesOpen,
+                        onDismiss = { statesOpen = false },
+                        options = choiceOptions(SearchDomain.CalendarAddFilter.entries, { (if (it == f.calendarAddFilter) "● " else "○ ") + it.label }) { choice ->
+                            statesOpen = false
+                            filters(f.withCalendarAddFilter(choice))
+                        },
+                    )
                 }
                 CalendarInstantField(f.calendarAddAtMillis) { filters(f.copy(calendarAddAtMillis = it)) }
                 InstantButtons(rightClickEnabled = f.calendarAddAtMillis != config.calendarClickMillis) { filters(f.copy(calendarAddAtMillis = it)) }
@@ -659,33 +657,34 @@ private fun SortMethodPicker(
                 .menuToggleClickable(open) { open = it }
                 .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
-        transientMenuDismissal(open) { open = false }
-        AppDropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            properties = PopupProperties(focusable = false),
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]), "Select all" its first element.
+        OptionSearchMenu(
+            open = open,
+            onDismiss = { open = false },
             modifier = Modifier.checkRangeShift(range),
-        ) {
-            // Checking them all adds the unchecked ones at the bottom, in the menu's order — what checking each
-            // in turn would do; unchecking them all takes this section's methods out and leaves the others'.
-            SelectAllMenuItem(
-                allChecked = methods.all(::inList),
-                onSelectAll = { onChange(methods.fold(sorts) { list, m -> if (inList(m)) list else SearchDomain.withSortMethod(list, m, on = true) }) },
-                onDeselectAll = { onChange(methods.fold(sorts) { list, m -> SearchDomain.withSortMethod(list, m, on = false) }) },
-            )
-            methods.forEach { method ->
-                val checked = inList(method)
-                DropdownMenuItem(
-                    text = { Text(method.key.label) },
-                    leadingIcon = { Checkbox(checked = checked, onCheckedChange = null) },
-                    // A shift-click range lands at the bottom in the menu's order, as checking each in turn would.
-                    onClick = {
+            options = SearchOptions(
+                options = methods.mapIndexed { i, method -> i.toString() to method.key.label },
+                checked = methods.indices.filter { inList(methods[it]) }.mapTo(HashSet()) { it.toString() },
+                // A shift-click range lands at the bottom in the menu's order, as checking each in turn would.
+                onClick = { id ->
+                    val method = id.toIntOrNull()?.let(methods::getOrNull)
+                    if (method != null) {
+                        val checked = inList(method)
                         val keys = range.press(methods, method)
                         onChange(keys.fold(sorts) { list, m -> if (inList(m) != checked) list else SearchDomain.withSortMethod(list, m, on = !checked) })
-                    },
-                )
-            }
-        }
+                    }
+                },
+                // Checking them all adds the unchecked ones at the bottom, in the menu's order — what checking each in
+                // turn would do; unchecking them all takes them out and leaves the others'.
+                onSelectAll = { ids ->
+                    val listed = ids.mapNotNull { it.toIntOrNull()?.let(methods::getOrNull) }
+                    onChange(
+                        if (listed.all(::inList)) listed.fold(sorts) { list, m -> SearchDomain.withSortMethod(list, m, on = false) }
+                        else listed.fold(sorts) { list, m -> if (inList(m)) list else SearchDomain.withSortMethod(list, m, on = true) },
+                    )
+                },
+            ),
+        )
     }
 }
 
@@ -833,13 +832,15 @@ private fun <T> EnumPicker(options: List<T>, selected: T?, label: (T) -> String,
                 .menuToggleClickable(open) { open = it }
                 .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
-        transientMenuDismissal(open) { open = false }
-        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-            DropdownMenuItem(text = { Text("any") }, onClick = { open = false; onSelect(null) })
-            options.forEach { option ->
-                DropdownMenuItem(text = { Text(label(option)) }, onClick = { open = false; onSelect(option) })
-            }
-        }
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]), "any" first.
+        OptionSearchMenu(
+            open = open,
+            onDismiss = { open = false },
+            options = choiceOptions(listOf<T?>(null) + options, { it?.let(label) ?: "any" }) {
+                open = false
+                onSelect(it)
+            },
+        )
     }
 }
 

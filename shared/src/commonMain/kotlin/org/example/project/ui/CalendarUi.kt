@@ -3123,17 +3123,15 @@ private fun <T> HistoryDropdownField(
                 color = if (enabled) CalColors.accent else CalColors.muted,
                 style = MaterialTheme.typography.labelSmall,
             )
-            AppDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                options.forEach { (name, value) ->
-                    DropdownMenuItem(
-                        text = { Text(name, style = MaterialTheme.typography.labelSmall) },
-                        onClick = {
-                            onSelect(value)
-                            open = false
-                        },
-                    )
-                }
-            }
+            // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
+            OptionSearchMenu(
+                open = open,
+                onDismiss = { open = false },
+                options = choiceOptions(options, { it.first }) { (_, value) ->
+                    onSelect(value)
+                    open = false
+                },
+            )
         }
     }
 }
@@ -3728,17 +3726,15 @@ internal fun RecurrenceUnitDropdown(unit: ChoreRecurrenceUnit, onSelect: (ChoreR
             Text(unit.label, style = MaterialTheme.typography.bodyMedium)
             Text("▾", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
         }
-        AppDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            ChoreRecurrenceUnit.entries.forEach { entry ->
-                DropdownMenuItem(
-                    text = { Text(entry.label) },
-                    onClick = {
-                        onSelect(entry)
-                        expanded = false
-                    },
-                )
-            }
-        }
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
+        OptionSearchMenu(
+            open = expanded,
+            onDismiss = { expanded = false },
+            options = choiceOptions(ChoreRecurrenceUnit.entries, { it.label }) { entry ->
+                onSelect(entry)
+                expanded = false
+            },
+        )
     }
 }
 
@@ -11159,23 +11155,18 @@ private fun EditModeSelector(options: List<EditModeOption>, focusPreserving: Boo
             Text(selectedLabel, style = MaterialTheme.typography.bodyMedium)
             Text("▾", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
         }
-        AppDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
+        OptionSearchMenu(
+            open = expanded,
+            onDismiss = { expanded = false },
+            options = choiceOptions(options, { it.label }) { option ->
+                option.onSelect()
+                expanded = false
+            },
             // Non-focusable in a focus-gated editor so opening the menu does not blur the title field and
             // collapse the editor; a normal focusable popup (with outside-tap dismissal) everywhere else.
-            properties = PopupProperties(focusable = !focusPreserving),
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option.label) },
-                    onClick = {
-                        option.onSelect()
-                        expanded = false
-                    },
-                )
-            }
-        }
+            focusable = !focusPreserving,
+        )
     }
 }
 

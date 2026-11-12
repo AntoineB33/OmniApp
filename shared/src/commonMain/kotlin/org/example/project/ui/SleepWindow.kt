@@ -178,17 +178,15 @@ private fun SleepTimeChoice(
             Text(which.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, softWrap = false)
             Text("▾", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            SchedulerDomain.NightTime.entries.forEach { entry ->
-                DropdownMenuItem(
-                    text = { Text(entry.label) },
-                    onClick = {
-                        onChoose(entry)
-                        open = false
-                    },
-                )
-            }
-        }
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
+        OptionSearchMenu(
+            open = open,
+            onDismiss = { open = false },
+            options = choiceOptions(SchedulerDomain.NightTime.entries, { it.label }) { entry ->
+                onChoose(entry)
+                open = false
+            },
+        )
     }
 }
 

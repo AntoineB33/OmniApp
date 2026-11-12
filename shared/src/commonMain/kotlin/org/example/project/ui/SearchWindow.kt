@@ -1574,7 +1574,22 @@ class SearchOptions(
     val onSolo: (String) -> Unit = onClick,
     val leading: (@Composable (String) -> Unit)? = null,
     val onNearEnd: (() -> Unit)? = null,
+    /** Each option's drop button ([SearchDomain.Config.dropButtons]): what it does; null, none. */
+    val onDrop: ((String) -> Unit)? = null,
+    /** Whether [onDrop] can drop the option: a command among them ("+ New tab") has no button. */
+    val canDrop: (String) -> Boolean = { true },
 )
+
+/**
+ * [options] as the rows of a one-choice drop-down ([OptionSearchMenu]): each by its place, named by [label]; a click picks it
+ * ([onPick]) — the caller closes the list.
+ */
+internal fun <T> choiceOptions(options: List<T>, label: (T) -> String, onPick: (T) -> Unit): SearchOptions =
+    SearchOptions(
+        options = options.mapIndexed { i, option -> i.toString() to label(option) },
+        checked = null,
+        onClick = { id -> id.toIntOrNull()?.let(options::getOrNull)?.let(onPick) },
+    )
 
 /** What a drop-down's Search window opens on nothing: it opens no element ([OptionSearchMenu]). */
 private val OPTION_OPENERS =
@@ -1605,10 +1620,15 @@ internal fun OptionSearchMenu(
     options: SearchOptions,
     modifier: Modifier = Modifier,
     width: Dp = OPTION_MENU_WIDTH,
+    /**
+     * False in an editor whose field must keep the caret while the list is open (the calendar's focus-gated editors): the
+     * list is not typed in then, its rows clicked alone.
+     */
+    focusable: Boolean = true,
 ) {
     transientMenuDismissal(open, onDismiss)
-    AppDropdownMenu(expanded = open, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true), modifier = modifier) {
-        var config by remember { mutableStateOf(SearchDomain.OPTION_SEARCH) }
+    AppDropdownMenu(expanded = open, onDismissRequest = onDismiss, properties = PopupProperties(focusable = focusable), modifier = modifier) {
+        var config by remember { mutableStateOf(SearchDomain.OPTION_SEARCH.copy(dropButtons = options.onDrop != null)) }
         var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
         // No account is searched: the options are the rows.
         val nothing = remember { SchedulerState.empty() }
@@ -1630,6 +1650,8 @@ internal fun OptionSearchMenu(
             onSplitsChange = { splits = it },
             embedded = true,
             options = options,
+            onDrop = options.onDrop?.let { drop -> { row -> (row as? SearchDomain.ItemResult)?.id?.let(drop) } },
+            canDrop = { row -> (row as? SearchDomain.ItemResult)?.id?.let { it != SearchDomain.SELECT_ALL_OPTION && options.canDrop(it) } == true },
             modifier = Modifier.width(width).height(height),
         )
     }

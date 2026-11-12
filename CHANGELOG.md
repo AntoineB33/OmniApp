@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every ▾ drop-down opens a Search window — 2026-11-12
+
+The rest of the drop-down fields open `OptionSearchMenu` too: the Sort by picker (check boxes, "Select all"), the
+configuration filters' "any"-or-one picker (`EnumPicker`) and the calendar filter's states, the window shortcut's window,
+the calendar elements' kind, the life plan's section and its tabs (each with its drop button, `SearchOptions.onDrop`, then
+"+ New tab"), the sleep window's night time, the time-sim pause scope, the history and recurrence-unit fields, the alert
+sound and the calendar editors' option field (`OptionSearchMenu(focusable = false)` where the field must keep the caret).
+`choiceOptions` makes a one-choice list. Not converted: the naming cells (a typed field with suggestions), the quota's
+date picker and resilience form (editors, not lists), and the switch-task picker. No migration.
+
 ### Drop-downs are Search windows; "Select all" an element; the search bar can be hidden — 2026-11-12
 
 User rules: *"All the drop-down menus of the app must be Search windows as well. Add the element 'Select all' that when

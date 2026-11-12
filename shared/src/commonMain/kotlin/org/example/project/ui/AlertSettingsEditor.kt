@@ -155,16 +155,14 @@ private fun AlertSoundDropdown(tone: AlertSound, enabled: Boolean, onSelect: (Al
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        AppDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            AlertSound.entries.forEach { entry ->
-                DropdownMenuItem(
-                    text = { Text(entry.label) },
-                    onClick = {
-                        onSelect(entry)
-                        expanded = false
-                    },
-                )
-            }
-        }
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
+        OptionSearchMenu(
+            open = expanded,
+            onDismiss = { expanded = false },
+            options = choiceOptions(AlertSound.entries, { it.label }) { entry ->
+                onSelect(entry)
+                expanded = false
+            },
+        )
     }
 }

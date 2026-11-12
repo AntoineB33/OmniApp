@@ -166,12 +166,15 @@ private fun SectionField(section: LifePlanSection, onPick: (LifePlanSection) -> 
                 .menuToggleClickable(open) { open = it }
                 .padding(horizontal = 10.dp, vertical = 8.dp),
         )
-        transientMenuDismissal(open) { open = false }
-        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-            for (choice in LifePlanSection.entries) {
-                DropdownMenuItem(text = { Text(choice.label) }, onClick = { open = false; onPick(choice) })
-            }
-        }
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
+        OptionSearchMenu(
+            open = open,
+            onDismiss = { open = false },
+            options = choiceOptions(LifePlanSection.entries, { it.label }) { choice ->
+                open = false
+                onPick(choice)
+            },
+        )
     }
 }
 
@@ -336,22 +339,29 @@ private fun TabField(
             trailingIcon = { Text("▾", Modifier.menuToggleClickable(open) { open = it }.padding(10.dp)) },
             modifier = Modifier.fillMaxWidth(),
         )
-        transientMenuDismissal(open) { open = false }
-        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-            Column(Modifier.width(280.dp)) {
-                for (each in tabs) {
-                    DropdownMenuItem(
-                        text = { Text(each.text.ifBlank { "(untitled)" }) },
-                        onClick = { open = false; onPick(each.id) },
-                        trailingIcon = { TextButton(onClick = { open = false; onRemove(each.id) }) { Text("🗑") } },
-                    )
-                }
-                if (tabs.isNotEmpty()) HorizontalDivider()
-                DropdownMenuItem(text = { Text("+ New tab") }, onClick = { open = false; onAdd() })
-            }
-        }
+        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]): each tab with its drop button, then "+ New tab".
+        OptionSearchMenu(
+            open = open,
+            onDismiss = { open = false },
+            options = SearchOptions(
+                options = tabs.map { it.id to it.text.ifBlank { "(untitled)" } } + (NEW_TAB_OPTION to "+ New tab"),
+                checked = null,
+                onClick = { id ->
+                    open = false
+                    if (id == NEW_TAB_OPTION) onAdd() else onPick(id)
+                },
+                onDrop = { id ->
+                    open = false
+                    onRemove(id)
+                },
+                canDrop = { it != NEW_TAB_OPTION },
+            ),
+        )
     }
 }
+
+/** The "+ New tab" row of the tab drop-down: no tab's id. */
+private const val NEW_TAB_OPTION = "new-tab"
 
 /** How far each level of sub-elements is indented. */
 private val STEP_INDENT = 18.dp

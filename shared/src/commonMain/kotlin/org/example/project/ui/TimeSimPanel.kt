@@ -183,17 +183,15 @@ fun TimeSimPanel(
                             ) { menuOpen = true }
                             .padding(vertical = 2.dp, horizontal = 8.dp),
                     )
-                    AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        scopes.forEach { scope ->
-                            DropdownMenuItem(
-                                text = { Text(scope.label, style = MaterialTheme.typography.labelMedium) },
-                                onClick = {
-                                    pauseScope = scope
-                                    menuOpen = false
-                                },
-                            )
-                        }
-                    }
+                    // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
+                    OptionSearchMenu(
+                        open = menuOpen,
+                        onDismiss = { menuOpen = false },
+                        options = choiceOptions(scopes, { it.label }) { scope ->
+                            pauseScope = scope
+                            menuOpen = false
+                        },
+                    )
                 }
             }
             // PRD §6: warn that any change made while time is diverged is debug-only and will be undone

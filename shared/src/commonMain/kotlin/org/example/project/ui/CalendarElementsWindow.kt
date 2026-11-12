@@ -189,17 +189,15 @@ fun CalendarElementsWindow(
                             text = kind.label + "  ▾",
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        AppDropdownMenu(expanded = kindMenuOpen, onDismissRequest = { kindMenuOpen = false }) {
-                            offeredKinds.forEach { option ->
-                                DropdownMenuItem(
-                                    text = { Text(option.label) },
-                                    onClick = {
-                                        kind = option
-                                        kindMenuOpen = false
-                                    },
-                                )
-                            }
-                        }
+                        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
+                        OptionSearchMenu(
+                            open = kindMenuOpen,
+                            onDismiss = { kindMenuOpen = false },
+                            options = choiceOptions(offeredKinds, { it.label }) { option ->
+                                kind = option
+                                kindMenuOpen = false
+                            },
+                        )
                     }
                     Button(
                         // "Greyed if no element is selected": for a task and a reminder a typed name IS a

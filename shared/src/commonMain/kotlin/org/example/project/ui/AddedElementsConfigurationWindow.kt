@@ -2101,25 +2101,19 @@ private fun ShortcutWindowEditor(added: List<SearchDomain.Result>, handlers: Add
                                 .menuToggleClickable(open) { open = it }
                                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
                         )
-                        transientMenuDismissal(open) { open = false }
-                        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-                            Column(Modifier.width(260.dp)) {
-                                for ((id, title) in windows) {
-                                    Text(
-                                        text = title,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (id == mapping.window) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                open = false
-                                                handlers.onWindowShortcutChange(mapping.copy(window = id))
-                                            }
-                                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                                    )
-                                }
-                            }
-                        }
+                        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]); the window it brings, ticked.
+                        OptionSearchMenu(
+                            open = open,
+                            onDismiss = { open = false },
+                            options = SearchOptions(
+                                options = windows,
+                                checked = setOfNotNull(mapping.window),
+                                onClick = { id ->
+                                    open = false
+                                    handlers.onWindowShortcutChange(mapping.copy(window = id))
+                                },
+                            ),
+                        )
                     }
                 }
             }
