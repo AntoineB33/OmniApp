@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar element, after a first look — 2026-11-12
+
+User rules: the calendar button's calendar opens on the day display with "Lock to now" on; the locks offer "Lock to
+the notifications in the results" (the window's result list, `LocalSearchResults`; on by default and followed in the
+"unfocused notif" window); the actions section's titles are sticky headers, each action's content an item under its
+title, so the title that hides an action is always in view; the grid keeps a margin on both sides where the wheel
+scrolls the section; the day selector is back to the width it had in the calendar window. An empty try account showed
+no task on the calendar because it holds none. No migration.
+
 ### The calendar is an element; the "unfocused notif" window is one Search window — 2026-11-12
 
 User rule: the calendar window is gone. `SearchDomain.Kind.Calendar` is one element whose actions are the calendar

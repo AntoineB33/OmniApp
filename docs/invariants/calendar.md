@@ -27,8 +27,14 @@ User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`),
   the account's) and the chips (`calendarView`, a `CalendarNotifications.WindowConfig`) are the Search window's
   configuration — one History Unit each, that window's Ctrl+Z. The locks, the zoom, the month shown and the grid's
   height are Compose-only (`CalendarElementView`, by frame id in `App`).
-- **The grid is a row of its own height** (`CALENDAR_ELEMENT_HEIGHT`, its bottom edge dragged): the actions section
-  scrolls, and the grid's endless scroll must not fight it. It holds the keyboard as the window did (O, Ctrl +/-/0,
+- **The calendar button's calendar opens on the day display, "Lock to now" on** (user rule 2026-11-12); a calendar
+  asked for with a view (the notifications it shows) takes the account's display.
+- **"Lock to the notifications in the results"**: the view held on every notification among its window's result
+  list (`LocalSearchResults`, provided by the Search window), first to last, the now-line included. Offered while there
+  is one; on by default, and locked again as they change, in the "unfocused notif" window (`followsNotifications`).
+- **The grid is a row of its own height** (`CALENDAR_ELEMENT_HEIGHT`, its bottom edge dragged), with a margin on both
+  sides (`CALENDAR_ELEMENT_SIDE_MARGIN`) where the wheel scrolls the actions section: the section scrolls, and the
+  grid's endless scroll must not fight it. Its title stays in view as it scrolls (`task-tree.md`, the actions section). It holds the keyboard as the window did (O, Ctrl +/-/0,
   Space); Ctrl+Z / Ctrl+Y are its window's. What it changes is `MadeIn(Search, that window's copy)`.
 - **The horizon follows the grids on screen** (`calendarSpans`, by frame id): a grid that leaves the composition (its
   row closed, its window closed) takes its days off.

@@ -4060,6 +4060,12 @@ enum class CalendarPart { Grid, Day, Display, Locks }
  */
 val LocalCalendarElement = compositionLocalOf<(@Composable (CalendarPart) -> Unit)?> { null }
 
+/**
+ * User rule 2026-11-12: the rows the Search window drawing the calendar lists — its calendar can be locked on the
+ * notifications among them ([CalendarElementLocks]). Provided by the Search window around its actions section.
+ */
+val LocalSearchResults = compositionLocalOf<List<org.example.project.scheduler.domain.SearchDomain.Result>> { emptyList() }
+
 /** The calendar's height in a Search window's actions section until its handle is dragged. */
 internal val CALENDAR_ELEMENT_HEIGHT = 520.dp
 
@@ -4135,10 +4141,15 @@ fun CalendarElementGrid(
     openingSpan: Pair<Long, Long>?,
     onVisibleDaysChanged: (LocalDate, Int) -> Unit,
     onNowLineResolutionChanged: (Long) -> Unit,
+    /**
+     * Whether a new stretch of notifications locks the view on it again — the "unfocused notif" window's calendar,
+     * which follows what it gathers (user rule 2026-10-14). Elsewhere the lock is the hand's.
+     */
+    followsNotifications: Boolean = true,
 ) {
     // A stretch to show (the notifications the window lists): held on it, as a calendar opened on one was.
     LaunchedEffect(openingSpan) {
-        if (openingSpan != null) {
+        if (openingSpan != null && followsNotifications) {
             view.lockNowLine = false
             view.lockNotifications = true
         }
@@ -4151,7 +4162,8 @@ fun CalendarElementGrid(
         }
     }
     val density = LocalDensity.current
-    Column(Modifier.fillMaxWidth()) {
+    // A margin on both sides (user rule 2026-11-12): the wheel there scrolls the actions section, not the calendar.
+    Column(Modifier.fillMaxWidth().padding(horizontal = CALENDAR_ELEMENT_SIDE_MARGIN)) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -4264,11 +4276,14 @@ fun CalendarElementGrid(
 }
 
 internal val CALENDAR_ELEMENT_MIN_HEIGHT = 160.dp
+internal val CALENDAR_ELEMENT_SIDE_MARGIN = 32.dp
 internal val CALENDAR_ELEMENT_MAX_HEIGHT = 2400.dp
 
 /** The calendar element's **day selector** ([CalendarPart.Day]): picking a day takes this window's calendar to it. */
 @Composable
 fun CalendarElementDay(view: CalendarElementView, selectedDate: LocalDate, today: LocalDate, onSelectDate: (LocalDate) -> Unit) {
+    // At the width it had in the calendar window's configuration section (user rule 2026-11-12: "keep it like it was").
+    Box(Modifier.width(CALENDAR_CONFIGURATION_WIDTH - 26.dp)) {
     MiniMonth(
         monthAnchor = view.monthAnchor,
         onMonthAnchorChange = { view.monthAnchor = it },
@@ -4279,6 +4294,7 @@ fun CalendarElementDay(view: CalendarElementView, selectedDate: LocalDate, today
             view.jumpNonce++
         },
     )
+    }
 }
 
 /**
@@ -4329,8 +4345,10 @@ fun CalendarElementLocks(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.width(CALENDAR_CONFIGURATION_WIDTH)) {
         CalendarConfigurationSwitch("Lock to now", view.lockNowLine) { on -> view.setLockNowLine(on) { onLockOnTaskChange(false) } }
+        // User rule 2026-11-12: the view held on every notification among the window's results, first to last, the
+        // now-line included — on by default for the "unfocused notif" window.
         if (hasSpan) {
-            CalendarConfigurationSwitch("Lock to notifications", view.lockNotifications) { on ->
+            CalendarConfigurationSwitch("Lock to the notifications in the results", view.lockNotifications) { on ->
                 view.setLockNotifications(on) { onLockOnTaskChange(false) }
             }
         }

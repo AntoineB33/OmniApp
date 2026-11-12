@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.rememberUpdatedState
@@ -424,11 +425,44 @@ private fun AddedActionList(
             // By the group's id, so that the groups before one coming and going do not make it anew. Two groups
             // sharing an id (an element added twice by an older build) must not take the list down.
             val seen = HashSet<String>()
+            fun unique(id: String, index: Int) = if (seen.add(id)) id else "$id#$index"
+            // User rule 2026-11-12: **the title of what is shown stays in view** — a group's heading and an open action's
+            // title are the list's sticky headers, its content the items under them: scrolling through a tall action
+            // (the calendar) keeps the title that hides it on screen. The heading under the title on top is pushed off.
+            fun actionItems(group: SearchDomain.ActionGroup, action: SearchDomain.AddedAction, index: Int, top: Boolean, about: String?) {
+                val microId = SearchDomain.microGroupId(group, action)
+                val members = group.members.joinToString(",") { SearchDomain.keyOf(it) }
+                if (ownsItsTitle(action)) {
+                    item(key = unique(microId, index)) {
+                        ActionRow(group, action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = top, nested = false, about = about)
+                    }
+                    return
+                }
+                stickyHeader(key = unique(microId, index)) {
+                    StickyTitle { ActionRow(group, action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = top, nested = false, about = about, part = RowPart.Title) }
+                }
+                if (SearchDomain.isActionRowOpen(config, microId, top)) {
+                    // What a field remembers (a draft being typed) belongs to the elements, not to the place in the list.
+                    item(key = unique("$microId/content/$members", index)) {
+                        ActionRow(group, action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = top, nested = false, part = RowPart.Content)
+                    }
+                }
+            }
             if (config.actionsGrouped) {
                 // User rule 2026-11-12: each group a row, its actions its children — every row closed by default.
                 groups.forEachIndexed { index, group ->
-                    item(key = if (seen.add(group.id)) group.id else group.id + "#" + index) {
-                        ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = true)
+                    stickyHeader(key = unique(group.id, index)) {
+                        StickyTitle { ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = true, headingOnly = true) }
+                    }
+                    if (!SearchDomain.isActionRowOpen(config, group.id, top = true)) return@forEachIndexed
+                    for (entry in SearchDomain.microGroups(group, if (config.actionSearchSortsOnly) config.actionSearch else "")) {
+                        when (entry) {
+                            is SearchDomain.MicroGroup.Inner ->
+                                item(key = unique(entry.group.id + "/in/" + group.id, index)) {
+                                    ActionGroupBlock(entry.group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, micro = true)
+                                }
+                            is SearchDomain.MicroGroup.One -> actionItems(group, entry.action, index, top = false, about = null)
+                        }
                     }
                 }
             } else {
@@ -436,17 +470,12 @@ private fun AddedActionList(
                 // (a kind's default configuration) still a row of its own.
                 groups.forEachIndexed { index, group ->
                     for (entry in SearchDomain.microGroups(group, if (config.actionSearchSortsOnly) config.actionSearch else "")) {
-                        val id = when (entry) {
-                            is SearchDomain.MicroGroup.One -> SearchDomain.microGroupId(group, entry.action)
-                            is SearchDomain.MicroGroup.Inner -> entry.group.id
-                        }
-                        item(key = if (seen.add(id)) id else "$id#$index") {
-                            when (entry) {
-                                is SearchDomain.MicroGroup.One ->
-                                    ActionRow(group, entry.action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = true, nested = false, about = group.title)
-                                is SearchDomain.MicroGroup.Inner ->
+                        when (entry) {
+                            is SearchDomain.MicroGroup.One -> actionItems(group, entry.action, index, top = true, about = group.title)
+                            is SearchDomain.MicroGroup.Inner ->
+                                item(key = unique(entry.group.id, index)) {
                                     ActionGroupBlock(entry.group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = true)
-                            }
+                                }
                         }
                     }
                 }
@@ -477,6 +506,8 @@ private fun ActionGroupBlock(
     micro: Boolean = false,
     /** A row of the list itself, not a child: open by default while the results are expanded ([SearchDomain.isActionRowOpen]). */
     top: Boolean = false,
+    /** Its heading alone: the list draws its actions as items of their own ([AddedActionList]). */
+    headingOnly: Boolean = false,
 ) {
     val added = group.members
     val collapsed = !SearchDomain.isActionRowOpen(config, group.id, top)
@@ -497,7 +528,7 @@ private fun ActionGroupBlock(
             }
         }
     }
-    if (collapsed) return@Column
+    if (collapsed || headingOnly) return@Column
     // What a field remembers (a draft being typed) belongs to the group's elements, not to its place in the list.
     androidx.compose.runtime.key(group.id, added.map(SearchDomain::keyOf)) {
         // Its micro groups — each action, and what it holds inside it (the default configuration of its kind, with its
@@ -537,6 +568,8 @@ private fun ActionRow(
     /** Inside a micro group (the default configuration of a kind): a level below it. */
     nested: Boolean,
     about: String? = null,
+    /** Its title, its content, or both ([AddedActionList] draws the two apart, the title sticky). */
+    part: RowPart = RowPart.Whole,
 ) {
     val added = group.members
     val run = { command: SearchDomain.AddedCommand ->
@@ -557,13 +590,12 @@ private fun ActionRow(
             modifier = if (nested) Modifier.padding(start = NESTED_ACTION_INDENT) else Modifier,
         ) {
             // One action writes its own title: it has buttons on that line ([LowestCountdownEditor]).
-            val ownTitle =
-                action == SearchDomain.AddedAction.TimerLowestCountdown || action == SearchDomain.AddedAction.ChronoHighestCount
+            val ownTitle = ownsItsTitle(action)
             // User rule 2026-10-18: *"every micro group retracts"* — its arrow, and a press on its title, as a
             // group's ([SearchDomain.microGroupId], kept with the window's configuration).
             val microId = SearchDomain.microGroupId(group, action)
             val microCollapsed = !SearchDomain.isActionRowOpen(config, microId, top)
-            if (microCollapsed || !ownTitle) {
+            if ((microCollapsed || !ownTitle) && part != RowPart.Content) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
                     SectionArrow(microCollapsed) { onToggle(microId) }
                     // Inside a micro group (the default configuration of a kind), a level below it.
@@ -578,7 +610,7 @@ private fun ActionRow(
                     }
                 }
             }
-            if (!microCollapsed) {
+            if (!microCollapsed && part != RowPart.Title) {
                 if (ownTitle) {
                     // Its title line is its own: the arrow stands before it.
                     Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
@@ -593,6 +625,19 @@ private fun ActionRow(
             }
         }
     }
+}
+
+/** What of an [ActionRow] is drawn: the list draws a title and its content as two items, the title sticky. */
+private enum class RowPart { Whole, Title, Content }
+
+/** An action whose title line is its own editor's (it has buttons on that line, [LowestCountdownEditor]). */
+private fun ownsItsTitle(action: SearchDomain.AddedAction): Boolean =
+    action == SearchDomain.AddedAction.TimerLowestCountdown || action == SearchDomain.AddedAction.ChronoHighestCount
+
+/** A sticky title of the actions section: opaque, so what scrolls under it does not show through. */
+@Composable
+private fun StickyTitle(content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) { content() }
 }
 
 /** How far right the actions inside a micro group stand of it (user rule 2026-10-18: "set them a little to the right"). */

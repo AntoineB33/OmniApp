@@ -1321,7 +1321,11 @@ fun SearchWindow(
                     onAddTasks = addTasks,
                 )
             }
-            if (!actionsRemoved) androidx.compose.runtime.CompositionLocalProvider(LocalTaskChildren provides taskChildren) {
+            if (!actionsRemoved) androidx.compose.runtime.CompositionLocalProvider(
+                LocalTaskChildren provides taskChildren,
+                // User rule 2026-11-12: the calendar element's lock on the notifications among these rows.
+                LocalSearchResults provides results,
+            ) {
             AddedActionsSection(
                 state = state,
                 added = addedRows,

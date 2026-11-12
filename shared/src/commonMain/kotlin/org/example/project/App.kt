@@ -2226,8 +2226,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         return existing
                     }
                 }
+                // User rule 2026-11-12: the calendar button's opens on the day display ("Lock to now" is on by default).
                 val calendar =
-                    SearchDomain.calendarWindowConfig(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Calendar), calendarView = view))
+                    SearchDomain.calendarWindowConfig(
+                        SearchDomain.Config(
+                            kinds = setOf(SearchDomain.Kind.Calendar), calendarView = view,
+                            calendarDayMode = true.takeIf { config == null },
+                        ),
+                    )
                 return openWindowOnItsPage(
                     FloatingWindow.Search, calendar.encode(), asCopy = true, atBack = atBack,
                     matches = { id -> id in calendars && searchConfigOf(id).calendarView == view },
@@ -4671,13 +4677,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     labelOf = { CalendarNotifications.label(it, tz) },
                                 )
                             }
-                        // User rule 2026-10-14: the "unfocused notif" window's calendar shows its notifications, first to last,
-                        // the now-line included — read again whenever they change; in between the view is the user's.
+                        // User rule 2026-11-12: the calendar can be held on the notifications among the window's results, first to
+                        // last, the now-line included — on by default, and followed as they change, in the "unfocused notif"
+                        // window; in between the view is the user's.
                         val notificationsWindow = SearchDomain.isNotificationsWindow(config)
-                        val openingSpan = remember(searchId, notificationsWindow, calendarConfig.notifications) {
-                            if (!notificationsWindow) null
-                            else CalendarNotifications.openingSpan(
-                                CalendarNotifications.chips(schedulerState.notificationLog, calendarConfig.notifications),
+                        val resultNotifications =
+                            org.example.project.ui.LocalSearchResults.current
+                                .filter { it is SearchDomain.ItemResult && it.kind == SearchDomain.Kind.Notification }
+                                .map { (it as SearchDomain.ItemResult).id }
+                        val openingSpan = remember(searchId, resultNotifications, schedulerState.notificationLog.size) {
+                            CalendarNotifications.openingSpan(
+                                CalendarNotifications.chips(schedulerState.notificationLog, resultNotifications),
                                 clock.nowMillis(),
                             )
                         }
@@ -4809,6 +4819,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         onLockOnTaskChange = { if (holdsLock) calendarLockOnTask = it },
                                         lockOnTaskNonce = if (holdsLock) calendarLockNonce else 0,
                                         openingSpan = openingSpan,
+                                        followsNotifications = notificationsWindow,
                                         // PRD §8/§9: the days on screen, which the horizon and every projection cover.
                                         onVisibleDaysChanged = { firstDay, dayCount ->
                                             if (calendarSpans[searchId] != (firstDay to dayCount)) calendarSpans[searchId] = firstDay to dayCount
