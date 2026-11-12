@@ -1357,8 +1357,9 @@ fun SearchWindow(
                         },
                     )
                     .onSizeChanged { topRightShownPx = it.height.toFloat() }
-                    .clipToBounds()
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .clipToBounds(),
+                // Inside the section, so a scroll over that gap scrolls it too (user rule 2026-11-12).
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp),
             )
             }
             // One of the two taken off: no line between them.

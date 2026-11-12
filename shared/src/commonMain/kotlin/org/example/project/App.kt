@@ -689,6 +689,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §6 (user rule 2026-10-01): what `App` keeps — a window's layout, a Search window's configuration, the
         // menu's buttons — recorded as History Units ([SchedulerIntent.RecordExternal]) and put back when one is undone.
         val viewHistory = remember { ViewHistoryRecorder() }
+        // User rule 2026-11-12: each Search window's view of the calendar element, by frame id (Compose-only). A window
+        // opened under an id is a new window: its view is dropped there ([openWindowOnItsPage]).
+        val calendarViews = remember { HashMap<String, org.example.project.ui.CalendarElementView>() }
         // The calendar's layer bands as last drawn — the hatch read off the lock history, which is not in the state —
         // for the Search window's "is on the calendar at" filter.
         val calendarLayers = remember { CalendarLayersHolder() }
@@ -2223,6 +2226,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     val focused = calendars.firstOrNull { historyWindowOfFrame(it) == (schedulerState.focusedWindow to schedulerState.focusedInstance) }
                     (focused ?: calendars.firstOrNull())?.let { existing ->
                         presentWindow(FloatingWindow.Search, existing)
+                        // User rule 2026-11-12: the calendar button's calendar is locked to now — brought back too.
+                        calendarViews[existing]?.setLockNowLine(true) {}
                         return existing
                     }
                 }
@@ -2263,6 +2268,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             searchOpenedConfigs.remove(id)
             configSearches.remove(id)
             calendarConfigs.remove(id)
+            // A window closed under this id left its calendar's view behind (its locks released, its zoom): not this one's.
+            calendarViews.remove(id)
             if (id == kind.name) {
                 updatePlacementById(id) { it.copy(config = config, minimized = false) }
                 if (atBack) windowFrames.openAtBack(id)
@@ -2971,8 +2978,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val calendarSpans = remember { mutableStateMapOf<String, Pair<LocalDate, Int>>() }
         // A calendar is on screen while a Search window draws one ([calendarSpans]: each grid reports its days).
         val anyCalendarOpen = calendarSpans.isNotEmpty()
-        // User rule 2026-11-12: each Search window's view of the calendar element, by frame id (Compose-only).
-        val calendarViews = remember { HashMap<String, org.example.project.ui.CalendarElementView>() }
         val visibleFirstDay = calendarSpans.values.minOfOrNull { it.first } ?: today
         val visibleDayCount =
             calendarSpans.values.maxOfOrNull { it.first.plus(it.second, DateTimeUnit.DAY) }

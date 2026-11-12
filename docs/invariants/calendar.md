@@ -27,8 +27,11 @@ User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`),
   the account's) and the chips (`calendarView`, a `CalendarNotifications.WindowConfig`) are the Search window's
   configuration — one History Unit each, that window's Ctrl+Z. The locks, the zoom, the month shown and the grid's
   height are Compose-only (`CalendarElementView`, by frame id in `App`).
-- **The calendar button's calendar opens on the day display, "Lock to now" on** (user rule 2026-11-12); a calendar
-  asked for with a view (the notifications it shows) takes the account's display.
+- **The calendar button's calendar opens on the day display, "Lock to now" on** (user rule 2026-11-12) — and a calendar
+  window it brings back is locked to now again; a calendar asked for with a view (the notifications it shows) takes the
+  account's display. **A window opened under a frame id is a new window**: the view a closed one left under that id
+  (`calendarViews`, its locks released, its zoom) is dropped (anomaly 2026-11-12: `Search#2` reopened with "Lock to now"
+  off).
 - **"Lock to the notifications in the results"**: the view held on every notification among its window's result
   list (`LocalSearchResults`, provided by the Search window), first to last, the now-line included. Always offered (with
   none among the results it holds nothing until one comes); on by default, and locked again as they change, in the

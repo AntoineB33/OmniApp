@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar element, after a third look — 2026-11-12
+
+The gap between the separator line and the actions section scrolls it (the padding moved inside the area that takes the
+scroll, `contentPadding`). "Lock to now" was off because a calendar window reopened under a frame id it had used
+(`Search#2`) took the view the closed one left there; a new window drops it, and the calendar button locks a calendar it
+brings back to now.
+
 ### The calendar element, after a second look — 2026-11-12
 
 The section's sides and its scrollbar scroll its list, touchpad included (`scrollsListFromItsSides`: the scroll no child

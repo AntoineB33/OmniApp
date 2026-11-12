@@ -309,11 +309,13 @@ internal fun AddedActionsSection(
     /** User rule 2026-11-06: what stands at the right of the section's bar — the arrow to every search configuration. */
     configurationArrow: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
+    /** The room between the section's edges and what it shows — inside the area whose scroll it takes. */
+    contentPadding: androidx.compose.foundation.layout.PaddingValues = androidx.compose.foundation.layout.PaddingValues(),
 ) {
     CompactFields {
     // A vertical scrollbar on its right (user rule 2026-10-03), the same the lists of the window have.
     val list = rememberLazyListState()
-    Column(modifier.scrollsListFromItsSides(list), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier.scrollsListFromItsSides(list).padding(contentPadding), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // No "All configurations" button (removed 2026-10-04): every action is listed right here.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             SectionArrow(collapsed, onToggleCollapsed)

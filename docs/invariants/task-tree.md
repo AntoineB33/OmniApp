@@ -1351,7 +1351,8 @@ suggestions before it was ever entered.
   title line is its editor's (`ownsItsTitle`) and a group inside a group stay one item. **A sticky title pressed while it
   stands over its own content keeps its place** (`keepingAtTop`): what it hid goes and the list scrolls to the title.
 - **The wheel or a touchpad anywhere in the actions section scrolls its list** (`scrollsListFromItsSides`): its sides,
-  its scrollbar, its bar — wherever no child scrolled with it (the calendar keeps its own wheel).
+  its scrollbar, its bar — wherever no child scrolled with it (the calendar keeps its own wheel). The section's padding
+  is inside that area (`contentPadding`), so the gap by the separator line is part of it.
 - **The actions section's bar has the same arrow** (user rule 2026-11-06, `AddedActionsSection`'s `configurationArrow`),
   as a task cell's Edit Mode has. **The bars' right-click menu is the field's own**: match case and whole word (in it
   2026-11-04 → 2026-11-06) are in the configurations alone.
