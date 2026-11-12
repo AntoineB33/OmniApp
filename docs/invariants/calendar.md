@@ -30,11 +30,12 @@ User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`),
 - **The calendar button's calendar opens on the day display, "Lock to now" on** (user rule 2026-11-12); a calendar
   asked for with a view (the notifications it shows) takes the account's display.
 - **"Lock to the notifications in the results"**: the view held on every notification among its window's result
-  list (`LocalSearchResults`, provided by the Search window), first to last, the now-line included. Offered while there
-  is one; on by default, and locked again as they change, in the "unfocused notif" window (`followsNotifications`).
-- **The grid is a row of its own height** (`CALENDAR_ELEMENT_HEIGHT`, its bottom edge dragged), with a margin on both
-  sides (`CALENDAR_ELEMENT_SIDE_MARGIN`) where the wheel scrolls the actions section: the section scrolls, and the
-  grid's endless scroll must not fight it. Its title stays in view as it scrolls (`task-tree.md`, the actions section). It holds the keyboard as the window did (O, Ctrl +/-/0,
+  list (`LocalSearchResults`, provided by the Search window), first to last, the now-line included. Always offered (with
+  none among the results it holds nothing until one comes); on by default, and locked again as they change, in the
+  "unfocused notif" window (`followsNotifications`). A scroll of the hand on the grid releases the locks, as always.
+- **The grid is a row of its own height** (`CALENDAR_ELEMENT_HEIGHT`, its bottom edge dragged), as wide as the section:
+  the wheel or a touchpad over the section's sides and its scrollbar scrolls the section (`task-tree.md`, the actions
+  section), over the grid the calendar. Its title stays in view as it scrolls. It holds the keyboard as the window did (O, Ctrl +/-/0,
   Space); Ctrl+Z / Ctrl+Y are its window's. What it changes is `MadeIn(Search, that window's copy)`.
 - **The horizon follows the grids on screen** (`calendarSpans`, by frame id): a grid that leaves the composition (its
   row closed, its window closed) takes its days off.

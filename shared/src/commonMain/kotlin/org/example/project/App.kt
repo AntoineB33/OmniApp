@@ -4846,7 +4846,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 org.example.project.ui.CalendarPart.Locks ->
                                     org.example.project.ui.CalendarElementLocks(
                                         view = view,
-                                        hasSpan = openingSpan != null,
                                         lockedTaskTitle =
                                             if (holdsLock) calendarLockTask?.let { schedulerState.tasks[it]?.title?.ifBlank { null } } else null,
                                         lockOnTask = holdsLock && calendarLockOnTask,

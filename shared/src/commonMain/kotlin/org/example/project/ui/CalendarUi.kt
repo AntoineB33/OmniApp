@@ -4162,8 +4162,7 @@ fun CalendarElementGrid(
         }
     }
     val density = LocalDensity.current
-    // A margin on both sides (user rule 2026-11-12): the wheel there scrolls the actions section, not the calendar.
-    Column(Modifier.fillMaxWidth().padding(horizontal = CALENDAR_ELEMENT_SIDE_MARGIN)) {
+    Column(Modifier.fillMaxWidth()) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -4276,7 +4275,6 @@ fun CalendarElementGrid(
 }
 
 internal val CALENDAR_ELEMENT_MIN_HEIGHT = 160.dp
-internal val CALENDAR_ELEMENT_SIDE_MARGIN = 32.dp
 internal val CALENDAR_ELEMENT_MAX_HEIGHT = 2400.dp
 
 /** The calendar element's **day selector** ([CalendarPart.Day]): picking a day takes this window's calendar to it. */
@@ -4337,7 +4335,6 @@ fun CalendarElementDisplay(mode: CalendarDisplayMode, onModeChange: (CalendarDis
 @Composable
 fun CalendarElementLocks(
     view: CalendarElementView,
-    hasSpan: Boolean,
     lockedTaskTitle: String?,
     lockOnTask: Boolean,
     lockTaskPending: Boolean,
@@ -4346,11 +4343,10 @@ fun CalendarElementLocks(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.width(CALENDAR_CONFIGURATION_WIDTH)) {
         CalendarConfigurationSwitch("Lock to now", view.lockNowLine) { on -> view.setLockNowLine(on) { onLockOnTaskChange(false) } }
         // User rule 2026-11-12: the view held on every notification among the window's results, first to last, the
-        // now-line included — on by default for the "unfocused notif" window.
-        if (hasSpan) {
-            CalendarConfigurationSwitch("Lock to the notifications in the results", view.lockNotifications) { on ->
-                view.setLockNotifications(on) { onLockOnTaskChange(false) }
-            }
+        // now-line included — on by default for the "unfocused notif" window. Always offered: with none among the
+        // results it holds nothing until one comes.
+        CalendarConfigurationSwitch("Lock to the notifications in the results", view.lockNotifications) { on ->
+            view.setLockNotifications(on) { onLockOnTaskChange(false) }
         }
         if (lockedTaskTitle != null) {
             CalendarConfigurationSwitch("Locked on task", lockOnTask) { on ->

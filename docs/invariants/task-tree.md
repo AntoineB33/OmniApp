@@ -1348,7 +1348,10 @@ suggestions before it was ever entered.
 - **The title of what the actions section shows stays in view** (user rule 2026-11-12, `AddedActionList`): a group's
   heading and an open action's title are the list's sticky headers and its content the items under them, so a press on
   the title that hides it is always on screen, however tall the action (the calendar element's grid). An action whose
-  title line is its editor's (`ownsItsTitle`) and a group inside a group stay one item.
+  title line is its editor's (`ownsItsTitle`) and a group inside a group stay one item. **A sticky title pressed while it
+  stands over its own content keeps its place** (`keepingAtTop`): what it hid goes and the list scrolls to the title.
+- **The wheel or a touchpad anywhere in the actions section scrolls its list** (`scrollsListFromItsSides`): its sides,
+  its scrollbar, its bar — wherever no child scrolled with it (the calendar keeps its own wheel).
 - **The actions section's bar has the same arrow** (user rule 2026-11-06, `AddedActionsSection`'s `configurationArrow`),
   as a task cell's Edit Mode has. **The bars' right-click menu is the field's own**: match case and whole word (in it
   2026-11-04 → 2026-11-06) are in the configurations alone.

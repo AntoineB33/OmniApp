@@ -88,8 +88,15 @@ class CalendarSecondsRenderTest {
 
     /** The calendar element's grid alone, filling [height] px (at the scene's density of 2) bar its handle. */
     @androidx.compose.runtime.Composable
-    private fun grid(nowExactMillis: () -> Long, records: List<CalendarRecord>, openingSpan: Pair<Long, Long>?, height: Int) {
-        val view = androidx.compose.runtime.remember { CalendarElementView(day).also { it.gridHeightDp = height / 2f - 8f } }
+    private fun grid(
+        nowExactMillis: () -> Long,
+        records: List<CalendarRecord>,
+        openingSpan: Pair<Long, Long>?,
+        height: Int,
+        given: CalendarElementView? = null,
+        mode: org.example.project.ui.CalendarDisplayMode = org.example.project.ui.CalendarDisplayMode.Week,
+    ) {
+        val view = androidx.compose.runtime.remember { (given ?: CalendarElementView(day)).also { it.gridHeightDp = height / 2f - 8f } }
         CalendarElementGrid(
             view = view,
             selectedDate = day,
@@ -112,7 +119,7 @@ class CalendarSecondsRenderTest {
             onAdjustWeights = {},
             overlapArmed = false,
             onToggleOverlap = {},
-            displayMode = org.example.project.ui.CalendarDisplayMode.Week,
+            displayMode = mode,
             lockTaskMillis = null,
             lockOnTask = false,
             onLockOnTaskChange = {},
@@ -172,5 +179,24 @@ class CalendarSecondsRenderTest {
         val (before, after) = panelRuns(at(17, 10, 3), listOf(span, span), lines = listOf(at(17, 10, 6), at(17, 10, 12)))
         assertTrue(after < before * 0.65, "the panel ran down ${before * 100} % then ${after * 100} %")
         assertTrue(after > before * 0.35, "the panel ran down ${before * 100} % then ${after * 100} %")
+    }
+
+    /** User rule 2026-11-12: the calendar button's calendar opens with "Lock to now" on, and opening it releases nothing. */
+    @Test
+    fun a_calendar_opens_locked_to_now_and_stays_so() {
+        for (mode in org.example.project.ui.CalendarDisplayMode.entries) {
+            val view = CalendarElementView(day)
+            val scene =
+                ImageComposeScene(width = 1800, height = 1000, density = Density(2f)) {
+                    grid(nowExactMillis = { at(17, 10, 6) }, records = emptyList(), openingSpan = null, height = 1000, given = view, mode = mode)
+                }
+            try {
+                var time = 0L
+                repeat(10) { scene.render(time); time += 50_000_000L }
+                assertTrue(view.lockNowLine, "Lock to now is on after the calendar opened in $mode")
+            } finally {
+                scene.close()
+            }
+        }
     }
 }

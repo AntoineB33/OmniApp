@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar element, after a second look — 2026-11-12
+
+The section's sides and its scrollbar scroll its list, touchpad included (`scrollsListFromItsSides`: the scroll no child
+took); the grid is as wide as the section again. A sticky title pressed over its own content keeps its place at the top.
+"Lock to the notifications in the results" is always offered. "Lock to now" was found on after opening, in both displays
+(`CalendarSecondsRenderTest`): a hand scroll on the grid releases it, as before.
+
 ### The calendar element, after a first look — 2026-11-12
 
 User rules: the calendar button's calendar opens on the day display with "Lock to now" on; the locks offer "Lock to
