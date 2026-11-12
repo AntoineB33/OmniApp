@@ -4007,7 +4007,11 @@ object SearchDomain {
     val ADD_PARENT_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Task), sorts = PICKER_SORTS, sortFollowsDefault = false) }
 
     /** The children rows of "Parents" ([AddedAction.ElementParents]), each opened by its arrow ([actionChildId]). */
-    enum class ParentsChild(val label: String) { List("List of parents"), Add("Add a parent") }
+    enum class ParentsChild(val label: String, val titled: Boolean) {
+        /** User rule 2026-11-12: the field itself is the child of "Parents", its grey text its name — no row around it. */
+        List("List of parents", titled = false),
+        Add("Add a parent", titled = true),
+    }
 
     /** The id of the child row [child] of the action row [microId]: what its arrow is remembered under ([Config.toggledActionRows]). */
     fun actionChildId(microId: String, child: ParentsChild): String = microId + "/" + child.name
@@ -4362,7 +4366,7 @@ object SearchDomain {
             group.actions.forEach { action ->
                 val micro = microGroupId(group, action)
                 out += micro
-                if (action == AddedAction.ElementParents) ParentsChild.entries.forEach { out += actionChildId(micro, it) }
+                if (action == AddedAction.ElementParents) ParentsChild.entries.filter { it.titled }.forEach { out += actionChildId(micro, it) }
             }
             group.inner.forEach(::walk)
         }

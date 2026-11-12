@@ -11,6 +11,11 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Parents": the field "list of parents" is its child directly — 2026-11-12
+
+User rule: no titled row with an arrow around the list's field; its grey text names it (`ParentsChild.titled`). "Add a
+parent" keeps its row. No migration.
+
 ### "Parents": its two rows are fields opening a headless Search window — 2026-11-12
 
 User rule: "Add a parent" is a field with the grey text "add a parent"; a click opens the pop-up headless Search window

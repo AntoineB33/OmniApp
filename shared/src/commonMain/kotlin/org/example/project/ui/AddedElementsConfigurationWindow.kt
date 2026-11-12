@@ -2616,16 +2616,19 @@ private fun ElementParentsEditor(
     }
     for (child in SearchDomain.ParentsChild.entries) {
         val id = SearchDomain.actionChildId(rowId, child)
-        val open = SearchDomain.isActionRowOpen(config, id, top = false)
+        // User rule 2026-11-12: the field "list of parents" is a child of "Parents" directly — no row of its own around it.
+        val open = !child.titled || SearchDomain.isActionRowOpen(config, id, top = false)
         val toggle = {
             onConfigChange(config.copy(toggledActionRows = if (id in config.toggledActionRows) config.toggledActionRows - id else config.toggledActionRows + id))
         }
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = NESTED_ACTION_INDENT)) {
-            SectionArrow(!open, toggle)
-            Box(Modifier.togglesSection(toggle)) { MicroGroupTitle(child.label, nested = true) }
+        if (child.titled) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = NESTED_ACTION_INDENT)) {
+                SectionArrow(!open, toggle)
+                Box(Modifier.togglesSection(toggle)) { MicroGroupTitle(child.label, nested = true) }
+            }
         }
         if (!open) continue
-        Box(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT * 2)) {
+        Box(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT * if (child.titled) 2 else 1)) {
             when (child) {
                 SearchDomain.ParentsChild.List ->
                     PopupSearchField(

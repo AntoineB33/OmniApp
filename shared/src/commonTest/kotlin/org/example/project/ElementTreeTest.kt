@@ -384,8 +384,9 @@ class ElementTreeTest {
         val listed = SearchDomain.listedGroupIds(groups)
         val group = groups.first { AddedAction.ElementParents in it.actions }
         val micro = SearchDomain.microGroupId(group, AddedAction.ElementParents)
-        val list = SearchDomain.actionChildId(micro, SearchDomain.ParentsChild.List)
-        assertTrue(list in listed && SearchDomain.actionChildId(micro, SearchDomain.ParentsChild.Add) in listed)
+        val list = SearchDomain.actionChildId(micro, SearchDomain.ParentsChild.Add)
+        assertFalse(SearchDomain.actionChildId(micro, SearchDomain.ParentsChild.List) in listed, "the list field has no row of its own")
+        assertTrue(list in listed)
         val config = SearchDomain.Config(toggledActionRows = setOf(list))
         assertTrue(SearchDomain.isActionRowOpen(config, list, top = false))
         // Another row's arrow keeps it open.
