@@ -30,8 +30,11 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -283,6 +286,165 @@ internal fun CellEditPopupLayer(
                     IntSize(width, height),
                     IntSize(constraints.maxWidth, constraints.maxHeight),
                 ),
+            )
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-12: **a field whose Search window pops up under it** ("Add a parent", "List of parents" of the actions
+ * section): where it stands, what bounds count as inside it, how `App` draws the window ([search], [LocalEmbeddedSearch]'s)
+ * and what it asks of it.
+ */
+internal class FieldSearchPopupRequest(
+    val anchor: () -> Rect?,
+    val region: OutsidePressEditor,
+    val search: @Composable (EmbeddedSearchRequest, Modifier) -> Unit,
+    val embedded: EmbeddedSearchRequest,
+    val onClose: () -> Unit,
+)
+
+/** What the open field publishes and the top layer draws: one such pop-up on screen at a time. */
+internal class FieldSearchPopupHost {
+    private var owner: Any? = null
+
+    var request: FieldSearchPopupRequest? by mutableStateOf(null)
+        private set
+
+    fun publish(from: Any, next: FieldSearchPopupRequest) {
+        owner = from
+        request = next
+    }
+
+    fun retract(from: Any) {
+        if (owner !== from) return
+        owner = null
+        request = null
+    }
+}
+
+internal val LocalFieldSearchPopupHost = staticCompositionLocalOf<FieldSearchPopupHost?> { null }
+
+/**
+ * User rule 2026-11-12: **a field with its grey text ([placeholder]) that opens, on a click, a headless Search window under
+ * it** — the Search window's search section alone, as a cell's Edit Mode shows it ([CellEditPopupLayer]): the field is its
+ * search bar (its text is [config]'s query), with the bar's cross and configurations arrow. [picker]: its rows are picked
+ * at a click ("Add a parent"), given what closes it. A press outside the field and the window, or Escape, closes it.
+ */
+@Composable
+internal fun PopupSearchField(
+    placeholder: String,
+    state: SchedulerState,
+    config: SearchDomain.Config,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    /** What the configurations tree's Reset goes back to. */
+    openedConfig: SearchDomain.Config,
+    modifier: Modifier = Modifier,
+    picker: ((close: () -> Unit) -> SearchPicker)? = null,
+    onDrop: ((SearchDomain.Result) -> Unit)? = null,
+    canDrop: (SearchDomain.Result) -> Boolean = { true },
+) {
+    val search = LocalEmbeddedSearch.current
+    val host = LocalFieldSearchPopupHost.current
+    var open by remember { mutableStateOf(false) }
+    var bounds by remember { mutableStateOf<Rect?>(null) }
+    val focusManager = LocalFocusManager.current
+    val close = {
+        open = false
+        focusManager.clearFocus()
+    }
+    val region = rememberOutsidePressEditor(active = open) { close() }
+    OutlinedTextField(
+        value = config.query,
+        onValueChange = {
+            onConfigChange(config.copy(query = it))
+            open = true
+        },
+        singleLine = true,
+        placeholder = { Text(placeholder) },
+        trailingIcon = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SearchBarCross(config.query) { onConfigChange(config.copy(query = "")) }
+                ConfigurationTreeArrow(
+                    state = state,
+                    config = config,
+                    openedConfig = openedConfig,
+                    onConfigChange = onConfigChange,
+                    nowMillis = LocalAppNowMillis.current,
+                    windows = emptyList(),
+                    claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
+                )
+            }
+        },
+        modifier = modifier
+            .outsidePressPart(region)
+            .onGloballyPositioned { bounds = it.boundsInWindow() }
+            // A click on it gives it the caret: that is what opens the window.
+            .onFocusChanged { if (it.isFocused) open = true }
+            .onPreviewKeyEvent { event ->
+                if (open && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    close()
+                    true
+                } else {
+                    false
+                }
+            },
+    )
+    if (!open || search == null || host == null) return
+    val request =
+        FieldSearchPopupRequest(
+            anchor = { bounds },
+            region = region,
+            search = search,
+            embedded = EmbeddedSearchRequest(config, onConfigChange, onDrop, canDrop, picker?.invoke(close), barOutside = true),
+            onClose = close,
+        )
+    val owner = remember { Any() }
+    SideEffect { host.publish(owner, request) }
+    DisposableEffect(host, owner) { onDispose { host.retract(owner) } }
+}
+
+/**
+ * The window a [PopupSearchField] opens, drawn over every window as the cell's Edit Mode rectangle is (a layer of the
+ * content area, no `Popup`: the field keeps the caret), placed by the same rule ([cellEditPopupOffset]).
+ */
+@Composable
+internal fun FieldSearchPopupLayer(host: FieldSearchPopupHost, modifier: Modifier = Modifier) {
+    val request = host.request ?: return
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    Layout(
+        content = {
+            Surface(
+                modifier = Modifier
+                    .outsidePressPart(request.region)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                            request.onClose()
+                            true
+                        } else {
+                            false
+                        }
+                    },
+                shape = RoundedCornerShape(8.dp),
+                // It IS the Search window: the windows' own background and border, as the cell's rectangle.
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                shadowElevation = 8.dp,
+            ) {
+                Column(Modifier.fillMaxSize().padding(8.dp)) {
+                    request.search(request.embedded, Modifier.fillMaxWidth().weight(1f))
+                }
+            }
+        },
+        modifier = modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() },
+    ) { measurables, constraints ->
+        val width = CELL_EDIT_POPUP_WIDTH.roundToPx().coerceAtMost(constraints.maxWidth)
+        val height = CELL_EDIT_POPUP_HEIGHT.roundToPx().coerceAtMost(constraints.maxHeight)
+        val placeable = measurables.single().measure(Constraints.fixed(width, height))
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            val anchor = request.anchor() ?: return@layout
+            placeable.place(
+                cellEditPopupOffset(anchor.translate(-origin), IntSize(width, height), IntSize(constraints.maxWidth, constraints.maxHeight)),
             )
         }
     }

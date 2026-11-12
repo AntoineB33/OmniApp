@@ -481,6 +481,11 @@ fun SearchWindow(
     onDrop: ((SearchDomain.Result) -> Unit)? = null,
     /** Whether [onDrop] can drop the row: a task's last place in the tree cannot be taken ([ElementTree.canUnlink]). */
     canDrop: (SearchDomain.Result) -> Boolean = { true },
+    /**
+     * User rule 2026-11-12: **its search bar is a field outside it** ([PopupSearchField], as a picker's is the cell): no bar
+     * of its own; the query is the field's, through [config].
+     */
+    barOutside: Boolean = false,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -1021,7 +1026,7 @@ fun SearchWindow(
             val barEditor = rememberFocusOutsidePressEditor(fieldFocused)
             // User rule 2026-11-04: a picker's bar IS the task cell being edited (its cross included, the same
             // `SearchBarCross`): no second bar here, so the completion list comes first, under the cell's switch.
-            if (picker == null)
+            if (picker == null && !barOutside)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1511,6 +1516,10 @@ class EmbeddedSearchRequest(
     val onConfigChange: (SearchDomain.Config) -> Unit,
     val onDrop: ((SearchDomain.Result) -> Unit)?,
     val canDrop: (SearchDomain.Result) -> Boolean = { true },
+    /** Rows picked at a click, as a cell's Edit Mode picks ([SearchPicker]); null: rows as a Search window has them. */
+    val picker: SearchPicker? = null,
+    /** Its bar is a field outside it ([PopupSearchField]). */
+    val barOutside: Boolean = false,
 )
 
 /**

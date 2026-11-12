@@ -2590,9 +2590,10 @@ private const val MAX_CHOOSER_ROWS: Int = 50
 
 /**
  * User rule 2026-11-12: **"Parents", the parent action of any element** — its children rows, each with its arrow
- * ([SearchDomain.ParentsChild], closed by default, [SearchDomain.isActionRowOpen]): the **List of parents**, a Search window
- * of its search section alone ([LocalEmbeddedSearch]) listing the parents of the added elements, each with the button
- * that drops it ([SearchDomain.parentsListConfig]); and **Add a parent**, the field ([ElementParentEditor]).
+ * ([SearchDomain.ParentsChild], closed by default, [SearchDomain.isActionRowOpen]), each a field with its grey text that
+ * opens a headless Search window under it ([PopupSearchField]): the **List of parents** — the parents of the added
+ * elements, each with the button that drops it ([SearchDomain.parentsListConfig]); and **Add a parent** — the tasks
+ * ([SearchDomain.ADD_PARENT_SEARCH]), a click making one a parent.
  */
 @Composable
 private fun ElementParentsEditor(
@@ -2605,9 +2606,14 @@ private fun ElementParentsEditor(
 ) {
     val tree = org.example.project.scheduler.domain.ElementTree
     val children = added.map(SearchDomain::keyOf)
-    // The list's own configuration (its bar, its settings): the window's view, Compose-only, kept while the row is.
+    // Each window's own configuration (its bar, its settings): the window's view, Compose-only, kept while the row is.
     var listConfig by remember(children) { mutableStateOf<SearchDomain.Config?>(null) }
-    val embedded = LocalEmbeddedSearch.current
+    var addConfig by remember(children) { mutableStateOf(SearchDomain.ADD_PARENT_SEARCH) }
+    // The tasks one of the added elements can be put under: the tree's own rule ([ElementTree.canLink]).
+    val below = remember(children, state.elementLinks, state.lists, state.tasks) { children.associateWith { tree.descendantsOf(state, it) } }
+    val eligible = remember(below, state.cells) {
+        state.tasks.keys.filterTo(HashSet()) { id -> children.any { tree.canLink(state, SearchDomain.taskKey(id), it, below.getValue(it)) } }
+    }
     for (child in SearchDomain.ParentsChild.entries) {
         val id = SearchDomain.actionChildId(rowId, child)
         val open = SearchDomain.isActionRowOpen(config, id, top = false)
@@ -2621,33 +2627,45 @@ private fun ElementParentsEditor(
         if (!open) continue
         Box(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT * 2)) {
             when (child) {
-                SearchDomain.ParentsChild.List -> {
-                    val shown = SearchDomain.parentsListConfig(children, listConfig)
-                    if (embedded == null) {
-                        NoteText("No Search window can be drawn here.")
-                    } else {
-                        embedded(
-                            EmbeddedSearchRequest(
-                                config = shown,
-                                onConfigChange = { listConfig = it },
-                                // Dropped: no longer a parent of any added element.
-                                onDrop = { parent -> run(SearchDomain.AddedCommand.ElementParent(SearchDomain.keyOf(parent), on = false)) },
-                                // A task's last place in the tree is not taken from it.
-                                canDrop = { parent -> children.any { tree.canUnlink(state, SearchDomain.keyOf(parent), it) } },
-                            ),
-                            // The list scrolls inside the section, which scrolls itself: a height of its own.
-                            Modifier.fillMaxWidth().height(PARENTS_LIST_HEIGHT),
-                        )
-                    }
-                }
-                SearchDomain.ParentsChild.Add -> ElementParentEditor(state, added, config, run)
+                SearchDomain.ParentsChild.List ->
+                    PopupSearchField(
+                        placeholder = "list of parents",
+                        state = state,
+                        config = SearchDomain.parentsListConfig(children, listConfig),
+                        onConfigChange = { listConfig = it },
+                        openedConfig = SearchDomain.parentsListConfig(children),
+                        modifier = Modifier.fillMaxWidth(),
+                        // Dropped: no longer a parent of any added element.
+                        onDrop = { parent -> run(SearchDomain.AddedCommand.ElementParent(SearchDomain.keyOf(parent), on = false)) },
+                        // A task's last place in the tree is not taken from it.
+                        canDrop = { parent -> children.any { tree.canUnlink(state, SearchDomain.keyOf(parent), it) } },
+                    )
+                SearchDomain.ParentsChild.Add ->
+                    PopupSearchField(
+                        placeholder = "add a parent",
+                        state = state,
+                        config = addConfig,
+                        onConfigChange = { addConfig = it },
+                        openedConfig = SearchDomain.ADD_PARENT_SEARCH,
+                        modifier = Modifier.fillMaxWidth(),
+                        picker = { close ->
+                            SearchPicker(
+                                eligible = eligible,
+                                canPick = true,
+                                onPick = { taskId ->
+                                    run(SearchDomain.AddedCommand.ElementParent(SearchDomain.taskKey(taskId), on = true))
+                                    addConfig = addConfig.copy(query = "")
+                                    close()
+                                },
+                                onNewTask = null,
+                                onCancel = close,
+                            )
+                        },
+                    )
             }
         }
     }
 }
-
-/** How tall the "List of parents" stands in the actions section: its list scrolls inside it. */
-private val PARENTS_LIST_HEIGHT = 240.dp
 
 /**
  * User rule 2026-11-02, "Add a parent": the selector, of what can be a parent of an added element ([ElementTree.canLink]), and

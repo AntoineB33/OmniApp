@@ -4000,6 +4000,12 @@ object SearchDomain {
     val ELEMENT_CATEGORY_ACTIONS: Set<AddedAction> = setOf(AddedAction.ElementAddCategory, AddedAction.ElementRemoveCategory)
     val ELEMENT_ACTIONS: Set<AddedAction> = ELEMENT_CATEGORY_ACTIONS + setOf(AddedAction.ElementParents)
 
+    /**
+     * User rule 2026-11-12: **the Search window "Add a parent" opens**, *"with the search configuration of only tasks"*: the
+     * tasks, by title, as a cell's Edit Mode lists them ([PICKER_SORTS]); a click picks the parent.
+     */
+    val ADD_PARENT_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Task), sorts = PICKER_SORTS, sortFollowsDefault = false) }
+
     /** The children rows of "Parents" ([AddedAction.ElementParents]), each opened by its arrow ([actionChildId]). */
     enum class ParentsChild(val label: String) { List("List of parents"), Add("Add a parent") }
 

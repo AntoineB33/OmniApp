@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Parents": its two rows are fields opening a headless Search window — 2026-11-12
+
+User rule: "Add a parent" is a field with the grey text "add a parent"; a click opens the pop-up headless Search window
+on the tasks alone (`SearchDomain.ADD_PARENT_SEARCH`), a click on a task making it a parent (`SearchPicker`, eligible =
+`ElementTree.canLink`). "List of parents" the same way, its window the parents with drop buttons (`parentsListConfig`).
+`PopupSearchField` is the field (it is the window's bar: cross and configurations arrow, Escape or an outside press
+closes); `FieldSearchPopupLayer` draws the window over every window, placed as the cell's Edit Mode rectangle
+(`cellEditPopupOffset`). `SearchWindow(barOutside = true)` drops its own bar. The list was drawn inline the same day.
+No migration.
+
 ### "Parents": the list of parents as a Search window with drop buttons — 2026-11-12
 
 User rule: every element has a parent action whose children are the list of parents and a field to add one; the list is a

@@ -362,6 +362,18 @@ class ElementTreeTest {
         assertEquals(setOf(b, one), listedIn(dropped, config))
     }
 
+    /** User rule 2026-11-12: "Add a parent" opens a headless Search window *"with the search configuration of only tasks"*. */
+    @Test
+    fun add_a_parent_searches_the_tasks_alone() {
+        val tasks = withTasks("One")
+        assertEquals(setOf(Kind.Task), SearchDomain.ADD_PARENT_SEARCH.searchedKinds)
+        val config = SearchDomain.ADD_PARENT_SEARCH
+        val found = SearchDomain.results(tasks, config.searchedKinds, "", filters = config.filters, sorts = config.sorts)
+        // As the window's picker shows them: the tasks that can be a parent, no creation row.
+        val shown = SearchDomain.pickerRows(tasks, found, tasks.tasks.keys, creation = false).map(SearchDomain::keyOf)
+        assertEquals(listOf(taskKey(tasks, "One")), shown, "no chrono, no root")
+    }
+
     private fun listedIn(state: SchedulerState, config: SearchDomain.Config) =
         SearchDomain.results(state, config.searchedKinds, config.query, filters = config.filters).map(SearchDomain::keyOf).toSet()
 

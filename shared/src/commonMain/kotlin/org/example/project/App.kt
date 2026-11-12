@@ -1336,6 +1336,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             walkPositions(undoRedoIntentFor(key, keyDown = true, ctrlOrMeta = ctrl, shift = shift, alt = alt))
         }
         val cellEditPopups = remember { org.example.project.ui.CellEditPopupHost() }
+        val fieldSearchPopups = remember { org.example.project.ui.FieldSearchPopupHost() }
         // The window bar's tab names (user rule 2026-10-01): loaded once, keeping only the windows that come back —
         // a row the user closed since is not visible — and written whenever a button names a tab.
         remember(placementStore) {
@@ -4188,6 +4189,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             org.example.project.ui.LocalPopupPositions provides popupPositions,
             org.example.project.ui.LocalMenuKeyForward provides menuKeyForward,
             org.example.project.ui.LocalCellEditPopupHost provides cellEditPopups,
+            org.example.project.ui.LocalFieldSearchPopupHost provides fieldSearchPopups,
             LocalWindowFrameHost provides windowFrames,
             LocalHeadObstacle provides menuToggleBounds,
             LocalWindowChromeMemory provides windowChromeMemory,
@@ -5583,6 +5585,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 embedded = true,
                                 onDrop = request.onDrop,
                                 canDrop = request.canDrop,
+                                picker = request.picker,
+                                barOutside = request.barOutside,
                                 modifier = embeddedModifier,
                             )
                         }
@@ -5690,6 +5694,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             modifier = popupModifier,
                         )
                     }
+
+                    // User rule 2026-11-12: the Search window popping up under a field of the actions section ("Add a
+                    // parent", "List of parents"), over every window as a cell's Edit Mode rectangle is.
+                    org.example.project.ui.FieldSearchPopupLayer(
+                        host = fieldSearchPopups,
+                        modifier = Modifier.zIndex(Float.MAX_VALUE),
+                    )
 
                     // PRD §5: every online configuration of this device — status, work offline, the account.
                     LateralWindow(FloatingWindow.Online, onlineWindowOpen) {
