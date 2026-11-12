@@ -811,10 +811,12 @@ class SearchWindowTest {
                 SearchDomain.Setting.ExcludedElements,
                 SearchDomain.Setting.IncludedElements,
                 SearchDomain.Setting.NoParentOfKinds,
+                SearchDomain.Setting.ParentsOf,
                 // User rule 2026-11-12: how the results are laid out (today the actions section's).
                 SearchDomain.Setting.GroupByAddedElements,
                 SearchDomain.Setting.ExpandResults,
                 SearchDomain.Setting.SearchSortsOnly,
+                SearchDomain.Setting.DropButtons,
                 SearchDomain.Setting.SortResults,
             ),
             sections.first().second,

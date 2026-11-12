@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Parents": the list of parents as a Search window with drop buttons — 2026-11-12
+
+User rule: every element has a parent action whose children are the list of parents and a field to add one; the list is a
+Search window of its search section alone, whose "drop button" configuration is on. `AddedAction.ElementParents` replaces
+"Add a parent" / "Remove a parent" (retired, kept for menu items made from them); its child rows ("List of parents",
+"Add a parent") open by their arrows under `Config.toggledActionRows` (`actionChildId`). The list is the Search window
+itself, drawn by `App` through `LocalEmbeddedSearch` (`SearchWindow(embedded = true)`: no frame, no head, own selection,
+no focus grab) on `parentsListConfig`. New configurations: `Config.dropButtons` ("A button to drop each element": in the
+parents list a drop unlinks the parent, elsewhere the row becomes an excluded element) and the filter
+`Filters.parentsOf` ("Parents of"). Stored config fields `dropButtons`, `parentsOf`, absent = off/none. No migration.
+
 ### Any element under a task; the root task found by a "no task parent" search — 2026-11-12
 
 User rules: *"The root task must be found when the search configurations are only tasks and must not have parents of type

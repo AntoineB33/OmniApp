@@ -468,13 +468,26 @@ fun SearchWindow(
     onSplitsChange: (SearchSplits) -> Unit = {},
     /** Set: this is the window of a cell in Edit Mode, its search section alone ([SearchPicker]). */
     picker: SearchPicker? = null,
+    /**
+     * User rule 2026-11-12: **a Search window drawn inside another one** — the "List of parents" of the actions section
+     * ([LocalEmbeddedSearch]): no frame, no section title, its selection its own (not the app window's), and the bar takes
+     * no focus on appearing. Which parts it shows is [splits]' word, as for any Search window.
+     */
+    embedded: Boolean = false,
+    /**
+     * What a row's drop button does, while [SearchDomain.Config.dropButtons] is on: the "List of parents" takes the parent
+     * off. Null: the row leaves the list, an excluded element of this window's configuration ([SearchDomain.Filters.excludedElements]).
+     */
+    onDrop: ((SearchDomain.Result) -> Unit)? = null,
+    /** Whether [onDrop] can drop the row: a task's last place in the tree cannot be taken ([ElementTree.canUnlink]). */
+    canDrop: (SearchDomain.Result) -> Boolean = { true },
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
     onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
     onRaise: () -> Unit = {},
 ) {
-    val frame = if (picker == null) rememberWindowFrameState("Search", initialOffset, initialSize) else null
+    val frame = if (picker == null && !embedded) rememberWindowFrameState("Search", initialOffset, initialSize) else null
     val query = config.query
     // User rule 2026-11-04: the kinds searched are the checked ones among those offered ([SearchDomain.Config.searchedKinds]).
     val kinds = config.searchedKinds
@@ -489,10 +502,11 @@ fun SearchWindow(
     val listFocus = remember { FocusRequester() }
     // The bar holds the focus from the moment the window opens: it is where the user types.
     // A picker's is not: the caret is in the cell (`task-tree.md`: the first letters typed are never lost).
-    LaunchedEffect(Unit) { if (picker == null) runCatching { fieldFocus.requestFocus() } }
+    // Nor an embedded one's: it appears inside a window the user is working in.
+    LaunchedEffect(Unit) { if (picker == null && !embedded) runCatching { fieldFocus.requestFocus() } }
     // The task tree's rule (its selector's name field above it): while the user is in the search BAR, no row is
     // selected. ↓ or Enter there moves into the list, a click on a row does too, and ↑ on the first row goes back.
-    var fieldFocused by remember { mutableStateOf(true) }
+    var fieldFocused by remember { mutableStateOf(!embedded) }
     // The picker's list shows a selection only once the keyboard went there, the caret being in the cell until then.
     var listFocused by remember { mutableStateOf(false) }
     val rowsSelectable = picker == null || listFocused
@@ -587,7 +601,7 @@ fun SearchWindow(
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
     // among the results (the question changed, the thing was deleted) reads as the first row.
     var pickerSelectedKey by remember { mutableStateOf<String?>(null) }
-    val selectedKey = if (picker != null) pickerSelectedKey else state.windowSelections[windowSelectionKey(HistoryWindow.Search, instance)]
+    val selectedKey = if (picker != null || embedded) pickerSelectedKey else state.windowSelections[windowSelectionKey(HistoryWindow.Search, instance)]
     val selected = results.indexOfFirst { resultKey(it) == selectedKey }.coerceAtLeast(0)
     // The rows selected with Ctrl+click and Shift+click (user rule 2026-10-01), by result key — what the row menu's
     // "add" adds. Null: the selection is the selected row alone. Compose-only, like the check boxes; the selected row
@@ -608,7 +622,7 @@ fun SearchWindow(
         deselected = false
         childSelection.clear()
         selectionAnchor = key
-        if (picker != null) {
+        if (picker != null || embedded) {
             pickerSelectedKey = key
             return
         }
@@ -821,6 +835,23 @@ fun SearchWindow(
         )
     }
 
+    /**
+     * The drop button of [row] while [SearchDomain.Config.dropButtons] is on — [onDrop], else the row leaves the list as an
+     * excluded element. A creation row is a command, not an element of the list: it has none.
+     */
+    fun dropOf(row: SearchDomain.Result): (() -> Unit)? {
+        if (!config.dropButtons || row.kind == SearchDomain.Kind.Creation || !canDrop(row)) return null
+        val drop = onDrop
+        return if (drop != null) {
+            { drop(row) }
+        } else {
+            {
+                val current = latestConfig
+                onConfigChange(current.copy(filters = current.filters.copy(excludedElements = current.filters.excludedElements + resultKey(row))))
+            }
+        }
+    }
+
     val windowContent: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
       // Three sections: the search on the left; on the right, the actions on the added elements above the list
       // of the added elements. Both separators are dragged to share the room (Compose-only, like the zoom):
@@ -964,7 +995,7 @@ fun SearchWindow(
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            if (picker == null) Row(verticalAlignment = Alignment.CenterVertically) {
+            if (picker == null && !embedded) Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionArrow(collapsed = false, onToggle = { searchCollapsed = true })
                 // One line, never wrapped: a section narrowed to an edge cuts its title, it does not squeeze it.
                 Text(
@@ -1207,6 +1238,8 @@ fun SearchWindow(
                             },
                     ) {
                         itemsIndexed(results, key = { _, r -> resultKey(r) }) { index, result ->
+                            // User rule 2026-11-12: with the drop buttons on, each element has one at its right.
+                            DropButtonRow(drop = dropOf(result)) {
                             when (result) {
                                 is SearchDomain.TaskResult -> taskRow(index, result, false)
                                 // A picker's creation row makes the cell's new task at one click, as a task row picks.
@@ -1254,6 +1287,7 @@ fun SearchWindow(
                                         )
                                     }
                                 }
+                            }
                             }
                         }
                     }
@@ -1465,6 +1499,43 @@ fun SearchWindow(
             content = windowContent,
         )
     }
+    }
+}
+
+/**
+ * User rule 2026-11-12: **what a Search window drawn inside another asks of `App`** ([LocalEmbeddedSearch]): its
+ * configuration, held by the caller, and what its drop buttons do.
+ */
+class EmbeddedSearchRequest(
+    val config: SearchDomain.Config,
+    val onConfigChange: (SearchDomain.Config) -> Unit,
+    val onDrop: ((SearchDomain.Result) -> Unit)?,
+    val canDrop: (SearchDomain.Result) -> Boolean = { true },
+)
+
+/**
+ * User rule 2026-11-12: **a Search window inside the actions section** (the "List of parents"), drawn by `App` with the
+ * handlers of the window it stands in ([SearchWindow]'s `embedded`), its search section alone ([EMBEDDED_SEARCH_SPLITS]).
+ * Null where no `App` provides one (a test): nothing is drawn.
+ */
+val LocalEmbeddedSearch = androidx.compose.runtime.compositionLocalOf<(@Composable (EmbeddedSearchRequest, Modifier) -> Unit)?> { null }
+
+/** An embedded Search window's parts: no head, no actions, no added elements — the search section alone. */
+val EMBEDDED_SEARCH_SPLITS: SearchSplits = SearchSplits(headerRemoved = true, actionsRemoved = true, addedRemoved = true)
+
+/**
+ * User rule 2026-11-12: **a row of a Search window's list with its drop button** at its right ([drop]; none drawn while it
+ * is null), the app's framed "✕" — the row keeps the rest of the width.
+ */
+@Composable
+internal fun DropButtonRow(drop: (() -> Unit)?, content: @Composable () -> Unit) {
+    if (drop == null) {
+        content()
+        return
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Box(Modifier.weight(1f)) { content() }
+        FrameButton("✕", onClick = drop)
     }
 }
 

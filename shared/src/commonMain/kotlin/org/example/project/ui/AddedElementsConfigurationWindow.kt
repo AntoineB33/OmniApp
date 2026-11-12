@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -691,11 +692,11 @@ private fun ActionRow(
                     Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
                         SectionArrow(false) { onToggle(microId) }
                         Box(Modifier.weight(1f)) {
-                            AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = true)
+                            AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = true, rowId = microId)
                         }
                     }
                 } else {
-                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = false)
+                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = false, rowId = microId)
                 }
             }
         }
@@ -923,9 +924,11 @@ private fun AddedActionEditor(
     onClear: (() -> Unit)?,
     /** The action's title is the editor's to write, for the ones that put buttons beside it; else its caller wrote it. */
     titled: Boolean = false,
+    /** The action's row ([SearchDomain.microGroupId]), which its children rows are known under; the menu's item has its own. */
+    rowId: String = "menu/" + action.name,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
-        AddedActionBlocks(state, action, added, config, onConfigChange, handlers, run, nowMillis, onOpenEach, onClear, titled)
+        AddedActionBlocks(state, action, added, config, onConfigChange, handlers, run, nowMillis, onOpenEach, onClear, titled, rowId)
     }
 }
 
@@ -943,6 +946,7 @@ private fun AddedActionBlocks(
     onOpenEach: () -> Unit,
     onClear: (() -> Unit)?,
     titled: Boolean,
+    rowId: String,
 ) {
     val taskIds = SearchDomain.addedTaskIds(state, added)
     val tasks = taskIds.mapNotNull { state.tasks[it] }
@@ -1000,6 +1004,8 @@ private fun AddedActionBlocks(
         // User rule 2026-10-11: the blocks themselves, picked from a check-box list and edited in place
         // ([CalendarBlocksEditor]) — it was a button opening another Search window on them.
         SearchDomain.AddedAction.CalendarBlocks -> CalendarBlocksEditor(state, added, config, onConfigChange, handlers, run, nowMillis)
+        SearchDomain.AddedAction.ElementParents -> ElementParentsEditor(state, added, config, onConfigChange, run, rowId)
+        // Retired ([SearchDomain.RETIRED_ACTIONS]): what an item of the lateral menu made from one before still draws.
         SearchDomain.AddedAction.ElementAddParent -> ElementParentEditor(state, added, config, run)
         SearchDomain.AddedAction.ElementRemoveParent -> {
             val children = added.map(SearchDomain::keyOf)
@@ -2581,6 +2587,67 @@ private fun ElementChooser(cellId: String, options: List<Pair<String, String>>, 
 
 /** How many elements a selector lists: what is typed narrows the rest. */
 private const val MAX_CHOOSER_ROWS: Int = 50
+
+/**
+ * User rule 2026-11-12: **"Parents", the parent action of any element** — its children rows, each with its arrow
+ * ([SearchDomain.ParentsChild], closed by default, [SearchDomain.isActionRowOpen]): the **List of parents**, a Search window
+ * of its search section alone ([LocalEmbeddedSearch]) listing the parents of the added elements, each with the button
+ * that drops it ([SearchDomain.parentsListConfig]); and **Add a parent**, the field ([ElementParentEditor]).
+ */
+@Composable
+private fun ElementParentsEditor(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    config: SearchDomain.Config,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    run: (SearchDomain.AddedCommand) -> Unit,
+    rowId: String,
+) {
+    val tree = org.example.project.scheduler.domain.ElementTree
+    val children = added.map(SearchDomain::keyOf)
+    // The list's own configuration (its bar, its settings): the window's view, Compose-only, kept while the row is.
+    var listConfig by remember(children) { mutableStateOf<SearchDomain.Config?>(null) }
+    val embedded = LocalEmbeddedSearch.current
+    for (child in SearchDomain.ParentsChild.entries) {
+        val id = SearchDomain.actionChildId(rowId, child)
+        val open = SearchDomain.isActionRowOpen(config, id, top = false)
+        val toggle = {
+            onConfigChange(config.copy(toggledActionRows = if (id in config.toggledActionRows) config.toggledActionRows - id else config.toggledActionRows + id))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = NESTED_ACTION_INDENT)) {
+            SectionArrow(!open, toggle)
+            Box(Modifier.togglesSection(toggle)) { MicroGroupTitle(child.label, nested = true) }
+        }
+        if (!open) continue
+        Box(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT * 2)) {
+            when (child) {
+                SearchDomain.ParentsChild.List -> {
+                    val shown = SearchDomain.parentsListConfig(children, listConfig)
+                    if (embedded == null) {
+                        NoteText("No Search window can be drawn here.")
+                    } else {
+                        embedded(
+                            EmbeddedSearchRequest(
+                                config = shown,
+                                onConfigChange = { listConfig = it },
+                                // Dropped: no longer a parent of any added element.
+                                onDrop = { parent -> run(SearchDomain.AddedCommand.ElementParent(SearchDomain.keyOf(parent), on = false)) },
+                                // A task's last place in the tree is not taken from it.
+                                canDrop = { parent -> children.any { tree.canUnlink(state, SearchDomain.keyOf(parent), it) } },
+                            ),
+                            // The list scrolls inside the section, which scrolls itself: a height of its own.
+                            Modifier.fillMaxWidth().height(PARENTS_LIST_HEIGHT),
+                        )
+                    }
+                }
+                SearchDomain.ParentsChild.Add -> ElementParentEditor(state, added, config, run)
+            }
+        }
+    }
+}
+
+/** How tall the "List of parents" stands in the actions section: its list scrolls inside it. */
+private val PARENTS_LIST_HEIGHT = 240.dp
 
 /**
  * User rule 2026-11-02, "Add a parent": the selector, of what can be a parent of an added element ([ElementTree.canLink]), and

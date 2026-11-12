@@ -674,6 +674,12 @@ object SearchDomain {
          */
         val actionSearchSortsOnly: Boolean = true,
         /**
+         * User rule 2026-11-12, a search configuration ([Setting.DropButtons]): **every element of the list with a button to
+         * drop it** — the "List of parents" takes the parent off ([ElementTree.parentIntents]); any other Search window takes
+         * the row off its list ([Filters.excludedElements]). Off by default.
+         */
+        val dropButtons: Boolean = false,
+        /**
          * User rule 2026-10-11: **the actions section's own search bar**. It SORTS — inside each group of elements
          * (a macro group), the actions (the micro groups, each under its title) that answer it come first, the best
          * answer first ([actionSearchRank], [sortedByActionSearch]) — and takes nothing away, nor moves a group of
@@ -819,6 +825,7 @@ object SearchDomain {
                     actionsGrouped = actionsGrouped,
                     actionsExpanded = actionsExpanded,
                     actionSearchSortsOnly = actionSearchSortsOnly,
+                    dropButtons = dropButtons,
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
                     pickedTimers = pickedTimers.sorted(),
@@ -841,6 +848,7 @@ object SearchDomain {
                     excludedElements = filters.excludedElements.sorted(),
                     includedElements = filters.includedElements.sorted(),
                     noParentOfKinds = Kind.entries.filter { it in filters.noParentOfKinds }.map { it.name },
+                    parentsOf = filters.parentsOf.sorted(),
                     placeStartMillis = placement.startMillis,
                     placeEndByDelta = placement.endByDelta,
                     placeStatedLengthMillis = placement.lengthMillis,
@@ -931,6 +939,7 @@ object SearchDomain {
                         excludedElements = stored.excludedElements.toSet(),
                         includedElements = stored.includedElements.toSet(),
                         noParentOfKinds = kindsNamed(stored.noParentOfKinds),
+                        parentsOf = stored.parentsOf.toSet(),
                         claudeProject = stored.claudeProject,
                         claudeFrom = stored.claudeFromMillis,
                         claudeUntil = stored.claudeUntilMillis,
@@ -947,6 +956,7 @@ object SearchDomain {
                     actionsGrouped = stored.actionsGrouped,
                     actionsExpanded = stored.actionsExpanded,
                     actionSearchSortsOnly = stored.actionSearchSortsOnly,
+                    dropButtons = stored.dropButtons,
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
                     pickedTimers = stored.pickedTimers.toSet(),
@@ -1275,6 +1285,11 @@ object SearchDomain {
          */
         val noParentOfKinds: Set<Kind> = emptySet(),
         /**
+         * User rule 2026-11-12: **only the parents of these elements**, by key ([ElementTree.parentsOf]); empty = any. What
+         * the "List of parents" of the actions section searches ([parentsListConfig]).
+         */
+        val parentsOf: Set<String> = emptySet(),
+        /**
          * The Claude Code logs' filters (user rule 2026-10-18), one for the three kinds: only the entries of this project
          * (null = any), and only those written in `[claudeFrom, claudeUntil]` (a null bound asks nothing on its side).
          */
@@ -1376,6 +1391,7 @@ object SearchDomain {
                 Setting.ExcludedElements -> excludedElements.isNotEmpty()
                 Setting.IncludedElements -> includedElements.isNotEmpty()
                 Setting.NoParentOfKinds -> noParentOfKinds.isNotEmpty()
+                Setting.ParentsOf -> parentsOf.isNotEmpty()
                 Setting.NotificationSourceSetting -> notificationSources.isNotEmpty()
                 Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject -> claudeProject != null
                 Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom -> claudeFrom != null
@@ -1609,12 +1625,16 @@ object SearchDomain {
         IncludedElements(null, "Included elements"),
         /** User rule 2026-11-12: only the elements with no parent of the checked kinds ([Filters.noParentOfKinds]). */
         NoParentOfKinds(null, "Has no parent of the types"),
+        /** User rule 2026-11-12: only the parents of the given elements ([Filters.parentsOf]): the "List of parents". */
+        ParentsOf(null, "Parents of"),
         /** User rule 2026-11-12: the results grouped by the added elements they involve ([Config.actionsGrouped]). */
         GroupByAddedElements(null, "Group by the added elements involved"),
         /** User rule 2026-11-12: the top rows of the results open by default, not their children ([Config.actionsExpanded]). */
         ExpandResults(null, "Expand the results"),
         /** User rule 2026-11-12: the search bar sorts and hides nothing ([Config.actionSearchSortsOnly]). */
         SearchSortsOnly(null, "Search sorts, hides nothing"),
+        /** User rule 2026-11-12: a button on every element to drop it ([Config.dropButtons]). */
+        DropButtons(null, "A button to drop each element"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -1995,6 +2015,8 @@ object SearchDomain {
         val actionsGrouped: Boolean = true,
         val actionsExpanded: Boolean = false,
         val actionSearchSortsOnly: Boolean = true,
+        /** New 2026-11-12: absent = no drop button ([Config.dropButtons]). */
+        val dropButtons: Boolean = false,
         /** New 2026-10-11: absent from an older build's = the actions in their own order. */
         val actionSearch: String = "",
         /** New 2026-10-11: absent = no block picked in "Blocks on the calendar". */
@@ -2032,6 +2054,8 @@ object SearchDomain {
         val includedElements: List<String> = emptyList(),
         /** New 2026-11-12: absent = no parent filter; a kind this build does not know is dropped. */
         val noParentOfKinds: List<String> = emptyList(),
+        /** New 2026-11-12: absent = the parents of nothing asked. */
+        val parentsOf: List<String> = emptyList(),
         val placeStartMillis: Long? = null,
         val placeEndByDelta: Boolean = true,
         val placeEndMillis: Long? = null,
@@ -2770,9 +2794,14 @@ object SearchDomain {
                 .filter { passes(state, it, filters, calendar) }
                 .let { rows ->
                     // User rule 2026-11-12: no parent of the checked kinds — every element's parents read once.
-                    if (filters.noParentOfKinds.isEmpty()) return@let rows
+                    // ...and only the parents of the given elements.
+                    if (filters.noParentOfKinds.isEmpty() && filters.parentsOf.isEmpty()) return@let rows
                     val parents = ElementTree.parentIndex(state)
-                    rows.filter { row -> parents[keyOf(row)].orEmpty().none { ElementTree.kindOf(it) in filters.noParentOfKinds } }
+                    val wanted = if (filters.parentsOf.isEmpty()) null else filters.parentsOf.flatMapTo(HashSet()) { parents[it].orEmpty() }
+                    rows.filter { row ->
+                        val key = keyOf(row)
+                        (wanted == null || key in wanted) && parents[key].orEmpty().none { ElementTree.kindOf(it) in filters.noParentOfKinds }
+                    }
                 }
                 .let { rows ->
                     // The blocks of the given elements: each block's element read once, not once per row.
@@ -3547,6 +3576,13 @@ object SearchDomain {
          * User rule 2026-11-02: the added elements' parents and categories ([ElementTree]): a selector of elements, and
          * beside it a button adding the element the window comes from ([Config.elementSource]).
          */
+        /**
+         * User rule 2026-11-12: *"In any element, there must be a parent action, and among the children there must be the
+         * [list of parents] and a field to add new parents."* Its children rows are [ParentsChild]: the parents as a
+         * Search window of its search section alone, each with its drop button ([parentsListConfig]), and the field of
+         * "Add a parent". It replaced the two actions below, retired ([RETIRED_ACTIONS]).
+         */
+        ElementParents(null, "Parents"),
         ElementAddParent(null, "Add a parent"),
         ElementRemoveParent(null, "Remove a parent"),
         ElementAddCategory(null, "Add a category"),
@@ -3962,7 +3998,28 @@ object SearchDomain {
 
     /** The added elements' parents and categories: nothing a list without an element offers ([actionsFor]). */
     val ELEMENT_CATEGORY_ACTIONS: Set<AddedAction> = setOf(AddedAction.ElementAddCategory, AddedAction.ElementRemoveCategory)
-    val ELEMENT_ACTIONS: Set<AddedAction> = ELEMENT_CATEGORY_ACTIONS + setOf(AddedAction.ElementAddParent, AddedAction.ElementRemoveParent)
+    val ELEMENT_ACTIONS: Set<AddedAction> = ELEMENT_CATEGORY_ACTIONS + setOf(AddedAction.ElementParents)
+
+    /** The children rows of "Parents" ([AddedAction.ElementParents]), each opened by its arrow ([actionChildId]). */
+    enum class ParentsChild(val label: String) { List("List of parents"), Add("Add a parent") }
+
+    /** The id of the child row [child] of the action row [microId]: what its arrow is remembered under ([Config.toggledActionRows]). */
+    fun actionChildId(microId: String, child: ParentsChild): String = microId + "/" + child.name
+
+    /**
+     * User rule 2026-11-12: **the Search window of the "List of parents"** of [children]: every element kind a parent can
+     * be (a category has its own actions: not here), only the parents of [children] ([Filters.parentsOf]), each with its
+     * drop button ([Config.dropButtons]). [current] is what the user made of it since (its bar, its other settings): the
+     * question it asks is set again, the rest kept.
+     */
+    fun parentsListConfig(children: List<String>, current: Config? = null): Config {
+        val base = current ?: Config(dropButtons = true)
+        return base.copy(
+            kinds = ElementTree.PARENT_KINDS.toSet(),
+            pageTypesOnly = false,
+            filters = base.filters.copy(parentsOf = children.toSet()),
+        )
+    }
 
     /**
      * **One group of the actions section** (user rule 2026-10-10): the added elements its actions act on ([members])
@@ -4296,7 +4353,11 @@ object SearchDomain {
         val out = HashSet<String>()
         fun walk(group: ActionGroup) {
             out += group.id
-            group.actions.forEach { out += microGroupId(group, it) }
+            group.actions.forEach { action ->
+                val micro = microGroupId(group, action)
+                out += micro
+                if (action == AddedAction.ElementParents) ParentsChild.entries.forEach { out += actionChildId(micro, it) }
+            }
             group.inner.forEach(::walk)
         }
         groups.forEach(::walk)
@@ -4449,7 +4510,8 @@ object SearchDomain {
      * made from one before is named by it, and still draws its editor. "Remove every element from the list" went the
      * same way (user rule 2026-10-13): its button stands beside "Open all", in the first micro group of every group.
      */
-    val RETIRED_ACTIONS: Set<AddedAction> = setOf(AddedAction.DragOnCalendar, AddedAction.ClearList)
+    val RETIRED_ACTIONS: Set<AddedAction> =
+        setOf(AddedAction.DragOnCalendar, AddedAction.ClearList, AddedAction.ElementAddParent, AddedAction.ElementRemoveParent)
 
     /** The general actions about the calendar: listed for the elements that can be on it ([CALENDAR_ADD_KINDS]). */
     val CALENDAR_ACTIONS: Set<AddedAction> =

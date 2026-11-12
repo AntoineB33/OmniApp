@@ -5554,6 +5554,38 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     androidx.compose.runtime.SideEffect {
                         menuActionContext.value = addedActionHandlers to { row -> searchRowOpeners.open(schedulerState, row) }
                     }
+                    // User rule 2026-11-12: a Search window inside the actions section of the Search window [ownerId] (the
+                    // "List of parents"): its search section alone, over the account; what it opens and commits is that window's.
+                    fun embeddedSearchOf(ownerId: String): @Composable (org.example.project.ui.EmbeddedSearchRequest, Modifier) -> Unit =
+                        { request, embeddedModifier ->
+                            SearchWindow(
+                                state = schedulerState,
+                                openers = searchRowOpeners.askedThrough(askedFrom(ownerId)),
+                                onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
+                                onGoToTaskTree = { taskId, at -> goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at) },
+                                onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                                actionHandlers = addedActionHandlers.askedThrough(askedFrom(ownerId)),
+                                calendarLayerKindsAt = calendarLayers::kindsAt,
+                                onIntent = {
+                                    vm.dispatch(SchedulerIntent.MadeIn(HistoryWindow.Search, ownerId.removePrefix(FloatingWindow.Search.name), it))
+                                },
+                                onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
+                                onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
+                                windows = if (request.config.readsWindows) searchWindowEntries() else emptyList(),
+                                schedulerRuns = schedulerRuns,
+                                nowMillis = clock::nowMillis,
+                                claudeLogs = claudeLogs,
+                                onDismiss = {},
+                                config = request.config,
+                                onConfigChange = request.onConfigChange,
+                                onOpenConfigurations = {},
+                                splits = org.example.project.ui.EMBEDDED_SEARCH_SPLITS,
+                                embedded = true,
+                                onDrop = request.onDrop,
+                                canDrop = request.canDrop,
+                                modifier = embeddedModifier,
+                            )
+                        }
                     // User rule 2026-10-11: a bound of the boxes' window of the Search window [target] picked by a click on
                     // the calendar — the calendar takes the focus, the click is the instant, and [back] brings the asking
                     // window back. The configurations window's, and the configurations tree's (2026-11-04).
@@ -5569,7 +5601,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         val searchId = windowInstanceId(FloatingWindow.Search.name)
                         val searchConfig = searchConfigOf(searchId)
                         // User rule 2026-11-12: its actions section draws the calendar element, as this window's view of it.
-                        CompositionLocalProvider(org.example.project.ui.LocalCalendarElement provides { part -> CalendarElementPart(searchId, part) }) {
+                        CompositionLocalProvider(
+                            org.example.project.ui.LocalCalendarElement provides { part -> CalendarElementPart(searchId, part) },
+                            org.example.project.ui.LocalEmbeddedSearch provides embeddedSearchOf(searchId),
+                        ) {
                         SearchWindow(
                             // User rule 2026-11-04: the configurations tree's box bounds are picked on the calendar too.
                             onPickOnCalendar = pickBoxBoundOnCalendar(searchId) { presentWindow(FloatingWindow.Search, searchId) },
@@ -5766,6 +5801,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             ) {
                                 SearchDomain.resolve(schedulerState, targetConfig.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)
                             }
+                        CompositionLocalProvider(org.example.project.ui.LocalEmbeddedSearch provides embeddedSearchOf(target)) {
                         AddedElementsConfigurationWindow(
                             state = schedulerState,
                             added = added,
@@ -5799,6 +5835,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onRaise = { focusWindow(FloatingWindow.AddedConfig) },
                             modifier = Modifier.align(Alignment.Center),
                         )
+                        }
                     }
 
                     // PRD §4 Default sub-tree: the template grafted under every task the user creates. It

@@ -414,6 +414,9 @@ internal fun SettingEditor(
             androidx.compose.material3.Switch(checked = config.actionsGrouped, onCheckedChange = { onChange(config.copy(actionsGrouped = it)) })
         SearchDomain.Setting.ExpandResults ->
             androidx.compose.material3.Switch(checked = config.actionsExpanded, onCheckedChange = { onChange(config.copy(actionsExpanded = it)) })
+        // User rule 2026-11-12: a button on every element of the list to drop it.
+        SearchDomain.Setting.DropButtons ->
+            androidx.compose.material3.Switch(checked = config.dropButtons, onCheckedChange = { onChange(config.copy(dropButtons = it)) })
         SearchDomain.Setting.SearchSortsOnly ->
             androidx.compose.material3.Switch(checked = config.actionSearchSortsOnly, onCheckedChange = { onChange(config.copy(actionSearchSortsOnly = it)) })
         // The Search window's Reset, the same button with the same rule; this window's own Reset (top section)
@@ -496,6 +499,9 @@ internal fun SettingEditor(
             ElementsDropDown(state, f.excludedElements, windows) { filters(f.copy(excludedElements = it)) }
         SearchDomain.Setting.IncludedElements ->
             ElementsDropDown(state, f.includedElements, windows) { filters(f.copy(includedElements = it)) }
+        // User rule 2026-11-12: only the parents of these elements (what the "List of parents" asks).
+        SearchDomain.Setting.ParentsOf ->
+            ElementsDropDown(state, f.parentsOf, windows) { filters(f.copy(parentsOf = it)) }
         // User rule 2026-11-12: the kinds no parent of a listed element may be — the app's one check-box drop-down.
         SearchDomain.Setting.NoParentOfKinds ->
             CheckBoxDropDown(

@@ -265,7 +265,8 @@ class ElementTreeTest {
         assertTrue(listed(chronos, a).containsAll(SearchDomain.ELEMENT_ACTIONS))
         val tasks = withTasks("One")
         val onlyTask = listed(tasks, taskKey(tasks, "One"))
-        assertTrue(AddedAction.ElementAddParent in onlyTask)
+        assertTrue(AddedAction.ElementParents in onlyTask)
+        assertFalse(AddedAction.ElementAddParent in onlyTask, "retired: a child row of \"Parents\"")
         assertFalse(AddedAction.ElementAddCategory in onlyTask, "a task has its own")
         assertTrue(listed(tasks, taskKey(tasks, "One"), a).containsAll(SearchDomain.ELEMENT_CATEGORY_ACTIONS))
         val creation =
@@ -336,6 +337,59 @@ class ElementTreeTest {
         )
         assertEquals(1, ElementTree.childrenOf(s, second, working).size)
         assertTrue(ElementTree.childrenOf(s, second, working).single().startsWith(Kind.ClaudeReasoning.name + "/"))
+    }
+
+    /**
+     * User rule 2026-11-12: *"In any element, there must be a parent action, and among the children there must be the [list
+     * of parents] and a field to add new parents. Under [list of parents], there is a Search window … with a search
+     * configuration element set to on, which makes every element appear with a button to drop them."*
+     */
+    @Test
+    fun the_list_of_parents_is_a_search_of_the_parents_each_with_its_drop_button() {
+        val tasks = withTasks("One")
+        val one = taskKey(tasks, "One")
+        val s = link(link(link(tasks, a, c), b, c), one, c)
+        val config = SearchDomain.parentsListConfig(listOf(c))
+        assertTrue(config.dropButtons, "the drop buttons are on")
+        assertEquals(ElementTree.PARENT_KINDS.toSet(), config.kinds)
+        assertEquals(setOf(a, b, one), listedIn(s, config))
+        // The user's own question is kept; the parents asked about follow the added elements.
+        val typed = SearchDomain.parentsListConfig(listOf(c), config.copy(query = "One"))
+        assertEquals(setOf(one), listedIn(s, typed))
+        assertEquals(emptySet(), listedIn(s, SearchDomain.parentsListConfig(listOf(a), typed)), "a has no parent")
+        // A drop is the parent action's own "no longer a parent".
+        val dropped = run(s, ElementTree.parentIntents(s, listOf(c), a, on = false))
+        assertEquals(setOf(b, one), listedIn(dropped, config))
+    }
+
+    private fun listedIn(state: SchedulerState, config: SearchDomain.Config) =
+        SearchDomain.results(state, config.searchedKinds, config.query, filters = config.filters).map(SearchDomain::keyOf).toSet()
+
+    @Test
+    fun the_parents_rows_are_children_of_the_action_and_keep_their_arrows() {
+        val added = SearchDomain.resolve(chronos, listOf(a), { emptyMap() })
+        val groups = SearchDomain.actionGroups(SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet()), added), added)
+        val listed = SearchDomain.listedGroupIds(groups)
+        val group = groups.first { AddedAction.ElementParents in it.actions }
+        val micro = SearchDomain.microGroupId(group, AddedAction.ElementParents)
+        val list = SearchDomain.actionChildId(micro, SearchDomain.ParentsChild.List)
+        assertTrue(list in listed && SearchDomain.actionChildId(micro, SearchDomain.ParentsChild.Add) in listed)
+        val config = SearchDomain.Config(toggledActionRows = setOf(list))
+        assertTrue(SearchDomain.isActionRowOpen(config, list, top = false))
+        // Another row's arrow keeps it open.
+        assertTrue(list in SearchDomain.withActionGroupToggled(config, micro, listed).toggledActionRows)
+    }
+
+    @Test
+    fun the_drop_buttons_and_the_parents_asked_survive_the_store_and_an_older_configuration_has_neither() {
+        val config = SearchDomain.parentsListConfig(listOf(a))
+        val back = SearchDomain.Config.decode(config.encode())!!
+        assertTrue(back.dropButtons)
+        assertEquals(setOf(a), back.filters.parentsOf)
+        assertTrue(back.filters.isOn(SearchDomain.Setting.ParentsOf))
+        val older = SearchDomain.Config.decode("{}")!!
+        assertFalse(older.dropButtons)
+        assertEquals(emptySet(), older.filters.parentsOf)
     }
 
     private fun claudeEntry(kind: org.example.project.claudelogs.ClaudeLogKind, text: String, ordinal: Int) =

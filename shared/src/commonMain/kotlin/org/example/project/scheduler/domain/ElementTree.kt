@@ -47,6 +47,12 @@ object ElementTree {
         )
 
     /**
+     * What a parent can be, as the "List of parents" searches it ([SearchDomain.parentsListConfig]): a task and every kind
+     * of the account to pick, but a category, which has its own actions ("Add a category").
+     */
+    val PARENT_KINDS: List<Kind> = listOf(Kind.Task) + PICKED_KINDS.filter { it != Kind.Category }
+
+    /**
      * The direct children of [key], in their order. A Claude Code log entry's come first, read off [claudeLogs]
      * ([ClaudeLogCatalog.childrenOf]: a prompt's reasoning chain and answer, a chain's answer), derived and never linked.
      */
