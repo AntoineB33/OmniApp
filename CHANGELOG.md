@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The actions section lays out every row: its scrollbar is exact from the start — 2026-11-12
+
+User rule: the section knows all it lists, so its scrollbar must be right without scrolling. `AddedActionList` is a plain
+column again (it was a `LazyColumn` by group, laying out only the rows on screen), affordable since every row is closed
+by default; `ColumnScrollbar` reads its exact height. The pinned titles, which the lazy list's sticky headers drew, are
+drawn over the column (`ActionRows`, the last header the scroll passed, pushed up by the next). No migration.
+
 ### A list's scrollbar reads the sum of its rows' heights — 2026-11-12
 
 User rule: the content's height is the sum of the rows' heights, changing when a row expands, collapses or is resized,

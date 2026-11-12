@@ -1099,9 +1099,10 @@ suggestions before it was ever entered.
     `ClaudeLogSearch`) has a group of its own before all the others (`ActionGroup.contents`), in the list's order, holding
     the action that shows its content, which leaves its element's group for as long — moved, not doubled, and the
     others stand as they stood. A kind whose search reads more than its row shows gains its action in `contentActionOf`;
-    today that is the three logs kinds alone. **One group per element, never one for them all: the section is a
-    `LazyColumn` by group** (`AddedActionList`), and a keystroke re-lays out the texts it highlights. As a plain column, 500
-    added entries of 3 KB held the UI 2 s per keystroke, 25 ms since. So nothing that can be long may share a group.
+    today that is the three logs kinds alone. **One group per element, never one for them all.** The section was a
+    `LazyColumn` by group: as a plain column, 500 added entries of 3 KB, all open, held the UI 2 s per keystroke. Since
+    2026-11-12 every row is closed by default (a title), and the section is a plain column again so that its scrollbar is
+    exact (below); what an OPEN row holds is laid out with it, so nothing that can be long may share a group still.
   - **"Add to the calendar"'s end has a button called "Default" where the added elements have a length of their
     own** (user rule 2026-10-11: *"If the added elements list is only a 15min screen break, then add a default button
     next to the 'ends' field to set it to 15 minutes"*; widened 2026-10-14: *"for a timer element […] a button named
@@ -1345,11 +1346,14 @@ suggestions before it was ever entered.
   feature page with its types under it, each type's configurations under that. **Every configuration is in it**: a
   change made anywhere a configuration is set — the tree, the configurations window, the bar — is
   stamped with its time (`SearchDomain.withChanged`).
-- **The title of what the actions section shows stays in view** (user rule 2026-11-12, `AddedActionList`): a group's
-  heading and an open action's title are the list's sticky headers and its content the items under them, so a press on
-  the title that hides it is always on screen, however tall the action (the calendar element's grid). An action whose
-  title line is its editor's (`ownsItsTitle`) and a group inside a group stay one item. **A sticky title pressed while it
-  stands over its own content keeps its place** (`keepingAtTop`): what it hid goes and the list scrolls to the title.
+- **Every row of the actions section is laid out, so its scrollbar is exact** (user rule 2026-11-12: *"it already knows
+  exactly what are all the elements"*, `AddedActionList`): the section is a plain column, its height the sum of its rows',
+  changing when a row opens, closes or is resized or the list changes — never by scrolling, and right from the start.
+- **The title of what the actions section shows stays in view** (user rule 2026-11-12): a group's heading and an open
+  action's title are headers (`ActionRows.Row.header`); the last one the scroll has passed is drawn again over the top of
+  the column, pushed up by the next as it comes, so a press on the title that hides it is always on screen, however tall
+  the action (the calendar element's grid). An action whose title line is its editor's (`ownsItsTitle`) and a group inside
+  a group are one row. **The pinned title pressed keeps its place**: what it hid goes and the column scrolls to the title.
 - **The wheel or a touchpad anywhere in the actions section scrolls its list** (`scrollsListFromItsSides`): its sides,
   its scrollbar, its bar — wherever no child scrolled with it (the calendar keeps its own wheel). The section's padding
   is inside that area (`contentPadding`), so the gap by the separator line is part of it.
