@@ -175,4 +175,22 @@ class CellEditPopupRulesTest {
         assertFalse("matchCase" in older || "wholeWord" in older, "off writes nothing: the shape before them")
         assertEquals(SearchDomain.Config(), SearchDomain.Config.decode(older))
     }
+    /**
+     * User rule 2026-11-04: the edited cell has the configurations arrow after its cross; what it sets is the Edit Mode's
+     * Search window's, kept from one Edit Mode to the next, the text being the cell's own.
+     */
+    @Test
+    fun the_edit_modes_search_keeps_its_configuration_and_the_text_is_the_cells() {
+        val host = org.example.project.ui.CellEditPopupHost()
+        assertEquals(SearchDomain.PICKER_SORTS, host.withDraft("Ap").sorts, "by title by default")
+        assertEquals("Ap", host.withDraft("Ap").query)
+        val drafts = mutableListOf<String>()
+        val filtered = host.withDraft("Ap").copy(filters = SearchDomain.Filters(matchCase = true))
+        host.change(filtered, "Ap") { drafts += it }
+        assertEquals(emptyList(), drafts, "the text unchanged: nothing written to the cell")
+        assertTrue(host.withDraft("Pe").filters.matchCase, "kept for the next Edit Mode")
+        assertEquals("", host.searchConfig.query, "the text is never kept: it is the cell's")
+        host.change(host.withDraft("Ap").copy(query = "Apple"), "Ap") { drafts += it }
+        assertEquals(listOf("Apple"), drafts, "a new text goes to the cell")
+    }
 }

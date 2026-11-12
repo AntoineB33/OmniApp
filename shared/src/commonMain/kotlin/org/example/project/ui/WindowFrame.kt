@@ -1473,6 +1473,11 @@ fun AppWindowFrame(
     headMenu: List<HeadMenuEntry> = emptyList(),
     /** The default window whose colours this one takes its own among, where its id does not say it ([WindowFrameHost.Registration.colorKind]). */
     colorKind: String? = null,
+    /**
+     * False: the window is drawn without its head (user rule 2026-11-11, the Search window's background menu) — its
+     * content the whole frame. The window bar, the chords and the edges still reach it.
+     */
+    showHead: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val host = LocalWindowFrameHost.current
@@ -1603,7 +1608,9 @@ fun AppWindowFrame(
                         else Modifier.onFocusChanged { keyboardInside = it.hasFocus }.focusRequester(ownKeyboard).focusable(),
                     ),
             ) {
-                WindowHead(
+                // No head: none to keep reachable either ([WindowFrameState.clampVertical] skips a zero height).
+                if (!showHead) headHeight[0] = 0f
+                if (showHead) WindowHead(
                     // The user's name for the window, where it has one: a menu button's, or "Rename"'s.
                     title = host?.tabTitles?.get(state.id) ?: title,
                     ownTitle = title,
@@ -1624,7 +1631,7 @@ fun AppWindowFrame(
                     headTrailing = headTrailing,
                     defaultSizePx = with(density) { Size(defaultWidth.toPx(), defaultHeight.toPx()) },
                 )
-                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                if (showHead) Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
                 // What is drawn inside keeps the suffix (a window nested in a copy is that copy's) but not the
                 // copy's wiring or its button, which are this frame's alone.
                 CompositionLocalProvider(

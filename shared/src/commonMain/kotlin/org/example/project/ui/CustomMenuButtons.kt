@@ -333,7 +333,8 @@ data class WindowLayout(
             kotlin.math.abs(x - other.x) < 1f && kotlin.math.abs(y - other.y) < 1f &&
             kotlin.math.abs(width - other.width) < 1f && kotlin.math.abs(height - other.height) < 1f &&
             // A layout kept before the hidden sections were (none listed) hid none.
-            hidden.any { it } == other.hidden.any { it } && (hidden.none { it } || hidden == other.hidden) &&
+            // A flag one of them does not list (kept before it existed, as the Search window's removed sections) is off.
+            (0 until maxOf(hidden.size, other.hidden.size)).all { hidden.getOrElse(it) { false } == other.hidden.getOrElse(it) { false } } &&
             splits.size == other.splits.size &&
             splits.indices.all { kotlin.math.abs(splits[it] - other.splits[it]) < if (splits[it] <= 1f && other.splits[it] <= 1f) 0.002f else 1f }
 }
@@ -423,7 +424,6 @@ object CustomMenuButtons {
             GLOBAL_MUTE,
             CustomMenuButton("d-" + MenuControl.Voice.name, "", "", control = MenuControl.Voice.name),
             CustomMenuButton("d-" + MenuControl.Notifications.name, "", "", control = MenuControl.Notifications.name),
-            CustomMenuButton("d-task-tree", "TaskTree", "Task tree"),
             CustomMenuButton("d-calendar", "Calendar", "Calendar"),
             LIFE_PLAN,
         ) + listOf(
@@ -627,7 +627,14 @@ object CustomMenuButtons {
      * [encode]'s reverse. Nothing stored, or nothing readable, is the menu's own items ([DEFAULTS]); a list written
      * before those were items is given them on top, once ([Stored.seeded]).
      */
-    fun decode(text: String?, defaults: List<CustomMenuButton> = DEFAULTS): List<CustomMenuButton> {
+    fun decode(text: String?, defaults: List<CustomMenuButton> = DEFAULTS): List<CustomMenuButton> =
+        // User rule 2026-11-11: there is no task tree window any more — a button a list kept for it is gone.
+        decodeKept(text, defaults).filterNot { it.windowId.substringBefore('#') == REMOVED_TASK_TREE_WINDOW }
+
+    /** The frame id the task tree window had, before it was removed (user rule 2026-11-11). */
+    private const val REMOVED_TASK_TREE_WINDOW = "TaskTree"
+
+    private fun decodeKept(text: String?, defaults: List<CustomMenuButton>): List<CustomMenuButton> {
         val stored = text?.let { runCatching { json.decodeFromString(Stored.serializer(), it) }.getOrNull() } ?: return defaults
         val buttons =
             if (stored.seeded) stored.buttons else defaults + stored.buttons.filterNot { button -> defaults.any { it.id == button.id } }

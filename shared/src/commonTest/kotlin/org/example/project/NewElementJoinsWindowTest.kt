@@ -103,7 +103,8 @@ class NewElementJoinsWindowTest {
     fun a_menu_stored_before_has_them_brought_together_once() {
         val older = """{"buttons":[{"id":"g-search","window":"Search","title":"Search","global":true},{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"d-task-tree","window":"TaskTree","title":"Task tree"},{"id":"d-Voice","window":"","title":"","control":"Voice"},{"id":"b1","window":"Search","title":"Mine"},{"id":"d-Notifications","window":"","title":"","control":"Notifications"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"claudeSoundsSeeded":true,"lifePlanSeeded":true}"""
         val read = CustomMenuButtons.decode(older)
-        assertEquals(listOf("g-search", "g-mute", "d-Voice", "d-Notifications", "d-task-tree", "b1"), positions(read))
+        // The task tree's button is gone with its window (user rule 2026-11-11).
+        assertEquals(listOf("g-search", "g-mute", "d-Voice", "d-Notifications", "b1"), positions(read))
         // Once: moved apart after that, they stay.
         val apart = CustomMenuButtons.moved(read, "d-Voice", null)
         assertEquals(positions(apart), positions(CustomMenuButtons.decode(CustomMenuButtons.encode(apart))))

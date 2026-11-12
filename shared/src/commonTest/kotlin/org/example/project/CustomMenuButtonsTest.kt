@@ -26,7 +26,7 @@ class CustomMenuButtonsTest {
     fun the_whole_menu_is_the_users_list_and_starts_as_what_the_menu_held() {
         val defaults = CustomMenuButtons.DEFAULTS
         // The global Search button first (user rule 2026-10-18: "by default, there is a Search button … for all pages").
-        assertEquals(listOf("Search", "TaskTree", "Calendar", "LifePlan"), defaults.filter { it.control == null }.map { it.windowId })
+        assertEquals(listOf("Search", "Calendar", "LifePlan"), defaults.filter { it.control == null }.map { it.windowId })
         assertEquals(
             // The mute switch, global (user rule 2026-10-18), then the controls the fixed part held — but the online button,
             // moved to the settings page's menu (user rule 2026-11-04).
@@ -119,8 +119,11 @@ class CustomMenuButtonsTest {
 
     @Test
     fun the_buttons_survive_their_local_encoding() {
-        val buttons = listOf(CustomMenuButton("b1", "Search#2", "Findings"), CustomMenuButton("b2", "TaskTree", "Tree"))
+        val buttons = listOf(CustomMenuButton("b1", "Search#2", "Findings"), CustomMenuButton("b2", "Calendar", "Days"))
         assertEquals(buttons, CustomMenuButtons.decode(CustomMenuButtons.encode(buttons)))
+        // User rule 2026-11-11: the task tree window is gone — a button a list kept for it (or a copy of it) is too.
+        val withTree = buttons + CustomMenuButton("d-task-tree", "TaskTree", "Task tree") + CustomMenuButton("b3", "TaskTree#2", "Tree")
+        assertEquals(buttons, CustomMenuButtons.decode(CustomMenuButtons.encode(withTree)))
         // Nothing stored, or nothing readable, is the menu's own items — never a failed start.
         assertEquals(CustomMenuButtons.DEFAULTS, CustomMenuButtons.decode(null))
         assertEquals(CustomMenuButtons.DEFAULTS, CustomMenuButtons.decode("{not json"))

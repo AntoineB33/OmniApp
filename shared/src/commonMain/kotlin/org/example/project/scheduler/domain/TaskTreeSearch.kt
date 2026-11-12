@@ -27,10 +27,14 @@ import org.example.project.scheduler.state.SchedulerState
  */
 object TaskTreeSearch {
 
-    /** The two toggles on the find bar. Regex is deliberately not offered. */
+    /**
+     * The toggles on a find bar. The tree's own find bar offers the first two; [regex] is the Search window's (user rule
+     * 2026-11-06, "Use regular expression"): the query is then a regular expression, an invalid one matching nothing.
+     */
     data class Options(
         val matchCase: Boolean = false,
         val wholeWord: Boolean = false,
+        val regex: Boolean = false,
     )
 
     /**
@@ -54,6 +58,7 @@ object TaskTreeSearch {
      * "cat" still matches the second word of "concat cat".
      */
     fun ranges(title: String, query: String, options: Options): List<IntRange> {
+        if (options.regex) return regexRanges(title, query, options)
         if (query.isEmpty() || title.length < query.length) return emptyList()
         val result = mutableListOf<IntRange>()
         var from = 0
@@ -150,6 +155,22 @@ object TaskTreeSearch {
             }
             .toMap()
     }
+
+    /** [ranges] for a regular expression: each non-empty match, left to right, the whole-word rule applied as for text. */
+    private fun regexRanges(title: String, pattern: String, options: Options): List<IntRange> {
+        if (pattern.isEmpty() || title.isEmpty()) return emptyList()
+        val regex =
+            runCatching { Regex(pattern, if (options.matchCase) emptySet() else setOf(RegexOption.IGNORE_CASE)) }.getOrNull()
+                ?: return emptyList()
+        return regex.findAll(title)
+            .filter { it.range.last >= it.range.first }
+            .filter { !options.wholeWord || isWholeWord(title, it.range.first, it.range.last + 1) }
+            .map { it.range }
+            .toList()
+    }
+
+    /** Whether [pattern] is a regular expression this platform reads. */
+    fun isValidRegex(pattern: String): Boolean = runCatching { Regex(pattern) }.isSuccess
 
     private fun isWholeWord(title: String, start: Int, end: Int): Boolean {
         val before = if (start == 0) null else title[start - 1]

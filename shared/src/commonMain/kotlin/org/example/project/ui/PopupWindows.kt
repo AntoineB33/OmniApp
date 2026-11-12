@@ -113,6 +113,12 @@ class TransientMenuHost {
         dismissMenus()
     }
 
+    /**
+     * A press in a pop-up of its own layer, which the root observer never sees ([dismissesMenusOnPress]): the menus
+     * close, and no edit — the pop-up is a part of the edit it was opened from (the cell's "▾"), not outside it.
+     */
+    fun onPressInPopup() = dismissMenus()
+
     private fun dismissMenus() {
         if (entries.isEmpty()) return
         for ((key, onDismiss) in entries.entries.toList()) {
@@ -186,6 +192,26 @@ fun rememberOutsidePressEditor(active: Boolean, onLeave: () -> Unit): OutsidePre
         onDispose { host?.closeEditor(editor) }
     }
     return editor
+}
+
+/**
+ * Anomaly 2026-11-11 (*"right-click on the background of the headless search window … then clicked on the background,
+ * but it didn't close the right-click menu"*): a `Popup` draws in its own layer, so a press in it never reaches the
+ * root observer ([transientMenuDismissRoot]). Put on a pop-up's content, a press in it closes the open menus as one
+ * outside them does — never a menu's own press, which stays in the menu's layer. Observes the Initial pass and consumes
+ * nothing, as the root does.
+ */
+@Composable
+fun Modifier.dismissesMenusOnPress(): Modifier {
+    val host = LocalTransientMenuHost.current ?: return this
+    return this.pointerInput(host) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.type == PointerEventType.Press) host.onPressInPopup()
+            }
+        }
+    }
 }
 
 /** One place [editor] counts as inside — see [OutsidePressEditor]. */

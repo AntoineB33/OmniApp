@@ -71,22 +71,35 @@ internal fun ConfigurationTreeArrow(
     var open by remember { mutableStateOf(false) }
     // The configuration of the search this pop-up IS (user rule 2026-11-11, [SearchDomain.CONFIGURATION_SEARCH]).
     var own by remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
-    // The category revealing its children at each depth, by id — held here, so a pop-up brought back
-    // ([PopupPositions]) comes back with the categories it showed.
+    // The category revealing its children at each depth, by id.
     var path by remember { mutableStateOf(listOf<String>()) }
-    // What it showed as it closed: a walk through the positions brings it back so (user rule 2026-11-11).
-    var pathAtClose by remember { mutableStateOf(listOf<String>()) }
-    // User rule 2026-11-11: brought back by Ctrl+Alt+←, it is as if its background had been clicked: pinned.
-    var pinOnOpen by remember { mutableStateOf(false) }
+    // User rule 2026-11-11: the pop-up IS a Search window, its header and its two right sections hidden as it opens;
+    // its background menu shows them ([SearchPartsMenu]). Kept while the arrow stands, as its path is.
+    var parts by remember { mutableStateOf(CellEditPopupHost.PICKER_SPLITS) }
     val positions = LocalPopupPositions.current
-    val token = remember { Any() }
-    DisposableEffect(Unit) { onDispose { positions?.forget(token) } }
+    // Anomaly 2026-11-11 (*"three headless search windows deep … ctrl+alt+<- opened the two first, not the third"*,
+    // measured in diagnostics.log): a pop-up of the tree — a category's, or the tree an arrow in a pop-up's bar opens —
+    // leaves the screen with the pop-up it hangs from, and so did its position. The outermost arrow's [TreeKeeper] keeps
+    // every position of its trees, by the address that shows the pop-up, and forgets them with that arrow alone.
+    val outer = LocalTreeKeeper.current
+    val keeper = outer ?: remember { TreeKeeper() }
+    // Where this tree stands: the trees above it, each by the categories of the pop-up whose bar holds the next arrow.
+    val prefix = if (outer == null) emptyList() else LocalTreePrefix.current + listOf(LocalBarPath.current)
+    val address = prefix + listOf(emptyList<String>())
+    val token = keeper.tokenOf(address)
+    DisposableEffect(keeper, prefix) {
+        keeper.live[prefix] = { if (open) path else null }
+        onDispose {
+            keeper.live.remove(prefix)
+            if (outer == null) keeper.tokens.values.forEach { positions?.forget(it) }
+        }
+    }
     // The tracker, made below from [close]: what gives the keyboard back to the app's window.
     val tracker = remember { arrayOfNulls<MenuHoverTracker>(1) }
     fun close() {
         if (!open) return
-        pathAtClose = path
         open = false
+        if (outer == null) keeper.stopWalk()
         // The keyboard goes back to the app's window (a pop-up opened from a pop-up gives it back to that one, which
         // says so itself): a position of its own (user rule 2026-11-11).
         if (depth == 0) positions?.appFocused { tracker[0]?.focusAppWindow?.invoke() }
@@ -96,28 +109,38 @@ internal fun ConfigurationTreeArrow(
     // 2026-11-11: its own tracker alone, the pointer on its pop-up was outside the tree, and the whole tree vanished).
     val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { close() }
     tracker[0] = hover
-    LaunchedEffect(open) {
-        if (!open) hover.unpin() else if (pinOnOpen) { hover.pin(); pinOnOpen = false }
-    }
-    // User rule 2026-11-11: the keyboard coming to the pop-up is a position of the app; walked back to, it gets the
-    // keyboard again, or comes back as it was, pinned.
-    DisposableEffect(hover, positions) {
+    LaunchedEffect(open) { if (!open) hover.unpin() }
+    // User rule 2026-11-11: the keyboard coming to the pop-up is a position of the app; walked back to, the trees are
+    // brought back down to it, pinned ([TreeKeeper.wanted]), and it gets the keyboard.
+    DisposableEffect(hover, positions, token) {
         hover.onFocused = {
-            positions?.focused(token, { open }, { hover.focusAppWindow?.invoke() }) {
-                if (open) {
-                    hover.pin()
-                    hover.focusWindow?.invoke()
-                } else {
-                    path = pathAtClose
-                    pinOnOpen = true
-                    open = true
+            keeper.focused(address) {
+                positions?.focused(token, { keeper.isShowing(address) }, { hover.focusAppWindow?.invoke() }) {
+                    keeper.bringBack(address)
                 }
             }
         }
         onDispose { hover.onFocused = null }
     }
+    // A walk back passing through this tree: open, showing the categories the address goes through, pinned; the tree
+    // itself the place walked to, it takes the keyboard.
+    val wanted = keeper.wanted
+    LaunchedEffect(wanted) {
+        val w = wanted ?: return@LaunchedEffect
+        if (w.size <= depth || w.take(depth) != prefix) return@LaunchedEffect
+        path = w[depth]
+        open = true
+        hover.pin()
+        if (w.size == depth + 1 && w[depth].isEmpty()) {
+            repeat(2) { androidx.compose.runtime.withFrameNanos { } }
+            hover.pin()
+            hover.focusWindow?.invoke()
+            keeper.wanted = null
+        }
+    }
     // Opened by the hand: a fresh pop-up.
     fun openFresh() {
+        keeper.stopWalk()
         path = emptyList()
         open = true
     }
@@ -133,12 +156,14 @@ internal fun ConfigurationTreeArrow(
                 .clickable { if (open) close() else openFresh() }
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
-        androidx.compose.runtime.CompositionLocalProvider(LocalMenuHover provides hover) {
-        AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
-        Column(
-            modifier = Modifier.width(320.dp).padding(8.dp),
-            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalMenuHover provides hover,
+            LocalTreeKeeper provides keeper,
+            LocalTreePrefix provides prefix,
+            LocalBarPath provides emptyList(),
         ) {
+        AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
+        SearchPopupParts(SearchDomain.windowTitle(own), 320.dp, parts, { parts = it }, onClose = { close() }) {
             TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
             ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth) { which ->
             close()
@@ -308,31 +333,43 @@ private fun TreeColumn(
                     val branch = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
                         if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
                     }
-                    // User rule 2026-11-11: the keyboard coming to it is a position of the app; walked back to, it gets
-                    // the keyboard again, or comes back with the categories shown then, pinned.
+                    // User rule 2026-11-11: the keyboard coming to it is a position of the app. Kept by the outermost
+                    // tree's keeper, by the address that shows it: it outlives this pop-up, which leaves the screen with
+                    // the tree (anomaly 2026-11-11, [TreeKeeper]); walked back to, the trees come back down to it.
                     val positions = LocalPopupPositions.current
-                    val token = remember { Any() }
-                    var pinOnReveal by remember { mutableStateOf(false) }
-                    val latestPath by rememberUpdatedState(path)
-                    val latestPathChange by rememberUpdatedState(onPathChange)
-                    DisposableEffect(Unit) { onDispose { positions?.forget(token) } }
-                    DisposableEffect(branch, positions) {
+                    val keeper = LocalTreeKeeper.current
+                    val prefix = LocalTreePrefix.current
+                    val branchPath = path.take(depth) + node.id
+                    val address = prefix + listOf(branchPath)
+                    val token = keeper?.tokenOf(address) ?: remember { Any() }
+                    DisposableEffect(Unit) { onDispose { if (keeper == null) positions?.forget(token) } }
+                    DisposableEffect(branch, positions, token) {
                         branch.onFocused = {
-                            val shown = latestPath
-                            positions?.focused(token, { latestPath.getOrNull(depth) == node.id }, { branch.focusAppWindow?.invoke() }) {
-                                if (latestPath.getOrNull(depth) == node.id) {
-                                    branch.pin()
-                                    branch.focusWindow?.invoke()
-                                } else {
-                                    pinOnReveal = true
-                                    latestPathChange(shown)
+                            val record = {
+                                positions?.focused(token, { keeper?.isShowing(address) ?: (path.getOrNull(depth) == node.id) }, { branch.focusAppWindow?.invoke() }) {
+                                    keeper?.bringBack(address)
                                 }
                             }
+                            if (keeper != null) keeper.focused(address) { record() } else record()
                         }
                         onDispose { branch.onFocused = null }
                     }
-                    LaunchedEffect(revealing) {
-                        if (!revealing) branch.unpin() else if (pinOnReveal) { branch.pin(); pinOnReveal = false }
+                    // A walk back passing through here: pinned as it shows; the place walked to takes the keyboard.
+                    val wanted = keeper?.wanted
+                    LaunchedEffect(revealing, wanted) {
+                        if (!revealing) {
+                            branch.unpin()
+                            return@LaunchedEffect
+                        }
+                        val w = wanted ?: return@LaunchedEffect
+                        val level = prefix.size
+                        if (w.size <= level || w.take(level) != prefix || w[level].take(depth + 1) != branchPath) return@LaunchedEffect
+                        branch.pin()
+                        if (w.size == level + 1 && w[level] == branchPath) {
+                            repeat(2) { androidx.compose.runtime.withFrameNanos { } }
+                            branch.focusWindow?.invoke()
+                            keeper.wanted = null
+                        }
                     }
                     val reveal = { if (!revealing) onPathChange(path.take(depth) + node.id) }
                     Box {
@@ -354,6 +391,8 @@ private fun TreeColumn(
                             androidx.compose.runtime.CompositionLocalProvider(
                                 LocalMenuSides provides MenuSide.SUBMENU,
                                 LocalMenuHover provides branch,
+                                // The arrow in this pop-up's bar opens a tree standing at this category.
+                                LocalBarPath provides branchPath,
                             ) {
                                 AppDropdownMenu(
                                     expanded = true,
@@ -363,17 +402,20 @@ private fun TreeColumn(
                                     modifier = Modifier.reportsHover(branch),
                                     properties = PopupProperties(focusable = true),
                                 ) {
-                                    Column(
-                                        modifier = Modifier.width(TREE_CATEGORY_COLUMN_WIDTH).padding(8.dp),
-                                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+                                    // Anomaly 2026-11-11: this field wrote into the parent pop-up's too — both
+                                    // were the root's one query. Each pop-up is a search of its own over its
+                                    // category's children ([SearchDomain.CONFIGURATION_SEARCH]), which goes with it.
+                                    var own by remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
+                                    // Anomaly 2026-11-11 (*"the right-click menu doesn't appear on the background of the
+                                    // 2nd headless search window"*): it is a Search window too, as the root's pop-up is.
+                                    var parts by remember { mutableStateOf(CellEditPopupHost.PICKER_SPLITS) }
+                                    val children = remember(node.children, own.query) {
+                                        node.children.filterConfigurationNodes(own.query)
+                                    }
+                                    SearchPopupParts(
+                                        SearchDomain.windowTitle(own), TREE_CATEGORY_COLUMN_WIDTH, parts, { parts = it },
+                                        onClose = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) },
                                     ) {
-                                        // Anomaly 2026-11-11: this field wrote into the parent pop-up's too — both
-                                        // were the root's one query. Each pop-up is a search of its own over its
-                                        // category's children ([SearchDomain.CONFIGURATION_SEARCH]), which goes with it.
-                                        var own by remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
-                                        val children = remember(node.children, own.query) {
-                                            node.children.filterConfigurationNodes(own.query)
-                                        }
                                         TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, level)
                                         TreeColumn(
                                             children, depth + 1, path, onPathChange, leaf,
@@ -397,3 +439,129 @@ private val TREE_CATEGORY_COLUMN_WIDTH = 200.dp
 /** Wide enough for the widest control a configuration has (a box bound and its "Pick on the calendar"): none is cut. */
 private val TREE_LEAF_COLUMN_WIDTH = 600.dp
 private val TREE_COLUMN_MAX_HEIGHT = 480.dp
+
+/**
+ * User rule 2026-11-11: **a pop-up of the configurations tree as the Search window it is** — the root's and every
+ * category's alike (one drawing, so the two cannot differ again): [parts] says what its background menu
+ * ([SearchPartsMenu]) shows — its head ([SearchPopupHead], [onClose] its ✕), its search section ([search]: the bar and
+ * the column), and its two right sections, empty since the tree adds nothing. Its own layer: a press in it closes the
+ * menus itself ([dismissesMenusOnPress]).
+ */
+@Composable
+private fun SearchPopupParts(
+    title: String,
+    width: androidx.compose.ui.unit.Dp,
+    parts: SearchSplits,
+    onPartsChange: (SearchSplits) -> Unit,
+    onClose: () -> Unit,
+    search: @Composable () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .width(width)
+            .dismissesMenusOnPress()
+            // A right-click nothing in it answered: the Search window's background menu.
+            .then(org.example.project.scheduler.ui.contextMenuModifier(enabled = true, key = "configuration-background") { menu = true }),
+    ) {
+        SearchPartsMenu(menu, { menu = false }, parts) { part -> onPartsChange(part.toggled(parts)) }
+        if (!parts.headerRemoved) SearchPopupHead(title, onClose)
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+        ) {
+            if (!parts.searchRemoved) search()
+            if (!parts.actionsRemoved) {
+                EmptySearchSection("Actions on the added elements", parts.actionsHidden) { onPartsChange(parts.copy(actionsHidden = !parts.actionsHidden)) }
+            }
+            if (!parts.addedRemoved) {
+                EmptySearchSection("Added elements", parts.addedHidden) { onPartsChange(parts.copy(addedHidden = !parts.addedHidden)) }
+            }
+        }
+    }
+}
+
+/** A right section of a Search window with nothing added ([ConfigurationTreeArrow]'s pop-up): its title, its arrow, and what it waits for. */
+@Composable
+private fun EmptySearchSection(title: String, collapsed: Boolean, onToggle: () -> Unit) {
+    Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionArrow(collapsed, onToggle)
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.togglesSection(onToggle),
+            )
+        }
+        if (!collapsed) {
+            Text(
+                "No element added.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Anomaly 2026-11-11: **the positions ([PopupPositions]) of every pop-up of a configurations tree**, kept by the
+ * outermost arrow — the one standing in a window, which stays while the pop-ups come and go with what they hang from.
+ *
+ * A pop-up is named by its **address**: for each tree from the outermost down, the categories its pop-up shows — the
+ * pop-up whose bar holds the arrow of the next tree, or, last, the pop-up itself (a tree's own pop-up: no category).
+ * [tokenOf] is its one owner while the outermost arrow stands; [isShowing] whether it is on screen now; [bringBack]
+ * asks every tree along the address to open, showing those categories, pinned ([wanted]), the last one taking the
+ * keyboard — which takes the request back.
+ */
+internal class TreeKeeper {
+    val tokens = HashMap<List<List<String>>, Any>()
+
+    /** Each tree on screen, by where it stands (the address above it): the categories it shows, null while closed. */
+    val live = HashMap<List<List<String>>, () -> List<String>?>()
+
+    /** The address a walk back is bringing the trees down to, until the pop-up at its end takes the keyboard. */
+    var wanted: List<List<String>>? by mutableStateOf(null)
+
+    /**
+     * The pop-up a walk back is bringing the keyboard to, until its window says it has it. The pop-ups opening on the way
+     * take the keyboard as they open: those are no position of the app ([focused]), or each would cut off the walk.
+     */
+    private var walkTarget: List<List<String>>? = null
+
+    /** The keyboard came to the pop-up at [address]: [record] it as a position, unless a walk is passing through it. */
+    fun focused(address: List<List<String>>, record: () -> Unit) {
+        val target = walkTarget
+        if (target != null && target != address) return
+        walkTarget = null
+        record()
+    }
+
+    /** A gesture of the hand (a pop-up opened afresh, the trees closed): no walk goes on. */
+    fun stopWalk() {
+        wanted = null
+        walkTarget = null
+    }
+
+    fun tokenOf(address: List<List<String>>): Any = tokens.getOrPut(address) { Any() }
+
+    fun isShowing(address: List<List<String>>): Boolean =
+        address.indices.all { level ->
+            val shown = live[address.take(level)]?.invoke()
+            shown != null && shown.take(address[level].size) == address[level]
+        }
+
+    fun bringBack(address: List<List<String>>) {
+        walkTarget = address
+        wanted = address
+    }
+}
+
+/** The [TreeKeeper] of the outermost tree a pop-up is in; null outside one. */
+internal val LocalTreeKeeper = androidx.compose.runtime.compositionLocalOf<TreeKeeper?> { null }
+
+/** The address of the tree a pop-up is of ([TreeKeeper]): the trees above it. */
+internal val LocalTreePrefix = androidx.compose.runtime.compositionLocalOf<List<List<String>>> { emptyList() }
+
+/** The categories the pop-up a bar stands in shows (none: a tree's own pop-up) — where an arrow in that bar stands. */
+internal val LocalBarPath = androidx.compose.runtime.compositionLocalOf<List<String>> { emptyList() }

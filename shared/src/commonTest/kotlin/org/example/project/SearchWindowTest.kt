@@ -798,6 +798,8 @@ class SearchWindowTest {
                 // User rule 2026-11-04: the search bar's two filters, under it.
                 SearchDomain.Setting.MatchCase,
                 SearchDomain.Setting.WholeWord,
+                SearchDomain.Setting.Regex,
+                SearchDomain.Setting.SearchBars,
                 SearchDomain.Setting.Types,
                 // User rule 2026-11-04: the page's types alone, beside the type selector.
                 SearchDomain.Setting.PageTypes,

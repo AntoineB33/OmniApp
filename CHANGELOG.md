@@ -11,6 +11,40 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The rename / change-id switch is a tree cell's alone — 2026-11-12
+
+User rule: the switch shows in the Edit Mode of a tree cell — a child shown under its expanded parent in a Search
+window — and never on a result row, which stays a rename (`RowRename`). Opening the cell's Edit Mode from a result row
+(with the switch) was built and taken back the same day. A task element's actions gain **"Children"**: each added
+task's children as tree cells (an expanded row's drawing), so they have the switch. `TaskChildrenActionTest`.
+
+### No task tree window; every Search window has the parts menu; a result row's Edit Mode shows its rectangle — 2026-11-11
+
+User rules: the task tree window is removed (`FloatingWindow.TaskTree`, `TaskTreeWindow`, its lateral-menu button —
+dropped from a kept menu on decode). "Go to task tree" opens the task's own Search window; the Default sub-tree window
+opens from a task element's actions ("Default sub-tree", `AddedAction.TaskDefaultSubtree`). The cell's Edit Mode picker
+and the "▾" configurations pop-up have the Search window's background menu: their header (`SearchPopupHead`) and two
+right sections start hidden and can be shown. Anomaly: a Search result task row in Edit Mode now shows the tree cell's
+rectangle (`CellEditPopupRequest.rename`), stuck to Rename. Local view state only; no migration. Anomaly: a press on
+the "▾" pop-up's background did not close its background menu (a pop-up's own layer is unseen by the root observer):
+`dismissesMenusOnPress`. Anomaly: the pop-up a category of that tree opens had no background menu — every pop-up of
+the tree is now drawn by one `SearchPopupParts`. Anomaly: Ctrl+Alt+← back to a category's pop-up after the tree
+closed brought back older pop-ups — measured: the trees opened by the arrows in the pop-ups' bars forgot their
+positions as they left the screen. The outermost arrow keeps every pop-up's position by address (`TreeKeeper`); the
+pop-ups opening on the way of a walk record none.
+
+### The Search window's background menu hides and shows its parts — 2026-11-11
+
+User rule: a right-click on the Search window's background opens four entries hiding or showing the window's header (its
+head: the title and the buttons, `AppWindowFrame(showHead)`) and each of the three sections (`SearchPart`). Hidden is not retracted: nothing is
+drawn; shown again, a section is expanded. Kept with the window's sections (`SearchSplits.hiddenFlags`: four flags
+after the three retracted ones; an older layout hides nothing). `docs/invariants/task-tree.md` § *The three sections*.
+
+### The default Search window checks every type — 2026-11-11
+
+User rule: the Task Scheduler page's Search button (`SearchDomain.pageDefaultConfig("")`) opens with every type of
+its selector checked (`clearedConfig`), no longer the tasks alone. A blank field under a category opens on the same.
+
 ### Two paces: ten-minute deep steps, and the instant schedule for what is displayed — 2026-11-11
 
 `docs/scheduler_requirements.md` § *Two paces*, user choices 2026-11-11 ("fixed 10-min deep steps"; "the instantaneous
@@ -48,6 +82,14 @@ account does not hold), rare tasks placed on the cycle in closed form. `:shared:
 after (the same two tests); per week the least served task moves both ways (120 tasks, minor changes: 0.73x→0.66x week 1,
 0.84x→0.69x week 4; 200 tasks, an upheaval: 0.56x→0.54x, 0.58x→0.68x, 0.64x→0.70x, nobody 6.4 %→3.3 % and 8.2 %→4.4 %).
 Client rebuild.
+
+### The edited task cell has the configurations arrow after its cross — 2026-11-06
+
+Anomaly: in a task cell's Edit Mode, the cell (which is the rectangle's search bar) had the bar's cross but not its configurations arrow. It has both now; the arrow sets the Edit Mode Search window's configuration, kept from one Edit Mode to the next for the run of the app (`CellEditPopupHost.searchConfig`; the text is the cell's draft). `CellEditPopupRulesTest`. Client rebuild only.
+
+### The Search window: other search bars and their formula, "Use regular expression", the arrow on the actions bar — 2026-11-06
+
+User rules: the Search configurations have **"Use regular expression"** (`Filters.regex`, `TaskTreeSearch.Options.regex`: an invalid expression matches nothing; Match case and Match whole word apply to it) and **"Search bars"**, where the user adds bars to the window's own and a formula puts them together — *"“main search bar” AND (“search bar 2” OR “search bar 3”)"* (`Config.extraQueries`, `Config.queryFormula`, `SearchBarFormula`: by number or name, AND/OR/NOT, parentheses; blank or not understood = every bar at once, said under the field). The **actions section's bar has the arrow** to every search configuration, as the search's bar and a task cell's Edit Mode have. The bar's **right-click menu no longer has match case and whole word** (they stay in the configurations). Local view state, new fields absent from an older configuration read as before. `SearchBarsAndRegexTest`. Only bar 1 is highlighted in the rows. Client rebuild only.
 
 ### A line reaching bedtime still at a screen is on a task: the rules carry it ahead — 2026-11-06
 

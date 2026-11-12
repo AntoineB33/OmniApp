@@ -76,18 +76,67 @@ internal fun cellEditPopupOffset(anchor: Rect, popup: IntSize, room: IntSize): I
 internal data class CellEditPopupRequest(
     val state: SchedulerState,
     val namingSource: SchedulerState,
-    val cellId: CellId,
+    /** The cell edited; null for a task row out of the tree ([rename]). */
+    val cellId: CellId?,
     val onIntent: (SchedulerIntent) -> Unit,
     val refocusField: () -> Unit,
     /** The cell's field in the window, read at layout: the rectangle follows a scrolled tree, nothing recomposes. */
     val anchor: () -> Rect?,
     /** The cell's edit: a press in the rectangle is a press in it (`rememberOutsidePressEditor`). */
     val region: OutsidePressEditor,
+    /**
+     * Anomaly 2026-11-11: a task row of a Search window's result list in Edit Mode shows the rectangle too, as a tree
+     * cell does. Its edit is the window's own, not the state's session, and stuck to Rename: its draft is told here.
+     */
+    val rename: RowRename? = null,
+)
+
+/** The Edit Mode of a task row out of the tree ([CellEditPopupRequest.rename]): its draft, how it changes, how it is left. */
+internal data class RowRename(
+    val draft: String,
+    val onDraft: (String) -> Unit,
+    val onCancel: () -> Unit,
 )
 
 /** What the rows publish and the top layer draws: at most one edit session is on screen. */
 internal class CellEditPopupHost {
     private var owner: Any? = null
+
+    /**
+     * User rule 2026-11-04: **the configuration of the Search window a cell's Edit Mode shows**, all of it but the text
+     * (the cell's draft, [withDraft]) — set through the configurations arrow after the cell's cross, and kept from one
+     * Edit Mode to the next for this run of the app, like a Search window's own. Its default lists the tasks by title.
+     */
+    var searchConfig: SearchDomain.Config by mutableStateOf(DEFAULT_SEARCH)
+
+    /**
+     * User rule 2026-11-11: what that Search window shows of itself, kept from one Edit Mode to the next as its
+     * configuration is. It opens on its search section alone ([PICKER_SPLITS]); its background menu shows the rest.
+     */
+    var splits: SearchSplits by mutableStateOf(PICKER_SPLITS)
+
+    /** [searchConfig] searching [draft], the cell's text. */
+    fun withDraft(draft: String): SearchDomain.Config = searchConfig.copy(query = draft)
+
+    /** A change of the Edit Mode's search ([next]): its text is the cell's ([onDraft]), the rest is kept here. */
+    fun change(next: SearchDomain.Config, draft: String, onDraft: (String) -> Unit) {
+        searchConfig = next.copy(query = "")
+        if (next.query != draft) onDraft(next.query)
+    }
+
+    companion object {
+        val DEFAULT_SEARCH: SearchDomain.Config =
+            SearchDomain.Config(
+                kinds = setOf(SearchDomain.Kind.Task),
+                completion = SearchDomain.Completion.TaskTitles,
+                // User rule 2026-11-04: the tasks sorted by their title, the creation row before them ([SearchDomain.pickerRows]).
+                sorts = SearchDomain.PICKER_SORTS,
+                sortFollowsDefault = false,
+            )
+
+        /** The picker as it opens (user rule 2026-11-02): no head, no actions, no added elements — hidden, not retracted. */
+        val PICKER_SPLITS: SearchSplits = SearchSplits(headerRemoved = true, actionsRemoved = true, addedRemoved = true)
+    }
     var request: CellEditPopupRequest? by mutableStateOf(null)
         private set
 
@@ -132,16 +181,23 @@ internal fun CellEditPopupLayer(
     search: @Composable (config: SearchDomain.Config, onConfigChange: (SearchDomain.Config) -> Unit, picker: SearchPicker, modifier: Modifier) -> Unit,
 ) {
     val request = host.request ?: return
-    val session = request.state.editSession ?: return
+    val rename = request.rename
+    val session = request.state.editSession
+    if (rename == null && session == null) return
     val state = request.state
     val cellId = request.cellId
+    // The draft and its writer: the cell's session, or the row's own edit ([CellEditPopupRequest.rename]).
+    val draft = rename?.draft ?: session!!.draftText
+    val onDraft: (String) -> Unit = rename?.onDraft ?: { request.onIntent(SchedulerIntent.UpdateEditText(it)) }
+    val cancel: () -> Unit = rename?.onCancel ?: { request.onIntent(SchedulerIntent.CancelEdit) }
     val frames = LocalWindowFrameHost.current
     val cellWindow = remember(cellId) { frames?.focusedId }
     var origin by remember { mutableStateOf(Offset.Zero) }
 
     // Read once a session: the list's question does not change as the draft does, and it walks a sub-tree per task.
-    val eligible = remember(cellId) { SchedulerDomain.assignableTaskIds(state, cellId) }
-    val changing = session.mode == CellEditMode.ChangeTask
+    // A row out of the tree changes no cell: every task is listed, to be looked through.
+    val eligible = remember(cellId) { if (cellId == null) request.namingSource.tasks.keys else SchedulerDomain.assignableTaskIds(state, cellId) }
+    val changing = rename == null && session?.mode == CellEditMode.ChangeTask
     val intent = request.onIntent
     val picker =
         SearchPicker(
@@ -160,16 +216,9 @@ internal fun CellEditPopupLayer(
             } else {
                 null
             },
+            onCancel = cancel,
         )
-    val config =
-        SearchDomain.Config(
-            query = session.draftText,
-            kinds = setOf(SearchDomain.Kind.Task),
-            completion = SearchDomain.Completion.TaskTitles,
-            // User rule 2026-11-04: the tasks sorted by their title, the creation row before them ([SearchDomain.pickerRows]).
-            sorts = SearchDomain.PICKER_SORTS,
-            sortFollowsDefault = false,
-        )
+    val config = host.withDraft(draft)
 
     Layout(
         content = {
@@ -180,7 +229,7 @@ internal fun CellEditPopupLayer(
                     // The tree's Escape, which the caret being in the rectangle no longer reaches.
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                            intent(SchedulerIntent.CancelEdit)
+                            cancel()
                             true
                         } else {
                             false
@@ -195,7 +244,7 @@ internal fun CellEditPopupLayer(
             ) {
                 Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     // A cell being created has one mode, and so no switch ([cellEditModeOptions]).
-                    val modes = cellEditModeOptions(state, cellId, intent, request.refocusField)
+                    val modes = if (cellId == null) emptyList() else cellEditModeOptions(state, cellId, intent, request.refocusField)
                     if (modes.isNotEmpty()) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -214,7 +263,7 @@ internal fun CellEditPopupLayer(
                     }
                     search(
                         config,
-                        { next -> if (next.query != session.draftText) intent(SchedulerIntent.UpdateEditText(next.query)) },
+                        { next -> host.change(next, draft, onDraft) },
                         picker,
                         Modifier.fillMaxWidth().weight(1f),
                     )

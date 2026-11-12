@@ -331,11 +331,29 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   left, else on its right, each only where it fits whole (`cellEditPopupOffset`). One switch, "switch task" on (the
   default) or "rename" off, the session's Mode through `cellEditModeOptions`; none on a cell being created. Under it, a
   Search window (`SearchPicker`) with no head, no added elements and no actions, nor what serves them: the kinds,
-  the configurations arrow, and no row opens a sub-tree.
+  the configurations arrow, and no row opens a sub-tree. **They are hidden, not missing** (user rule 2026-11-11): the
+  picker is a Search window whose header and two right sections its background menu shows again (`SearchPartsMenu`,
+  `CellEditPopupHost.PICKER_SPLITS`, kept by `CellEditPopupHost.splits` for the run); its header, having no frame, is
+  `SearchPopupHead` — the title and a ✕ that cancels the Edit Mode — and its rows' "add" is offered while its added
+  elements are shown.
+  - **A task row of a Search window's result list in Edit Mode shows the same rectangle** (anomaly 2026-11-11, *"it
+    doesn't open the search window, but it does when it is in the task tree window"*; `SearchRowEditPopupTest`). The
+    row publishes its edit as a tree cell does (`PublishCellEditPopup`), with no cell (`cellId = null`) and its own
+    draft (`CellEditPopupRequest.rename`, `RowRename`): no switch, stuck to Rename, every task listed to look through,
+    Escape abandons the rename. **The switch between renaming and changing the id is a tree cell's alone** (user rule
+    2026-11-12): a child shown under its expanded parent (`SearchSubtree` → `TaskTreeView`, the tree's own session) has
+    it; a result row never does, its task in the tree or not (a cell's Edit Mode opened from the row was tried and
+    taken back the same day). **A task element's actions hold "Children"** (same rule; `AddedAction.TaskChildren`,
+    `TaskChildrenActionTest`): one block per added task, its children drawn as an expanded row draws them
+    (`SearchSubtree`, given to the actions section through `LocalTaskChildren`) — tree cells with that switch, their
+    own keyboard and selection surface (`ACTIONS_SURFACE`); a task with no child says so and points to "Add under".
   - **The bar IS the task cell** (user rule 2026-11-04; it was a second field holding the draft until then): the Search
     window draws no bar of its own in a picker, so its completion list comes first, under the switch. The cell has the
     bar's cross (`SearchBarCross`, the same code), just after its title's column — inside the column it wrapped or
-    covered a title as wide as the column; it empties the draft and the caret stays in the cell. The caret never leaves
+    covered a title as wide as the column; it empties the draft and the caret stays in the cell. **After the cross,
+    the bar's configurations arrow** (user rule 2026-11-04, `ConfigurationTreeArrow`): what it sets is the Edit Mode's
+    Search window's configuration, kept by `CellEditPopupHost.searchConfig` from one Edit Mode to the next for the run
+    of the app, all of it but the text, which is the cell's draft (`withDraft`, `change`). The caret never leaves
     the cell on its own: a focus-on-open would lose the first letters typed (below).
   - **It is a layer of the content area, never a `Popup`**: a non-focusable one cannot be typed in, a focusable one eats the
     outside press Forced Exit needs. So the rectangle is an `outsidePressPart` of the cell's edit, and gives the frame
@@ -783,7 +801,8 @@ suggestions before it was ever entered.
   excepted. A configuration with no default keeps its sorting. The logs' kinds and nothing else default to **the date, newest first — ONE method about every row** (`SortKey.Date`): a date common to a
   prompt, an answer and a reasoning chain is never three per-kind methods, which order each kind only in its own places.
 - **The Search window is the same on every page** (user rule 2026-10-31): same kinds, configurations and sorting
-  methods. A page differs only by what its menu button opens with (`pageDefaultConfig`); `Config.page` says where the
+  methods. A page differs only by what its menu button opens with (`pageDefaultConfig`; the Task Scheduler's, the
+  default Search window, has every type of its selector checked — user rule 2026-11-11); `Config.page` says where the
   window is drawn and decides nothing else. A window checking a log kind has the logs read, wherever it stands.
 
 #### The kinds of result
@@ -1309,8 +1328,20 @@ suggestions before it was ever entered.
   every configuration from the most to the least recently changed (`Config.settingsChangedAt`, local-only, no part of
   the search; the never-changed after, in their order), then **General** (the configurations with no type), then each
   feature page with its types under it, each type's configurations under that. **Every configuration is in it**: a
-  change made anywhere a configuration is set — the tree, the configurations window, the bar, its right-click menu — is
+  change made anywhere a configuration is set — the tree, the configurations window, the bar — is
   stamped with its time (`SearchDomain.withChanged`).
+- **The actions section's bar has the same arrow** (user rule 2026-11-06, `AddedActionsSection`'s `configurationArrow`),
+  as a task cell's Edit Mode has. **The bars' right-click menu is the field's own**: match case and whole word (in it
+  2026-11-04 → 2026-11-06) are in the configurations alone.
+- **"Use regular expression"** (user rule 2026-11-06, `Filters.regex`, `TaskTreeSearch.Options.regex`): every bar is
+  read as one expression, case by "Match case", whole words by "Match whole word"; an invalid one matches nothing. The
+  kinds' own search is then not asked (it reads text): every row is read and the expression decides, as for the bars
+  below.
+- **"Search bars"** (user rule 2026-11-06, `Config.extraQueries`, `Config.queryFormula`, `SearchBarFormula`): bars
+  added to the window's own (bar 1), and a formula over them — *"“main search bar” AND (“search bar 2” OR “search bar
+  3”)"*: by number or name, AND / OR / NOT, parentheses, side by side an AND. Blank or not understood (said under it):
+  every bar at once. A blank bar asks nothing. A bar answers a row as `SearchDomain.barMatches` says (its terms in the
+  name, a log entry's whole text; with a filter of the bar on, as the filter reads). Only bar 1 is highlighted.
 
 #### The three sections
 
@@ -1335,7 +1366,22 @@ suggestions before it was ever entered.
   room to its neighbour, and the joint goes with it — but **the line beside a retracted section is still dragged**
   (anomaly 2026-10-21, as the task tree's and the calendar's): a drag of it brings the section back at the size the
   drag gives it, from where the line stands, in the same gesture. Only a line between two retracted sections is a
-  plain divider. `SearchSectionsTest`. The actions section has no "All
+  plain divider. `SearchSectionsTest`. **The window's background right-click menu hides and shows the header and each
+  of the three sections** (user rule 2026-11-11, `SearchPart`, `SearchPartsMenu`): four entries, "Hide …" / "Show …" —
+  the window's header (its head: the title and the buttons, `AppWindowFrame(showHead)`), the search, the actions, the added
+  elements. Without its head the window is still reached by the window bar, the chords and its edges. A section hidden is not
+  retracted: nothing of it is drawn, not even its arrow, and its neighbour takes the room (no line, no joint). **Shown
+  again, a section is expanded**, never back as its arrow alone. Kept with the window as the retractions are (`SearchSplits.hiddenFlags`, after the three retracted flags; a
+  layout kept before lists three and hides nothing).
+  `SearchPartsMenuTest`. **Every Search window has that menu** (user rule 2026-11-11: *"They both supposed to be Search
+  windows"*): the cell's Edit Mode picker (opening with its header and two right sections hidden), and the configurations
+  pop-up of the "▾" (`ConfigurationTreeArrow`: header and right sections hidden as it opens; its header is
+  `SearchPopupHead`, its search section the bar and the tree, its two right sections empty since the tree adds nothing).
+  Every pop-up of the tree, the root's and each category's, is drawn by ONE `SearchPopupParts` (anomaly 2026-11-11: the
+  category's had no menu). Each is a layer of its own, which the root's press observer never sees: its content
+  reports a press itself (`dismissesMenusOnPress` → `TransientMenuHost.onPressInPopup`), closing the menus and no edit —
+  anomaly 2026-11-11, a click on its background left the background menu open.
+  The actions section has no "All
   configurations" button any more — every action is listed in it. **ONE way to add: a row's right-click menu "add"**,
   on the SELECTED rows, in the list's order, and **Ctrl+A in the list selects every row** (user rule 2026-11-03: *"Remove
   the check boxes on the search result list, and "Select all" and "add" button, as they are redundant with right-click

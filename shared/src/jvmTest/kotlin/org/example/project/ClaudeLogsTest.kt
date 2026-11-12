@@ -313,7 +313,7 @@ class ClaudeLogsTest {
 
     @Test
     fun thePagesDifferOnlyByWhatTheirSearchButtonChecks() {
-        assertEquals(setOf(SearchDomain.Kind.Task), SearchDomain.pageDefaultConfig("").kinds)
+        assertEquals(SearchDomain.FEATURE_PAGES.first { it.id == "" }.kinds.toSet(), SearchDomain.pageDefaultConfig("").searchedKinds)
         assertEquals(SearchDomain.CLAUDE_KINDS.toSet(), SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).kinds)
         // The logs' directory is an app setting.
         val settings = SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.AppSetting), "Claude", claudeLogs = catalog)

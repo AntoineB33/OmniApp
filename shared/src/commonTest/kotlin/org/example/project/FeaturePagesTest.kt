@@ -41,6 +41,9 @@ class FeaturePagesTest {
             val cleared = SearchDomain.resetConfig(config.copy(query = "x"), null)
             assertTrue(cleared.pageTypesOnly && cleared.searchedKinds == page.kinds.toSet(), page.label)
         }
+        // User rule 2026-11-11: the default Search window (the Task Scheduler's) has every type of its selector checked.
+        val default = SearchDomain.pageDefaultConfig("")
+        assertEquals(default.offeredKinds.toSet(), default.searchedKinds)
         val logs = SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE)
         assertEquals(listOf(Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning), logs.offeredKinds)
         // Off: every type is offered, and what the window held of the others is searched again.
@@ -155,7 +158,7 @@ class FeaturePagesTest {
             val opened = SearchDomain.withDefaultSort(button)
             assertTrue(SearchDomain.sameSearchConfigurations(button.encode(), opened.encode()), page.label)
         }
-        val button = SearchDomain.pageDefaultConfig("")
+        val button = SearchDomain.pageDefaultConfig("").copy(kinds = setOf(Kind.Task))
         assertTrue(SearchDomain.withDefaultSort(button) != button, "test premise: the window's sorting is not the button's")
         // What the window does with its elements and actions is not its search.
         val used = SearchDomain.withDefaultSort(button).copy(added = listOf("Task/task/1"), actionQuery = "min", openedFrom = "Search#2")

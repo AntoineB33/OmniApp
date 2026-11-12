@@ -205,4 +205,53 @@ class MenuHoverTrackerTest {
         positions.forget("branch")
         assertFalse(positions.back(), "left at the app's window they hung from: the app's own history is walked")
     }
+
+    /**
+     * Anomaly 2026-11-11 (measured in diagnostics.log): three trees deep — each opened by the arrow in the bar of the
+     * pop-up before — a click in the app's window, then Ctrl+Alt+<-: the two inner trees had forgotten their positions
+     * as they left the screen with the pop-up they hung from, and the walk brought back older pop-ups. The outermost
+     * tree's [org.example.project.ui.TreeKeeper] keeps them all, by address, and a walk back brings the trees down to the
+     * pop-up walked to; the pop-ups opening on the way are no positions of their own.
+     */
+    @Test
+    fun a_walk_back_brings_the_trees_down_to_the_deepest_pop_up_and_on_back_up() {
+        val positions = PopupPositions { 0 }
+        val keeper = org.example.project.ui.TreeKeeper()
+        val open = mutableMapOf<List<List<String>>, List<String>>()
+        fun showing(prefix: List<List<String>>) {
+            open[prefix] = emptyList()
+            keeper.live[prefix] = { open[prefix] }
+        }
+        // What a tree's pop-up does as the keyboard comes to it ([ConfigurationTreeArrow]).
+        fun focus(prefix: List<List<String>>) {
+            val address = prefix + listOf(emptyList<String>())
+            keeper.focused(address) {
+                positions.focused(keeper.tokenOf(address), { keeper.isShowing(address) }) { keeper.bringBack(address) }
+            }
+        }
+        val first = emptyList<List<String>>()
+        val second = listOf(emptyList<String>())
+        val third = listOf(emptyList<String>(), emptyList())
+        for (tree in listOf(first, second, third)) {
+            showing(tree)
+            focus(tree)
+        }
+        // A click in the app's window: the trees close and leave the screen; their positions stay.
+        open.clear()
+        positions.appFocused {}
+        assertTrue(positions.back())
+        assertEquals(third + listOf(emptyList()), keeper.wanted, "down to the third tree's pop-up")
+        // The trees open on the way, each taking the keyboard: no position of its own — the third's is the one arrived at.
+        for (tree in listOf(first, second, third)) {
+            showing(tree)
+            focus(tree)
+        }
+        assertTrue(keeper.isShowing(third + listOf(emptyList())))
+        // Back again: the second, then the first — the walk was not cut off by the pop-ups opened on the way.
+        assertTrue(positions.back())
+        assertEquals(second + listOf(emptyList()), keeper.wanted)
+        focus(second)
+        assertTrue(positions.back())
+        assertEquals(first + listOf(emptyList()), keeper.wanted)
+    }
 }

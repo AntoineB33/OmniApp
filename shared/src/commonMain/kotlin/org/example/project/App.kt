@@ -137,9 +137,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
 import org.example.project.ui.LocalHeadObstacle
 import org.example.project.ui.REMINDER_EDIT_FRAME_ID
-import org.example.project.ui.TASK_TREE_WINDOW_ID
-import org.example.project.ui.TaskTreeWindow
-import org.example.project.ui.TASK_TREE_DEFAULT_CHROME
 import org.example.project.ui.windowInstanceId
 import org.example.project.ui.WindowInstance
 import org.example.project.ui.WindowCopy
@@ -524,8 +521,6 @@ private enum class FloatingWindow(val title: String) {
     Search("Search"),
     /** PRD §5: status, work offline and the account — what the top-right chip and button used to be. */
     Online("Online"),
-    /** PRD §4: the task tree, a window like the others ([TASK_TREE_WINDOW_ID]). */
-    TaskTree("Task tree"),
     /** Opened from the Search window; its name is its frame id ([CONFIGURATION_SEARCH_FRAME_ID]). */
     ConfigSearch("Search configurations"),
     /** Opened from the Search window's actions; its name is its frame id ([ADDED_CONFIGURATION_FRAME_ID]). */
@@ -717,10 +712,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val calendarCopySections = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowSections>() }
         var calendarConfigurationWidth by remember { mutableStateOf<Float?>(null) }
         var calendarSectionsHidden by remember { mutableStateOf<List<Boolean>?>(null) }
-        // The task tree window's sections (user rule 2026-10-20), kept as the calendar's are: the configuration's width,
-        // and which of the two (tree, configuration) are retracted.
-        var taskTreeConfigurationWidth by remember { mutableStateOf<Float?>(null) }
-        var taskTreeSectionsHidden by remember { mutableStateOf<List<Boolean>?>(null) }
         fun updatePlacementById(id: String, change: (WindowPlacement) -> WindowPlacement) {
             val previous = placements[id] ?: WindowPlacement(x = 0f, y = 0f, visible = false)
             val next = change(previous)
@@ -1407,18 +1398,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     if (id == FloatingWindow.Calendar.name) {
                         kept.splits.firstOrNull()?.let { calendarConfigurationWidth = it }
                         if (kept.hidden.isNotEmpty()) calendarSectionsHidden = kept.hidden
-                    } else if (id == FloatingWindow.TaskTree.name) {
-                        kept.splits.firstOrNull()?.let { taskTreeConfigurationWidth = it }
-                        if (kept.hidden.isNotEmpty()) taskTreeSectionsHidden = kept.hidden
                     } else if (placements[id]?.visible != true) {
                         // Closed since: nothing of it is the next window's under that id.
                     } else if (id.startsWith(FloatingWindow.Calendar.name + "#")) {
                         calendarCopySections[id] = kept
                     } else if (kept.splits.size == 2) {
                         searchSplits[id] =
-                            org.example.project.ui.SearchSplits(
-                                kept.splits[0], kept.splits[1],
-                                kept.hidden.getOrNull(0) ?: false, kept.hidden.getOrNull(1) ?: false, kept.hidden.getOrNull(2) ?: false,
+                            org.example.project.ui.SearchSplits.of(kept.splits[0], kept.splits[1], kept.hidden).copy(
                                 expandedResults = kept.expanded.toSet(), expandedAdded = kept.expandedAdded.toSet(),
                                 expandedElements = kept.expandedElements.toSet(), scrolls = kept.scrolls,
                             )
@@ -1431,15 +1417,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 val search =
                     searchSplits.mapValues { (_, s) ->
                         org.example.project.ui.WindowSections(
-                            listOf(s.left, s.topRight), listOf(s.searchHidden, s.actionsHidden, s.addedHidden),
+                            listOf(s.left, s.topRight), s.hiddenFlags,
                             s.expandedResults.sorted(), s.expandedAdded.sorted(), s.expandedElements.sorted(), s.scrolls,
                         )
                     }
                 val calendar =
                     org.example.project.ui.WindowSections(listOfNotNull(calendarConfigurationWidth), calendarSectionsHidden.orEmpty())
-                        .takeIf { it.splits.isNotEmpty() || it.hidden.isNotEmpty() }
-                val taskTree =
-                    org.example.project.ui.WindowSections(listOfNotNull(taskTreeConfigurationWidth), taskTreeSectionsHidden.orEmpty())
                         .takeIf { it.splits.isNotEmpty() || it.hidden.isNotEmpty() }
                 it.copy(
                     config =
@@ -1447,7 +1430,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             search + calendarCopySections +
                                 listOfNotNull(
                                     calendar?.let { c -> FloatingWindow.Calendar.name to c },
-                                    taskTree?.let { t -> FloatingWindow.TaskTree.name to t },
                                 ),
                         ),
                 )
@@ -1582,15 +1564,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val serverChangePendingValue = vm.serverChangePending?.collectAsState()?.value == true
         val serverVersionValue = vm.serverVersion?.collectAsState()?.value
         val offlineValue = vm.offline?.collectAsState()?.value
-        // PRD §4: the task tree's window. OPEN on a first run (nothing kept yet), as it was left after that.
-        var taskTreeWindowOpen by remember {
-            mutableStateOf(initialPlacements[FloatingWindow.TaskTree.name]?.visible ?: true)
-        }
-        var taskTreeOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskTree, Offset.Zero)) }
-        var taskTreeSize by remember { mutableStateOf(savedSize(FloatingWindow.TaskTree)) }
-        LaunchedEffect(taskTreeWindowOpen) {
-            persistPlacement(FloatingWindow.TaskTree, taskTreeOffset, taskTreeSize, taskTreeWindowOpen)
-        }
+        // User rule 2026-11-11: there is no task tree window any more — the tree is looked through in Search windows
+        // (a task row and its sub-tree), and a task's own Search window is where "go to task tree" leads.
         // PRD §7 Search: the query, the checked kinds and the filters, kept here rather than in the window —
         // the Configuration Search window edits the same configuration, and it outlives both windows — and on
         // this device's placement row, so they outlive the app. Local-only view state.
@@ -1706,7 +1681,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Search -> HistoryWindow.Search
             FloatingWindow.ConfigSearch -> HistoryWindow.ConfigSearch
             FloatingWindow.AddedConfig -> HistoryWindow.AddedConfig
-            FloatingWindow.TaskTree -> HistoryWindow.Tree
             FloatingWindow.Online -> HistoryWindow.Online
             FloatingWindow.LifePlan -> HistoryWindow.LifePlan
             // The debug time-simulation panel is not a window of the app and commits nothing.
@@ -1778,7 +1752,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.Search -> searchWindowOpen
             FloatingWindow.ConfigSearch -> configSearchWindowOpen
             FloatingWindow.AddedConfig -> addedConfigWindowOpen
-            FloatingWindow.TaskTree -> taskTreeWindowOpen
             FloatingWindow.Online -> onlineWindowOpen
             FloatingWindow.LifePlan -> lifePlanWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
@@ -1799,7 +1772,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 FloatingWindow.Search -> searchWindowOpen = open
                 FloatingWindow.ConfigSearch -> configSearchWindowOpen = open
                 FloatingWindow.AddedConfig -> addedConfigWindowOpen = open
-                FloatingWindow.TaskTree -> taskTreeWindowOpen = open
                 FloatingWindow.Online -> onlineWindowOpen = open
                 FloatingWindow.LifePlan -> lifePlanWindowOpen = open
                 FloatingWindow.TimeSim -> Unit
@@ -2106,10 +2078,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         "\"$name\" is not in the task tree."
                     }
             } else {
-                taskTreeWindowOpen = true
-                windowFrames.present(FloatingWindow.TaskTree.name)
-                focusWindow(FloatingWindow.TaskTree)
-                vm.dispatch(SchedulerIntent.RevealCell(occurrence.cellId, occurrence.ancestors))
+                // User rule 2026-11-11: no task tree window — the task's own Search window, its sub-tree in it.
+                val shown = schedulerState.cells[occurrence.cellId]?.taskId ?: taskId ?: return
+                openElementSearch(SearchDomain.Kind.Task, shown.value)
             }
         }
         val goToTaskTree: (TaskId?, String) -> Unit = { taskId, title -> goToTaskTreeAt(taskId, title, null) }
@@ -2166,9 +2137,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val (splits, hidden) =
                 when (lateralWindowOf(frameId)) {
                     FloatingWindow.Search ->
-                        listOf(search.left, search.topRight) to listOf(search.searchHidden, search.actionsHidden, search.addedHidden)
+                        listOf(search.left, search.topRight) to search.hiddenFlags
                     FloatingWindow.Calendar -> listOfNotNull(calendarConfigurationWidth) to calendarSectionsHidden.orEmpty()
-                    FloatingWindow.TaskTree -> listOfNotNull(taskTreeConfigurationWidth) to taskTreeSectionsHidden.orEmpty()
                     else -> emptyList<Float>() to emptyList()
                 }
             val scrolls = if (lateralWindowOf(frameId) == FloatingWindow.Search) search.scrolls else emptyList()
@@ -2230,7 +2200,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             atBack: Boolean = false,
             matches: ((String) -> Boolean)? = null,
         ): String {
-            if (kind == FloatingWindow.TaskTree || kind == FloatingWindow.TimeSim || (kind == FloatingWindow.Calendar && config == null)) {
+            if (kind == FloatingWindow.TimeSim || (kind == FloatingWindow.Calendar && config == null)) {
                 if (!isWindowOpen(kind)) setWindowOpen(kind, true)
                 focusWindow(kind)
                 windowFrames.present(kind.name)
@@ -2715,19 +2685,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         FloatingWindow.Search ->
                             if (saved.splits.size == 2) {
                                 searchSplits[id] =
-                                    org.example.project.ui.SearchSplits(
-                                        saved.splits[0], saved.splits[1],
-                                        saved.hidden.getOrNull(0) ?: false, saved.hidden.getOrNull(1) ?: false, saved.hidden.getOrNull(2) ?: false,
-                                        scrolls = saved.scrolls,
-                                    )
+                                    org.example.project.ui.SearchSplits.of(saved.splits[0], saved.splits[1], saved.hidden)
+                                        .copy(scrolls = saved.scrolls)
                             }
                         FloatingWindow.Calendar -> {
                             saved.splits.firstOrNull()?.let { calendarConfigurationWidth = it }
                             if (saved.hidden.isNotEmpty()) calendarSectionsHidden = saved.hidden
-                        }
-                        FloatingWindow.TaskTree -> {
-                            saved.splits.firstOrNull()?.let { taskTreeConfigurationWidth = it }
-                            if (saved.hidden.isNotEmpty()) taskTreeSectionsHidden = saved.hidden
                         }
                         else -> Unit
                     }
@@ -4496,55 +4459,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // tree and back on every press in another window (PRD §7 — each is a WindowNav unit).
                         .raiseOnPress { windowFrames.blur() },
                 ) {
-                    // PRD §4: the task tree, a window among the others — drawn FIRST, so the windows that were
-                    // open with it come back over it rather than under a maximized tree. On its page, or on every page
-                    // once it is global (user rule 2026-10-18, [windowPageOf]).
-                    if (taskTreeWindowOpen && windowPageOf(FloatingWindow.TaskTree.name) == page) TaskTreeWindow(
-                        onDismiss = { taskTreeWindowOpen = false },
-                        modifier = Modifier.align(Alignment.Center),
-                        initialOffset = taskTreeOffset,
-                        initialSize = taskTreeSize,
-                        onGeometryChange = { windowOffset, windowSize ->
-                            taskTreeOffset = windowOffset
-                            taskTreeSize = windowSize
-                            persistPlacement(FloatingWindow.TaskTree, windowOffset, windowSize, true)
-                        },
-                        onRaise = { focusWindow(FloatingWindow.TaskTree) },
-                    ) { treeKeyboardEnabled ->
-                            Perf.measure("compose.TaskSchedulerScreen") {
-                            TaskSchedulerScreen(
-                                modifier = Modifier.fillMaxSize(),
-                                keyboardEnabled = treeKeyboardEnabled,
-                                store = store,
-                                vm = vm,
-                                // PRD §4: the default sub-tree's window, opened from the top of this window's
-                                // configuration section — what the lateral menu's button did.
-                                defaultSubtreeWindowOpen = defaultSubtreeWindowOpen,
-                                onToggleDefaultSubtree = {
-                                    onMenuWindowClicked(FloatingWindow.DefaultSubtree) { defaultSubtreeWindowOpen = it }
-                                },
-                                onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
-                                onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
-                                onSetEditTask = { it?.let { id -> openElementSearch(SearchDomain.Kind.Task, id.value) } },
-                                onSetEditCategory = { it?.let { id -> openElementSearch(SearchDomain.Kind.Category, id.value) } },
-                                onSetDeepCopyCell = { deepCopyWindows.setFrom(template = false, it) },
-                                onLinkTask = { taskLinkWindows.open(it) },
-                                configurationWidthDp = taskTreeConfigurationWidth,
-                                onConfigurationWidthChange = {
-                                    taskTreeConfigurationWidth = it
-                                    saveWindowSections()
-                                },
-                                sectionsHidden = taskTreeSectionsHidden,
-                                onSectionsHiddenChange = {
-                                    if (it != (taskTreeSectionsHidden ?: listOf(false, false))) {
-                                        taskTreeSectionsHidden = it
-                                        saveWindowSections()
-                                    }
-                                },
-                            )
-                            }
-                    }
-
                     // The Task Scheduler's per-object windows, drawn on its page alone (user rule 2026-10-18): the
                     // lateral-menu windows and the task tree decide for themselves ([windowPageOf]).
                     if (page == OmniPage.TaskScheduler) {
@@ -5651,6 +5565,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), null)
                             },
                             onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                            // User rule 2026-11-11: the default sub-tree's window, from a task element's actions.
+                            onOpenDefaultSubtree = {
+                                if (!defaultSubtreeWindowOpen) defaultSubtreeWindowOpen = true
+                                presentWindow(FloatingWindow.DefaultSubtree, FloatingWindow.DefaultSubtree.name)
+                            },
                             onOpenResilienceSearch = { kind -> openLinkedSearch(SearchDomain.resilienceSearchConfig(kind)) },
                             onOpenKindSearch = { kind -> openLinkedSearch(SearchDomain.kindSearchConfig(kind)) },
                             schedulerRuns = { schedulerRuns },
@@ -5798,6 +5717,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             config = config,
                             onConfigChange = onConfigChange,
                             onOpenConfigurations = {},
+                            // User rule 2026-11-11: what its background menu shows of it, kept from one Edit Mode to the next.
+                            splits = cellEditPopups.splits,
+                            onSplitsChange = { cellEditPopups.splits = it },
                             picker = picker,
                             modifier = popupModifier,
                         )
@@ -6125,10 +6047,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                         return@reset
                     }
-                    taskTreeOffset = Offset.Zero
-                    taskTreeSize = Size.Zero
-                    persistPlacement(FloatingWindow.TaskTree, Offset.Zero, Size.Zero, visible = false)
-                    windowChromeMemory.save(FloatingWindow.TaskTree.name, TASK_TREE_DEFAULT_CHROME)
                     calendarOffset = Offset.Zero
                     calendarSize = Size.Zero
                     engineScope.launch {

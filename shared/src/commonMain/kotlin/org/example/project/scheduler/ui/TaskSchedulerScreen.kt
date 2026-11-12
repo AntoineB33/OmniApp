@@ -3270,6 +3270,26 @@ internal fun TaskRow(
                                     onTextChange("")
                                     fieldRefocusRequests++
                                 }
+                                // User rule 2026-11-04: and the bar's configurations arrow, after the cross — the Edit
+                                // Mode's Search window's configuration ([CellEditPopupHost.searchConfig]).
+                                val popups = org.example.project.ui.LocalCellEditPopupHost.current
+                                val shown = popups?.request?.namingSource
+                                if (popups != null && shown != null) {
+                                    org.example.project.ui.ConfigurationTreeArrow(
+                                        state = shown,
+                                        config = popups.withDraft(textFieldValue.text),
+                                        openedConfig = org.example.project.ui.CellEditPopupHost.DEFAULT_SEARCH,
+                                        onConfigChange = { next ->
+                                            popups.change(next, textFieldValue.text) { draft ->
+                                                textFieldValue = TextFieldValue(draft, androidx.compose.ui.text.TextRange(draft.length))
+                                                onTextChange(draft)
+                                            }
+                                        },
+                                        nowMillis = org.example.project.ui.LocalAppNowMillis.current,
+                                        windows = emptyList(),
+                                        claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
+                                    )
+                                }
                             }
                         }
                     }

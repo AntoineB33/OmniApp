@@ -236,7 +236,8 @@ object SearchDomain {
             CLAUDE_LOGS_PAGE -> claudeLogsConfig()
             SETTINGS_PAGE -> Config(kinds = SETTINGS_KINDS.toSet(), page = SETTINGS_PAGE, pageTypesOnly = true)
             // User rule 2026-11-04: each page's button opens on its own types alone ([Config.pageTypesOnly]).
-            else -> Config(pageTypesOnly = true)
+            // User rule 2026-11-11: the default Search window has every type of its selector checked ([clearedConfig]).
+            else -> clearedConfig(page)
         }
 
     /** The configuration a Search window of the Claude Code logs page opens with: every kind of the logs, newest first. */
@@ -597,6 +598,12 @@ object SearchDomain {
      */
     data class Config(
         val query: String = "",
+        /**
+         * User rule 2026-11-06: **the search bars the user added** to the window's own ([query] is bar 1, these are 2, 3…),
+         * and the formula that puts them together ([queryFormula], [SearchBarFormula]) — blank: every bar at once.
+         */
+        val extraQueries: List<String> = emptyList(),
+        val queryFormula: String = "",
         val kinds: Set<Kind> = setOf(Kind.Task),
         val filters: Filters = Filters(),
         /** Dominant first ([SortMethod]). */
@@ -789,6 +796,9 @@ object SearchDomain {
                     settingsChangedAt = settingsChangedAt.mapKeys { it.key.name },
                     matchCase = filters.matchCase,
                     wholeWord = filters.wholeWord,
+                    regex = filters.regex,
+                    extraQueries = extraQueries,
+                    queryFormula = queryFormula,
                     claudeProject = filters.claudeProject,
                     claudeFromMillis = filters.claudeFrom,
                     claudeUntilMillis = filters.claudeUntil,
@@ -851,6 +861,7 @@ object SearchDomain {
                         calendarAddOn = stored.calendarAddOn,
                         matchCase = stored.matchCase,
                         wholeWord = stored.wholeWord,
+                        regex = stored.regex,
                         calendarAddAtMillis = stored.calendarAddAtMillis,
                         calendarAddKeeping = stored.calendarAddKeeping,
                         calendarAtOn = stored.calendarAtOn,
@@ -894,6 +905,8 @@ object SearchDomain {
                     elementSource = stored.elementSource,
                     completion = Completion.entries.firstOrNull { it.name == stored.completion },
                     pageTypesOnly = stored.pageTypesOnly,
+                    extraQueries = stored.extraQueries,
+                    queryFormula = stored.queryFormula,
                     settingsChangedAt = stored.settingsChangedAt.mapNotNull { (name, at) -> Setting.entries.firstOrNull { it.name == name }?.let { it to at } }.toMap(),
                 )
             }
@@ -1145,6 +1158,8 @@ object SearchDomain {
          */
         val matchCase: Boolean = false,
         val wholeWord: Boolean = false,
+        /** User rule 2026-11-06: the bars hold regular expressions ([TaskTreeSearch.Options.regex]). */
+        val regex: Boolean = false,
         val calendarAddOn: Boolean = false,
         val calendarAddAtMillis: Long? = null,
         /**
@@ -1233,8 +1248,8 @@ object SearchDomain {
             get() = taskOnCalendar != Tri.Any || taskBoxesFrom != null || taskBoxesUntil != null ||
                 periodOnCalendar != Tri.Any || periodBoxesFrom != null || periodBoxesUntil != null
 
-        /** The search bar's two filters ([matchCase], [wholeWord]) as the task tree's find bar holds them. */
-        val queryOptions: TaskTreeSearch.Options get() = TaskTreeSearch.Options(matchCase, wholeWord)
+        /** The search bar's filters ([matchCase], [wholeWord], [regex]) as a find bar holds them. */
+        val queryOptions: TaskTreeSearch.Options get() = TaskTreeSearch.Options(matchCase, wholeWord, regex)
 
         /** How many filters are set to something other than "any" — the Search window's button shows it. */
         val activeCount: Int
@@ -1250,6 +1265,7 @@ object SearchDomain {
             when (setting) {
                 Setting.MatchCase -> matchCase
                 Setting.WholeWord -> wholeWord
+                Setting.Regex -> regex
                 Setting.CalendarAdd -> calendarAddAt != null
                 Setting.CalendarAt -> calendarAt != null
                 Setting.TaskInTree -> taskInTree != Tri.Any
@@ -1493,6 +1509,10 @@ object SearchDomain {
         /** User rule 2026-11-04: filters on what the bar holds ([Filters.matchCase], [Filters.wholeWord]). */
         MatchCase(null, "Match case"),
         WholeWord(null, "Match whole word"),
+        /** User rule 2026-11-06: the bars hold regular expressions ([Filters.regex]). */
+        Regex(null, "Use regular expression"),
+        /** User rule 2026-11-06: the search bars added to the window's own, and their formula ([Config.extraQueries]). */
+        SearchBars(null, "Search bars"),
         Types(null, "Types"),
         /** User rule 2026-11-04: the type selector offers the page's types alone ([Config.pageTypesOnly]). */
         PageTypes(null, "Only this page's types"),
@@ -1940,6 +1960,10 @@ object SearchDomain {
         /** New 2026-11-04: absent = the case ignored and any part of a word matched, as before ([Filters.matchCase]). */
         val matchCase: Boolean = false,
         val wholeWord: Boolean = false,
+        /** New 2026-11-06: absent = the bars read as text, and the window's own bar alone ([Config.extraQueries]). */
+        val regex: Boolean = false,
+        val extraQueries: List<String> = emptyList(),
+        val queryFormula: String = "",
         val claudeProject: String? = null,
         val claudeFromMillis: Long? = null,
         val claudeUntilMillis: Long? = null,
@@ -2607,28 +2631,42 @@ object SearchDomain {
         placementOwnLength: Long? = null,
         /** The Claude Code logs as last read, for the logs' kinds ([CLAUDE_KINDS]) — `App` reads them. */
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
-        /** The search bar's match case and whole word ([Filters.queryOptions]). */
+        /** The search bar's match case, whole word and regular expression ([Filters.queryOptions]). */
         match: TaskTreeSearch.Options = TaskTreeSearch.Options(),
+        /** User rule 2026-11-06: the bars added to [query] and their formula ([Config.extraQueries], [SearchBarFormula]). */
+        extraQueries: List<String> = emptyList(),
+        queryFormula: String = "",
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
+        // Several bars, or a regular expression: every row of the kinds is read, and the bars decide ([barsMatch]). One
+        // plain bar keeps the kinds' own search, which also ranks what it finds.
+        val bars = listOf(query) + extraQueries
+        val severalBars = extraQueries.any { it.isNotBlank() }
+        val kindQuery = if (severalBars || match.regex) "" else query
         val base =
             Kind.entries
                 .filter { it in kinds }
                 .flatMap { kind ->
                     if (kind == Kind.Task) {
-                        taskResults(state, query, allPaths())
+                        taskResults(state, kindQuery, allPaths())
                     } else if (kind in CLAUDE_KINDS) {
-                        claudeResults(kind, query, claudeLogs, filters, timeZone)
+                        claudeResults(kind, kindQuery, claudeLogs, filters, timeZone)
                     } else {
                         itemResults(
-                            state, kind, query, windows = windows,
+                            state, kind, kindQuery, windows = windows,
                             windowTypesOnly = filters.windowDuplicates == WindowDuplicates.Hidden,
                             schedulerRuns = schedulerRuns, claudeLogs = claudeLogs,
                         )
                     }
                 }
                 .let { rows -> rows + withCreatedKindRows(state, kinds, query, filters) }
-                .let { rows -> if (match == TaskTreeSearch.Options() || query.isBlank()) rows else rows.filter { matchesWith(it, query, match, claudeLogs) } }
+                .let { rows ->
+                    when {
+                        severalBars -> rows.filter { row -> SearchBarFormula.evaluate(queryFormula, bars.size) { i -> barMatches(row, bars[i], match, claudeLogs) } }
+                        match == TaskTreeSearch.Options() || query.isBlank() -> rows
+                        else -> rows.filter { matchesWith(it, query, match, claudeLogs) }
+                    }
+                }
                 .filter { passes(state, it, filters, calendar) }
                 .let { rows ->
                     // The blocks of the given elements: each block's element read once, not once per row.
@@ -3230,11 +3268,29 @@ object SearchDomain {
      */
     fun matchesWith(row: Result, query: String, match: TaskTreeSearch.Options, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): Boolean {
         val entry = (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.let { claudeLogs.find(it.id)?.second }
-        return TaskTreeSearch.ranges(entry?.text ?: row.name, matchPhrase(query), match).isNotEmpty()
+        return TaskTreeSearch.ranges(entry?.text ?: row.name, matchPhrase(query, match), match).isNotEmpty()
     }
 
-    /** What the bar holds as the one phrase match case and whole word read ([matchesWith], [matchRanges]): trimmed, unquoted. */
-    fun matchPhrase(query: String): String = query.trim().removeSurrounding("\"").trim()
+    /**
+     * User rule 2026-11-06: **whether one search bar answers [row]** — the bars a formula puts together
+     * ([SearchBarFormula]): a blank bar answers everything; with a filter of the bar on, as [matchesWith]; else every
+     * term of it — words, or "quoted phrases" — is in the row's name (a log entry's whole text), case aside, as the
+     * logs' own search reads a bar ([ClaudeLogSearch]).
+     */
+    fun barMatches(row: Result, query: String, match: TaskTreeSearch.Options, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): Boolean {
+        if (query.isBlank()) return true
+        if (match != TaskTreeSearch.Options()) return matchesWith(row, query, match, claudeLogs)
+        val entry = (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.let { claudeLogs.find(it.id)?.second }
+        val text = entry?.text ?: row.name
+        return ClaudeLogSearch.rawTerms(query).all { text.contains(it, ignoreCase = true) }
+    }
+
+    /**
+     * What the bar holds as the one phrase match case and whole word read ([matchesWith], [matchRanges]): trimmed,
+     * unquoted — a regular expression as it is written ([TaskTreeSearch.Options.regex]).
+     */
+    fun matchPhrase(query: String, match: TaskTreeSearch.Options = TaskTreeSearch.Options()): String =
+        if (match.regex) query else query.trim().removeSurrounding("\"").trim()
 
     internal fun matchRank(name: String, query: String): Int? {
         val q = query.trim().lowercase()
@@ -3255,7 +3311,7 @@ object SearchDomain {
     fun matchRanges(text: String, query: String, match: TaskTreeSearch.Options = TaskTreeSearch.Options()): List<IntRange> {
         if (text.isEmpty()) return emptyList()
         // User rule 2026-11-04: with the bar's match case or whole word on, only what matches with them is a hit.
-        if (match != TaskTreeSearch.Options()) return TaskTreeSearch.ranges(text, matchPhrase(query), match)
+        if (match != TaskTreeSearch.Options()) return TaskTreeSearch.ranges(text, matchPhrase(query, match), match)
         val ranges = ArrayList<IntRange>()
         for (term in ClaudeLogSearch.rawTerms(query)) {
             var at = text.indexOf(term, ignoreCase = true)
@@ -3430,8 +3486,19 @@ object SearchDomain {
         TaskDeepCopy(Kind.Task, "Deep copy"),
         TaskCollapseSubtrees(Kind.Task, "Collapse sub-trees"),
         TaskAddDefaultSubtree(Kind.Task, "Add default sub-tree"),
+        /**
+         * User rule 2026-11-11: the default sub-tree's window, which the task tree window's configuration section opened
+         * until that window was removed: a task element's actions are where it is reached now.
+         */
+        TaskDefaultSubtree(Kind.Task, "Default sub-tree"),
         // The task edit window's sections (`TaskEditWindow`), over every added task.
         TaskAddUnder(Kind.Task, "Add under"),
+        /**
+         * User rule 2026-11-12: each added task's **children, as tree cells** — the drawing an expanded row shows its
+         * sub-tree with — so they are edited as the tree's cells are, the switch between renaming and changing the id
+         * in their Edit Mode included (a result row has none).
+         */
+        TaskChildren(Kind.Task, "Children"),
         TaskResilience(Kind.Task, "Resilience"),
         TaskScheduleUnit(Kind.Task, "Schedule unit"),
         TaskText(Kind.Task, "Text"),
@@ -3804,7 +3871,7 @@ object SearchDomain {
     val PER_ELEMENT_ACTIONS: Set<AddedAction> =
         setOf(
             AddedAction.QuotaProgress, AddedAction.QuotaLookTimes, AddedAction.QuotaLoops, AddedAction.TimerRun,
-            AddedAction.ChronoRun, AddedAction.HistoryRules, AddedAction.HistoryInformation, AddedAction.TaskPaths,
+            AddedAction.ChronoRun, AddedAction.HistoryRules, AddedAction.HistoryInformation, AddedAction.TaskPaths, AddedAction.TaskChildren,
             AddedAction.TaskCellCategories, AddedAction.TaskFulfilment, AddedAction.TaskFulfilledBy,
             AddedAction.TaskStartNow, AddedAction.TaskEdit, AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar,
             AddedAction.CategoryName, AddedAction.ShortcutChord, AddedAction.ShortcutWindow,
@@ -3958,6 +4025,8 @@ object SearchDomain {
             AddedAction.TaskDeepCopy -> "deep copy"
             AddedAction.TaskCollapseSubtrees -> "collapse"
             AddedAction.TaskAddDefaultSubtree -> "add default sub-tree"
+            AddedAction.TaskDefaultSubtree -> "open default sub-tree template window"
+            AddedAction.TaskChildren -> "children sub-tree cells edit rename change task id switch"
             AddedAction.TaskResilience -> "period apply"
             AddedAction.TaskScheduleUnit, AddedAction.TaskText -> "apply"
             AddedAction.AlarmOnOff, AddedAction.AlarmRepeat, AddedAction.TimerBelowZero -> "on off"

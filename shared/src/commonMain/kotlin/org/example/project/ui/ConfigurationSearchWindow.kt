@@ -401,6 +401,11 @@ internal fun SettingEditor(
             androidx.compose.material3.Switch(checked = f.matchCase, onCheckedChange = { filters(f.copy(matchCase = it)) })
         SearchDomain.Setting.WholeWord ->
             androidx.compose.material3.Switch(checked = f.wholeWord, onCheckedChange = { filters(f.copy(wholeWord = it)) })
+        // User rule 2026-11-06: the bars hold regular expressions.
+        SearchDomain.Setting.Regex ->
+            androidx.compose.material3.Switch(checked = f.regex, onCheckedChange = { filters(f.copy(regex = it)) })
+        // User rule 2026-11-06: the search bars added to the window's own, and the formula putting them together.
+        SearchDomain.Setting.SearchBars -> SearchBarsEditor(config, onChange)
         // User rule 2026-11-04: on, the type selector offers the window's page's types alone ([SearchDomain.Config.pageTypesOnly]).
         SearchDomain.Setting.PageTypes ->
             androidx.compose.material3.Switch(checked = config.pageTypesOnly, onCheckedChange = { onChange(config.copy(pageTypesOnly = it)) })
@@ -1048,6 +1053,55 @@ internal fun DayChips(days: Set<DayOfWeek>, emptyLabel: String = "any day", onCh
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 4.dp),
+            )
+        }
+    }
+}
+
+
+/**
+ * User rule 2026-11-06: **the window's other search bars and their formula** ([SearchDomain.Config.extraQueries],
+ * [SearchDomain.Config.queryFormula], read by [org.example.project.scheduler.domain.SearchBarFormula]) — each added bar
+ * with its ✕, a button adding one, and the formula, with what is wrong with it said under it.
+ */
+@Composable
+private fun SearchBarsEditor(config: SearchDomain.Config, onChange: (SearchDomain.Config) -> Unit) {
+    val bars = config.extraQueries
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        NoteText("Search bar 1 is the window's own bar.")
+        bars.forEachIndexed { i, text ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { next -> onChange(config.copy(extraQueries = bars.toMutableList().also { it[i] = next })) },
+                    singleLine = true,
+                    label = { Text("Search bar ${i + 2}") },
+                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
+                )
+                Text(
+                    "✕",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.clickable { onChange(config.copy(extraQueries = bars.filterIndexed { j, _ -> j != i })) }.padding(6.dp),
+                )
+            }
+        }
+        FrameButton("Add a search bar") { onChange(config.copy(extraQueries = bars + "")) }
+        if (bars.isNotEmpty()) {
+            OutlinedTextField(
+                value = config.queryFormula,
+                onValueChange = { onChange(config.copy(queryFormula = it)) },
+                singleLine = false,
+                label = { Text("Formula") },
+                placeholder = { Text("\u201Cmain search bar\u201D AND (\u201Csearch bar 2\u201D OR \u201Csearch bar 3\u201D)") },
+                modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
+            )
+            val problem = org.example.project.scheduler.domain.SearchBarFormula.problem(config.queryFormula, bars.size + 1)
+            NoteText(
+                when {
+                    config.queryFormula.isBlank() -> "Blank: every bar at once."
+                    problem != null -> "Not understood ($problem): every bar at once."
+                    else -> "Bars by number or name, with AND, OR, NOT and parentheses."
+                },
             )
         }
     }

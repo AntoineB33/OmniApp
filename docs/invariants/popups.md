@@ -34,7 +34,15 @@ window, a period's, a category's, a notice — is the same thing with the same m
   PRD §4): several may stand open at once, from both trees, so each reads its own tree's state and sends its
   intents back into it. There is no app-wide "which tree asked" any more.
 
-## The task tree is a window
+## The task tree is a window — removed 2026-11-11
+
+**User rule 2026-11-11: there is no task tree window any more.** `TaskTreeWindow`, `FloatingWindow.TaskTree` and the
+lateral menu's "Task tree" button are gone (`CustomMenuButtons.decode` drops a kept button for it, `TaskTree` or a copy);
+the tree is looked through in Search windows — a task row and its sub-tree. **"Go to task tree" opens the task's own
+Search window** (`goToTaskTreeAt` → `openElementSearch`), and **the Default sub-tree window is opened from a task
+element's actions** (`AddedAction.TaskDefaultSubtree`), where the tree window's configuration section opened it.
+`TaskSchedulerScreen` is no longer composed by `App`; its keyboard went with it, so no key reaches a tree nobody sees.
+What follows is the window as it was, kept for its history.
 
 Since 2026-09-24 the tree (`TaskSchedulerScreen`) is not the app's background but a lateral-menu window
 (`TaskTreeWindow`, `FloatingWindow.TaskTree`, a "Task tree" button in the lateral menu). It opens **maximized**
@@ -358,7 +366,16 @@ means.
     for the pop-up's window (`MenuSession.keyDispatcher`), never from its Compose content: a pop-up brought back holds
     the keyboard with nothing of it focused, and then no key reaches its content nor the window's own key handler
     (measured 2026-11-11). In this run only; a
-    pop-up that left the screen with the one holding it is no position any more.
+    pop-up that left the screen with the one holding it is no position any more. **The pop-ups of a configurations tree
+    are the exception: their positions are the outermost arrow's** (anomaly 2026-11-11, *"three headless search windows
+    deep … ctrl+alt+<- opened the two first, not the third"*, measured in `diagnostics.log`; `TreeKeeper`,
+    `MenuHoverTrackerTest`). A category's pop-up and the tree an arrow in a pop-up's bar opens leave the screen with what
+    they hang from, so each is named by its **address** — for each tree from the outermost down, the categories of the
+    pop-up whose bar holds the next arrow, then those of the pop-up itself — kept by the outermost arrow (the one in a
+    window) while it stands and forgotten with it. Walked back to, every tree along the address opens showing those
+    categories, pinned (`TreeKeeper.wanted`), and the pop-up at its end takes the keyboard; the pop-ups opening on the way
+    take it too, and are no positions of their own (`TreeKeeper.focused`) — recorded, they cut off the rest of the walk.
+    A tree's own pop-up comes back showing no category: each category it showed is a position of its own.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
     (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree.
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
@@ -530,7 +547,8 @@ means.
   `CustomMenuButtons.firstWindowButton`, a folder's items included; none, and no window opens; it was the calendar
   alone, and another page's Search window). The calendar's chrome is still written as `CALENDAR_RESET_CHROME`. It
   replaced the lateral menu's "Close windows" (2026-09-24), which listed the lateral-menu windows by hand and
-  so never closed a per-object window, a copy or a notice. **It also resets the task tree window's placement**
+  so never closed a per-object window, a copy or a notice. **It also reset the task tree window's placement** (until
+  the window was removed, 2026-11-11)
   (user rule, 2026-09-30; `WindowBar(onReset)` in `App`): offset and size back to zero and the chrome to
   `TASK_TREE_DEFAULT_CHROME`, so the tree reopens as on a first run — maximized, and un-maximizing gives the
   default size, centred. The chrome is WRITTEN as the default, not cleared: `WindowChromeMemory.saved` answers
@@ -705,6 +723,11 @@ The account's data is shared, of course — an alarm edited in one copy shows in
 - A press inside a `DropdownMenu`/`Popup` draws in its own layer and never reaches that observer, which is
   what makes "any press the observer sees" mean "a press outside the menu" — so a menu publishes no bounds,
   and a window's own menus never close it.
+- **The same goes for a menu opened INSIDE a pop-up** (anomaly 2026-11-11, the "▾" configurations pop-up's background
+  menu): a press on that pop-up is in its layer, which the root never sees either, so the menu stayed. Such a pop-up
+  reports its presses itself, `Modifier.dismissesMenusOnPress()` on its content → `TransientMenuHost.onPressInPopup`:
+  the menus close, the edits do not (the pop-up is part of the edit it was opened from). It is the same funnel, fed
+  from one more layer — not a per-menu handler.
 - The menu's popup must be **non-focusable** (`PopupProperties(focusable = false)`): a focusable
   `DropdownMenu` consumes the outside press for its own `onDismissRequest`, and that is exactly the press
   PRD §13 needs to go on and select the next cell — right-click one cell, click another, and the second cell

@@ -195,6 +195,8 @@ data class AddedActionHandlers(
     val onStartNow: (TaskId) -> Unit,
     val onEdit: (TaskId) -> Unit,
     val onGoToTaskTree: (TaskId) -> Unit,
+    /** "Default sub-tree": its window, opened or brought to the front (user rule 2026-11-11). */
+    val onOpenDefaultSubtree: () -> Unit = {},
     val onDeepCopyCell: (CellId) -> Unit,
     /** A period's "Search its tasks": the Search window of its tasks' resilience ([SearchDomain.resilienceSearchConfig]). */
     val onOpenResilienceSearch: (String) -> Unit,
@@ -299,6 +301,8 @@ internal fun AddedActionsSection(
      * the same group scrolls twice — the added elements' "show only its actions" (user rule 2026-10-13).
      */
     reveal: Pair<String, Int>? = null,
+    /** User rule 2026-11-06: what stands at the right of the section's bar — the arrow to every search configuration. */
+    configurationArrow: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     CompactFields {
@@ -318,15 +322,18 @@ internal fun AddedActionsSection(
         if (collapsed) return@Column
         // User rule 2026-10-11: the section's search bar. It SORTS the actions inside each group of elements — the
         // ones whose title answers it first — and hides none, nor moves a group ([SearchDomain.sortedByActionSearch]).
-        OutlinedTextField(
-            value = config.actionSearch,
-            onValueChange = { onConfigChange(config.copy(actionSearch = it)) },
-            singleLine = true,
-            label = { Text("Search an action") },
-            trailingIcon = { SearchBarCross(config.actionSearch) { onConfigChange(config.copy(actionSearch = "")) } },
-            modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress()
-                .revertsOnEscape(config.actionSearch) { onConfigChange(config.copy(actionSearch = it)) },
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(
+                value = config.actionSearch,
+                onValueChange = { onConfigChange(config.copy(actionSearch = it)) },
+                singleLine = true,
+                label = { Text("Search an action") },
+                trailingIcon = { SearchBarCross(config.actionSearch) { onConfigChange(config.copy(actionSearch = "")) } },
+                modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
+                    .revertsOnEscape(config.actionSearch) { onConfigChange(config.copy(actionSearch = it)) },
+            )
+            configurationArrow()
+        }
         // The filter is set in the configurations window; said here, with its way off, so a quarter showing one
         // action is never a mystery.
         if (config.actionQuery.isNotBlank()) {
@@ -824,6 +831,7 @@ private fun AddedActionBlocks(
                 taskIds.forEach(handlers.onEdit)
             }
         SearchDomain.AddedAction.TaskGoToTree -> OneTaskButton("Go", taskIds) { handlers.onGoToTaskTree(it) }
+        SearchDomain.AddedAction.TaskDefaultSubtree -> FrameButton("Open") { handlers.onOpenDefaultSubtree() }
         SearchDomain.AddedAction.TaskGoToCalendar -> {
             val calendar = LocalCalendarGoTo.current
             val single = taskIds.singleOrNull()
@@ -1075,6 +1083,18 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.QuotaResilience -> QuotaResilienceEditor(state, addedQuotas(state, added), run.asIntentSink())
         SearchDomain.AddedAction.QuotaLoops -> QuotaLoopsEditor(state, addedQuotas(state, added), run.asIntentSink(), nowMillis)
         SearchDomain.AddedAction.TaskCellCategories -> TaskCellCategoriesEditor(state, taskIds, run)
+        SearchDomain.AddedAction.TaskChildren -> {
+            val children = LocalTaskChildren.current
+            for (taskId in taskIds) {
+                ElementHeading(state.tasks[taskId]?.title.orEmpty(), taskIds.size)
+                val listId = state.tasks[taskId]?.childListId?.takeIf { state.lists[it]?.cellIds?.isNotEmpty() == true }
+                when {
+                    listId == null -> NoteText("No child. \"Add under\" adds one.", color = MaterialTheme.colorScheme.onSurface)
+                    children == null -> Unit
+                    else -> children(taskId, listId)
+                }
+            }
+        }
         SearchDomain.AddedAction.TaskPaths -> {
             for (taskId in taskIds) {
                 val places = remember(taskId, state.cells, state.lists, state.tasks) { TaskPathsDomain.occurrences(state, taskId) }
@@ -2515,3 +2535,11 @@ private fun WorkplaceApplyButton(setups: List<org.example.project.scheduler.doma
         }
     }
 }
+
+/**
+ * User rule 2026-11-12: how the "Children" action ([SearchDomain.AddedAction.TaskChildren]) draws a task's children — the
+ * Search window's own sub-tree drawing, as an expanded row's ([SearchSubtree]), which only the window can build. Null
+ * where no window gives it: the action then shows the task's heading alone.
+ */
+internal val LocalTaskChildren =
+    androidx.compose.runtime.compositionLocalOf<(@Composable (TaskId, org.example.project.scheduler.model.CellListId) -> Unit)?> { null }

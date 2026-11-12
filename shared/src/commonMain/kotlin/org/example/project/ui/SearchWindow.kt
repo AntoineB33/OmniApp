@@ -188,7 +188,34 @@ data class SearchSplits(
      * far under the top ([WindowLayout.scrolls]'s order): a menu button keeps them with the window, and puts them back.
      */
     val scrolls: List<Int> = emptyList(),
-)
+    /**
+     * User rule 2026-11-11: what the window's background menu took off it — not retracted to an arrow, not there: the
+     * window's header (its head: the title and the buttons, [AppWindowFrame]'s `showHead`) and each of the three sections.
+     */
+    val headerRemoved: Boolean = false,
+    val searchRemoved: Boolean = false,
+    val actionsRemoved: Boolean = false,
+    val addedRemoved: Boolean = false,
+) {
+    /** The flags as [WindowSections.hidden] keeps them: the three retracted, then the four removed. */
+    val hiddenFlags: List<Boolean>
+        get() = listOf(searchHidden, actionsHidden, addedHidden, headerRemoved, searchRemoved, actionsRemoved, addedRemoved)
+
+    companion object {
+        /** Read back from [hiddenFlags]; a flag an older build did not write is off. */
+        fun of(left: Float, topRight: Float, hidden: List<Boolean>): SearchSplits =
+            SearchSplits(
+                left, topRight,
+                searchHidden = hidden.getOrNull(0) ?: false,
+                actionsHidden = hidden.getOrNull(1) ?: false,
+                addedHidden = hidden.getOrNull(2) ?: false,
+                headerRemoved = hidden.getOrNull(3) ?: false,
+                searchRemoved = hidden.getOrNull(4) ?: false,
+                actionsRemoved = hidden.getOrNull(5) ?: false,
+                addedRemoved = hidden.getOrNull(6) ?: false,
+            )
+    }
+}
 
 /**
  * User rule 2026-11-02: **the Search window a task cell's Edit Mode shows** ([CellEditPopupLayer]): no head, no added
@@ -206,6 +233,8 @@ class SearchPicker(
      * by a new one of the same title. Null where the cell cannot change task (Rename): no creation row.
      */
     val onNewTask: (() -> Unit)?,
+    /** Leaves the Edit Mode, the draft abandoned: the ✕ of its head, once shown (user rule 2026-11-11). */
+    val onCancel: () -> Unit = {},
 )
 
 /** A press and release on a row of a [SearchPicker]'s list, taken before the row: nothing in the row answers it. */
@@ -466,6 +495,14 @@ fun SearchWindow(
     // A task row in its rename-only Edit Mode (the tree's own field, TaskRow's): the task, and what is typed.
     var editingTaskId by remember { mutableStateOf<TaskId?>(null) }
     var editDraft by remember { mutableStateOf("") }
+    // User rule 2026-11-11: the head and the sections the background menu took off ([SearchPart]). Here and not in the
+    // content: the frame draws the head, and the row menu's "add" is offered while the added elements are there.
+    // A picker given nothing opens as the cell's Edit Mode shows it: its search section alone.
+    val shownSplits = splits ?: CellEditPopupHost.PICKER_SPLITS.takeIf { picker != null }
+    var headerRemoved by remember { mutableStateOf(shownSplits?.headerRemoved == true) }
+    var searchRemoved by remember { mutableStateOf(shownSplits?.searchRemoved == true) }
+    var actionsRemoved by remember { mutableStateOf(shownSplits?.actionsRemoved == true) }
+    var addedRemoved by remember { mutableStateOf(shownSplits?.addedRemoved == true) }
     // The rows whose sub-tree is open, kept with the window's sections ([SearchSplits]), and the one whose sub-tree
     // holds the keyboard, Compose-only.
     var expandedTasks by remember { mutableStateOf(splits?.expandedResults.orEmpty().map { TaskId(it) }.toSet()) }
@@ -484,6 +521,8 @@ fun SearchWindow(
     // drawn. This names the sub-tree the last press went to — "result/<task>" or "added/<task>" — and is null once
     // a row took the selection back. Sticky, unlike [subtreeFocusOwner]: a press in another window changes nothing.
     var selectionSurface by remember { mutableStateOf<String?>(null) }
+    // The "Children" action's sub-tree holding the keyboard (user rule 2026-11-12), apart from the rows' own.
+    var actionsSubtreeFocus by remember { mutableStateOf<TaskId?>(null) }
     // The pinned parent row of the result list ([pinnedItemIndex]): the list's top in the window, which an expanded
     // row's sub-tree reckons its own pinned row from, and the row whose sub-tree is pinning a deeper parent there.
     var resultListTop by remember { mutableStateOf<Float?>(null) }
@@ -520,6 +559,8 @@ fun SearchWindow(
             claudeLogs,
             picker?.eligible,
             config.filters.queryOptions,
+            config.extraQueries,
+            config.queryFormula,
         ) {
             val found =
                 SearchDomain.results(
@@ -528,6 +569,8 @@ fun SearchWindow(
                     placementOwnLength = if (filters.calendarAddKeeping) SearchDomain.placementDefaultLength(state, addedRows) else null,
                     claudeLogs = claudeLogs,
                     match = config.filters.queryOptions,
+                    extraQueries = config.extraQueries,
+                    queryFormula = config.queryFormula,
                 )
             if (picker != null) {
                 SearchDomain.pickerRows(state, found, picker.eligible, creation = picker.onNewTask != null)
@@ -758,8 +801,9 @@ fun SearchWindow(
             onEdit = null,
             // User rule 2026-10-01: the menu's "add" adds every SELECTED row — the right-click selected this one first
             // when it was not among them.
-            onAdd = if (picker == null) { { addSelected() } } else null,
-            onAddReplacing = if (picker == null) { { addSelected(replacing = true) } } else null,
+            // A picker's rows add once its added elements are shown (user rule 2026-11-11).
+            onAdd = if (picker == null || !addedRemoved) { { addSelected() } } else null,
+            onAddReplacing = if (picker == null || !addedRemoved) { { addSelected(replacing = true) } } else null,
             calendarTaskId = taskId,
             // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
             onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
@@ -798,6 +842,8 @@ fun SearchWindow(
           }
       }
       var addedCollapsed by remember { mutableStateOf(splits?.addedHidden ?: false) }
+      // User rule 2026-11-11: the background's menu takes the header and each section off the window, and puts it back
+      // expanded ([SearchSplits.headerRemoved]). A picker too: it is the Search window with those parts taken off.
       LaunchedEffect(splits) {
           splits?.let {
               leftShare = it.left
@@ -805,6 +851,10 @@ fun SearchWindow(
               searchCollapsed = it.searchHidden
               actionsCollapsed = it.actionsHidden
               addedCollapsed = it.addedHidden
+              headerRemoved = it.headerRemoved
+              searchRemoved = it.searchRemoved
+              actionsRemoved = it.actionsRemoved
+              addedRemoved = it.addedRemoved
           }
       }
       // The added elements' scroll, told by their list ([AddedElementsList]).
@@ -814,10 +864,14 @@ fun SearchWindow(
               leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed,
               expandedTasks.mapTo(HashSet()) { it.value }, expandedAdded.mapTo(HashSet()) { it.value }, expandedElements,
               scrolls = listOf(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, addedScroll.first, addedScroll.second),
+              headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved,
           )
       // A section retracted or brought back, a row opened or closed, a list come to rest after a scroll, is told as a
       // dragged line is (user rule 2026-11-05: the scrolls are the window's state too). Event-driven: on the scroll's end.
-      LaunchedEffect(searchCollapsed, actionsCollapsed, addedCollapsed, expandedTasks, expandedAdded, expandedElements, addedScroll) { onSplitsChange(splitsNow()) }
+      LaunchedEffect(
+          searchCollapsed, actionsCollapsed, addedCollapsed, expandedTasks, expandedAdded, expandedElements, addedScroll,
+          headerRemoved, searchRemoved, actionsRemoved, addedRemoved,
+      ) { onSplitsChange(splitsNow()) }
       LaunchedEffect(listState) {
           androidx.compose.runtime.snapshotFlow {
               if (listState.isScrollInProgress) null else listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
@@ -861,9 +915,33 @@ fun SearchWindow(
           LocalRowMenusAtPointer provides true,
           LocalCalendarClickMillis provides config.calendarClickMillis,
       ) {
-      Box(Modifier.fillMaxWidth().weight(1f)) {
+      // What is left on screen: the left section, and the right side while one of its two is there.
+      val searchShown = !searchRemoved
+      val rightShown = !(actionsRemoved && addedRemoved)
+      var backgroundMenu by remember { mutableStateOf(false) }
+      Box(
+          Modifier.fillMaxWidth().weight(1f)
+              // A right-click no row, field or control answered (they consume theirs): the window's own menu.
+              .then(contextMenuModifier(enabled = true, key = "search-background") { backgroundMenu = true }),
+      ) {
+      SearchPartsMenu(
+          open = backgroundMenu,
+          onDismiss = { backgroundMenu = false },
+          removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved),
+      ) { part ->
+          val next = part.toggled(splitsNow())
+          headerRemoved = next.headerRemoved
+          searchRemoved = next.searchRemoved
+          actionsRemoved = next.actionsRemoved
+          addedRemoved = next.addedRemoved
+          searchCollapsed = next.searchHidden
+          actionsCollapsed = next.actionsHidden
+          addedCollapsed = next.addedHidden
+      }
       Row(Modifier.fillMaxSize().onSizeChanged { rowWidthPx = it.width.toFloat() }) {
-        if (searchCollapsed && picker == null) {
+        if (!searchShown) {
+            // Taken off: nothing of it, not even its arrow.
+        } else if (searchCollapsed && picker == null) {
             // Retracted: a strip as wide as its arrow, the whole height.
             Column(Modifier.fillMaxHeight().onSizeChanged { leftShownPx = it.width.toFloat() }.padding(horizontal = 6.dp, vertical = 10.dp)) {
                 SectionArrow(collapsed = true, onToggle = { searchCollapsed = false })
@@ -873,7 +951,7 @@ fun SearchWindow(
             modifier = Modifier
                 // The share is read at layout: a dragged line re-lays the window out, it does not recompose it.
                 .then(
-                    if (picker != null) Modifier.fillMaxWidth()
+                    if (!rightShown) Modifier.fillMaxWidth()
                     else Modifier.sectionShare(horizontal = true, reserved = SECTION_SEPARATOR_THICKNESS) { leftShare },
                 )
                 .fillMaxHeight()
@@ -914,29 +992,10 @@ fun SearchWindow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // User rule 2026-11-04: the bar's right-click menu has match case and whole word, checked while on.
-                val currentConfig by rememberUpdatedState(config)
+                // User rule 2026-11-06: the bar's right-click menu is the field's own (match case and whole word, which it
+                // held from 2026-11-04, are in the configurations tree alone).
                 Box(Modifier.weight(1f)) {
-                WithTextMenuItems({
-                    listOf(
-                        TextMenuItem((if (currentConfig.filters.matchCase) "✓ " else "") + "Match case") {
-                            onConfigChange(
-                                SearchDomain.withChanged(
-                                    currentConfig, currentConfig.copy(filters = currentConfig.filters.copy(matchCase = !currentConfig.filters.matchCase)),
-                                    listOf(SearchDomain.Setting.MatchCase), nowMillis(),
-                                ),
-                            )
-                        },
-                        TextMenuItem((if (currentConfig.filters.wholeWord) "✓ " else "") + "Match whole word") {
-                            onConfigChange(
-                                SearchDomain.withChanged(
-                                    currentConfig, currentConfig.copy(filters = currentConfig.filters.copy(wholeWord = !currentConfig.filters.wholeWord)),
-                                    listOf(SearchDomain.Setting.WholeWord), nowMillis(),
-                                ),
-                            )
-                        },
-                    )
-                }) {
+                run {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { onConfigChange(SearchDomain.withChanged(config, config.copy(query = it), listOf(SearchDomain.Setting.SearchText), nowMillis())) },
@@ -1032,6 +1091,7 @@ fun SearchWindow(
                             onBeginEdit = { beginEdit(result, result.title) },
                             onDraftChange = { editDraft = it },
                             onEndEdit = { step -> endEdit(result, cancel = false, step = step) },
+                            onCancelEdit = { endEdit(result, cancel = true) },
                             onToggleExpand = {
                                 expandedTasks =
                                     if (result.taskId in expandedTasks) expandedTasks - result.taskId
@@ -1218,19 +1278,55 @@ fun SearchWindow(
             }
         }
 
-        if (picker == null) SectionSeparator(vertical = true, onDrag = dragLeftShare, onDragEnd = tellSplits)
+        if (searchShown && rightShown) SectionSeparator(vertical = true, onDrag = dragLeftShare, onDragEnd = tellSplits)
 
-        if (picker == null) Column(
+        if (rightShown) Column(
             Modifier.weight(1f).fillMaxHeight().clipToBounds().onSizeChanged { rightHeightPx = it.height.toFloat() },
         ) {
             // A retracted section is as tall as its head; the other takes the room, or — both retracted — neither.
-            val bothOpen = !actionsCollapsed && !addedCollapsed
+            val bothOpen = !actionsCollapsed && !addedCollapsed && !actionsRemoved && !addedRemoved
             // --- The actions on every added element (top right) ------------------------------------
+            // User rule 2026-11-12: the "Children" action draws a task's children as an expanded row does — tree cells,
+            // with their own keyboard and selection surface ([ACTIONS_SURFACE]).
+            val taskChildren: @Composable (TaskId, CellListId) -> Unit = { taskId, listId ->
+                SearchSubtree(
+                    state = state,
+                    listId = listId,
+                    readOnly = remember(taskId, state.cells, state.lists, state.tasks) {
+                        SchedulerDomain.firstTaskOccurrence(state, taskId) == null
+                    },
+                    priorities = priorities,
+                    focused = actionsSubtreeFocus == taskId,
+                    onFocus = { focused ->
+                        if (focused) {
+                            actionsSubtreeFocus = taskId
+                            selectionSurface = ACTIONS_SURFACE + taskId.value
+                        } else if (actionsSubtreeFocus == taskId) {
+                            actionsSubtreeFocus = null
+                        }
+                    },
+                    showSelection = selectionSurface == ACTIONS_SURFACE + taskId.value,
+                    onTakeSelection = { selectionSurface = ACTIONS_SURFACE + taskId.value },
+                    onIntent = onIntent,
+                    onSetWeightWindow = onSetWeightWindow,
+                    onSetRelativeWindow = onSetRelativeWindow,
+                    onOpenTaskEdit = openers.onOpenTaskEdit,
+                    onOpenCategory = openers.onOpenCategory,
+                    onDeepCopyCell = onDeepCopyCell,
+                    onGoToTaskTree = { id -> onGoToTaskTree(id, null) },
+                    onAddTasks = addTasks,
+                )
+            }
+            if (!actionsRemoved) androidx.compose.runtime.CompositionLocalProvider(LocalTaskChildren provides taskChildren) {
             AddedActionsSection(
                 state = state,
                 added = addedRows,
                 config = config,
                 onConfigChange = onConfigChange,
+                // User rule 2026-11-06: the section's bar has the arrow to every search configuration, as the search's has.
+                configurationArrow = {
+                    ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar)
+                },
                 handlers = actionHandlers,
                 onIntent = onIntent,
                 nowMillis = nowMillis,
@@ -1247,7 +1343,7 @@ fun SearchWindow(
                     .fillMaxWidth()
                     .then(
                         when {
-                            actionsCollapsed -> Modifier
+                            actionsCollapsed && !addedRemoved -> Modifier
                             bothOpen -> Modifier.sectionShare(horizontal = false, reserved = SECTION_SEPARATOR_THICKNESS) { topRightShare }
                             else -> Modifier.weight(1f)
                         },
@@ -1256,10 +1352,13 @@ fun SearchWindow(
                     .clipToBounds()
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
-            if (!(actionsCollapsed && addedCollapsed)) SectionSeparator(vertical = false, onDrag = dragTopRightShare, onDragEnd = tellSplits)
+            }
+            // One of the two taken off: no line between them.
+            if (actionsRemoved || addedRemoved) Unit
+            else if (!(actionsCollapsed && addedCollapsed)) SectionSeparator(vertical = false, onDrag = dragTopRightShare, onDragEnd = tellSplits)
             else HorizontalDivider()
             // --- The added elements (bottom right) ---------------------------------------------------
-            AddedElementsList(
+            if (!addedRemoved) AddedElementsList(
                 initialScroll = addedScroll,
                 onScrolled = { addedScroll = it },
                 expandedTasks = expandedAdded,
@@ -1303,7 +1402,7 @@ fun SearchWindow(
                 onToggleCollapsed = { addedCollapsed = !addedCollapsed },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (addedCollapsed) Modifier else Modifier.weight(1f))
+                    .then(if (addedCollapsed && !actionsRemoved) Modifier else Modifier.weight(1f))
                     .clipToBounds()
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
@@ -1311,7 +1410,9 @@ fun SearchWindow(
       }
       // Where the two lines cross: drawn over both strips, it drags the three sections at once. Placed only once
       // the row has been measured, since the crossing is read off the two splits and the room they share.
-      if (picker == null && rowWidthPx > 0f && rightHeightPx > 0f && !searchCollapsed && !actionsCollapsed && !addedCollapsed) {
+      if (rowWidthPx > 0f && rightHeightPx > 0f && !searchCollapsed && !actionsCollapsed && !addedCollapsed &&
+          !searchRemoved && !actionsRemoved && !addedRemoved
+      ) {
           val jointHalfPx = with(density) { SECTION_JOINT_SIZE.toPx() } / 2f
           SectionJoint(
               onDrag = { delta ->
@@ -1333,7 +1434,11 @@ fun SearchWindow(
     // User rule 2026-11-04: with the bar's match case or whole word on, only what matches with them is highlighted.
     androidx.compose.runtime.CompositionLocalProvider(LocalSearchMatch provides filters.queryOptions) {
     if (frame == null) {
-        Column(modifier) { windowContent() }
+        Column(modifier) {
+            // User rule 2026-11-11: shown by its background menu, the head of a Search window drawn in no frame.
+            if (!headerRemoved) SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss)
+            windowContent()
+        }
     } else {
         AppWindowFrame(
             title = SearchDomain.windowTitle(config),
@@ -1347,6 +1452,7 @@ fun SearchWindow(
             onRaise = onRaise,
             onGeometryChange = onGeometryChange,
             claimsKeyboard = true,
+            showHead = !headerRemoved,
             content = windowContent,
         )
     }
@@ -1364,6 +1470,93 @@ internal fun SectionArrow(collapsed: Boolean, onToggle: () -> Unit) {
 }
 
 /**
+ * User rule 2026-11-11: **the background menu of every Search window** — the app's, the cell's Edit Mode picker, the
+ * configurations pop-up: one entry for the header and one per section ([SearchPart]), each "Hide …" or "Show …" by
+ * [removed]. [onToggle] applies [SearchPart.toggled]. At the pointer; a part of the pop-up it is opened in, if any
+ * ([LocalMenuHover]), so going to it does not close that pop-up.
+ */
+@Composable
+internal fun SearchPartsMenu(open: Boolean, onDismiss: () -> Unit, removed: SearchSplits, onToggle: (SearchPart) -> Unit) {
+    transientMenuDismissal(open, onDismiss)
+    AppDropdownMenu(
+        expanded = open,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = false),
+        atPointer = true,
+    ) {
+        Column(Modifier.reportsHover(LocalMenuHover.current)) {
+            SearchPart.entries.forEach { part ->
+                DropdownMenuItem(
+                    text = { Text(part.menuLabel(removed = part.isRemoved(removed))) },
+                    onClick = {
+                        onDismiss()
+                        onToggle(part)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-11: **the head of a Search window that is no window of its own** — the cell's Edit Mode picker, the
+ * configurations pop-up — once its background menu shows it ([SearchPart.Header]): the window's title and its ✕, on the
+ * windows' head colour. A pop-up has nothing to move, reduce or keep, so the frame's other buttons are not there.
+ */
+@Composable
+internal fun SearchPopupHead(title: String, onClose: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        Text(
+            "✕",
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onClose).padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
+}
+
+/**
+ * User rule 2026-11-11: **what the Search window's background menu takes off the window and puts back** — the
+ * window's header (its head: the title and the buttons to keep, reduce, resize and close it) and each of the three
+ * sections. Taken off, nothing of it is drawn, not even its arrow; put back, a section is EXPANDED, never back as its
+ * arrow alone.
+ */
+internal enum class SearchPart(private val label: String) {
+    Header("the header"),
+    Search("the search"),
+    Actions("the actions"),
+    Added("the added elements");
+
+    fun isRemoved(splits: SearchSplits): Boolean =
+        when (this) {
+            Header -> splits.headerRemoved
+            Search -> splits.searchRemoved
+            Actions -> splits.actionsRemoved
+            Added -> splits.addedRemoved
+        }
+
+    /** "Hide …" while it is there, "Show …" once taken off. */
+    fun menuLabel(removed: Boolean): String = (if (removed) "Show " else "Hide ") + label
+
+    /** [splits] with this part taken off, or put back expanded. */
+    fun toggled(splits: SearchSplits): SearchSplits {
+        val show = isRemoved(splits)
+        return when (this) {
+            Header -> splits.copy(headerRemoved = !show)
+            Search -> if (show) splits.copy(searchRemoved = false, searchHidden = false) else splits.copy(searchRemoved = true)
+            Actions -> if (show) splits.copy(actionsRemoved = false, actionsHidden = false) else splits.copy(actionsRemoved = true)
+            Added -> if (show) splits.copy(addedRemoved = false, addedHidden = false) else splits.copy(addedRemoved = true)
+        }
+    }
+}
+
+/**
  * User rule 2026-10-13: **a press on the TITLE of a section or of a group is a press on its arrow** ([SectionArrow]) —
  * *"Clicking in the title of a macro group in the action section must be the same as clicking its expansion arrow
  * button. Same thing for the title of the sections of the Search window and the calendar window."* Put on the title
@@ -1374,6 +1567,8 @@ internal fun Modifier.togglesSection(onToggle: () -> Unit): Modifier = clickable
 /** The window's `selectionSurface`: a sub-tree of the result list's row, or of the added elements' — then the task's id. */
 private const val RESULT_SURFACE: String = "result/"
 private const val ADDED_SURFACE: String = "added/"
+/** The "Children" action's sub-trees, by task ([SearchDomain.AddedAction.TaskChildren]). */
+private const val ACTIONS_SURFACE: String = "actions/"
 
 /** The added elements' row menu: every other element off the list (never off the account). */
 private const val REMOVE_OTHERS_LABEL: String = "remove the others"
@@ -2115,6 +2310,8 @@ private fun SearchTaskRow(
     onDraftChange: (String) -> Unit,
     /** Leaves Edit Mode, committing; the argument is the step the selection takes (Enter: +1, Shift+Enter: -1). */
     onEndEdit: (step: Int) -> Unit,
+    /** Leaves Edit Mode, the draft abandoned (Escape in its rectangle). */
+    onCancelEdit: () -> Unit = {},
     onToggleExpand: () -> Unit,
     onActivateMinTime: () -> Unit,
     onIntent: (SchedulerIntent) -> Unit,
@@ -2228,6 +2425,26 @@ private fun SearchTaskRow(
             onToggleExpand = { if (hasChildren) onToggleExpand() },
             // Stuck to Rename: no mode selector, no id menu.
             editMenus = null,
+            // Anomaly 2026-11-11: in Edit Mode the row shows the tree cell's rectangle, its Search window ([RowRename]).
+            editPopup =
+                if (editing && !picking && !headOnly) {
+                    { refocusField, anchor, region ->
+                        PublishCellEditPopup(
+                            CellEditPopupRequest(
+                                state = state,
+                                namingSource = state,
+                                cellId = null,
+                                onIntent = onIntent,
+                                refocusField = refocusField,
+                                anchor = anchor,
+                                region = region,
+                                rename = RowRename(editDraft, onDraftChange, onCancelEdit),
+                            ),
+                        )
+                    }
+                } else {
+                    null
+                },
             categoryCell = live?.let { { TaskCategoryCell(state, taskId, onIntent, onOpenCategory) } },
             rowLeading = { KindSection(result.kind, kindWidth) },
             // The title prevails; the path box is squeezed to a thin box behind a long one, never dropped.

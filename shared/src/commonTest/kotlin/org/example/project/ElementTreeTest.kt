@@ -200,7 +200,7 @@ class ElementTreeTest {
         assertEquals(a, config.elementSource)
         assertEquals(a, SearchDomain.Config.decode(config.encode())!!.elementSource)
         assertEquals(null, SearchDomain.Config.decode("{}")!!.elementSource)
-        assertEquals(SearchDomain.Config().kinds, ElementTree.childSearchConfig("Category/health", "").kinds, "a category has children of every kind")
+        assertEquals(SearchDomain.pageDefaultConfig("").kinds, ElementTree.childSearchConfig("Category/health", "").kinds, "a category has children of every kind")
         assertEquals(SearchDomain.SETTINGS_PAGE, ElementTree.childSearchConfig("WorkplaceSetup/a", SearchDomain.SETTINGS_PAGE).page)
     }
 

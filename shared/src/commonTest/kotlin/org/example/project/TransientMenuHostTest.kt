@@ -176,4 +176,24 @@ class TransientMenuHostTest {
         host.onPress(androidx.compose.ui.geometry.Offset(10f, 10f))
         assertEquals(1, left)
     }
+
+    /**
+     * Anomaly 2026-11-11: a press in a pop-up of its own layer (the "▾" configurations pop-up) never reaches the root
+     * observer, so the pop-up reports it ([org.example.project.ui.dismissesMenusOnPress]): the background menu opened in
+     * it closes, and the cell's Edit Mode the pop-up was opened from does not end.
+     */
+    @Test
+    fun `a press in a pop-up closes the menus and leaves the edits`() {
+        val host = TransientMenuHost()
+        var menuClosed = 0
+        host.open(Any()) { menuClosed++ }
+        val editor = OutsidePressEditor()
+        var left = 0
+        host.openEditor(editor, editor) { left++ }
+
+        host.onPressInPopup()
+        assertEquals(1, menuClosed, "the menu closed")
+        assertFalse(host.anyOpen)
+        assertEquals(0, left, "the edit the pop-up belongs to goes on")
+    }
 }
