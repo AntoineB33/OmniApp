@@ -878,6 +878,11 @@ object SchedulerReducer {
                 if (state.editSession != null) undo(state, HistoryCategory.Edit) else undoIn(state, changesOf(state))
             SchedulerIntent.Redo ->
                 if (state.editSession != null) redo(state, HistoryCategory.Edit) else redoIn(state, changesOf(state))
+            // An Edit Mode session's keystrokes are the one history open while it is: the whole walk is its walk then.
+            SchedulerIntent.UndoAll ->
+                if (state.editSession != null) undo(state, HistoryCategory.Edit) else undoIn(state, ALL_CHANGES)
+            SchedulerIntent.RedoAll ->
+                if (state.editSession != null) redo(state, HistoryCategory.Edit) else redoIn(state, ALL_CHANGES)
             SchedulerIntent.UndoSelection -> undoIn(state, selectionsOf(state))
             SchedulerIntent.RedoSelection -> redoIn(state, selectionsOf(state))
             SchedulerIntent.UndoPosition -> undoIn(state, POSITIONS)
@@ -917,22 +922,31 @@ object SchedulerReducer {
 
     /**
      * `Ctrl+Z` outside an Edit Mode session: the **changes made in the focused window** — the units of
-     * [HistoryCategory.Main] and [HistoryCategory.Calendar] stamped with it. A unit stamped with no window was
-     * written before units knew theirs (or by a headless host): a calendar unit is the calendar's, any other the
-     * tree's, which is where each was undone from then.
+     * [HistoryCategory.Main] and [HistoryCategory.Calendar] stamped with it, and nothing else (user rule 2026-11-12).
+     * A unit stamped with no window was written before units knew theirs (or by a headless host): a calendar unit is
+     * the calendar's, any other the tree's, which is where each was undone from then.
      *
-     * Two kinds of unit break that rule. A change made in **the left-side menu**, which is no window, is walked from
-     * every window ([isAppWide], user rule 2026-11-01). And what **the app** authored is walked from none
-     * ([Delta.authoredByApp]): the work banked as the line advanced used to sit on top of the stack, so a Ctrl+Z after
-     * a few minutes took a banked record back instead of what the user did last (anomaly 2026-11-01).
+     * A change made in **the left-side menu** or the window bar, which are no window ([isAppWide]), is walked by no
+     * window's Ctrl+Z: [ALL_CHANGES] alone reaches it (user rule 2026-11-12, replacing the 2026-11-01 rule that walked
+     * it from every window). What **the app** authored is walked by no chord at all ([Delta.authoredByApp]): the work
+     * banked as the line advanced used to sit on top of the stack, so a Ctrl+Z after a few minutes took a banked record
+     * back instead of what the user did last (anomaly 2026-11-01).
      */
     private fun changesOf(state: SchedulerState): HistoryWalk =
         HistoryWalk(listOf(HistoryCategory.Main, HistoryCategory.Calendar)) { category, unit ->
-            !unit.delta.authoredByApp &&
-                (isAppWide(unit) ||
-                    (unit.window ?: if (category == HistoryCategory.Calendar) HistoryWindow.Calendar else HistoryWindow.Tree) ==
-                    state.focusedWindow)
+            !unit.delta.authoredByApp && !isAppWide(unit) &&
+                (unit.window ?: if (category == HistoryCategory.Calendar) HistoryWindow.Calendar else HistoryWindow.Tree) ==
+                state.focusedWindow
         }
+
+    /**
+     * `Ctrl+Shift+Z` / `Ctrl+Shift+Y`: **every change**, whichever window it was made in (user rule 2026-11-12). Undo
+     * takes the newest applied one, so a unit a window's own Ctrl+Z already undid is skipped; redo the oldest undone
+     * one, so the windows' undone units come back in the order made and each window's own history stays one pin
+     * (applied up to a point, undone after it) whichever of the two walks moved it.
+     */
+    private val ALL_CHANGES =
+        HistoryWalk(listOf(HistoryCategory.Main, HistoryCategory.Calendar)) { _, unit -> !unit.delta.authoredByApp }
 
     /**
      * Whether [unit] was made outside every window. A unit of the menu's buttons is, whatever it is stamped with: the
@@ -947,33 +961,14 @@ object SchedulerReducer {
             } == true
 
     /**
-     * Whether the next Ctrl+Z ([undo]) or Ctrl+Y would walk a change made outside every window ([isAppWide]). `App` then
-     * takes the chord before the focused element: a text field would answer it with its own undo, and the change
-     * was not made there (anomaly 2026-11-01: a menu Reset no Ctrl+Z could reach from the Search field).
-     */
-    /**
      * User rule 2026-11-11: **where this device's position history stands** (the units [SchedulerIntent.UndoPosition]
      * walks) — equal at two moments only if no position was recorded, undone or redone between them. What a hover
-     * pop-up closed by the pointer is stamped with: `Ctrl+Alt+←` brings it back only while nothing came after it.
+     * pop-up closed by the pointer is stamped with: `Shift+Alt+←` brings it back only while nothing came after it.
      */
     fun positionStamp(state: SchedulerState): Any {
         val me = deviceId()
         val mine = POSITIONS.categories.flatMap { state.histories.forCategory(it).units }.filter { it.ownedBy(me) }
         return Triple(mine.size, mine.count { it.undone }, mine.maxOfOrNull { it.deviceSeq } ?: 0L)
-    }
-
-    fun nextChangeIsAppWide(state: SchedulerState, undo: Boolean): Boolean {
-        if (state.editSession != null) return false
-        val walk = changesOf(state)
-        val me = deviceId()
-        val candidates =
-            walk.categories.mapNotNull { category ->
-                val units = state.histories.forCategory(category).units
-                if (undo) units.lastOrNull { it.ownedBy(me) && !it.undone && walk.accepts(category, it) }
-                else units.firstOrNull { it.ownedBy(me) && it.undone && walk.accepts(category, it) }
-            }
-        val next = if (undo) candidates.maxByOrNull { it.deviceSeq } else candidates.minByOrNull { it.deviceSeq }
-        return next != null && isAppWide(next)
     }
 
     /**
@@ -1746,6 +1741,7 @@ object SchedulerReducer {
         if (inner is SchedulerIntent.InSearchSubtree) return state
         if (
             inner is SchedulerIntent.Undo || inner is SchedulerIntent.Redo ||
+            inner is SchedulerIntent.UndoAll || inner is SchedulerIntent.RedoAll ||
             inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection ||
             inner is SchedulerIntent.UndoPosition || inner is SchedulerIntent.RedoPosition ||
             inner is SchedulerIntent.UndoFocus || inner is SchedulerIntent.RedoFocus
@@ -1817,6 +1813,7 @@ object SchedulerReducer {
         if (inner is SchedulerIntent.InDefaultSubtree) return state
         if (
             inner is SchedulerIntent.Undo || inner is SchedulerIntent.Redo ||
+            inner is SchedulerIntent.UndoAll || inner is SchedulerIntent.RedoAll ||
             inner is SchedulerIntent.UndoSelection || inner is SchedulerIntent.RedoSelection ||
             inner is SchedulerIntent.UndoPosition || inner is SchedulerIntent.RedoPosition ||
             inner is SchedulerIntent.UndoFocus || inner is SchedulerIntent.RedoFocus

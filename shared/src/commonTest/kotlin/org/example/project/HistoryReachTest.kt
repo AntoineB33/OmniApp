@@ -79,48 +79,68 @@ class HistoryReachTest {
         return out
     }
 
+    /** User rule 2026-11-12 (replacing 2026-11-01's): the menu is no window, so only the whole walk reaches its units. */
     @Test
-    fun a_menu_unit_is_undone_and_redone_from_whichever_window_has_the_focus() {
+    fun a_menu_unit_is_walked_by_ctrl_shift_z_from_every_window_and_by_no_windows_ctrl_z() {
         for (window in listOf(HistoryWindow.Tree, HistoryWindow.Calendar, HistoryWindow.Search, HistoryWindow.Alarms)) {
             var s = focus(SchedulerState.empty(), HistoryWindow.Search)
             s = r(s, inMenu(menuUnit()))
             assertEquals(HistoryWindow.Menu, main(s).last().window)
             assertEquals(HistoryWindow.Search, s.focusedWindow, "the menu takes no focus")
             s = focus(s, window)
-            s = r(s, SchedulerIntent.Undo)
+            assertEquals(s, r(s, SchedulerIntent.Undo), "Ctrl+Z in $window does not reach the menu")
+            s = r(s, SchedulerIntent.UndoAll)
             assertEquals("before", s.externalRestores.last().to, "undone from $window")
-            s = r(s, SchedulerIntent.Redo)
+            assertEquals(s, r(s, SchedulerIntent.Redo), "nor does Ctrl+Y")
+            s = r(s, SchedulerIntent.RedoAll)
             assertEquals("after", s.externalRestores.last().to, "redone from $window")
         }
     }
 
     @Test
-    fun a_menu_unit_written_before_the_menu_had_a_stamp_is_undone_from_every_window_too() {
+    fun a_menu_unit_written_before_the_menu_had_a_stamp_is_the_whole_walks_too() {
         // Units 7536-7537 of the release DB: the Resets, stamped with whichever window held the focus.
         var s = focus(SchedulerState.empty(), HistoryWindow.Search)
         s = r(s, menuUnit())
         assertEquals(HistoryWindow.Search, main(s).last().window)
+        assertEquals(s, r(s, SchedulerIntent.Undo), "not the Search window's change, though stamped with it")
         s = focus(s, HistoryWindow.Calendar)
-        assertTrue(SchedulerReducer.nextChangeIsAppWide(s, undo = true))
-        s = r(s, SchedulerIntent.Undo)
+        s = r(s, SchedulerIntent.UndoAll)
         assertEquals("before", s.externalRestores.last().to)
         // …and the store keeps both facts.
-        val back = assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(r(s, SchedulerIntent.Redo))))
-        assertEquals("before", r(back, SchedulerIntent.Undo).externalRestores.last().to)
+        val back = assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(r(s, SchedulerIntent.RedoAll))))
+        assertEquals("before", r(back, SchedulerIntent.UndoAll).externalRestores.last().to)
     }
 
+    /**
+     * User rule 2026-11-12: the whole walk going back skips a unit its window's Ctrl+Z already undid; going forward it
+     * redoes the oldest undone one, so each window's own history stays one pin whichever walk moved it.
+     */
     @Test
-    fun the_chord_is_taken_before_a_text_field_only_while_the_next_change_is_the_menus() {
-        var s = focus(SchedulerState.empty(), HistoryWindow.Search)
-        assertFalse(SchedulerReducer.nextChangeIsAppWide(s, undo = true), "nothing to walk")
-        s = r(s, inMenu(menuUnit()))
-        assertTrue(SchedulerReducer.nextChangeIsAppWide(s, undo = true))
-        assertFalse(SchedulerReducer.nextChangeIsAppWide(s, undo = false), "nothing to redo")
-        // A change of the focused window after it comes first: the field's chord is its own again.
-        val typed = r(s, SchedulerIntent.RecordExternal(ExternalKeys.SEARCH + "Search", "a", "ab", "Search text"))
-        assertFalse(SchedulerReducer.nextChangeIsAppWide(typed, undo = true))
-        val undone = r(s, SchedulerIntent.Undo)
-        assertTrue(SchedulerReducer.nextChangeIsAppWide(undone, undo = false), "its redo is taken the same way")
+    fun the_whole_walk_skips_what_a_window_undid_and_keeps_every_window_one_pin() {
+        fun edit(state: SchedulerState, window: HistoryWindow, value: String): SchedulerState {
+            val key = ExternalKeys.WINDOW_TITLE + window.name
+            return r(focus(state, window), SchedulerIntent.RecordExternal(key, "$value-", value, "Title"))
+        }
+        var s = SchedulerState.empty()
+        s = edit(s, HistoryWindow.Tree, "a")
+        s = edit(s, HistoryWindow.Calendar, "b")
+        s = edit(s, HistoryWindow.Tree, "c")
+        // The tree's Ctrl+Z, twice: c then a. The calendar's b stays.
+        s = r(focus(s, HistoryWindow.Tree), SchedulerIntent.Undo)
+        s = r(s, SchedulerIntent.Undo)
+        assertEquals(listOf("c-", "a-"), s.externalRestores.takeLast(2).map { it.to })
+        // Ctrl+Shift+Z: the newest applied change is b; a and c are skipped.
+        s = r(s, SchedulerIntent.UndoAll)
+        assertEquals("b-", s.externalRestores.last().to)
+        assertEquals(s, r(s, SchedulerIntent.UndoAll), "nothing applied is left")
+        // Ctrl+Shift+Y: a, b, c, in the order made.
+        val redone = mutableListOf<String?>()
+        repeat(3) {
+            s = r(s, SchedulerIntent.RedoAll)
+            redone += s.externalRestores.last().to
+        }
+        assertEquals<List<String?>>(listOf("a", "b", "c"), redone)
     }
 
     @Test
@@ -129,12 +149,12 @@ class HistoryReachTest {
         s = r(s, inMenu(menuUnit()))
         // The banked record on top: Ctrl+Z goes under it, to what the user did.
         val atop = banked(s)
-        val undone = r(atop, SchedulerIntent.Undo)
+        val undone = r(atop, SchedulerIntent.UndoAll)
         assertEquals("before", undone.externalRestores.lastOrNull()?.to)
         assertEquals(atop.tasks.getValue(work(atop)).record, undone.tasks.getValue(work(atop)).record, "the work stays banked")
         // Undone, then the line banks again: the Ctrl+Y is still there.
         val later = banked(undone.copy(panels = emptyList()))
-        assertEquals("after", r(later, SchedulerIntent.Redo).externalRestores.last().to)
+        assertEquals("after", r(later, SchedulerIntent.RedoAll).externalRestores.last().to)
     }
 
     @Test

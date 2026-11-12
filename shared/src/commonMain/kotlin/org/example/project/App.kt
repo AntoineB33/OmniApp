@@ -682,6 +682,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §6 (user rule 2026-10-01): what `App` keeps — a window's layout, a Search window's configuration, the
         // menu's buttons — recorded as History Units ([SchedulerIntent.RecordExternal]) and put back when one is undone.
         val viewHistory = remember { ViewHistoryRecorder() }
+        // User rule 2026-11-12: the day each calendar window (by frame id) was taken to by its day selector — a change of
+        // that window, so its Ctrl+Z takes it back (anomaly 2026-11-12: going to a later day, then Ctrl+Z, reduced the
+        // calendar — the day was no unit, and the Ctrl+Z reached the window's "Bring window back" under it). Absent: today.
+        // And how many times each was asked for: a pick of the day already picked is still a jump.
+        val calendarPickedDays = remember { mutableStateMapOf<String, LocalDate>() }
+        val calendarJumpNonces = remember { mutableStateMapOf<String, Int>() }
+        fun jumpCalendarTo(calendarId: String, day: LocalDate) {
+            calendarPickedDays[calendarId] = day
+            calendarJumpNonces[calendarId] = (calendarJumpNonces[calendarId] ?: 0) + 1
+        }
         // The calendar's layer bands as last drawn — the hatch read off the lock history, which is not in the state —
         // for the Search window's "is on the calendar at" filter.
         val calendarLayers = remember { CalendarLayersHolder() }
@@ -1872,6 +1882,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             val menuPage = restore.key.removePrefix(MENU_KEY).removePrefix("/")
                             if (CustomMenuButtons.encode(menuButtonsOfPage(menuPage)) == restore.from) {
                                 setMenuButtonsOf(menuPage, CustomMenuButtons.decode(restore.to, CustomMenuButtons.defaultsOf(menuPage)))
+                            }
+                        }
+                        restore.key.startsWith(org.example.project.scheduler.state.ExternalKeys.CALENDAR_DAY) -> {
+                            val id = restore.key.removePrefix(org.example.project.scheduler.state.ExternalKeys.CALENDAR_DAY)
+                            if ((calendarPickedDays[id] ?: today).toString() == restore.from) {
+                                restore.to?.let { runCatching { LocalDate.parse(it) }.getOrNull() }?.let { jumpCalendarTo(id, it) }
                             }
                         }
                         restore.key.startsWith(org.example.project.scheduler.state.ExternalKeys.CALENDAR) -> {
@@ -4252,15 +4268,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // the focus undone and redone, in EVERY window — on the PREVIEW pass, so the stroke is the walk's
                 // before a text field or the tree's own Tab can take it ([TabWalk]).
                 .onPreviewKeyEvent { event ->
-                    // User rule 2026-11-01: a change made outside every window is undone from whichever has the focus,
-                    // so its chord is taken before the focused element — a text field would answer with its own undo.
                     val chord = undoRedoIntentFor(event)
                     // User rule 2026-11-11: the walk through every window's positions goes through the pop-ups first —
                     // taken here, before a surface walks the history with it.
                     if (walkPositions(chord)) return@onPreviewKeyEvent true
-                    if ((chord == SchedulerIntent.Undo || chord == SchedulerIntent.Redo) &&
-                        SchedulerReducer.nextChangeIsAppWide(vm.state.value, undo = chord == SchedulerIntent.Undo)
-                    ) {
+                    // User rule 2026-11-12: Ctrl+Shift+Z / Ctrl+Shift+Y walk every window's changes, so they are no
+                    // surface's: taken before the focused element, which would answer with its own (a text field's redo).
+                    if (chord == SchedulerIntent.UndoAll || chord == SchedulerIntent.RedoAll) {
                         vm.dispatch(chord)
                         return@onPreviewKeyEvent true
                     }
@@ -4686,12 +4700,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                       LateralWindow(FloatingWindow.Calendar, calendarOpen) {
                         val calendarId = windowInstanceId(FloatingWindow.Calendar.name)
                         val isCopy = LocalWindowInstance.current?.copy != null
-                        var selectedDate by remember { mutableStateOf(today) }
+                        // The day it opened on until one is picked: never [today] read live, or midnight would jump it.
+                        val openedOn = remember { today }
+                        val selectedDate = calendarPickedDays[calendarId] ?: openedOn
                         var monthAnchor by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
                         // PRD §7: a date pick in the month rail is an EVENT the calendar must act on even when it
                         // picks the day already selected (the scroll has since carried the grid elsewhere), so it is
-                        // counted, not read.
-                        var calendarJumpNonce by remember { mutableStateOf(0) }
+                        // counted, not read ([calendarJumpNonces]).
+                        val calendarJumpNonce = calendarJumpNonces[calendarId] ?: 0
                         // A copy's sections are its own, kept by its frame id; a new one starts from the original's.
                         val copyKept = remember { calendarCopySections[calendarId] }
                         var copyConfigurationWidth by remember { mutableStateOf(copyKept?.splits?.firstOrNull() ?: calendarConfigurationWidth) }
@@ -4705,6 +4721,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onDispose {
                                 calendarSpans.remove(calendarId)
                                 calendarResolutions.remove(calendarId)
+                                // Its view went with it, as it always did: opened again, it starts on its opening day.
+                                calendarPickedDays.remove(calendarId)
+                                calendarJumpNonces.remove(calendarId)
                             }
                         }
                         // The notifications THIS window shows as chips, and its drop-down of them.
@@ -4764,7 +4783,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             // The day selector, in the window's configuration section (it left the lateral menu).
                             monthAnchor = monthAnchor,
                             onMonthAnchorChange = { monthAnchor = it },
-                            onSelectDate = { selectedDate = it; calendarJumpNonce++ },
+                            onSelectDate = { day ->
+                                viewHistory.record(
+                                    org.example.project.scheduler.state.ExternalKeys.CALENDAR_DAY + calendarId,
+                                    selectedDate.toString(), day.toString(), "Go to day",
+                                    madeIn = org.example.project.scheduler.state.HistoryWindow.Calendar,
+                                )
+                                jumpCalendarTo(calendarId, day)
+                            },
                             nowMillis = nowMillis,
                             // The now-line's own instant: read afresh on every frame it is placed on, so it
                             // glides however seldom [nowMillis] above is re-derived (see the display's own

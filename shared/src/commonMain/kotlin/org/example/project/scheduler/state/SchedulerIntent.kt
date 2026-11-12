@@ -1736,11 +1736,18 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z — undo/redo the **changes made in the focused window** (the Edit Mode
-     * session's own stack while one is open). PRD §5.
+     * Ctrl+Z / Ctrl+Y — undo/redo the **changes made in the focused window** (the Edit Mode session's own stack
+     * while one is open). PRD §5.
      */
     data object Undo : SchedulerIntent
     data object Redo : SchedulerIntent
+
+    /**
+     * Ctrl+Shift+Z / Ctrl+Shift+Y — undo/redo **every change**, whatever window it was made in, the left-side menu's
+     * and the window bar's included (user rule 2026-11-12). A unit a window's own Ctrl+Z already undid is skipped.
+     */
+    data object UndoAll : SchedulerIntent
+    data object RedoAll : SchedulerIntent
 
     /** Alt+Left / Alt+Right — undo/redo the **selections of the focused window** (PRD §5). */
     data object UndoSelection : SchedulerIntent

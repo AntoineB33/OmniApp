@@ -108,7 +108,7 @@ enum class HistoryCategory { Edit, Selection, Calendar, Main, WindowNav }
  * **every position** — every selection of every window and every move of the focus between windows.
  */
 enum class HistoryChord(val label: String) {
-    /** The changes of the focused window: `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y`. */
+    /** The changes: of the focused window by `Ctrl+Z` / `Ctrl+Y`, of every window by `Ctrl+Shift+Z` / `Ctrl+Shift+Y`. */
     Undo("Ctrl+Z"),
 
     /** The selections of the focused window: `Alt+←` / `Alt+→`. */

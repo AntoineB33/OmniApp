@@ -208,6 +208,8 @@ private fun SchedulerIntent.forDefaultSubtree(): SchedulerIntent =
     when (this) {
         is SchedulerIntent.Undo,
         is SchedulerIntent.Redo,
+        is SchedulerIntent.UndoAll,
+        is SchedulerIntent.RedoAll,
         is SchedulerIntent.UndoSelection,
         is SchedulerIntent.RedoSelection,
         is SchedulerIntent.UndoPosition,

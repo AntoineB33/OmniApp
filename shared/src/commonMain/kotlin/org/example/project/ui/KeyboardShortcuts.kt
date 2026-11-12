@@ -23,12 +23,16 @@ import org.example.project.scheduler.state.SchedulerIntent
  * — fell into the `Ctrl + Z` branch and undid a third time**. The rule lives here now and the surfaces route
  * through it; a fourth surface must call this and never re-spell it.
  *
- * The chords, and all of them — each relative to the focused window (user rule, 2026-09-25):
- *  - **Ctrl+Z** (no Shift) → [SchedulerIntent.Undo], **Ctrl+Shift+Z** / **Ctrl+Y** → [SchedulerIntent.Redo]:
- *    the changes made in the focused window;
+ * The chords, and all of them (user rule 2026-11-12: without Shift relative to the focused window, with Shift the
+ * whole app's):
+ *  - **Ctrl+Z** / **Ctrl+Y** → [SchedulerIntent.Undo] / [SchedulerIntent.Redo]: the changes made in the focused
+ *    window;
+ *  - **Ctrl+Shift+Z** / **Ctrl+Shift+Y** → [SchedulerIntent.UndoAll] / [SchedulerIntent.RedoAll]: every change,
+ *    whatever window it was made in, the left-side menu's and the window bar's included. (Ctrl+Shift+Z redid until
+ *    then, as in most applications: the user gave it to the whole history.);
  *  - **Alt+←** / **Alt+→** → [SchedulerIntent.UndoSelection] / [SchedulerIntent.RedoSelection]: the
  *    selections of the focused window;
- *  - **Ctrl+Alt+←** / **Ctrl+Alt+→** (user rule 2026-11-11), and **Shift+Alt+←** / **Shift+Alt+→** →
+ *  - **Shift+Alt+←** / **Shift+Alt+→** →
  *    [SchedulerIntent.UndoPosition] / [SchedulerIntent.RedoPosition]: every position — every window's selections and
  *    every move of the focus between windows, the pop-ups the keyboard went to first ([PopupPositions], read by `App`).
  *  - **Ctrl+Page Up** / **Ctrl+Page Down** → [SchedulerIntent.UndoFocus] / [SchedulerIntent.RedoFocus]: the moves
@@ -70,20 +74,12 @@ fun undoRedoIntentFor(
             else -> null
         }
     }
-    // User rule 2026-11-11: Ctrl+Alt+← / → walk every window's, as Shift+Alt does. With Shift as well it is another
-    // chord (the system-wide ones are all Ctrl+Shift+Alt), never this.
-    if (alt && ctrlOrMeta && !shift) {
-        return when (key) {
-            Key.DirectionLeft -> SchedulerIntent.UndoPosition
-            Key.DirectionRight -> SchedulerIntent.RedoPosition
-            else -> null
-        }
-    }
+    // Ctrl+Alt+← / → walked every window's positions from 2026-11-11 to 2026-11-12; the user gave that walk back to
+    // Shift+Alt alone. Ctrl+Alt (and Ctrl+Shift+Alt, the system-wide chords) is no history chord.
     if (!ctrlOrMeta || alt) return null
-    return when {
-        key == Key.Z && !shift -> SchedulerIntent.Undo
-        key == Key.Z -> SchedulerIntent.Redo
-        key == Key.Y -> SchedulerIntent.Redo
+    return when (key) {
+        Key.Z -> if (shift) SchedulerIntent.UndoAll else SchedulerIntent.Undo
+        Key.Y -> if (shift) SchedulerIntent.RedoAll else SchedulerIntent.Redo
         else -> null
     }
 }
@@ -232,18 +228,23 @@ object KeyboardShortcutCatalog {
             ),
             KeyboardShortcutGroup(
                 title = "History",
-                note = "In every window. Each chord is relative to the focused window, except Ctrl + Alt and " +
-                    "Shift + Alt, which walk every window.",
+                note = "In every window. Without Shift a chord is relative to the focused window; with Shift it walks " +
+                    "every window.",
                 shortcuts = listOf(
                     KeyboardShortcut("Ctrl + Z", "Undo the last change made in the focused window"),
-                    KeyboardShortcut("Ctrl + Shift + Z / Ctrl + Y", "Redo it"),
+                    KeyboardShortcut("Ctrl + Y", "Redo it"),
+                    KeyboardShortcut(
+                        "Ctrl + Shift + Z",
+                        "Undo the last change, whatever window it was made in — the left-side menu's and the window " +
+                            "bar's too; one a window's own Ctrl + Z already undid is skipped",
+                    ),
+                    KeyboardShortcut("Ctrl + Shift + Y", "Redo the oldest change still undone, whatever its window"),
                     KeyboardShortcut("Alt + ← / Alt + →", "Go back / forward through the focused window's selections"),
                     KeyboardShortcut(
-                        "Ctrl + Alt + ← / Ctrl + Alt + →",
+                        "Shift + Alt + ← / Shift + Alt + →",
                         "Go back / forward through every selection and every move between windows, the pop-ups the " +
                             "keyboard went to first — one that closed comes back, kept open until another window takes the keyboard",
                     ),
-                    KeyboardShortcut("Shift + Alt + ← / Shift + Alt + →", "Same as Ctrl + Alt + ← / →"),
                 ),
             ),
             KeyboardShortcutGroup(

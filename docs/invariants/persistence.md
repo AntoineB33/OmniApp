@@ -161,18 +161,25 @@ by ctrl+z, ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history unit
   focused window: every few minutes one landed on top, so the next `Ctrl+Z` took a banked record back instead of what the
   user did, and it dropped their redo. Neither any more, on the server either (`dropHistoryBranch` is asked from the
   newest unit that is the user's). A record the USER takes out is theirs: "Remove" on a block, a period laid over it.
-- **A change made in the left-side menu is undone from whichever window has the focus** (user rule 2026-11-01; "Reset"
-  was the anomaly). The menu is no window and takes no focus, so its units are stamped `HistoryWindow.Menu`
-  (`SchedulerIntent.MadeIn`, its controls included) and `changesOf` accepts them everywhere; a unit of the menu's buttons
-  stamped with a window, written before, counts too. While such a unit is the next one, `App`'s root takes the chord on
-  the PREVIEW pass (`SchedulerReducer.nextChangeIsAppWide`, `HistoryChordRoutingTest`): a focused text field would answer
-  it with its own undo. With nothing focused no modifier sees a key at all, so the desktop window hands them to
-  `AppKeyFallback`. Restoring the menu is the one restore that is not three-way: nothing can come between its units, and
+- **A change made in the left-side menu or the window bar is walked by `Ctrl+Shift+Z` / `Ctrl+Shift+Y` alone** (user rule
+  2026-11-12, replacing 2026-11-01's "from whichever window has the focus", whose anomaly was a "Reset"). The menu is no
+  window and takes no focus, so its units are stamped `HistoryWindow.Menu` (`SchedulerIntent.MadeIn`, its controls
+  included) and `changesOf` refuses them in every window (`isAppWide`); a unit of the menu's buttons stamped with a
+  window, written before, counts too. `App`'s root takes `Ctrl+Shift+Z/Y` on the PREVIEW pass, always
+  (`HistoryChordRoutingTest`): a focused text field would answer them with its own redo. With nothing focused no
+  modifier sees a key at all, so the desktop window hands them to `AppKeyFallback`. Restoring the menu is the one restore that is not three-way: nothing can come between its units, and
   a difference the app made itself (a button's configuration frozen at a start) must not leave an undo doing nothing.
-- **Every chord is relative to the focused window** (user rule, 2026-09-25; `SchedulerReducer.undoIn` over a
-  `HistoryWalk`): `Ctrl+Z`/`Ctrl+Y`/`Ctrl+Shift+Z` walk the Main and Calendar units stamped with the focused window
-  (the Edit stack while a session is open); `Alt+←/→` the Selection units whose delta is the focused window's (and,
-  for a per-copy selection, the focused copy's); `Ctrl+Alt+←/→` and `Shift+Alt+←/→` every Selection and WindowNav unit. A walk over
+- **Without Shift a chord is relative to the focused window, with Shift it walks every window** (user rules
+  2026-09-25 and 2026-11-12; `SchedulerReducer.undoIn` over a `HistoryWalk`): `Ctrl+Z`/`Ctrl+Y` walk the Main and
+  Calendar units stamped with the focused window (the Edit stack while a session is open), `Ctrl+Shift+Z`/`Ctrl+Shift+Y`
+  every Main and Calendar unit (`ALL_CHANGES`); `Alt+←/→` the Selection units whose delta is the focused window's (and,
+  for a per-copy selection, the focused copy's) — **selections of rows only**: the day a calendar is taken to is a
+  change of that calendar (`ExternalKeys.CALENDAR_DAY`, walked by its `Ctrl+Z`); `Shift+Alt+←/→` every Selection and
+  WindowNav unit (`Ctrl+Alt+←/→` did too, 2026-11-11 to 2026-11-12).
+- **The whole walk and a window's walk share the units, so each window's history stays one pin.** Undo takes the
+  newest applied unit, so `Ctrl+Shift+Z` skips a unit its window's `Ctrl+Z` already undid; redo takes the oldest
+  undone one, so `Ctrl+Shift+Y` brings the windows' undone units back in the order made. A window's units are therefore
+  always applied up to a point and undone after it, whichever walk moved them (`HistoryReachTest`). A walk over
   two stacks orders them by `deviceSeq`, which is why `chronoId` is counted across **every** category: a press
   moves the focus and selects in one millisecond, and the two must still be walked in the order made.
 - **Every window's selection is a unit** — the tree's (`SetSelectionDelta`), the projected windows'

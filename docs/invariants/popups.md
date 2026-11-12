@@ -350,7 +350,7 @@ means.
     application. Closed, it is a hover pop-up again.
   - **The pop-ups the keyboard went to are positions of the app** (user rule 2026-11-11, `PopupPositions`): each one
     the keyboard comes to (`MenuHoverTracker.windowFocused`, told by the desktop menu window) is a new position, and
-    `Ctrl+Alt+←/→` (or `Shift+Alt`) walk them before the app's own history — the keyboard brought back to one still
+    `Shift+Alt+←/→` walk them before the app's own history — the keyboard brought back to one still
     open, or one that closed (the pointer leaving it, most often) brought back pinned with the categories it showed.
     The app's window is a position too: before the first pop-up, and each time the keyboard goes back to it as the
     top pop-up closes (`PopupPositions.appFocused`) — back to it gives it the keyboard

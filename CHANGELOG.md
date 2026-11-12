@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Ctrl+Z walks the focused window, Ctrl+Shift+Z every window; the calendar's day is a unit — 2026-11-12
+
+Anomaly: in the calendar, going to a later day then Ctrl+Z reduced the calendar. Read off the release DB: the day was no
+unit (UI-only state), so the Ctrl+Z reached the window's "Bring window back" under it. User rules: Ctrl+Z / Ctrl+Y walk
+the focused window's changes only; Ctrl+Shift+Z / Ctrl+Shift+Y (`UndoAll`/`RedoAll`) every window's, the left-side menu's
+and the window bar's included (they left Ctrl+Z, replacing the 2026-11-01 rule; `nextChangeIsAppWide` is gone and the
+root takes Ctrl+Shift+Z/Y on the preview pass always). The whole walk skips what a window's Ctrl+Z undid. Ctrl+Shift+Z
+no longer redoes. Alt+arrows stay the selections of rows; a day picked in a calendar's day selector is a change of that
+calendar (`ExternalKeys.CALENDAR_DAY`). Ctrl+Alt+←/→ are no history chord any more: Shift+Alt+←/→ walk every position.
+`HistoryReachTest`, `UndoRedoChordTest`. No migration.
+
 ### A calendar far ahead is planned on its own, at once — 2026-11-12
 
 Anomaly: the calendar two years ahead showed no task. The instant schedule walked to the window from the definitive

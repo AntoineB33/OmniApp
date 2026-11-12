@@ -265,8 +265,8 @@ when, never for how long — see `scheduler.md` for why it does not grow on its 
 
 ## Undo/redo chords are read in ONE place
 
-- **`undoRedoIntentFor` (`ui/KeyboardShortcuts.kt`) is the only reading of Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in
-  the app.** Every surface that owns the keyboard answers them — the task tree, the calendar, the Alarms
+- **`undoRedoIntentFor` (`ui/KeyboardShortcuts.kt`) is the only reading of Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z /
+  Ctrl+Shift+Y in the app.** Every surface that owns the keyboard answers them — the task tree, the calendar, the Alarms
   window — and each used to spell the test out for itself. Three copies of one rule is exactly how they came
   to agree on something wrong: none looked at Shift, so **Ctrl+Shift+Z fell into the `Ctrl+Z` branch and
   undid a third time** where every other application redoes. A fourth surface calls this function; it does
@@ -274,12 +274,17 @@ when, never for how long — see `scheduler.md` for why it does not grow on its 
 - The rule proper takes the four facts that decide it (`key`, `keyDown`, `ctrlOrMeta`, `shift`) and the
   `KeyEvent` overload is only the adapter, so `UndoRedoChordTest` can hold it to the contract without a
   synthetic key event. **Cmd counts as Ctrl**, as everywhere else.
-- Which *stack* the intent then walks is not decided here: that is `SchedulerReducer.contentCategory`, off
-  whichever surface has the focus.
+- **Shift widens the walk to every window** (user rule 2026-11-12): Ctrl+Z / Ctrl+Y the focused window's changes,
+  Ctrl+Shift+Z / Ctrl+Shift+Y every change (`UndoAll`/`RedoAll`), the left-side menu's and the window bar's included.
+  Ctrl+Shift+Z no longer redoes, as it does in most applications: the user gave it to the whole history. It is still
+  never a second Ctrl+Z, the anomaly above.
+- Which units the intent then walks is not decided here: that is `SchedulerReducer`'s walks, off whichever window
+  has the focus.
 - `Alt + ← / →` (selection history) is a separate rule and lives on the tree, which is the only surface with
   a selection to walk.
-- `Ctrl + Alt + ← / →` (user rule 2026-11-11) and `Shift + Alt + ← / →` walk every window's positions
-  (`UndoPosition`/`RedoPosition`), read in `undoRedoIntentFor` like the rest. Back first brings back a hover pop-up
+- `Shift + Alt + ← / →` walk every window's positions (`UndoPosition`/`RedoPosition`), read in `undoRedoIntentFor`
+  like the rest. `Ctrl + Alt + ← / →` did too from 2026-11-11; the user replaced it by `Shift + Alt` on 2026-11-12, and
+  it is no history chord now. Back first brings back a hover pop-up
   the pointer closed since the last position (`HoverClosedPopups`, `popups.md`). `Ctrl + Shift + Alt` stays the
   system-wide chords'.
 

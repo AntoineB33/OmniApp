@@ -32,15 +32,16 @@ class UndoRedoChordTest {
 
     /** The anomaly: this is REDO, and must never reach Undo. */
     @Test
-    fun ctrl_shift_z_redoes() {
-        assertEquals(SchedulerIntent.Redo, chord(Key.Z, shift = true))
+    fun ctrl_shift_z_and_ctrl_shift_y_walk_the_whole_history() {
+        // User rule 2026-11-12: Shift turns the focused window's walk into the whole app's. Still never a second
+        // Ctrl+Z: the anomaly this test was written for was Ctrl+Shift+Z falling into the plain undo.
+        assertEquals(SchedulerIntent.UndoAll, chord(Key.Z, shift = true))
+        assertEquals(SchedulerIntent.RedoAll, chord(Key.Y, shift = true))
     }
 
     @Test
     fun ctrl_y_redoes() {
         assertEquals(SchedulerIntent.Redo, chord(Key.Y))
-        // Shift changes nothing for the Y spelling: it is redo either way, never a second undo.
-        assertEquals(SchedulerIntent.Redo, chord(Key.Y, shift = true))
     }
 
     @Test
@@ -58,9 +59,9 @@ class UndoRedoChordTest {
         assertEquals(SchedulerIntent.RedoSelection, chord(Key.DirectionRight, ctrlOrMeta = false, alt = true))
         assertEquals(SchedulerIntent.UndoPosition, chord(Key.DirectionLeft, ctrlOrMeta = false, shift = true, alt = true))
         assertEquals(SchedulerIntent.RedoPosition, chord(Key.DirectionRight, ctrlOrMeta = false, shift = true, alt = true))
-        // User rule 2026-11-11: Ctrl+Alt+arrows walk every position too.
-        assertEquals(SchedulerIntent.UndoPosition, chord(Key.DirectionLeft, alt = true))
-        assertEquals(SchedulerIntent.RedoPosition, chord(Key.DirectionRight, alt = true))
+        // User rule 2026-11-12: Ctrl+Alt+arrows (every position from 2026-11-11) are no history chord any more.
+        assertNull(chord(Key.DirectionLeft, alt = true))
+        assertNull(chord(Key.DirectionRight, alt = true))
         // Not an arrow, or Ctrl+Shift+Alt (the system-wide chords): not a history chord.
         assertNull(chord(Key.DirectionUp, ctrlOrMeta = false, alt = true))
         assertNull(chord(Key.DirectionUp, alt = true))

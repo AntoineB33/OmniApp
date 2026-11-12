@@ -2554,6 +2554,7 @@ private fun SearchSubtree(
             when (intent) {
                 // App-wide: the history stacks and the window focus are no tree's.
                 is SchedulerIntent.Undo, is SchedulerIntent.Redo,
+                is SchedulerIntent.UndoAll, is SchedulerIntent.RedoAll,
                 is SchedulerIntent.UndoSelection, is SchedulerIntent.RedoSelection,
                 is SchedulerIntent.UndoPosition, is SchedulerIntent.RedoPosition,
                 is SchedulerIntent.UndoFocus, is SchedulerIntent.RedoFocus,

@@ -144,7 +144,7 @@ class UserActionHistoryTest {
 
     @Test
     fun the_restores_are_never_stored() {
-        val s = r(r(SchedulerState.empty(), SchedulerIntent.RecordExternal("menu", "a", "b", "Menu buttons")), SchedulerIntent.Undo)
+        val s = r(r(SchedulerState.empty(), SchedulerIntent.RecordExternal("menu", "a", "b", "Menu buttons")), SchedulerIntent.UndoAll)
         assertTrue(s.externalRestores.isNotEmpty())
         assertTrue(assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))).externalRestores.isEmpty())
     }

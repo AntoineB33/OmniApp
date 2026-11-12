@@ -24,6 +24,12 @@ object ExternalKeys {
     /** A calendar window's own configuration, followed by its frame id. */
     const val CALENDAR: String = "calendar/"
 
+    /**
+     * The day a calendar window was taken to by its day selector, followed by its frame id (user rule 2026-11-12: a
+     * change of that window, walked by its Ctrl+Z — not a selection of rows, which Alt+arrows walk).
+     */
+    const val CALENDAR_DAY: String = "calendar-day/"
+
     /** A Search configurations window's own configuration, followed by its frame id. */
     const val CONFIG_SEARCH: String = "config-search/"
 
@@ -113,6 +119,8 @@ val Delta.changedElements: Set<ChangedElement>
                         add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.WINDOW_TITLE)))
                     delta.key.startsWith(ExternalKeys.WINDOW) ->
                         add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.WINDOW)))
+                    delta.key.startsWith(ExternalKeys.CALENDAR_DAY) ->
+                        add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.CALENDAR_DAY)))
                     delta.key.startsWith(ExternalKeys.CALENDAR) ->
                         add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.CALENDAR)))
                     delta.key.startsWith(ExternalKeys.CONFIG_SEARCH) ->
