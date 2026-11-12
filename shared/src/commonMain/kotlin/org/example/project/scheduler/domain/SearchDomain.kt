@@ -218,15 +218,30 @@ object SearchDomain {
     /** The id of the "Select all" row of a drop-down whose options have check boxes ([optionResults]). */
     const val SELECT_ALL_OPTION: String = "select-all"
 
+    /** The id of the row that makes what the bar names ([optionResults]'s `creates`). */
+    const val CREATE_OPTION: String = "create"
+
     /**
      * User rule 2026-11-12: **the rows of a drop-down's Search window** — its [options] (id and name, in the drop-down's
      * order) that answer [query], and, where they have check boxes ([checked] not null), first, the element **"Select
      * all"**: *"when clicked selects all the elements of the same list that have a check box"* — those listed. Once they
      * all are, it reads "Deselect all" ([selectAllApplied]).
      */
-    fun optionResults(options: List<Pair<String, String>>, query: String, checked: Set<String>?): List<ItemResult> {
+    fun optionResults(
+        options: List<Pair<String, String>>,
+        query: String,
+        checked: Set<String>?,
+        /** Whether a name the bar holds and no option has is offered as a row that makes it ([CREATE_OPTION]). */
+        creates: Boolean = false,
+    ): List<ItemResult> {
         val listed = options.filter { (_, name) -> query.isBlank() || matchRank(name, query) != null }
-        val rows = listed.map { (id, name) -> ItemResult(Kind.Option, id, name, "") }
+        val typed = query.trim()
+        val create =
+            listOfNotNull(
+                ItemResult(Kind.Option, CREATE_OPTION, "create “$typed”", "")
+                    .takeIf { creates && typed.isNotEmpty() && options.none { it.second.equals(typed, ignoreCase = true) } },
+            )
+        val rows = listed.map { (id, name) -> ItemResult(Kind.Option, id, name, "") } + create
         if (checked == null || listed.isEmpty()) return rows
         val all = listed.all { it.first in checked }
         return listOf(ItemResult(Kind.Option, SELECT_ALL_OPTION, if (all) "Deselect all" else "Select all", "")) + rows
@@ -3683,7 +3698,7 @@ object SearchDomain {
         QuotaDelete(Kind.Quota, "Delete"),
         ReminderNew(Kind.Reminder, "New"),
         ReminderDuplicate(Kind.Reminder, "Duplicate"),
-        // A task cell's right-click menu (`TaskCellMenuItems`), over every added task.
+        // A task cell's right-click menu (`taskCellMenuActions`), over every added task.
         TaskStartNow(Kind.Task, "Start now"),
         TaskEdit(Kind.Task, "Edit task"),
         TaskGoToTree(Kind.Task, "Go to task tree"),

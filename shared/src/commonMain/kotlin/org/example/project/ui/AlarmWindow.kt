@@ -1397,21 +1397,16 @@ private fun CountdownField(
                     }
                 },
         )
-        transientMenuDismissal(menuOpen) { menuOpen = false }
-        AppDropdownMenu(
-            expanded = menuOpen,
-            onDismissRequest = { menuOpen = false },
-            properties = PopupProperties(focusable = false),
-        ) {
-            NUDGE_STEPS.forEach { step ->
-                DropdownMenuItem(
-                    text = { Text((if (step > 0) "+" else "−") + abs(step) + " " + unitLabel(field)) },
-                    // The menu STAYS OPEN: "+10 s" three times is three clicks, not three right-clicks. It
-                    // leaves like any menu, on the first press outside it (popups.md).
-                    onClick = { onNudge(step * field.unitMillis) },
-                )
-            }
-        }
+        // User rule 2026-11-12: the menu is a Search window of its entries.
+        // The menu STAYS OPEN: "+10 s" three times is three clicks, not three right-clicks. It leaves like any menu, on the
+        // first press outside it (popups.md).
+        ActionMenu(
+            open = menuOpen,
+            onDismiss = { menuOpen = false },
+            actions = NUDGE_STEPS.map { step ->
+                MenuAction((if (step > 0) "+" else "−") + abs(step) + " " + unitLabel(field), keepsOpen = true) { onNudge(step * field.unitMillis) }
+            },
+        )
     }
 }
 

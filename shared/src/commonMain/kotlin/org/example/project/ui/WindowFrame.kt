@@ -1877,24 +1877,13 @@ class HeadMenuEntry(val label: String, val enabled: Boolean = true, val onClick:
 /** The head's right-click menu (user rule 2026-10-15): at the pointer, a menu like the others (`popups.md`). */
 @Composable
 private fun HeadMenu(open: Boolean, onDismiss: () -> Unit, entries: List<HeadMenuEntry>) {
-    transientMenuDismissal(open, onDismiss)
-    AppDropdownMenu(
-        expanded = open,
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.PopupProperties(focusable = false),
+    // User rule 2026-11-12: the menu is a Search window of its entries.
+    ActionMenu(
+        open = open,
+        onDismiss = onDismiss,
+        actions = entries.map { entry -> MenuAction(entry.label, enabled = entry.enabled, onClick = entry.onClick) },
         atPointer = true,
-    ) {
-        for (entry in entries) {
-            DropdownMenuItem(
-                text = { Text(entry.label) },
-                enabled = entry.enabled,
-                onClick = {
-                    onDismiss()
-                    entry.onClick()
-                },
-            )
-        }
-    }
+    )
 }
 
 /**
@@ -2155,38 +2144,22 @@ fun WindowBar(
         // The bar's menu (user rule 2026-10-01): it acts on the SELECTED tabs ([WindowFrameHost.selectedTabs]).
         // Non-focusable and closed by the app root's observer, like every menu (`popups.md` § Menus). The bar is
         // the app's bottom edge, so the menu opens upward from it, at the pointer's x.
-        transientMenuDismissal(menuAt != null) { menuAt = null }
-        AppDropdownMenu(
-            expanded = menuAt != null,
-            onDismissRequest = { menuAt = null },
+        // User rule 2026-11-12: the menu is a Search window of its entries.
+        // Checked while every selected window that can be global is: a press sets them all one way.
+        val any = host.selectedTabs.isNotEmpty()
+        val globalizable = host.selectedTabs.filter(canBeGlobal)
+        val allGlobal = globalizable.isNotEmpty() && globalizable.all(isGlobal)
+        ActionMenu(
+            open = menuAt != null,
+            onDismiss = { menuAt = null },
+            actions = listOf(
+                MenuAction("close selection", enabled = any) { host.closeSelection() },
+                MenuAction("minimize selection", enabled = host.selectionHasShown) { host.minimizeSelection() },
+                MenuAction("open selection", enabled = any) { host.openSelection() },
+                MenuAction((if (allGlobal) "✓ " else "") + "global", enabled = globalizable.isNotEmpty()) { onSetGlobal(globalizable, !allGlobal) },
+            ),
             offset = with(density) { DpOffset((menuAt?.x ?: 0f).toDp(), 0.dp) },
-            properties = PopupProperties(focusable = false),
-        ) {
-            val any = host.selectedTabs.isNotEmpty()
-            DropdownMenuItem(
-                text = { Text("close selection") },
-                enabled = any,
-                onClick = { menuAt = null; host.closeSelection() },
-            )
-            DropdownMenuItem(
-                text = { Text("minimize selection") },
-                enabled = host.selectionHasShown,
-                onClick = { menuAt = null; host.minimizeSelection() },
-            )
-            DropdownMenuItem(
-                text = { Text("open selection") },
-                enabled = any,
-                onClick = { menuAt = null; host.openSelection() },
-            )
-            // Checked while every selected window that can be global is: a press sets them all one way.
-            val globalizable = host.selectedTabs.filter(canBeGlobal)
-            val allGlobal = globalizable.isNotEmpty() && globalizable.all(isGlobal)
-            DropdownMenuItem(
-                text = { Text((if (allGlobal) "✓ " else "") + "global") },
-                enabled = globalizable.isNotEmpty(),
-                onClick = { menuAt = null; onSetGlobal(globalizable, !allGlobal) },
-            )
-        }
+        )
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxSize()) {
             Row(
                 modifier = Modifier
@@ -2291,15 +2264,13 @@ private fun WindowBarMoreButton(onUndo: () -> Unit, onRedo: () -> Unit) {
                 .clickable { open = !open }
                 .padding(horizontal = 10.dp, vertical = 6.dp),
         )
-        transientMenuDismissal(open) { open = false }
-        AppDropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            properties = PopupProperties(focusable = false),
-        ) {
-            DropdownMenuItem(text = { Text("undo") }, onClick = onUndo)
-            DropdownMenuItem(text = { Text("redo") }, onClick = onRedo)
-        }
+        // User rule 2026-11-12: the menu is a Search window of its entries.
+        ActionMenu(
+            open = open,
+            onDismiss = { open = false },
+            // As before: the menu stays open, "undo" pressed in turn.
+            actions = listOf(MenuAction("undo", keepsOpen = true, onClick = onUndo), MenuAction("redo", keepsOpen = true, onClick = onRedo)),
+        )
     }
 }
 

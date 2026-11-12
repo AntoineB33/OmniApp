@@ -1598,31 +1598,16 @@ private fun WeightTableHeader(
                         },
                 ) {
                     ColumnDragHandle(active = draggedColumn == column)
-                    AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Add column to the right") },
-                            onClick = {
-                                menuOpen = false
-                                onAddColumn(column + 1)
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Reset to default") },
-                            onClick = {
-                                menuOpen = false
-                                onResetColumn(column)
-                            },
-                        )
-                        if (weightColumns.size > 1) {
-                            DropdownMenuItem(
-                                text = { Text("Delete column") },
-                                onClick = {
-                                    menuOpen = false
-                                    onDeleteColumn(column)
-                                },
-                            )
-                        }
-                    }
+                    // User rule 2026-11-12: the menu is a Search window of its entries.
+                    org.example.project.ui.ActionMenu(
+                        open = menuOpen,
+                        onDismiss = { menuOpen = false },
+                        actions = listOfNotNull(
+                            org.example.project.ui.MenuAction("Add column to the right") { onAddColumn(column + 1) },
+                            org.example.project.ui.MenuAction("Reset to default") { onResetColumn(column) },
+                            org.example.project.ui.MenuAction("Delete column") { onDeleteColumn(column) }.takeIf { weightColumns.size > 1 },
+                        ),
+                    )
                 }
             }
             if (draggedColumn != null && dropIndex == weightColumns.size) ColumnDropLine()
@@ -2322,21 +2307,13 @@ internal fun RelativePriorityWindow(
                     TextButton(onClick = { relativeToMenuOpen = true }) {
                         Text(relativeToLabel(state, relativeTo))
                     }
-                    AppDropdownMenu(
-                        expanded = relativeToMenuOpen,
-                        onDismissRequest = { relativeToMenuOpen = false },
-                    ) {
-                        // Root first, then this cell's ancestors from the root-most down to its parent.
-                        options.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(relativeToLabel(state, option)) },
-                                onClick = {
-                                    relativeToMenuOpen = false
-                                    relativeTo = option
-                                },
-                            )
-                        }
-                    }
+                    // User rule 2026-11-12: the menu is a Search window of its entries.
+                    // Root first, then this cell's ancestors from the root-most down to its parent.
+                    org.example.project.ui.ActionMenu(
+                        open = relativeToMenuOpen,
+                        onDismiss = { relativeToMenuOpen = false },
+                        actions = options.map { option -> org.example.project.ui.MenuAction(relativeToLabel(state, option)) { relativeTo = option } },
+                    )
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(
@@ -3072,20 +3049,15 @@ internal fun TaskRow(
           CompositionLocalProvider(org.example.project.ui.LocalTaskCellForeground provides null) {
             // PRD §13 right-click contextual menu on a populated cell.
             if (cellMenu != null) {
-                transientMenuDismissal(contextMenuOpen) { contextMenuOpen = false }
-                AppDropdownMenu(
-                    expanded = contextMenuOpen,
-                    onDismissRequest = { contextMenuOpen = false },
-                    // PRD §13: the menu must NOT eat the press that closes it — clicking another cell has
-                    // to select that cell in the same gesture. A focusable popup consumes that press for
-                    // its own outside-dismissal, so the dismissal is handed to the app-root observer
-                    // instead (see [transientMenuDismissal], registered just above).
-                    properties = PopupProperties(focusable = false),
+                // User rule 2026-11-12: the menu is a Search window of its entries, its bar taking typing — so, the user's
+                // choice, the press that closes it is its own (PRD §13 had it reach the cell under it).
+                org.example.project.ui.ActionMenu(
+                    open = contextMenuOpen,
+                    onDismiss = { contextMenuOpen = false },
+                    actions = taskCellMenuActions(cellMenu),
                     // At the pointer where the row is a list's, as wide as the list (the Search window's).
                     atPointer = org.example.project.ui.LocalRowMenusAtPointer.current,
-                ) {
-                    TaskCellMenuItems(cellMenu) { contextMenuOpen = false }
-                }
+                )
             }
             rowLeading?.invoke(this)
             if (showExpandArrow) {
@@ -3370,27 +3342,15 @@ internal fun TaskRow(
                         )
                         // Same rule as the row's own menu: dismissed by the app-root observer, so the
                         // press that closes it still selects whatever it landed on.
-                        transientMenuDismissal(priorityMenuOpen) { priorityMenuOpen = false }
-                        AppDropdownMenu(
-                            expanded = priorityMenuOpen,
-                            onDismissRequest = { priorityMenuOpen = false },
-                            properties = PopupProperties(focusable = false),
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("relative priority") },
-                                onClick = {
-                                    priorityMenuOpen = false
-                                    onOpenRelativePriority()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("priority weights") },
-                                onClick = {
-                                    priorityMenuOpen = false
-                                    onTogglePriorityWeights()
-                                },
-                            )
-                        }
+                        // User rule 2026-11-12: the menu is a Search window of its entries.
+                        org.example.project.ui.ActionMenu(
+                            open = priorityMenuOpen,
+                            onDismiss = { priorityMenuOpen = false },
+                            actions = listOf(
+                                org.example.project.ui.MenuAction("relative priority") { onOpenRelativePriority() },
+                                org.example.project.ui.MenuAction("priority weights") { onTogglePriorityWeights() },
+                            ),
+                        )
                     }
                 }
                 // PRD §10: the task's minimum-time field sits just to the right of the percentage. It
@@ -3550,133 +3510,50 @@ private fun RowScope.TitleThenSection(
 }
 
 /**
- * PRD §13: the entries of a task cell's right-click menu, in their order — the ONE drawing of them, used by the
- * tree's cells and by the Search window's task rows, so the two menus can never offer different things.
- * [close] closes the menu the entries stand in.
+ * PRD §13: the entries of a task cell's right-click menu, in their order — the ONE list of them, used by the tree's cells
+ * and by the Search window's task rows, so the two menus can never offer different things. User rule 2026-11-12: the menu
+ * is a Search window of them ([org.example.project.ui.ActionMenu]).
  */
 @Composable
-internal fun TaskCellMenuItems(cellMenu: TaskCellMenuActions, close: () -> Unit) {
-    // PRD §13: only offered on a schedulable leaf — a parent task is never placed.
-    cellMenu.onStartNow?.let { startNow ->
-        DropdownMenuItem(
-            text = { Text("start this task now") },
-            onClick = {
-                close()
-                startNow()
-            },
-        )
-    }
-    // PRD §7 Search (user rule 2026-10-01): a result row's menu ADDS its task to the window's added elements, in the
-    // place "edit task" has elsewhere — the row is already in the window that edits it.
-    cellMenu.onAdd?.let { add ->
-        DropdownMenuItem(
-            text = { Text("add") },
-            onClick = {
-                close()
-                add()
-            },
-        )
-    }
-    // ... and the same, emptying the added elements first: they become what this adds (user rule 2026-10-01).
-    cellMenu.onAddReplacing?.let { addReplacing ->
-        DropdownMenuItem(
-            text = { Text(ADD_REPLACING_LABEL) },
-            onClick = {
-                close()
-                addReplacing()
-            },
-        )
-    }
-    // PRD §13: named "edit task" — the calendar's panel menu offers the very same window
-    // beside its own panel "Edit" (PRD §8), so the two surfaces must not call it two things.
-    cellMenu.onEdit?.let { edit ->
-        DropdownMenuItem(
-            text = { Text("edit task") },
-            onClick = {
-                close()
-                edit()
-            },
-        )
-    }
-    // PRD §7/§8: the calendar panel's entry under its own name, offered by any surface that
-    // is not the tree itself — the Search window's task rows and their sub-trees.
-    cellMenu.onGoToTaskTree?.let { goToTaskTree ->
-        DropdownMenuItem(
-            text = { Text("go to task tree") },
-            onClick = {
-                close()
-                goToTaskTree()
-            },
-        )
-    }
+internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.example.project.ui.MenuAction> {
     // PRD §8 "go to calendar" (user spec 2026-09-26): the calendar, locked on this task's panel closest to the
     // now-line — with a loading mark while no panel of it exists yet but one can come, and not offered at all when
     // none can. Asked once as the menu opens.
     val calendar = LocalCalendarGoTo.current
     val calendarTaskId = cellMenu.calendarTaskId
-    if (calendar != null && calendarTaskId != null) {
-        val reach = remember(calendarTaskId) { calendar.reach(calendarTaskId) }
-        if (reach != CalendarLockDomain.Reach.None) {
-            DropdownMenuItem(
-                text = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("go to calendar")
-                        if (reach == CalendarLockDomain.Reach.Pending) {
-                            Spacer(Modifier.width(8.dp))
-                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                        }
-                    }
-                },
-                onClick = {
-                    close()
-                    calendar.go(calendarTaskId)
-                },
+    val reach = if (calendar != null && calendarTaskId != null) remember(calendarTaskId) { calendar.reach(calendarTaskId) } else null
+    return buildList {
+        // PRD §13: only offered on a schedulable leaf — a parent task is never placed.
+        cellMenu.onStartNow?.let { add(org.example.project.ui.MenuAction("start this task now", onClick = it)) }
+        // PRD §7 Search (user rule 2026-10-01): a result row's menu ADDS its task to the window's added elements, in the
+        // place "edit task" has elsewhere — the row is already in the window that edits it.
+        cellMenu.onAdd?.let { add(org.example.project.ui.MenuAction("add", onClick = it)) }
+        // ... and the same, emptying the added elements first: they become what this adds (user rule 2026-10-01).
+        cellMenu.onAddReplacing?.let { add(org.example.project.ui.MenuAction(ADD_REPLACING_LABEL, onClick = it)) }
+        // PRD §13: named "edit task" — the calendar's panel menu offers the very same window beside its own panel "Edit"
+        // (PRD §8), so the two surfaces must not call it two things.
+        cellMenu.onEdit?.let { add(org.example.project.ui.MenuAction("edit task", onClick = it)) }
+        // PRD §7/§8: the calendar panel's entry under its own name, offered by any surface that is not the tree itself.
+        cellMenu.onGoToTaskTree?.let { add(org.example.project.ui.MenuAction("go to task tree", onClick = it)) }
+        if (calendar != null && calendarTaskId != null && reach != null && reach != CalendarLockDomain.Reach.None) {
+            add(
+                org.example.project.ui.MenuAction(
+                    "go to calendar",
+                    mark = if (reach == CalendarLockDomain.Reach.Pending) {
+                        { CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp) }
+                    } else {
+                        null
+                    },
+                ) { calendar.go(calendarTaskId) },
             )
         }
-    }
-    DropdownMenuItem(
-        text = { Text("copy task id (ctrl c)") },
-        onClick = {
-            close()
-            cellMenu.onCopyTaskId()
-        },
-    )
-    DropdownMenuItem(
-        text = { Text("deep copy") },
+        add(org.example.project.ui.MenuAction("copy task id (ctrl c)", onClick = cellMenu.onCopyTaskId))
         // Greyed, never hidden, where no live cell holds the task (a Search row of another tree's task).
-        enabled = cellMenu.onDeepCopy != null,
-        onClick = {
-            close()
-            cellMenu.onDeepCopy?.invoke()
-        },
-    )
-    cellMenu.onLink?.let { link ->
-        DropdownMenuItem(
-            text = { Text("link to a task of another tree…") },
-            onClick = {
-                close()
-                link()
-            },
-        )
-    }
-    cellMenu.onCollapseSubtrees?.let { collapseSubtrees ->
-        DropdownMenuItem(
-            text = { Text("collapse sub-trees") },
-            onClick = {
-                close()
-                collapseSubtrees()
-            },
-        )
-    }
-    // PRD §7: only offered where there is a template to add.
-    cellMenu.onAddDefaultSubtree?.let { addDefaultSubtree ->
-        DropdownMenuItem(
-            text = { Text("add default sub-tree") },
-            onClick = {
-                close()
-                addDefaultSubtree()
-            },
-        )
+        add(org.example.project.ui.MenuAction("deep copy", enabled = cellMenu.onDeepCopy != null) { cellMenu.onDeepCopy?.invoke() })
+        cellMenu.onLink?.let { add(org.example.project.ui.MenuAction("link to a task of another tree…", onClick = it)) }
+        cellMenu.onCollapseSubtrees?.let { add(org.example.project.ui.MenuAction("collapse sub-trees", onClick = it)) }
+        // PRD §7: only offered where there is a template to add.
+        cellMenu.onAddDefaultSubtree?.let { add(org.example.project.ui.MenuAction("add default sub-tree", onClick = it)) }
     }
 }
 

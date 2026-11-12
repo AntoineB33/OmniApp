@@ -218,16 +218,13 @@ fun MenuAddableBox(key: Any?, onAdd: (MenuCustomizer) -> Unit, modifier: Modifie
     ) {
         content()
         if (active) {
-            transientMenuDismissal(menuOpen) { menuOpen = false }
-            AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, properties = PopupProperties(focusable = false), atPointer = true) {
-                DropdownMenuItem(
-                    text = { Text("add in the left-side menu") },
-                    onClick = {
-                        menuOpen = false
-                        customizer?.let(onAdd)
-                    },
-                )
-            }
+            // User rule 2026-11-12: the menu is a Search window of its entries.
+            ActionMenu(
+                open = menuOpen,
+                onDismiss = { menuOpen = false },
+                actions = listOf(MenuAction("add in the left-side menu") { customizer?.let(onAdd) }),
+                atPointer = true,
+            )
         }
     }
 }
@@ -1168,42 +1165,26 @@ internal fun CustomMenuSection(
                                     )
                                 }
                             }
-                            transientMenuDismissal(menuOpen) { menuOpen = false }
-                            AppDropdownMenu(
-                                expanded = menuOpen,
-                                onDismissRequest = { menuOpen = false },
-                                properties = PopupProperties(focusable = false),
-                            ) {
-                                if (!button.folder && canUpdate(button)) {
-                                    DropdownMenuItem(text = { Text("Update") }, onClick = { menuOpen = false; onUpdate(button) })
-                                }
-                                if (CustomMenuButtons.canRename(button)) {
-                                    DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onStartRename(button.id) })
-                                }
-                                // Checked while the item stands in the menu of every page. A folder is its items, each global or not.
-                                // User rule 2026-11-04: named "all pages" (it was "Global").
-                                if (!button.folder) {
-                                    DropdownMenuItem(
-                                        text = { Text((if (button.global) "✓ " else "") + "all pages") },
-                                        onClick = { menuOpen = false; onSetGlobal(button.id, !button.global) },
-                                    )
-                                }
-                                // User rule 2026-11-05: a window's button only — checked, it brings back its window
-                                // only as it keeps it whole.
-                                if (!button.folder && button.control == null && button.action == null && button.windowId.isNotBlank()) {
-                                    val on = CustomMenuButtons.wholeStateOn(button)
-                                    DropdownMenuItem(
-                                        text = { Text((if (on) "✓ " else "") + "match the whole state") },
-                                        onClick = { menuOpen = false; onSetWholeState(button.id, !on) },
-                                    )
-                                }
-                                DropdownMenuItem(text = { Text("Remove") }, onClick = { menuOpen = false; onRemove(button.id) })
-                                DropdownMenuItem(
-                                    text = { Text(if (customizing) "Stop customizing" else "Customize") },
-                                    onClick = { menuOpen = false; onCustomize(!customizing) },
-                                )
-                                DropdownMenuItem(text = { Text("Reset") }, onClick = { menuOpen = false; onReset() })
-                            }
+                            // User rule 2026-11-12: the menu is a Search window of its entries.
+                            ActionMenu(
+                                open = menuOpen,
+                                onDismiss = { menuOpen = false },
+                                actions = buildList {
+                                    if (!button.folder && canUpdate(button)) add(MenuAction("Update") { onUpdate(button) })
+                                    if (CustomMenuButtons.canRename(button)) add(MenuAction("Rename") { onStartRename(button.id) })
+                                    // Checked while the item stands in the menu of every page. A folder is its items, each global or not.
+                                    // User rule 2026-11-04: named "all pages" (it was "Global").
+                                    if (!button.folder) add(MenuAction((if (button.global) "✓ " else "") + "all pages") { onSetGlobal(button.id, !button.global) })
+                                    // User rule 2026-11-05: a window's button only — checked, it brings back its window only as it keeps it whole.
+                                    if (!button.folder && button.control == null && button.action == null && button.windowId.isNotBlank()) {
+                                        val on = CustomMenuButtons.wholeStateOn(button)
+                                        add(MenuAction((if (on) "✓ " else "") + "match the whole state") { onSetWholeState(button.id, !on) })
+                                    }
+                                    add(MenuAction("Remove") { onRemove(button.id) })
+                                    add(MenuAction(if (customizing) "Stop customizing" else "Customize") { onCustomize(!customizing) })
+                                    add(MenuAction("Reset") { onReset() })
+                                },
+                            )
                         }
                     }
                 }

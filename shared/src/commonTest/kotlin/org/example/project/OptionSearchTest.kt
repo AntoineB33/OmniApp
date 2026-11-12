@@ -37,6 +37,16 @@ class OptionSearchTest {
         assertEquals(setOf("c"), SearchDomain.selectAllApplied(setOf("b", "c"), listed), "all listed checked: unchecked")
     }
 
+    /** The task categories field: a name the bar holds that no option has is a row that makes it. */
+    @Test
+    fun a_name_no_option_has_is_offered_to_create() {
+        val rows = SearchDomain.optionResults(options, "Date", checked = emptySet(), creates = true)
+        assertEquals(SearchDomain.CREATE_OPTION, rows.last().id)
+        assertEquals("create “Date”", rows.last().name)
+        assertEquals(emptyList(), SearchDomain.optionResults(options, "banana", checked = null, creates = true).filter { it.id == SearchDomain.CREATE_OPTION }, "a name taken")
+        assertEquals(emptyList(), SearchDomain.optionResults(options, "Date", checked = null).filter { it.id == SearchDomain.CREATE_OPTION }, "not asked")
+    }
+
     @Test
     fun the_account_holds_no_option() {
         assertEquals(emptyList(), SearchDomain.itemResults(SchedulerState.empty(), Kind.Option, ""))

@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Right-click menus are Search windows too — 2026-11-12
+
+User rule (*"Right-click menus too"*, the menus taking typing): every right-click menu is a Search window of its entries
+(`MenuAction`: label, greyed, keeps the menu open, a mark; `ActionMenu` over `OptionSearchMenu`, focusable, at the pointer
+or an offset). Converted: the task cell menu (`taskCellMenuActions`, the tree's cells and the Search window's task rows,
+"deep copy" greyed, "go to calendar" with its loading mark), the Search window's row, added-element, sub-tree, path-list,
+"go to task" and background menus, the window head's and tab bar's menus and the undo/redo one, the lateral menu's
+background and button menus, "add in the left-side menu", the calendar's grid menu (on a phone the panel's name and
+time a first greyed row), its held-drag and Edit Mode id-row menus and the page picker, the priority weight table's
+column menu, the relative-priority "relative to" menu and the priority column's, and the timer and time nudge menus
+(they stay open). **Behaviour change:** a focusable menu takes the press that closes it, so a click on another tree
+cell while the cell menu is open only closes the menu (PRD §13 had the press select that cell too). The task
+categories field is a Search window of the account's task categories, ticked where the task carries them (a click
+attaches or takes off, a right-click opens the category's window, a name nobody holds is a "create" row —
+`SearchOptions.onCreate`, `SearchDomain.CREATE_OPTION`). Left as they are: the configurations tree's pop-ups (already
+Search windows) and the quota's date picker and resilience form. No migration.
+
 ### Every ▾ drop-down opens a Search window — 2026-11-12
 
 The rest of the drop-down fields open `OptionSearchMenu` too: the Sort by picker (check boxes, "Select all"), the

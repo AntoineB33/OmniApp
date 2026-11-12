@@ -89,11 +89,12 @@ internal fun NudgeMenu(enabled: Boolean, stepsMillis: List<Long>, onNudge: (delt
         },
     ) {
         field()
-        transientMenuDismissal(open) { open = false }
-        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }, properties = PopupProperties(focusable = false)) {
-            stepsMillis.forEach { delta ->
-                DropdownMenuItem(text = { Text(nudgeLabel(delta)) }, onClick = { onNudge(delta) })
-            }
-        }
+        // User rule 2026-11-12: the menu is a Search window of its entries.
+        // The menu stays open: a nudge is pressed in turn.
+        ActionMenu(
+            open = open,
+            onDismiss = { open = false },
+            actions = stepsMillis.map { delta -> MenuAction(nudgeLabel(delta), keepsOpen = true) { onNudge(delta) } },
+        )
     }
 }

@@ -1,5 +1,8 @@
 package org.example.project
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -96,14 +99,16 @@ class SearchSelectAllTest {
                 scene.sendKeyEvent(KeyEvent(key = Key.A, type = KeyEventType.KeyUp, isCtrlPressed = true))
             }
             frames(2)
-            // The menu opens under the row, at the list's left edge, "add" first (drawn and looked at: about 50, 194).
-            for (dy in 20..80 step 6) {
-                time += 1_000L
-                click(row, PointerButton.Secondary)
-                frames(10)
-                click(Offset(60f, row.y + dy))
-                if (added.isNotEmpty()) break
+            // The menu is a Search window of its entries (user rule 2026-11-12): its bar, then "add" — found by its text.
+            time += 1_000L
+            click(row, PointerButton.Secondary)
+            frames(10)
+            val add = onEdt {
+                scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                    .first { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == "add" } == true }
+                    .boundsInWindow.center
             }
+            click(add)
             assertEquals(listOf("Chrono/a", "Chrono/b", "Chrono/c", "Creation/Chrono"), added.lastOrNull()?.sorted(), "every row, the creation row's included: $added")
         } finally {
             onEdt { scene.close() }

@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.composed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -112,7 +113,6 @@ import androidx.compose.ui.platform.LocalDensity
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.HistoryWindow
 import org.example.project.scheduler.state.windowSelectionKey
-import org.example.project.scheduler.ui.TaskCellMenuItems
 import org.example.project.scheduler.ui.TaskCellMenuActions
 import org.example.project.scheduler.ui.ADD_REPLACING_LABEL
 
@@ -154,7 +154,7 @@ private const val NOT_IN_TREE_HINT: String =
  * `Enter` opens it (a task's "edit task" window, a category's or a period kind's own window, the Alarms or the
  * Reminders window that owns an alarm, a timer or a reminder), `Ctrl + C` on a task copies its id, and a
  * right-click selects it and opens its contextual menu. A task's menu is the TREE CELL's own
- * ([TaskCellMenuItems]) — "go to task tree" included — on the row, on its path box and on each line of its list
+ * ([org.example.project.scheduler.ui.taskCellMenuActions]) — "go to task tree" included — on the row, on its path box and on each line of its list
  * of paths, each speaking for that path's occurrence ([SearchDomain.occurrenceAtPath]). The selection looks
  * as it does in the tree (the grey fill, [taskCellOutline]), and moving it scrolls the list only when it would
  * leave what is shown.
@@ -585,7 +585,9 @@ fun SearchWindow(
         }
     val results: List<SearchDomain.Result> =
         if (options != null) {
-            remember(options.options, options.checked, query) { SearchDomain.optionResults(options.options, query, options.checked) }
+            remember(options.options, options.checked, query) {
+                SearchDomain.optionResults(options.options, query, options.checked, creates = options.onCreate != null)
+            }
         } else
         remember(
             kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
@@ -704,8 +706,15 @@ fun SearchWindow(
     /** A drop-down's option clicked ([options]): ticked or picked, or "Select all" over the options listed. */
     fun actOnOption(id: String) {
         val given = options ?: return
+        if (id in given.disabled) return
+        if (id == SearchDomain.CREATE_OPTION) {
+            given.onCreate?.invoke(query.trim())
+            return
+        }
         if (id == SearchDomain.SELECT_ALL_OPTION) {
-            given.onSelectAll(results.mapNotNull { (it as? SearchDomain.ItemResult)?.id?.takeIf { row -> row != SearchDomain.SELECT_ALL_OPTION } })
+            given.onSelectAll(
+                results.mapNotNull { (it as? SearchDomain.ItemResult)?.id?.takeIf { row -> row != SearchDomain.SELECT_ALL_OPTION && row != SearchDomain.CREATE_OPTION } },
+            )
         } else {
             given.onClick(id)
         }
@@ -1324,9 +1333,10 @@ fun SearchWindow(
                                             else if (SearchRowOpeners.doubleClickOpens(result.kind)) openers.open(state, result)
                                             else addKeys(listOf(resultKey(result)))
                                         },
-                                        checkBox = option?.checked?.takeIf { !selectAll }?.let { result.id in it },
+                                        checkBox = option?.checked?.takeIf { !selectAll && result.id != SearchDomain.CREATE_OPTION }?.let { result.id in it },
                                         leading = option?.leading?.takeIf { !selectAll }?.let { draw -> { draw(result.id) } },
                                         hasMenu = option == null,
+                                        enabled = option == null || result.id !in option.disabled,
                                         onAdd = { addSelected() },
                                         onAddReplacing = { addSelected(replacing = true) },
                                         timerRun = if (result.kind == SearchDomain.Kind.Timer) {
@@ -1578,7 +1588,62 @@ class SearchOptions(
     val onDrop: ((String) -> Unit)? = null,
     /** Whether [onDrop] can drop the option: a command among them ("+ New tab") has no button. */
     val canDrop: (String) -> Boolean = { true },
+    /** The options that can do nothing now: greyed, and a click on one does nothing (user rule 2026-10-08). */
+    val disabled: Set<String> = emptySet(),
+    /** A name the bar holds that no option has: the row that makes it, and what it does ([SearchDomain.CREATE_OPTION]). */
+    val onCreate: ((String) -> Unit)? = null,
 )
+
+/**
+ * User rule 2026-11-12: **an entry of a right-click menu** — the menu being a Search window ([ActionMenu]): its [label], what
+ * a click on it does ([onClick]), whether it can ([enabled]: greyed, never hidden), whether the menu stays open after it
+ * ([keepsOpen]: a nudge pressed in turn), and a mark drawn before it ([mark]: a loading wheel).
+ */
+class MenuAction(
+    val label: String,
+    val enabled: Boolean = true,
+    val keepsOpen: Boolean = false,
+    val mark: (@Composable () -> Unit)? = null,
+    val onClick: () -> Unit,
+)
+
+/**
+ * User rule 2026-11-12: *"All the drop-down menus of the app must be Search windows as well"* — right-click menus too, the
+ * user's choice being that their bar takes typing. **A menu of [actions] as a Search window** ([OptionSearchMenu]): its
+ * entries are its rows, a click runs one and closes the menu (but a [MenuAction.keepsOpen] one), the bar finds among them.
+ */
+@Composable
+internal fun ActionMenu(
+    open: Boolean,
+    onDismiss: () -> Unit,
+    actions: List<MenuAction>,
+    modifier: Modifier = Modifier,
+    atPointer: Boolean = false,
+    offset: androidx.compose.ui.unit.DpOffset = androidx.compose.ui.unit.DpOffset(0.dp, 0.dp),
+) {
+    val latest by rememberUpdatedState(actions)
+    val latestDismiss by rememberUpdatedState(onDismiss)
+    OptionSearchMenu(
+        open = open,
+        onDismiss = onDismiss,
+        modifier = modifier,
+        atPointer = atPointer,
+        offset = offset,
+        options = SearchOptions(
+            options = actions.mapIndexed { i, action -> i.toString() to action.label },
+            checked = null,
+            onClick = { id ->
+                val action = id.toIntOrNull()?.let(latest::getOrNull)
+                if (action != null && action.enabled) {
+                    if (!action.keepsOpen) latestDismiss()
+                    action.onClick()
+                }
+            },
+            leading = if (actions.any { it.mark != null }) { id -> id.toIntOrNull()?.let(actions::getOrNull)?.mark?.invoke() } else null,
+            disabled = actions.indices.filter { !actions[it].enabled }.mapTo(HashSet()) { it.toString() },
+        ),
+    )
+}
 
 /**
  * [options] as the rows of a one-choice drop-down ([OptionSearchMenu]): each by its place, named by [label]; a click picks it
@@ -1625,14 +1690,24 @@ internal fun OptionSearchMenu(
      * list is not typed in then, its rows clicked alone.
      */
     focusable: Boolean = true,
+    /** A right-click menu: at the pointer ([AppDropdownMenu]'s own), or at [offset] from its anchor. */
+    atPointer: Boolean = false,
+    offset: androidx.compose.ui.unit.DpOffset = androidx.compose.ui.unit.DpOffset(0.dp, 0.dp),
 ) {
     transientMenuDismissal(open, onDismiss)
-    AppDropdownMenu(expanded = open, onDismissRequest = onDismiss, properties = PopupProperties(focusable = focusable), modifier = modifier) {
+    AppDropdownMenu(
+        expanded = open,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = focusable),
+        modifier = modifier,
+        offset = offset,
+        atPointer = atPointer,
+    ) {
         var config by remember { mutableStateOf(SearchDomain.OPTION_SEARCH.copy(dropButtons = options.onDrop != null)) }
         var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
         // No account is searched: the options are the rows.
         val nothing = remember { SchedulerState.empty() }
-        val rows = options.options.size + if (options.checked != null) 1 else 0
+        val rows = options.options.size + (if (options.checked != null) 1 else 0) + (if (options.onCreate != null) 1 else 0)
         val height = (OPTION_MENU_BAR_HEIGHT + RESULT_ROW_HEIGHT * rows.coerceAtLeast(1)).coerceAtMost(OPTION_MENU_MAX_HEIGHT)
         SearchWindow(
             state = nothing,
@@ -1716,25 +1791,13 @@ internal fun SectionArrow(collapsed: Boolean, onToggle: () -> Unit) {
  */
 @Composable
 internal fun SearchPartsMenu(open: Boolean, onDismiss: () -> Unit, removed: SearchSplits, onToggle: (SearchPart) -> Unit) {
-    transientMenuDismissal(open, onDismiss)
-    AppDropdownMenu(
-        expanded = open,
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = false),
+    // User rule 2026-11-12: the menu is a Search window of its entries.
+    ActionMenu(
+        open = open,
+        onDismiss = onDismiss,
+        actions = SearchPart.entries.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed))) { onToggle(part) } },
         atPointer = true,
-    ) {
-        Column(Modifier.reportsHover(LocalMenuHover.current)) {
-            SearchPart.entries.forEach { part ->
-                DropdownMenuItem(
-                    text = { Text(part.menuLabel(removed = part.isRemoved(removed))) },
-                    onClick = {
-                        onDismiss()
-                        onToggle(part)
-                    },
-                )
-            }
-        }
-    }
+    )
 }
 
 /**
@@ -2028,31 +2091,20 @@ private fun AddedElementsList(
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                         )
                     }
-                    transientMenuDismissal(menuOpen) { menuOpen = false }
-                    AppDropdownMenu(
-                        expanded = menuOpen,
-                        onDismissRequest = { menuOpen = false },
-                        properties = PopupProperties(focusable = false),
+                    // User rule 2026-11-12: the menu is a Search window of its entries.
+                    val picked = selected.ifEmpty { setOf(key) }
+                    ActionMenu(
+                        open = menuOpen,
+                        onDismiss = { menuOpen = false },
+                        actions = listOfNotNull(
+                            MenuAction(if (picked.size == 1) "remove" else "remove ${picked.size}") { onRemoveAll(picked) },
+                            // Nothing to offer once the selection is all the list holds.
+                            MenuAction(REMOVE_OTHERS_LABEL) { onKeepOnly(picked) }.takeIf { rows.size > picked.size },
+                            // About the row under the pointer alone, whatever is selected: a group is ONE element's.
+                            MenuAction(SHOW_ONLY_ACTIONS_LABEL) { onShowOnlyActions(currentRow) },
+                        ),
                         atPointer = LocalRowMenusAtPointer.current,
-                    ) {
-                        val picked = selected.ifEmpty { setOf(key) }
-                        MenuEntry(if (picked.size == 1) "remove" else "remove ${picked.size}") {
-                            menuOpen = false
-                            onRemoveAll(picked)
-                        }
-                        // Nothing to offer once the selection is all the list holds.
-                        if (rows.size > picked.size) {
-                            MenuEntry(REMOVE_OTHERS_LABEL) {
-                                menuOpen = false
-                                onKeepOnly(picked)
-                            }
-                        }
-                        // About the row under the pointer alone, whatever is selected: a group is ONE element's.
-                        MenuEntry(SHOW_ONLY_ACTIONS_LABEL) {
-                            menuOpen = false
-                            onShowOnlyActions(currentRow)
-                        }
-                    }
+                    )
                     }
             }
             LazyColumn(
@@ -2856,15 +2908,13 @@ private fun TaskPathBox(
         menuOpen = menu != null
     }
     menu?.let { shown ->
-        transientMenuDismissal(menuOpen) { menuOpen = false }
-        AppDropdownMenu(
-            expanded = menuOpen,
-            onDismissRequest = { menuOpen = false },
-            properties = PopupProperties(focusable = false),
+        // User rule 2026-11-12: the menu is a Search window of its entries.
+        ActionMenu(
+            open = menuOpen,
+            onDismiss = { menuOpen = false },
+            actions = org.example.project.scheduler.ui.taskCellMenuActions(shown),
             atPointer = LocalRowMenusAtPointer.current,
-        ) {
-            TaskCellMenuItems(shown) { menuOpen = false }
-        }
+        )
     }
     Row(
         modifier = Modifier
@@ -2897,35 +2947,19 @@ private fun TaskPathBox(
                         .menuToggleClickable(listOpen) { listOpen = it }
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
-                transientMenuDismissal(listOpen) { listOpen = false }
-                AppDropdownMenu(
-                    expanded = listOpen,
-                    onDismissRequest = { listOpen = false },
-                    properties = PopupProperties(focusable = false),
-                ) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                        Text(
-                            text = "${result.paths.size} paths",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        for (path in result.paths) {
-                            Text(
-                                text = SearchDomain.pathLabel(path),
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier
-                                    // Opening the row's menu closes this list (one menu at a time), and the
-                                    // menu then speaks for this line's occurrence.
-                                    .then(
-                                        contextMenuModifier(enabled = true, key = path, onSelect = selectNow) {
-                                            onOpenMenu(path)
-                                        },
-                                    )
-                                    .padding(vertical = 3.dp),
-                            )
+                // User rule 2026-11-12: the menu is a Search window of its entries.
+                // The task's paths, each a row: a click — or a right-click — opens the row's menu for THAT path's occurrence (one menu
+                // at a time: this list closes).
+                ActionMenu(
+                    open = listOpen,
+                    onDismiss = { listOpen = false },
+                    actions = result.paths.map { path ->
+                        MenuAction(SearchDomain.pathLabel(path)) {
+                            selectNow()
+                            onOpenMenu(path)
                         }
-                    }
-                }
+                    },
+                )
             }
         } else {
             Box(Modifier.width(6.dp))
@@ -3023,16 +3057,13 @@ internal fun TaskIdentityRow(
                 afterTitleMinWidth = MIN_PATH_BOX_WIDTH + 8.dp,
             )
             item.actions?.let { actions ->
-                AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("go to task") },
-                        enabled = actions.onGoToTask != null,
-                        onClick = {
-                            menuOpen = false
-                            actions.onGoToTask?.invoke()
-                        },
-                    )
-                }
+                // User rule 2026-11-12: the menu is a Search window of its entries.
+                // PRD §4: "go to task" is GREYED, never absent, when the row's task is nowhere in the tree.
+                ActionMenu(
+                    open = menuOpen,
+                    onDismiss = { menuOpen = false },
+                    actions = listOf(MenuAction("go to task", enabled = actions.onGoToTask != null) { actions.onGoToTask?.invoke() }),
+                )
             }
         }
         if (expanded && hasChildren && childListId != null) {
@@ -3112,6 +3143,8 @@ private fun ItemResultRow(
     hasMenu: Boolean = true,
     /** A drop-down's option: what its right-click does, on the RELEASE ([pickOnSecondaryRelease]). */
     onSecondaryRelease: (() -> Unit)? = null,
+    /** False: greyed, a menu entry that can do nothing now. */
+    enabled: Boolean = true,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val workplaceRuns = LocalWorkplaceRuns.current
@@ -3121,6 +3154,7 @@ private fun ItemResultRow(
     val currentOnDoubleClick by rememberUpdatedState(onDoubleClick)
     Box(
         modifier = resultRowModifier(selected, inSelection)
+            .then(if (enabled) Modifier else Modifier.alpha(0.38f))
             .then(onSecondaryRelease?.let { Modifier.pickOnSecondaryRelease(item.id, it) } ?: Modifier)
             .resultRowGestures(
                 key = item.kind.name + "/" + item.id,
@@ -3161,43 +3195,31 @@ private fun ItemResultRow(
                 )
             }
         }
-        transientMenuDismissal(menuOpen) { menuOpen = false }
-        AppDropdownMenu(
-            expanded = menuOpen,
-            onDismissRequest = { menuOpen = false },
-            properties = PopupProperties(focusable = false),
+        // User rule 2026-11-12: the menu is a Search window of its entries.
+        // EVERY row adds (user rule 2026-10-03): this Search window is every element's own window (2026-10-01), so "add" and
+        // "add and remove others" are never replaced. The rows a lateral window of the app still owns keep a way there, UNDER
+        // the two.
+        val elsewhere =
+            when (item.kind) {
+                SearchDomain.Kind.TaskTree -> "open in All task trees"
+                SearchDomain.Kind.TaskRelation -> "open in Task relations"
+                SearchDomain.Kind.Shortcut -> "open in Keyboard shortcuts"
+                SearchDomain.Kind.Window -> "show window"
+                // What the right-click did on its own until 2026-10-03: making a new element of the row's kind.
+                SearchDomain.Kind.Creation -> "create"
+                SearchDomain.Kind.WorkplaceSetup -> "apply"
+                else -> null
+            }
+        ActionMenu(
+            open = menuOpen,
+            onDismiss = { menuOpen = false },
+            actions = listOfNotNull(
+                MenuAction("add") { onAdd() },
+                MenuAction(ADD_REPLACING_LABEL) { onAddReplacing() },
+                elsewhere?.let { MenuAction(it) { onOpen() } },
+            ),
             atPointer = LocalRowMenusAtPointer.current,
-        ) {
-            // EVERY row adds (user rule 2026-10-03): this Search window is every element's own window (2026-10-01),
-            // so "add" and "add and remove others" are never replaced. A history unit's opening went to the History
-            // window, which its "Information" action replaced, so it has nothing else. The rows a lateral window of the
-            // app still owns keep a way there, UNDER the two.
-            MenuEntry("add") {
-                menuOpen = false
-                onAdd()
-            }
-            MenuEntry(ADD_REPLACING_LABEL) {
-                menuOpen = false
-                onAddReplacing()
-            }
-            val elsewhere =
-                when (item.kind) {
-                    SearchDomain.Kind.TaskTree -> "open in All task trees"
-                    SearchDomain.Kind.TaskRelation -> "open in Task relations"
-                    SearchDomain.Kind.Shortcut -> "open in Keyboard shortcuts"
-                    SearchDomain.Kind.Window -> "show window"
-                    // What the right-click did on its own until 2026-10-03: making a new element of the row's kind.
-                    SearchDomain.Kind.Creation -> "create"
-                    SearchDomain.Kind.WorkplaceSetup -> "apply"
-                    else -> null
-                }
-            if (elsewhere != null) {
-                MenuEntry(elsewhere) {
-                    menuOpen = false
-                    onOpen()
-                }
-            }
-        }
+        )
     }
 }
 
@@ -3282,22 +3304,16 @@ private fun ElementChildren(
                 }
             }
             // The menu, on the selected children: added to the window's elements, as a result row's "add" adds.
-            transientMenuDismissal(menuOpen) { menuOpen = false }
-            AppDropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                properties = PopupProperties(focusable = false),
+            // User rule 2026-11-12: the menu is a Search window of its entries.
+            ActionMenu(
+                open = menuOpen,
+                onDismiss = { menuOpen = false },
+                actions = listOf(
+                    MenuAction("add") { selection.add(replacing = false) },
+                    MenuAction(ADD_REPLACING_LABEL) { selection.add(replacing = true) },
+                ),
                 atPointer = LocalRowMenusAtPointer.current,
-            ) {
-                MenuEntry("add") {
-                    menuOpen = false
-                    selection.add(replacing = false)
-                }
-                MenuEntry(ADD_REPLACING_LABEL) {
-                    menuOpen = false
-                    selection.add(replacing = true)
-                }
-            }
+            )
             }
             if (rowKey in expanded) {
                 ElementChildren(key, childSurface(rowKey), depth + 1, path + key, state, windows, schedulerRuns, claudeLogs, expanded, onToggle, openers, onIntent, kindWidth, selection)

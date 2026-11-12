@@ -1783,18 +1783,16 @@ fun LateralMenu(
             PageNavButton(page = page, onPageSelected = onPageSelected)
             transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
             // At the pointer (anomaly 2026-11-01): declared here, it hung from the top of the menu, wherever the click was.
-            AppDropdownMenu(
-                expanded = backgroundMenu,
-                onDismissRequest = { backgroundMenu = false },
-                properties = PopupProperties(focusable = false),
+            // User rule 2026-11-12: the menu is a Search window of its entries.
+            ActionMenu(
+                open = backgroundMenu,
+                onDismiss = { backgroundMenu = false },
+                actions = listOf(
+                    MenuAction(if (customizing) "Stop customizing" else "Customize") { onCustomize(!customizing) },
+                    MenuAction("Reset") { onReset() },
+                ),
                 atPointer = true,
-            ) {
-                DropdownMenuItem(
-                    text = { Text(if (customizing) "Stop customizing" else "Customize") },
-                    onClick = { backgroundMenu = false; onCustomize(!customizing) },
-                )
-                DropdownMenuItem(text = { Text("Reset") }, onClick = { backgroundMenu = false; onReset() })
-            }
+            )
         }
         items()
     }
@@ -3822,18 +3820,20 @@ private fun PageNavButton(page: OmniPage, onPageSelected: (OmniPage) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         MenuButton(label = page.label, active = false, onClick = { expanded = true })
-        AppDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            OmniPage.entries.forEach { entry ->
-                DropdownMenuItem(
-                    // User rule 2026-11-01: the page the app is on stands out of the list.
-                    text = { Text(entry.label, fontWeight = if (entry == page) androidx.compose.ui.text.font.FontWeight.Bold else null) },
-                    onClick = {
-                        onPageSelected(entry)
-                        expanded = false
-                    },
-                )
-            }
-        }
+        // User rule 2026-11-12: the menu is a Search window of its entries.
+        // The current page in bold no more: it is ticked.
+        OptionSearchMenu(
+            open = expanded,
+            onDismiss = { expanded = false },
+            options = SearchOptions(
+                options = OmniPage.entries.map { it.name to it.label },
+                checked = setOf(page.name),
+                onClick = { name ->
+                    OmniPage.entries.firstOrNull { it.name == name }?.let(onPageSelected)
+                    expanded = false
+                },
+            ),
+        )
     }
 }
 
@@ -7170,100 +7170,50 @@ private fun DayColumn(
         androidx.compose.runtime.key(anchor) {
             transientMenuDismissal(anchor != null) { closeMenu() }
         }
-        AppDropdownMenu(
-            expanded = anchor != null,
-            onDismissRequest = { closeMenu() },
-            offset = anchor?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
-            properties = PopupProperties(focusable = false),
-            // Beside the right-click, not beside the whole day column the menu is declared in (user rule 2026-10-14):
-            // the desktop's menu opens from the pointer; elsewhere the offset says where it was.
-            atPointer = true,
-        ) {
-            val hits = menuHits
-            val branch = menuBranch
-            val topMost = hits.lastOrNull()
-            // PRD §8 (phone): the panel info tops the touch contextual menu — a phone has no hover bubble.
-            if (menuFromTouch && topMost != null) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    // PRD §8 (phone): this is the bubble's stand-in, so it names the task the same way —
-                    // in the task's own colour ([TaskTitleLabel]). The menu sits on an ordinary light
-                    // surface, so it takes the SHEET reading, not the bubble's accent one.
-                    TaskTitleLabel(
-                        label = SchedulerDomain.taskTitleLabel(topMost.title),
-                        taskColor = topMost.taskId?.let { taskSheetColors[it] },
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    Text(
-                        text =
-                            placedTimeRange(topMost, tz),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = CalColors.muted,
-                    )
-                }
-            }
-            if (branch.isNotEmpty()) {
-                // The "restrictive period" chooser, in place of the menu that opened it.
-                branch.forEach { child ->
-                    DropdownMenuItem(
-                        text = { Text(child.label) },
-                        onClick = { pickChoice(child) },
-                    )
-                }
+        // User rule 2026-11-12: the menu is a Search window of its entries.
+        // The entries, read while the menu is open alone.
+        val calendarMenuActions: List<MenuAction> =
+            if (anchor == null) {
+                emptyList()
             } else {
-                // PRD §8: **what "edit…" is about — the ELEMENTS drawn here** ([calendarElementDrafts]).
-                //
-                // **A chooser of one is still not a chooser**: one element under the cursor puts its own
-                // name in the menu and opens its own editor, exactly as before, and a double-click is
-                // untouched ([calendarBlockEditChoice] still goes through [calendarEditChoices]). Two or
-                // more open the one window that holds them all, where they are configured together —
-                // which is the thing a chooser could never do: a chooser picks ONE of the truths at a
-                // point, and the reason there are several is that they were placed as a set.
-                // User rule 2026-10-01: what "edit…" is about is what the Search window it opens lists here — every
-                // distinct thing at the cursor, the LAYER bands included (they are in no hit list: drawn across the
-                // column, they displace nothing), so a task over "no phone unlocked" is two things, not one.
-                val layerHits = remember(hits, anchor) {
-                    anchor?.let { a -> layerBands.filter { pressSpans(it, a.y, currentHourHeightPx) } }.orEmpty()
-                }
-                val things = remember(hits, layerHits) { calendarThingsAt(hits, layerHits) }
-                // User rule 2026-10-11: *"remove the 'edit [something]', as it is done with 'edit...'"* — ONE entry,
-                // "edit…", whatever is under the cursor: one thing or several, it opens the Search window of what is
-                // there. The entries that named a thing ("edit task panel", "edit sleep schedule", "edit timer") are
-                // gone; what they opened is reached from that window, and a double-click on a block still opens the
-                // block's own editor.
-                if (things.isNotEmpty()) {
-                    DropdownMenuItem(
-                        text = { Text("edit…") },
-                        onClick = {
-                            anchor?.let { onEditElementsAt(exactMillisAt(it.y), hits) }
-                            closeMenu()
-                        },
-                    )
-                }
-                // (User rule 2026-10-10: "go to task tree" is no entry of this menu any more — it is an action of the
-                // Search window "edit…" opens on the task.)
-                // PRD §8 (phone): a touch drag scrolls the grid, so a block is moved by arming this menu
-                // option and then dragging — the release commits (see the column's gesture handler). The
-                // generated sleep band is not a movable entity (no panel behind it).
-                if (menuFromTouch && topMost != null && !topMost.sleep) {
-                    DropdownMenuItem(
-                        text = { Text("move") },
-                        onClick = { closeMenu(); movePending = topMost },
-                    )
+                val hits = menuHits
+                val branch = menuBranch
+                val topMost = hits.lastOrNull()
+                buildList {
+                    // PRD §8 (phone): the panel info tops the touch contextual menu — a phone has no hover bubble. A row
+                    // of its own, greyed: it names the task and its time, and does nothing.
+                    if (menuFromTouch && topMost != null) {
+                        add(MenuAction(SchedulerDomain.taskTitleLabel(topMost.title) + "  ·  " + placedTimeRange(topMost, tz), enabled = false) {})
+                    }
+                    if (branch.isNotEmpty()) {
+                        // The "restrictive period" chooser, in place of the menu that opened it.
+                        branch.forEach { child -> add(MenuAction(child.label, keepsOpen = true) { pickChoice(child) }) }
+                    } else {
+                        // PRD §8, user rule 2026-10-11: ONE entry, "edit…", whatever is under the cursor — one thing or
+                        // several (the LAYER bands included, user rule 2026-10-01), it opens the Search window of what is
+                        // there. A double-click on a block still opens the block's own editor.
+                        val layerHits = anchor.let { a -> layerBands.filter { pressSpans(it, a.y, currentHourHeightPx) } }
+                        if (calendarThingsAt(hits, layerHits).isNotEmpty()) {
+                            add(MenuAction("edit…") { onEditElementsAt(exactMillisAt(anchor.y), hits) })
+                        }
+                        // PRD §8 (phone): a touch drag scrolls the grid, so a block is moved by arming this entry and then
+                        // dragging — the release commits. The generated sleep band is not a movable entity.
+                        if (menuFromTouch && topMost != null && !topMost.sleep) add(MenuAction("move") { movePending = topMost })
+                    }
+                    // PRD §8: **one "add" entry**, anchored at the right-click time ([CalendarElementsWindow] answers what,
+                    // of which kind, with which configuration; nothing is laid until its Save).
+                    add(MenuAction("add…") { onAddAt(millisAt(anchor.y)) })
                 }
             }
-            // PRD §8: **one "add" entry**, anchored at the right-click time. The four it replaced named
-            // two of the kinds of restrictive period by hand, which is a funnel with an exception list —
-            // `before bed` and every kind the account defines had no way onto the calendar at all. What is
-            // being added, of which kind, and with which configuration is all answered in
-            // [CalendarElementsWindow] — the same window "edit…" opens — and nothing is laid until its Save.
-            DropdownMenuItem(
-                text = { Text("add…") },
-                onClick = {
-                    anchor?.let { onAddAt(millisAt(it.y)) }
-                    closeMenu()
-                },
-            )
-        }
+        ActionMenu(
+            open = anchor != null,
+            onDismiss = { closeMenu() },
+            actions = calendarMenuActions,
+            offset = anchor?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
+            // Beside the right-click, not beside the whole day column the menu is declared in (user rule 2026-10-14): the
+            // desktop's menu opens from the pointer; elsewhere the offset says where it was.
+            atPointer = true,
+        )
         // User rule 2026-10-02: the menu a right-click opens DURING a block drag. The drag is suspended, not
         // ended — the preview stays where it was and nothing is saved — and the two rows are the two things
         // that can be said about it. Dismissing the menu without choosing takes the drag back up: that loses
@@ -7272,21 +7222,17 @@ private fun DayColumn(
             heldDrag = heldDrag?.copy(menuAt = null, following = true, lastY = null, pressed = false)
         }
         val heldMenuAt = heldDrag?.menuAt
-        AppDropdownMenu(
-            expanded = heldMenuAt != null,
-            onDismissRequest = { resumeHeldDrag() },
+        // User rule 2026-11-12: the menu is a Search window of its entries.
+        ActionMenu(
+            open = heldMenuAt != null,
+            onDismiss = { resumeHeldDrag() },
+            actions = listOf(
+                MenuAction("cancel") { heldDrag = null; dragPreview = null },
+                MenuAction("resume drag") { resumeHeldDrag() },
+            ),
             offset = heldMenuAt?.let { with(density) { DpOffset(it.x.toDp(), it.y.toDp()) } } ?: DpOffset.Zero,
             atPointer = true,
-        ) {
-            DropdownMenuItem(
-                text = { Text("cancel") },
-                onClick = { heldDrag = null; dragPreview = null },
-            )
-            DropdownMenuItem(
-                text = { Text("resume drag") },
-                onClick = { resumeHeldDrag() },
-            )
-        }
+        )
         // PRD §8: **the period boxes' GESTURE, emitted UNDER the panels** — the other half of the drawing
         // further down, which is emitted OVER them.
         //
@@ -11238,19 +11184,15 @@ internal fun EditMenuRow(
             color = taskColor?.let(TaskPalette::foreground) ?: color ?: MaterialTheme.colorScheme.onSurface,
         )
         if (actions != null) {
-            AppDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                // PRD §4: "go to task" is GREYED, never absent, when the row's task is nowhere in the tree.
-                // The row is still a task the field can be pointed at; what it has not got is a place to go,
-                // and a vanishing entry would read as "this row has no menu" instead of saying so.
-                DropdownMenuItem(
-                    text = { Text("go to task") },
-                    enabled = actions.onGoToTask != null,
-                    onClick = {
-                        menuOpen = false
-                        actions.onGoToTask?.invoke()
-                    },
-                )
-            }
+            // User rule 2026-11-12: the menu is a Search window of its entries.
+            // PRD §4: "go to task" is GREYED, never absent, when the row's task is nowhere in the tree. The row is still a task
+            // the field can be pointed at; what it has not got is a place to go, and a vanishing entry would read as "this row has
+            // no menu" instead of saying so.
+            ActionMenu(
+                open = menuOpen,
+                onDismiss = { menuOpen = false },
+                actions = listOf(MenuAction("go to task", enabled = actions.onGoToTask != null) { actions.onGoToTask?.invoke() }),
+            )
         }
     }
 }

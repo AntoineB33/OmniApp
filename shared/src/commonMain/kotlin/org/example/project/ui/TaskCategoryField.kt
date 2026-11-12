@@ -42,23 +42,12 @@ private const val EMPTY_LABEL = "+ category"
  * PRD §5 **the task cell's categories field**: the column, after the minimum time, that says which
  * categories this task carries — and the drop-down that is the only place they are added and removed.
  *
- * The drop-down holds exactly two things, in this order:
- *
- *  - **one row per category the task carries**, each with a **bin** (take it off *this task*; the category
- *    itself is the account's and survives) and a **✎** onto [CategoryEditWindow] — *this category, every
- *    task and every rule*, which is where a rule is written and where the category is deleted. The pair is
- *    deliberately the resilience row's pair (`✎` onto the period's own window, the row itself being about
- *    one task): a category and a kind of period are both objects the tree merely *refers* to;
- *  - **the "add" option, which is a task cell entering Edit Mode** — the [NamingCell] every field naming an
- *    element is, its menus drawn only once it is entered, with the **identity** rows (the account's
- *    categories, so a name already taken attaches THAT one rather than minting a second under the same
- *    spelling, then a "Create" row for a name nobody holds) and the **title suggestions**. What it has not
- *    got is the **Mode selector** — a cell chooses between renaming its task
- *    and pointing at another, and neither question exists here: naming a category IS pointing at it.
- *
- * The drop-down closes on the gesture that changes something, because every one of them is a whole answer:
- * removing a category, opening its window, attaching one. Typing is the exception — the field stays open
- * while it narrows the rows under it, exactly as a cell's does.
+ * User rule 2026-11-12: the drop-down is a **Search window** of the account's task categories, each a check box ticked where
+ * this task carries it — a click attaches it or takes it off *this task* (the category itself is the account's and
+ * survives); a **right-click** opens [CategoryEditWindow] — *this category, every task and every rule*, which is where a
+ * rule is written and where the category is deleted; a name the bar holds that no category has is a **"create"** row,
+ * which makes it (so a name already taken attaches THAT one rather than minting a second). "Select all" attaches every
+ * category listed. Until then it held the carried ones with a bin and a ✎, and a naming cell to add one.
  */
 @Composable
 fun TaskCategoryCell(
@@ -86,78 +75,40 @@ fun TaskCategoryCell(
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             ),
         )
-        AppDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            Column(
-                modifier = Modifier
-                    .widthIn(min = 240.dp, max = 320.dp)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text("Categories", style = MaterialTheme.typography.labelMedium)
-                if (carried.isEmpty()) {
-                    Text(
-                        "This task carries none yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                for (category in carried) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Text(
-                            text = category.title,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.weight(1f),
-                        )
-                        // The bin is about THIS TASK. Deleting the category itself is the ✎ window's
-                        // button, for the same reason the period edit window owns "Delete period".
-                        TextButton(onClick = {
-                            open = false
-                            onIntent(SchedulerIntent.RemoveTaskCategory(taskId, category.id))
-                        }) { Text("🗑") }
-                        TextButton(onClick = {
-                            open = false
-                            onOpenCategoryEdit(category.id)
-                        }) { Text("✎") }
+        // User rule 2026-11-12: the drop-down is a Search window of the account's task categories, ticked where this task
+        // carries them: a click attaches or takes one off THIS task (the category is the account's and survives), a right-click
+        // opens its window ([CategoryEditWindow]: every task and every rule, where it is deleted), and a name nobody holds is
+        // offered as a row that makes it. Typing in the bar narrows the rows.
+        val categories = state.categories.filter { it.kind == CategoryKind.TaskId }
+            .sortedWith(compareBy({ it.id !in carried.map { c -> c.id } }, { it.title.lowercase() }))
+        OptionSearchMenu(
+            open = open,
+            onDismiss = { open = false },
+            options = SearchOptions(
+                options = categories.map { it.id.value to it.title },
+                checked = carried.mapTo(HashSet()) { it.id.value },
+                onClick = { key ->
+                    val id = CategoryId(key)
+                    if (carried.any { it.id == id }) onIntent(SchedulerIntent.RemoveTaskCategory(taskId, id))
+                    else onIntent(SchedulerIntent.AttachTaskCategory(taskId, id))
+                },
+                onSelectAll = { keys ->
+                    val ids = keys.map(::CategoryId)
+                    val all = ids.all { id -> carried.any { it.id == id } }
+                    ids.forEach { id ->
+                        if (all) onIntent(SchedulerIntent.RemoveTaskCategory(taskId, id))
+                        else if (carried.none { it.id == id }) onIntent(SchedulerIntent.AttachTaskCategory(taskId, id))
                     }
-                }
-
-                HorizontalDivider()
-
-                // The "add" option: a task cell in Edit Mode, minus the Mode selector — the [NamingCell] every field
-                // naming an element is (user rule 2026-10-03), so its menus show only once it is entered. Its
-                // identity rows are the account's categories (a name already taken attaches THAT one rather than
-                // minting a second under the same spelling), then a "Create" row for a name nobody holds.
-                Text("Add a category", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                NamingCell(
-                    cellId = CellId("task-categories/${taskId.value}"),
-                    shown = "",
-                    identityLabel = "Categories",
-                    identity = { draft ->
-                        val typed = draft.trim()
-                        // Task id categories only: a task cell category is given to one occurrence, from the Search
-                        // window's "Task cell categories" action (user rule 2026-10-03).
-                        CategoryRules.menuEntries(state, draft, carried.map { it.id }, CategoryKind.TaskId)
-                            .map { NamingRow(it.id.value, it.title) } +
-                            listOfNotNull(
-                                namingCreateRow(typed).takeIf {
-                                    typed.isNotEmpty() && state.categories.none { it.title.equals(typed, ignoreCase = true) }
-                                },
-                            )
-                    },
-                    suggestions = { draft -> CategoryRules.titleSuggestions(state, draft, CategoryKind.TaskId) },
-                    onPick = { key ->
-                        open = false
-                        val created = namingCreatedName(key)
-                        if (created != null) onIntent(SchedulerIntent.AddTaskCategory(taskId, created))
-                        else onIntent(SchedulerIntent.AttachTaskCategory(taskId, CategoryId(key)))
-                    },
-                    width = 296.dp,
-                )
-            }
-        }
+                },
+                onSolo = { key ->
+                    open = false
+                    onOpenCategoryEdit(CategoryId(key))
+                },
+                onCreate = { name ->
+                    open = false
+                    onIntent(SchedulerIntent.AddTaskCategory(taskId, name))
+                },
+            ),
+        )
     }
 }
