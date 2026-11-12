@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The actions section is a Search window — 2026-11-12
+
+User rule: *"The action section is a Search window (hiding its header and its own action and added elements list
+sections)."* New kind `Kind.Action` (with its "Sort by"); `SearchDomain.actionListRows` flattens the section's groups into
+its rows (`ActionListRow`: a group heading or an action, its depth and open state — the same order and open rule as
+before, grouped or not). `AddedActionList` now draws the real `SearchWindow` (`actionRows = ActionSearchRows(...)`, search
+section alone): every row a result row (`ItemResultRow`, `depth`), opened by its arrow (or a double-click, or Enter), an
+open action's controls under it, the open action's row pinned over the top while its controls are scrolled through, the
+lateral menu's "add" kept (`wrap`), the group asked for scrolled to (`reveal`). Its bar is the section's ("Search an
+action"; the window of them all keeps its own bar above, the inner one hidden), its configurations arrow edits the
+section's layout settings. **Behaviour changes:** a press on a row's title selects it (it opened the row before; the arrow
+and a double-click open it); the section is a lazy list again (only the rows on screen laid out), its scrollbar the
+Search window's; the wheel over the section's sides no longer scrolls it. No migration.
+
 ### Right-click menus are Search windows too — 2026-11-12
 
 User rule (*"Right-click menus too"*, the menus taking typing): every right-click menu is a Search window of its entries

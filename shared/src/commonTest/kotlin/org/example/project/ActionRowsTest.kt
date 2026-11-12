@@ -67,4 +67,35 @@ class ActionRowsTest {
         val changed = SearchDomain.Config(actionsGrouped = false, actionsExpanded = true, actionSearchSortsOnly = false, toggledActionRows = setOf("kind/Quota"))
         assertEquals(changed, SearchDomain.Config.decode(changed.encode()))
     }
+
+    /**
+     * User rule 2026-11-12: *"The action section is a Search window"* — its rows ([SearchDomain.actionListRows]), as its
+     * Search window lists them: closed, only the groups; an open group shows its actions a level in; an open action is
+     * open; not grouped, each action is a top row naming the elements it acts on.
+     */
+    @Test
+    fun the_section_s_search_window_lists_its_rows_as_the_section_did() {
+        val config = SearchDomain.Config()
+        val groups = SearchDomain.shownActionGroups(sections(config), added, config)
+        val closed = SearchDomain.actionListRows(groups, config)
+        assertEquals(groups.map { it.id }, closed.map { it.key })
+        assertTrue(closed.all { it.action == null && it.depth == 0 && !it.open })
+
+        val first = groups.first()
+        val opened = config.copy(toggledActionRows = setOf(first.id))
+        val rows = SearchDomain.actionListRows(groups, opened)
+        val under = rows.drop(1).takeWhile { it.depth > 0 }
+        assertEquals(first.actions.toSet(), under.mapNotNull { it.action }.toSet())
+        assertTrue(under.all { it.depth == 1 && !it.open })
+
+        val action = under.first()
+        val actionOpen = opened.copy(toggledActionRows = opened.toggledActionRows + action.id)
+        assertTrue(SearchDomain.actionListRows(groups, actionOpen).first { it.key == action.key }.open)
+
+        val flat = SearchDomain.actionListRows(groups, config.copy(actionsGrouped = false))
+        assertTrue(flat.all { it.depth == 0 || it.action == null })
+        assertEquals(first.title, flat.first { it.action != null }.detail, "it names the elements it acts on")
+        // Every key once: what the list is keyed by.
+        assertEquals(flat.size, flat.map { it.key }.toSet().size)
+    }
 }

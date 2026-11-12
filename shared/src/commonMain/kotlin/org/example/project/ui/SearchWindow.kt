@@ -388,7 +388,7 @@ data class SearchRowOpeners(
             // A notification is a fact that happened: it has nothing to open. Nor has a log entry — its actions show it.
             // A search configuration is set in the configurations tree, where it stands with its control.
             SearchDomain.Kind.Notification, SearchDomain.Kind.ClaudePrompt, SearchDomain.Kind.ClaudeAnswer,
-            SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.SearchConfiguration, SearchDomain.Kind.Option -> Unit
+            SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.SearchConfiguration, SearchDomain.Kind.Option, SearchDomain.Kind.Action -> Unit
             SearchDomain.Kind.WorkplaceSetup -> onApplyWorkplaceSetup(item.id)
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }
@@ -497,6 +497,11 @@ fun SearchWindow(
      * not the account's elements, a click on one ticking or picking it.
      */
     options: SearchOptions? = null,
+    /**
+     * User rule 2026-11-12: **the actions section** ([AddedActionList]): its rows are these ([SearchDomain.Kind.Action]) —
+     * a group or an action, each opened by its arrow, an open action's controls under it.
+     */
+    actionRows: ActionSearchRows? = null,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -588,6 +593,9 @@ fun SearchWindow(
             remember(options.options, options.checked, query) {
                 SearchDomain.optionResults(options.options, query, options.checked, creates = options.onCreate != null)
             }
+        } else if (actionRows != null) {
+            // The section has sorted and filtered them by its bar already ([SearchDomain.shownActionGroups]).
+            remember(actionRows.rows) { actionRows.rows.map { SearchDomain.ItemResult(SearchDomain.Kind.Action, it.key, it.title, it.detail) } }
         } else
         remember(
             kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
@@ -668,6 +676,13 @@ fun SearchWindow(
     val stayAtTop = atTop
     LaunchedEffect(results.firstOrNull()?.let(::resultKey)) { if (stayAtTop) listState.scrollToItem(0) }
     LaunchedEffect(selected) { minTimeEditTaskId = null }
+    // User rule 2026-11-01: the actions section STARTS at the group asked for ([ActionSearchRows.reveal]).
+    LaunchedEffect(actionRows?.reveal) {
+        val (key, _) = actionRows?.reveal ?: return@LaunchedEffect
+        withFrameNanos { }
+        val at = results.indexOfFirst { (it as? SearchDomain.ItemResult)?.id == key }
+        if (at >= 0) listState.scrollToItem(at)
+    }
     // A drop-down's list with no end ([SearchOptions.onNearEnd]): more is asked as its last rows come in view.
     val latestOnNearEnd by rememberUpdatedState(options?.onNearEnd)
     LaunchedEffect(listState, options?.onNearEnd != null) {
@@ -723,6 +738,10 @@ fun SearchWindow(
         val row = results.getOrNull(selected) ?: return
         if (options != null) {
             (row as? SearchDomain.ItemResult)?.let { actOnOption(it.id) }
+            return
+        }
+        if (actionRows != null) {
+            (row as? SearchDomain.ItemResult)?.let { actionRows.byKey[it.id] }?.let { actionRows.onToggle(it.id) }
             return
         }
         if (picker == null) openers.open(state, row)
@@ -1128,6 +1147,7 @@ fun SearchWindow(
                     Text(
                         text =
                             when {
+                                actionRows != null -> actionRows.noneListed
                                 kinds.isEmpty() -> "Tick a kind to look for."
                                 filters.activeCount > 0 -> "Nothing passes the filters."
                                 query.isBlank() -> "Nothing of these kinds yet."
@@ -1291,6 +1311,39 @@ fun SearchWindow(
                             },
                     ) {
                         itemsIndexed(results, key = { _, r -> resultKey(r) }) { index, result ->
+                            // User rule 2026-11-12: a row of the actions section — a result row like any other, its arrow
+                            // opening it, an open action's controls under it.
+                            val actionRow = actionRows?.let { given -> (result as? SearchDomain.ItemResult)?.let { given.byKey[it.id] } }
+                            if (actionRows != null && actionRow != null && result is SearchDomain.ItemResult) {
+                                actionRows.wrap(actionRow) {
+                                    Column(Modifier.fillMaxWidth().outsidePressPart(resultRows)) {
+                                        ItemResultRow(
+                                            kindWidth = resultKindWidth,
+                                            item = result,
+                                            categories = emptyList(),
+                                            expanded = actionRow.open,
+                                            onToggleExpand = { actionRows.onToggle(actionRow.id) },
+                                            query = query,
+                                            selected = rowSelected(index),
+                                            inSelection = rowInSelection(index),
+                                            onSelect = { select(index) },
+                                            onSecondarySelect = { select(index) },
+                                            onOpen = {},
+                                            onDoubleClick = { actionRows.onToggle(actionRow.id) },
+                                            onAdd = {},
+                                            onAddReplacing = {},
+                                            hasMenu = false,
+                                            depth = actionRow.depth,
+                                        )
+                                        if (actionRow.open && actionRow.action != null) {
+                                            Box(Modifier.fillMaxWidth().padding(start = ACTION_ROW_INDENT * (actionRow.depth + 1))) {
+                                                actionRows.content(actionRow)
+                                            }
+                                        }
+                                    }
+                                }
+                                return@itemsIndexed
+                            }
                             // User rule 2026-11-12: with the drop buttons on, each element has one at its right.
                             DropButtonRow(drop = dropOf(result)) {
                             when (result) {
@@ -1377,6 +1430,55 @@ fun SearchWindow(
                                 .background(MaterialTheme.colorScheme.surface),
                         ) {
                             taskRow(pinnedTask.first, pinnedTask.second, true)
+                        }
+                    }
+                    // User rule 2026-11-12, the actions section: **the title of what is shown stays in view** — the open
+                    // action whose controls are being scrolled through, its row drawn again over the top of the list.
+                    // Pressed, it keeps its place: what it hid goes, and the list scrolls back to the row.
+                    val pinnedAction =
+                        pinnedIndex?.let { index ->
+                            (results.getOrNull(index) as? SearchDomain.ItemResult)?.let { row ->
+                                actionRows?.byKey?.get(row.id)?.takeIf { it.open && it.action != null }?.let { Triple(index, row, it) }
+                            }
+                        }
+                    if (pinnedAction != null && actionRows != null) {
+                        val (index, row, action) = pinnedAction
+                        Box(
+                            Modifier
+                                .align(Alignment.TopStart)
+                                .fillMaxWidth()
+                                .padding(end = 12.dp)
+                                .height(RESULT_ROW_HEIGHT)
+                                .clipToBounds()
+                                .background(MaterialTheme.colorScheme.surface),
+                        ) {
+                            ItemResultRow(
+                                kindWidth = resultKindWidth,
+                                item = row,
+                                categories = emptyList(),
+                                expanded = true,
+                                onToggleExpand = {
+                                    actionRows.onToggle(action.id)
+                                    pinScope.launch { listState.scrollToItem(index) }
+                                },
+                                query = query,
+                                selected = rowSelected(index),
+                                inSelection = rowInSelection(index),
+                                onSelect = {
+                                    select(index)
+                                    pinScope.launch { listState.animateScrollToItem(index) }
+                                },
+                                onSecondarySelect = { select(index) },
+                                onOpen = {},
+                                onDoubleClick = {
+                                    actionRows.onToggle(action.id)
+                                    pinScope.launch { listState.scrollToItem(index) }
+                                },
+                                onAdd = {},
+                                onAddReplacing = {},
+                                hasMenu = false,
+                                depth = action.depth,
+                            )
                         }
                     }
                 }
@@ -1656,11 +1758,31 @@ internal fun <T> choiceOptions(options: List<T>, label: (T) -> String, onPick: (
         onClick = { id -> id.toIntOrNull()?.let(options::getOrNull)?.let(onPick) },
     )
 
+/**
+ * User rule 2026-11-12: **what the actions section gives the Search window that is it** ([AddedActionList]): its [rows]
+ * ([SearchDomain.actionListRows]), what an arrow does ([onToggle], by the row's id), the controls an open action shows
+ * under its row ([content]), what each row is drawn inside ([wrap]: the lateral menu's "add" while it is customized), the
+ * group to scroll to ([reveal], with the count of the asks) and what is said where no row is listed.
+ */
+class ActionSearchRows(
+    val rows: List<SearchDomain.ActionListRow>,
+    val onToggle: (String) -> Unit,
+    val content: @Composable (SearchDomain.ActionListRow) -> Unit,
+    val wrap: @Composable (SearchDomain.ActionListRow, @Composable () -> Unit) -> Unit = { _, row -> row() },
+    val reveal: Pair<String, Int>? = null,
+    val noneListed: String = "No action matches.",
+) {
+    val byKey: Map<String, SearchDomain.ActionListRow> = rows.associateBy { it.key }
+}
+
+/** How far each level of the actions section's rows stands in: an action under its group, a group inside another. */
+internal val ACTION_ROW_INDENT = 14.dp
+
 /** What a drop-down's Search window opens on nothing: it opens no element ([OptionSearchMenu]). */
-private val OPTION_OPENERS =
+internal val OPTION_OPENERS =
     SearchRowOpeners(onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {})
 
-private val OPTION_HANDLERS =
+internal val OPTION_HANDLERS =
     AddedActionHandlers(
         onStartNow = {}, onEdit = {}, onGoToTaskTree = {}, onDeepCopyCell = {}, onOpenResilienceSearch = {}, onOpenKindSearch = {},
         timerRun = { _, _ -> }, reminderEditor = {}, onCreate = {}, onDuplicate = { _, _ -> emptyList() }, onPlaceOnCalendar = {},
@@ -3145,6 +3267,8 @@ private fun ItemResultRow(
     onSecondaryRelease: (() -> Unit)? = null,
     /** False: greyed, a menu entry that can do nothing now. */
     enabled: Boolean = true,
+    /** How many levels in the row stands: an action under its group in the actions section ([ACTION_ROW_INDENT]). */
+    depth: Int = 0,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val workplaceRuns = LocalWorkplaceRuns.current
@@ -3168,12 +3292,12 @@ private fun ItemResultRow(
         contentAlignment = Alignment.CenterStart,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(start = ACTION_ROW_INDENT * depth),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            // A drop-down lists options alone: no column saying so on each row.
-            if (item.kind != SearchDomain.Kind.Option) KindSection(item.kind, kindWidth)
+            // A drop-down lists options alone, the actions section actions: no column saying so on each row.
+            if (item.kind != SearchDomain.Kind.Option && item.kind != SearchDomain.Kind.Action) KindSection(item.kind, kindWidth)
             // User rule 2026-11-02: every element has its arrow. A "creation" row is a command, and an option a choice:
             // neither is an element.
             if (item.kind != SearchDomain.Kind.Creation && item.kind != SearchDomain.Kind.Option) SectionArrow(!expanded, onToggleExpand)

@@ -173,12 +173,10 @@ fun AddedElementsConfigurationWindow(
             HorizontalDivider()
 
             // --- The actions ------------------------------------------------------------------------
-            // User rule 2026-10-14: typing in the bar brings the list back to its top.
-            val actionsScroll = androidx.compose.foundation.rememberScrollState()
-            ScrollsToTopWhenTyped(config.actionQuery, actionsScroll)
+            // User rule 2026-11-12: a Search window, its bar the one above ("Search a configuration").
             AddedActionList(
                 state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear,
-                scroll = actionsScroll,
+                ownBar = false,
                 highlighted = config.actionQuery,
                 noneListed = "No configuration matches.",
                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -318,9 +316,7 @@ internal fun AddedActionsSection(
     contentPadding: androidx.compose.foundation.layout.PaddingValues = androidx.compose.foundation.layout.PaddingValues(),
 ) {
     CompactFields {
-    // A vertical scrollbar on its right (user rule 2026-10-03), the same the lists of the window have.
-    val scroll = androidx.compose.foundation.rememberScrollState()
-    Column(modifier.scrollsListFromItsSides(scroll).padding(contentPadding), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier.padding(contentPadding), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // No "All configurations" button (removed 2026-10-04): every action is listed right here.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             SectionArrow(collapsed, onToggleCollapsed)
@@ -334,20 +330,6 @@ internal fun AddedActionsSection(
             )
         }
         if (collapsed) return@Column
-        // User rule 2026-10-11: the section's search bar. It SORTS the actions inside each group of elements — the
-        // ones whose title answers it first — and hides none, nor moves a group ([SearchDomain.sortedByActionSearch]).
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedTextField(
-                value = config.actionSearch,
-                onValueChange = { onConfigChange(config.copy(actionSearch = it)) },
-                singleLine = true,
-                label = { Text("Search an action") },
-                trailingIcon = { SearchBarCross(config.actionSearch) { onConfigChange(config.copy(actionSearch = "")) } },
-                modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
-                    .revertsOnEscape(config.actionSearch) { onConfigChange(config.copy(actionSearch = it)) },
-            )
-            configurationArrow()
-        }
         // The filter is set in the configurations window; said here, with its way off, so a quarter showing one
         // action is never a mystery.
         if (config.actionQuery.isNotBlank()) {
@@ -368,28 +350,32 @@ internal fun AddedActionsSection(
                 ),
                 added,
             )
-        // User rule 2026-10-14: typing in the section's bar brings its list back to the top.
-        ScrollsToTopWhenTyped(config.actionSearch, scroll)
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            AddedActionList(
-                state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear,
-                scroll = scroll,
-                highlighted = config.actionSearch,
-                noneListed = "No action matches.",
-                reveal = reveal,
-                modifier = Modifier.fillMaxSize().padding(end = 12.dp).keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
-            )
-            ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
-        }
+        // User rule 2026-11-12: the section IS a Search window — its search section alone, its bar the section's
+        // ("Search an action", which sorts or filters, [SearchDomain.Config.actionSearchSortsOnly]), its arrow the section's
+        // configurations; typing brings its list back to the top, as in any Search window.
+        AddedActionList(
+            state, sections, added, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear,
+            ownBar = true,
+            highlighted = config.actionSearch,
+            noneListed = "No action matches.",
+            reveal = reveal,
+            modifier = Modifier.fillMaxWidth().weight(1f).keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
+        )
     }
     }
 }
 
 /**
- * The groups of actions, one drawing for the quarter and for the window. **A list drawn by group**: only the groups on
- * screen are composed and laid out (measured 2026-11-02: as a plain column, a keystroke over 500 added log entries of
- * 3 KB held the UI 2 s, every text being laid out again for its highlight). A group is one item, so nothing that can be
- * long may share one: [SearchDomain.actionGroups] gives each element's contents a group.
+ * User rule 2026-11-12: *"The action section is a Search window (hiding its header and its own action and added elements
+ * list sections)."* **The actions, as the Search window lists them**, one drawing for the quarter and for the window of them
+ * all: the real [SearchWindow], its search section alone, its rows the section's ([SearchDomain.actionListRows]: each group
+ * a row whose children are its actions, every row closed by default) — result rows like any other, each opened by its
+ * arrow, an open action's controls under it ([AddedActionEditor]). A lazy list, so a keystroke over hundreds of long log
+ * entries lays out the rows on screen alone (measured 2026-11-02: 2 s as a plain column).
+ *
+ * [ownBar]: its bar is the section's ("Search an action", [SearchDomain.Config.actionSearch]); else the caller has one (the
+ * window of them all's "Search a configuration") and [highlighted] is what it holds. The configurations arrow of the bar
+ * edits the section's own: grouped or not, expanded, the bar sorting or filtering.
  */
 @Composable
 private fun AddedActionList(
@@ -403,10 +389,10 @@ private fun AddedActionList(
     nowMillis: () -> Long,
     onOpenEach: (List<SearchDomain.Result>) -> Unit,
     onClear: (List<SearchDomain.Result>) -> Unit,
-    scroll: androidx.compose.foundation.ScrollState,
+    ownBar: Boolean,
     /** What the bar over the list holds, highlighted in it (user rule 2026-11-02, [HighlightsSearch]). */
     highlighted: String,
-    /** Said in place of the groups where no action is listed. */
+    /** Said in place of the rows where no action is listed. */
     noneListed: String,
     modifier: Modifier = Modifier,
     /** The group the list is to start at ([AddedActionsSection]'s). */
@@ -414,329 +400,72 @@ private fun AddedActionList(
 ) {
     // User rule 2026-10-10: the groups from the widest reach to the narrowest — every element, each kind holding
     // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
-    // …and, inside each, the actions that answer the section's search bar first (user rule 2026-10-11).
     // User rule 2026-11-12: the bar sorts and hides nothing ([SearchDomain.Config.actionSearchSortsOnly]), else filters.
     val groups = SearchDomain.shownActionGroups(sections, added, config, handlers.claudeLogs())
     val listed = SearchDomain.listedGroupIds(groups)
-    val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(config, id, listed)) }
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    // Where each row stands in the column, by key — what the pinned title and "show only its actions" read.
-    val tops = remember { androidx.compose.runtime.mutableStateMapOf<String, Float>() }
-    // User rule 2026-10-13: the added elements' "show only its actions" scrolls the section to this group — once the
-    // others are retracted and laid out. User rule 2026-11-01: the section STARTS at it.
-    val shownGroups by rememberUpdatedState(groups)
-    LaunchedEffect(reveal) {
-        if (reveal == null) return@LaunchedEffect
-        // One frame for the others to retract, one for the column to lay them out so.
-        withFrameNanos { }
-        withFrameNanos { }
-        val group = shownGroups.firstOrNull { it.id == reveal.first } ?: return@LaunchedEffect
-        tops[group.id]?.let { scroll.scrollTo(it.toInt()) }
+    val rows = SearchDomain.actionListRows(groups, config)
+    val latestConfig by rememberUpdatedState(config)
+    val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(latestConfig, id, listed)) }
+    // Its configuration is this window's: the actions its type, its bar the section's; what it changes of it comes back.
+    val inner = config.copy(kinds = setOf(SearchDomain.Kind.Action), pageTypesOnly = false, query = highlighted, added = emptyList())
+    val onInner = { next: SearchDomain.Config ->
+        val current = latestConfig
+        onConfigChange(
+            current.copy(
+                actionSearch = if (ownBar) next.query else current.actionSearch,
+                actionsGrouped = next.actionsGrouped,
+                actionsExpanded = next.actionsExpanded,
+                actionSearchSortsOnly = next.actionSearchSortsOnly,
+                toggledActionRows = next.toggledActionRows,
+            ),
+        )
     }
-    // User rule 2026-11-12: **every row is laid out** — the section knows all it lists, so its height is the sum of its
-    // rows' and its scrollbar is exact from the start, never an estimate a scroll corrects. (It was a lazy list, which
-    // lays out the rows on screen alone: measured 2026-11-02, 500 OPEN log entries of 3 KB held a keystroke 2 s; every row
-    // is closed by default since, a title.) The rows, in order: each title a header the column pins at its top while
-    // what it opens is scrolled through ([ActionRows.Row.header]).
-    val rows = ActionRows()
-    // By the group's id, so that the groups before one coming and going do not make it anew. Two groups sharing an id
-    // (an element added twice by an older build) must not take the column down.
-    val seen = HashSet<String>()
-    fun unique(id: String, index: Int) = if (seen.add(id)) id else "$id#$index"
-    fun actionRows(group: SearchDomain.ActionGroup, action: SearchDomain.AddedAction, index: Int, top: Boolean, about: String?) {
-        val microId = SearchDomain.microGroupId(group, action)
-        val members = group.members.joinToString(",") { SearchDomain.keyOf(it) }
-        if (ownsItsTitle(action)) {
-            rows.add(unique(microId, index)) { _ ->
-                ActionRow(group, action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = top, nested = false, about = about)
-            }
-            return
-        }
-        rows.add(unique(microId, index), header = true) { onToggle ->
-            ActionRow(group, action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, onToggle, top = top, nested = false, about = about, part = RowPart.Title)
-        }
-        if (SearchDomain.isActionRowOpen(config, microId, top)) {
-            // What a field remembers (a draft being typed) belongs to the elements, not to the place in the column.
-            rows.add(unique("$microId/content/$members", index)) { _ ->
-                ActionRow(group, action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = top, nested = false, part = RowPart.Content)
-            }
-        }
-    }
-    if (config.actionsGrouped) {
-        // User rule 2026-11-12: each group a row, its actions its children — every row closed by default.
-        groups.forEachIndexed { index, group ->
-            // Its heading under the group's own id: what "show only its actions" scrolls to.
-            rows.add(unique(group.id, index), header = true) { onToggle ->
-                ActionGroupBlock(group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, onToggle, top = true, headingOnly = true)
-            }
-            if (!SearchDomain.isActionRowOpen(config, group.id, top = true)) return@forEachIndexed
-            for (entry in SearchDomain.microGroups(group, if (config.actionSearchSortsOnly) config.actionSearch else "")) {
-                when (entry) {
-                    is SearchDomain.MicroGroup.Inner ->
-                        rows.add(unique(entry.group.id + "/in/" + group.id, index)) { _ ->
-                            ActionGroupBlock(entry.group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, micro = true)
-                        }
-                    is SearchDomain.MicroGroup.One -> actionRows(group, entry.action, index, top = false, about = null)
-                }
-            }
-        }
-    } else {
-        // Not grouped: one flat list of action rows, each naming the elements it acts on — a group inside a group (a
-        // kind's default configuration) still a row of its own.
-        groups.forEachIndexed { index, group ->
-            for (entry in SearchDomain.microGroups(group, if (config.actionSearchSortsOnly) config.actionSearch else "")) {
-                when (entry) {
-                    is SearchDomain.MicroGroup.One -> actionRows(group, entry.action, index, top = true, about = group.title)
-                    is SearchDomain.MicroGroup.Inner ->
-                        rows.add(unique(entry.group.id, index)) { _ ->
-                            ActionGroupBlock(entry.group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, toggle, top = true)
-                        }
-                }
-            }
-        }
-    }
-    // The title pinned at the top: the last header the scroll has passed, pushed up by the next one as it comes.
-    val headers = rows.list.filter { it.header }.map { it.key }
-    val pinned by remember(headers) {
-        androidx.compose.runtime.derivedStateOf {
-            val at = scroll.value.toFloat()
-            val passed = headers.lastOrNull { key -> (tops[key] ?: Float.MAX_VALUE) < at } ?: return@derivedStateOf null
-            val next = headers.getOrNull(headers.indexOf(passed) + 1)?.let { tops[it] }
-            passed to next?.let { it - at }
-        }
-    }
-    var pinnedHeight by remember { mutableStateOf(0) }
+    var splits by remember { mutableStateOf(if (ownBar) EMBEDDED_SEARCH_SPLITS else EMBEDDED_SEARCH_SPLITS.copy(barRemoved = true)) }
     HighlightsSearch(highlighted) {
-        Box(modifier) {
-            Column(
-                Modifier.fillMaxWidth().verticalScroll(scroll),
-                verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
-            ) {
-                if (sections.isEmpty()) NoteText(noneListed)
-                for (row in rows.list) {
-                    androidx.compose.runtime.key(row.key) {
-                        Box(Modifier.fillMaxWidth().onPlaced { tops[row.key] = it.positionInParent().y }) { row.content(toggle) }
-                    }
-                }
-            }
-            // User rule 2026-11-12: **the title of what is shown stays in view** — the heading or the action title whose
-            // content is being scrolled through, drawn again over the top of the column. Pressed, it keeps its place:
-            // what it hid goes, and the column scrolls back to the title (only what comes after it changed).
-            pinned?.let { (key, nextAt) ->
-                val row = rows.list.firstOrNull { it.key == key } ?: return@let
-                val pushed = nextAt?.let { (it - pinnedHeight).coerceAtMost(0f) } ?: 0f
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .offset { androidx.compose.ui.unit.IntOffset(0, pushed.toInt()) }
-                        .onSizeChanged { pinnedHeight = it.height }
-                        .background(MaterialTheme.colorScheme.surface),
-                ) {
-                    row.content { id ->
-                        val titleAt = tops[key]
-                        toggle(id)
-                        if (titleAt != null) scope.launch {
-                            withFrameNanos { }
-                            scroll.scrollTo(titleAt.toInt())
+        SearchWindow(
+            state = state,
+            openers = OPTION_OPENERS,
+            onStartTaskNow = {},
+            onGoToTaskTree = { _, _ -> },
+            onDeepCopyCell = {},
+            actionHandlers = handlers,
+            onIntent = onIntent,
+            onDismiss = {},
+            config = inner,
+            onConfigChange = onInner,
+            onOpenConfigurations = {},
+            splits = splits,
+            onSplitsChange = { splits = it },
+            embedded = true,
+            actionRows = ActionSearchRows(
+                rows = rows,
+                onToggle = toggle,
+                content = { row ->
+                    val action = row.action
+                    if (action != null) {
+                        val members = row.group.members
+                        // Every action goes through the app's own intents ([SearchDomain.addedIntents]), over its group's elements.
+                        val run = { command: SearchDomain.AddedCommand ->
+                            SearchDomain.addedIntents(state, members, command, nowMillis()).forEach(onIntent)
                         }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * The rows of the actions section in order ([AddedActionList]): each a key, whether it is a title the column pins while
- * what it opens is scrolled through, and its drawing — handed what a press on its arrow does, which a pinned copy changes.
- */
-private class ActionRows {
-    class Row(val key: String, val header: Boolean, val content: @Composable (onToggle: (String) -> Unit) -> Unit)
-
-    val list = ArrayList<Row>()
-
-    fun add(key: String, header: Boolean = false, content: @Composable (onToggle: (String) -> Unit) -> Unit) {
-        list += Row(key, header, content)
-    }
-}
-
-/**
- * One group of the actions section: its heading with **its expansion arrow** (user rule 2026-10-10: *"add an expansion
- * arrow button to each group"* — the sections' own, [SectionArrow]; what is retracted is the window's configuration,
- * [SearchDomain.Config.collapsedActionGroups]), and, while it is open, its actions drawn over its elements, then
- * [inside].
- */
-@Composable
-private fun ActionGroupBlock(
-    group: SearchDomain.ActionGroup,
-    state: SchedulerState,
-    config: SearchDomain.Config,
-    onConfigChange: (SearchDomain.Config) -> Unit,
-    handlers: AddedActionHandlers,
-    onIntent: (SchedulerIntent) -> Unit,
-    nowMillis: () -> Long,
-    onOpenEach: (List<SearchDomain.Result>) -> Unit,
-    onClear: (List<SearchDomain.Result>) -> Unit,
-    onToggle: (String) -> Unit,
-    /** A group INSIDE a group of elements (the default configuration of its kind): titled as an action is ([MicroGroupTitle]). */
-    micro: Boolean = false,
-    /** A row of the list itself, not a child: open by default while the results are expanded ([SearchDomain.isActionRowOpen]). */
-    top: Boolean = false,
-    /** Its heading alone: the list draws its actions as items of their own ([AddedActionList]). */
-    headingOnly: Boolean = false,
-) {
-    val added = group.members
-    val collapsed = !SearchDomain.isActionRowOpen(config, group.id, top)
-    // One box per group, spaced as the section spaces its rows.
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
-    // A group inside a group of elements is titled as a micro group is: set as far right ([MICRO_TITLE_INDENT]).
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().then(if (micro) Modifier.padding(start = MICRO_TITLE_INDENT) else Modifier),
-    ) {
-        SectionArrow(collapsed) { onToggle(group.id) }
-        // A press on the title is a press on the arrow (user rule 2026-10-13).
-        Box(Modifier.togglesSection { onToggle(group.id) }) {
-            when {
-                micro -> MicroGroupTitle(group.title)
-                group.heading == null -> SectionTitle(group.title)
-                else -> Text(searchHighlighted(group.title), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
-            }
-        }
-    }
-    if (collapsed || headingOnly) return@Column
-    // What a field remembers (a draft being typed) belongs to the group's elements, not to its place in the list.
-    androidx.compose.runtime.key(group.id, added.map(SearchDomain::keyOf)) {
-        // Its micro groups — each action, and what it holds inside it (the default configuration of its kind, with its
-        // own arrow) — in the order the section's search bar asks for ([SearchDomain.microGroups]).
-        for (entry in SearchDomain.microGroups(group, if (config.actionSearchSortsOnly) config.actionSearch else "")) {
-            if (entry is SearchDomain.MicroGroup.Inner) {
-                ActionGroupBlock(entry.group, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, onToggle, micro = true)
-                continue
-            }
-            ActionRow(group, (entry as SearchDomain.MicroGroup.One).action, state, config, onConfigChange, handlers, onIntent, nowMillis, onOpenEach, onClear, onToggle, top = false, nested = micro)
-        }
-    }
-    }
-}
-
-/**
- * User rule 2026-11-12: **one action as a row of the actions section** — the section is a Search window whose results are
- * actions. Its arrow and title; its controls are its children, closed by default ([SearchDomain.isActionRowOpen]: a [top]
- * row of an ungrouped list opens with the results expanded). [about]: the elements it acts on, said beside its title where
- * no group row says it (the list not grouped). Every action goes through the app's own intents
- * ([SearchDomain.addedIntents]), over [group]'s elements.
- */
-@Composable
-private fun ActionRow(
-    group: SearchDomain.ActionGroup,
-    action: SearchDomain.AddedAction,
-    state: SchedulerState,
-    config: SearchDomain.Config,
-    onConfigChange: (SearchDomain.Config) -> Unit,
-    handlers: AddedActionHandlers,
-    onIntent: (SchedulerIntent) -> Unit,
-    nowMillis: () -> Long,
-    onOpenEach: (List<SearchDomain.Result>) -> Unit,
-    onClear: (List<SearchDomain.Result>) -> Unit,
-    onToggle: (String) -> Unit,
-    top: Boolean,
-    /** Inside a micro group (the default configuration of a kind): a level below it. */
-    nested: Boolean,
-    about: String? = null,
-    /** Its title, its content, or both ([AddedActionList] draws the two apart, the title sticky). */
-    part: RowPart = RowPart.Whole,
-) {
-    val added = group.members
-    val run = { command: SearchDomain.AddedCommand ->
-        SearchDomain.addedIntents(state, added, command, nowMillis()).forEach(onIntent)
-    }
-    val openEach = { onOpenEach(added) }
-    val clear = { onClear(added) }
-    // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add
-    // in the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
-    AddableAction(action, added, config) {
-        // User rule 2026-10-11: *"give to every micro group the same typo … Put them all in micro groups. A
-        // micro group can have only one action."* — EVERY action is a micro group: its title on a line of its
-        // own, in the one title style ([MicroGroupTitle]), and its editor under it. Until then an editor short
-        // enough sat beside its label, in the label's font, and only the tall ones had a title.
-        // Inside a micro group (the default configuration of a kind), set a little to the right of its title.
-        Column(
-            verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
-            modifier = if (nested) Modifier.padding(start = NESTED_ACTION_INDENT) else Modifier,
-        ) {
-            // One action writes its own title: it has buttons on that line ([LowestCountdownEditor]).
-            val ownTitle = ownsItsTitle(action)
-            // User rule 2026-10-18: *"every micro group retracts"* — its arrow, and a press on its title, as a
-            // group's ([SearchDomain.microGroupId], kept with the window's configuration).
-            val microId = SearchDomain.microGroupId(group, action)
-            val microCollapsed = !SearchDomain.isActionRowOpen(config, microId, top)
-            if ((microCollapsed || !ownTitle) && part != RowPart.Content) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
-                    SectionArrow(microCollapsed) { onToggle(microId) }
-                    // Inside a micro group (the default configuration of a kind), a level below it.
-                    Box(Modifier.togglesSection { onToggle(microId) }) { MicroGroupTitle(action.label, nested = nested) }
-                    // Not grouped: the elements it acts on, beside its title.
-                    if (about != null) {
-                        Text(
-                            "  ·  " + about,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        AddedActionEditor(
+                            state, action, members, config, onConfigChange, handlers, run, nowMillis,
+                            onOpenEach = { onOpenEach(members) }, onClear = { onClear(members) }, titled = false, rowId = row.id,
                         )
                     }
-                }
-            }
-            if (!microCollapsed && part != RowPart.Title) {
-                if (ownTitle) {
-                    // Its title line is its own: the arrow stands before it.
-                    Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(start = MICRO_TITLE_INDENT)) {
-                        SectionArrow(false) { onToggle(microId) }
-                        Box(Modifier.weight(1f)) {
-                            AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = true, rowId = microId)
-                        }
-                    }
-                } else {
-                    AddedActionEditor(state, action, added, config, onConfigChange, handlers, run, nowMillis, openEach, clear, titled = false, rowId = microId)
-                }
-            }
-        }
+                },
+                // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add in
+                // the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
+                wrap = { row, draw ->
+                    val action = row.action
+                    if (action == null) draw() else AddableAction(action, row.group.members, config) { draw() }
+                },
+                reveal = reveal,
+                noneListed = noneListed,
+            ),
+            modifier = modifier,
+        )
     }
-}
-
-/**
- * User rule 2026-11-12: **the wheel (or a touchpad) anywhere in the section scrolls its list** — over its sides, its
- * scrollbar, its bar — wherever no child scrolled with it: an action that scrolls (the calendar) keeps its own wheel, and
- * the list its own. The scroll no child took reaches here on the Main pass and is given to [list], a line a unit.
- */
-private fun Modifier.scrollsListFromItsSides(list: androidx.compose.foundation.ScrollState): Modifier =
-    pointerInput(list) {
-        val line = 64.dp.toPx()
-        coroutineScope {
-            awaitPointerEventScope {
-                while (true) {
-                    val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Main)
-                    if (event.type != androidx.compose.ui.input.pointer.PointerEventType.Scroll) continue
-                    val free = event.changes.filterNot { it.isConsumed }
-                    val dy = free.fold(0f) { sum, change -> sum + change.scrollDelta.y }
-                    if (dy == 0f) continue
-                    free.forEach { it.consume() }
-                    launch { list.scrollBy(dy * line) }
-                }
-            }
-        }
-    }
-
-/** What of an [ActionRow] is drawn: the list draws a title and its content as two items, the title sticky. */
-private enum class RowPart { Whole, Title, Content }
-
-/** An action whose title line is its own editor's (it has buttons on that line, [LowestCountdownEditor]). */
-private fun ownsItsTitle(action: SearchDomain.AddedAction): Boolean =
-    action == SearchDomain.AddedAction.TimerLowestCountdown || action == SearchDomain.AddedAction.ChronoHighestCount
-
-/** A sticky title of the actions section: opaque, so what scrolls under it does not show through. */
-@Composable
-private fun StickyTitle(content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) { content() }
 }
 
 /** How far right the actions inside a micro group stand of it (user rule 2026-10-18: "set them a little to the right"). */

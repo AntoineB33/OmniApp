@@ -181,6 +181,13 @@ object SearchDomain {
         Option("option"),
 
         /**
+         * User rule 2026-11-12: *"The action section is a Search window (hiding its header and its own action and added
+         * elements list sections)."* **A row of the actions section** — a group of the added elements or one action over
+         * them ([actionListRows]); what the section gives its Search window, none in the account.
+         */
+        Action("action"),
+
+        /**
          * One CREATION row per kind of element the user can make ([CREATABLE]): opening it makes a new one, as that
          * kind's own "+ New …" does, and opens its window (user spec 2026-09-26). History units and task relations
          * are not made by the user, so they have none. A new keyboard shortcut is a chord for a window (user rule
@@ -1706,6 +1713,8 @@ object SearchDomain {
         SearchConfigurationSort(Kind.SearchConfiguration, "Sort by", sorts = true),
         /** User rule 2026-11-12: a drop-down's options, sorted as any kind's rows are. */
         OptionSort(Kind.Option, "Sort by", sorts = true),
+        /** User rule 2026-11-12: the actions section's rows, sorted as any kind's rows are. */
+        ActionSort(Kind.Action, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
         TaskSchedulable(Kind.Task, "Schedulable"),
         TaskCategory(Kind.Task, "Category"),
@@ -2701,6 +2710,8 @@ object SearchDomain {
                 // Every configuration of a Search window, named by its label, the type it is about beside it.
                 // Only what a drop-down gives: the account holds none ([optionResults]).
                 Kind.Option -> emptyList()
+                // Only what the actions section gives its Search window ([actionListRows]).
+                Kind.Action -> emptyList()
                 Kind.SearchConfiguration -> Setting.entries.map { setting ->
                     ItemResult(kind, setting.name, setting.label, setting.section?.label ?: "general")
                 }
@@ -3049,7 +3060,7 @@ object SearchDomain {
                         ))
             }
             is ItemResult -> when (result.kind) {
-                Kind.Task, Kind.WorkplaceSetup, Kind.SearchConfiguration, Kind.Option -> true
+                Kind.Task, Kind.WorkplaceSetup, Kind.SearchConfiguration, Kind.Option, Kind.Action -> true
                 Kind.Category ->
                     tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
                 Kind.RestrictivePeriod -> when (filters.periodOrigin) {
@@ -4400,6 +4411,71 @@ object SearchDomain {
      * the same action in another group (another element's) is retracted on its own.
      */
     fun microGroupId(group: ActionGroup, action: AddedAction): String = "action/" + group.id + "/" + action.name
+
+    /**
+     * User rule 2026-11-12: **a row of the actions section's Search window** — a group's heading ([action] null) or one
+     * action of [group] — by its [key] (the arrow's id, [ActionGroup.id] or [microGroupId], made unique), named [title],
+     * [detail] saying the elements it acts on where no group row says it, [depth] levels in, [open] by its arrow
+     * ([isActionRowOpen]).
+     */
+    data class ActionListRow(
+        val key: String,
+        val id: String,
+        val title: String,
+        val detail: String,
+        val depth: Int,
+        val open: Boolean,
+        val group: ActionGroup,
+        val action: AddedAction?,
+    )
+
+    /**
+     * User rule 2026-11-12: **the rows of the actions section, in order**, as its Search window lists them — what it drew
+     * itself until then, the same order and the same open rule. Grouped ([Config.actionsGrouped]): each group a row whose
+     * children are its micro groups ([microGroups]) — an action, or a group inside it with its own actions — every row
+     * closed by default, but a top row while [Config.actionsExpanded]. Not grouped: every action a top row, naming the
+     * elements it acts on, a group inside a group still a row of its own. Only what an open row holds is listed.
+     */
+    fun actionListRows(groups: List<ActionGroup>, config: Config): List<ActionListRow> {
+        val search = if (config.actionSearchSortsOnly) config.actionSearch else ""
+        val out = ArrayList<ActionListRow>()
+        val seen = HashSet<String>()
+        // Two groups sharing an id (an element added twice by an older build) must not share a row.
+        fun unique(id: String): String {
+            var key = id
+            var n = 1
+            while (!seen.add(key)) key = id + "#" + n++
+            return key
+        }
+        fun actionRow(group: ActionGroup, action: AddedAction, depth: Int, top: Boolean, about: String) {
+            val id = microGroupId(group, action)
+            out += ActionListRow(unique(id), id, action.label, about, depth, isActionRowOpen(config, id, top), group, action)
+        }
+        fun groupRow(group: ActionGroup, depth: Int, top: Boolean) {
+            val open = isActionRowOpen(config, group.id, top)
+            out += ActionListRow(unique(group.id), group.id, group.title, "", depth, open, group, null)
+            if (!open) return
+            for (entry in microGroups(group, search)) {
+                when (entry) {
+                    is MicroGroup.One -> actionRow(group, entry.action, depth + 1, top = false, about = "")
+                    is MicroGroup.Inner -> groupRow(entry.group, depth + 1, top = false)
+                }
+            }
+        }
+        for (group in groups) {
+            if (config.actionsGrouped) {
+                groupRow(group, 0, top = true)
+            } else {
+                for (entry in microGroups(group, search)) {
+                    when (entry) {
+                        is MicroGroup.One -> actionRow(group, entry.action, 0, top = true, about = group.title)
+                        is MicroGroup.Inner -> groupRow(entry.group, 0, top = true)
+                    }
+                }
+            }
+        }
+        return out
+    }
 
     /**
      * Every arrow the section shows for [groups] — each group, each group inside one, and each action's micro group in
