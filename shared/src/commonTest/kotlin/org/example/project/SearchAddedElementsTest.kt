@@ -1240,8 +1240,12 @@ class SearchAddedElementsTest {
         val all = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), setOf(SearchDomain.Kind.Alarm))
         assertEquals(listOf(null, SearchDomain.Kind.Alarm), all.map { it.first })
         assertEquals(
-            // …and the menu's "Minimum time weight", an app setting's action since 2026-11-04.
-            listOf(SearchDomain.AddedAction.TaskMinimumTime, SearchDomain.AddedAction.MinimumTimeWeightControl),
+            // …and the menu's "Minimum time weight", an app setting's action since 2026-11-04 and the calendar element's
+            // since 2026-11-12 (the calendar window held it).
+            listOf(
+                SearchDomain.AddedAction.TaskMinimumTime, SearchDomain.AddedAction.CalendarMinimumTimeWeight,
+                SearchDomain.AddedAction.MinimumTimeWeightControl,
+            ),
             SearchDomain.addedActions("minimum", SearchDomain.Kind.entries.toSet()).flatMap { it.second },
         )
     }

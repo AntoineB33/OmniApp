@@ -321,6 +321,8 @@ data class SearchRowOpeners(
     val onOpenAppSetting: (String) -> Unit = {},
     /** A calendar block's row: what is on the calendar at its start — the calendar's own "edit…" there. */
     val onOpenCalendarAt: (Long) -> Unit = {},
+    /** The calendar element's row (user rule 2026-11-12): a Search window showing the calendar. */
+    val onOpenCalendar: () -> Unit = {},
     /** A workplace setup's row, by id: it is applied (user rule 2026-11-01), a command like a "creation" row. */
     val onApplyWorkplaceSetup: (String) -> Unit = {},
     /** The blank field under an element's children, double-clicked: a Search window coming from it ([ElementTree.childSearchConfig]). */
@@ -353,6 +355,7 @@ data class SearchRowOpeners(
             onCreate = { around { onCreate(it) } },
             onOpenAppSetting = { around { onOpenAppSetting(it) } },
             onOpenCalendarAt = { around { onOpenCalendarAt(it) } },
+            onOpenCalendar = { around { onOpenCalendar() } },
             onApplyWorkplaceSetup = { around { onApplyWorkplaceSetup(it) } },
             onOpenChildSearch = { around { onOpenChildSearch(it) } },
         )
@@ -388,6 +391,7 @@ data class SearchRowOpeners(
             SearchDomain.Kind.Shortcut -> onOpenShortcuts()
             SearchDomain.Kind.Window -> onOpenWindow(item.id)
             SearchDomain.Kind.AppSetting -> onOpenAppSetting(item.id)
+            SearchDomain.Kind.Calendar -> onOpenCalendar()
             SearchDomain.Kind.Creation ->
                 SearchDomain.Kind.entries.firstOrNull { it.name == item.id }?.let(onCreate)
         }

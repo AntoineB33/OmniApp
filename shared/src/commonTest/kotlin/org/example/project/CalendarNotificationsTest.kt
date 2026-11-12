@@ -84,31 +84,15 @@ class CalendarNotificationsTest {
         val added = SearchDomain.resolve(state, keys)
         assertEquals(3, added.size)
         assertEquals(keys.map { it.substringAfter('/') }, CalendarNotifications.idsOf(added))
-        // The app adding them is not the user changing the window: it goes on gathering…
-        val opened = SearchDomain.notificationsConfig(since)
+        // User rule 2026-11-12: the window lists them in its search section; what it adds is the calendar, which shows
+        // them as chips. The app writing the chips is not the user changing the window: it goes on gathering…
+        val opened = SearchDomain.notificationsWindowConfig(since, keys.map { it.substringAfter('/') })
         assertTrue(SearchDomain.isUntouchedNotificationsWindow(opened))
-        assertTrue(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = keys)))
+        assertTrue(SearchDomain.isUntouchedNotificationsWindow(opened.copy(calendarView = "")))
         // …until the user adds something else, or changes the search.
-        assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = keys + "Alarm/alarm-0")))
-        assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = keys, query = "break")))
-        assertFalse(SearchDomain.isUntouchedNotificationsWindow(SearchDomain.Config(added = keys)))
-    }
-
-    @Test
-    fun the_calendar_opened_under_the_notifications_window_is_that_windows_on_the_bar() {
-        // User rule 2026-10-14: the calendar's tab is linked to the "unfocused notif" window's — read off what both
-        // hold, so it survives a restart.
-        val since = day + 9 * hour
-        val keys = SearchDomain.notificationKeysSince(log, since)
-        val calendar = CalendarNotifications.WindowConfig(keys.map { it.substringAfter('/') }.reversed())
-        val notif = SearchDomain.notificationsConfig(since).copy(added = keys)
-        val plain = SearchDomain.Config(added = keys)
-        assertEquals("Search#3", CalendarNotifications.notificationsWindowOf(calendar, listOf("Search" to plain, "Search#3" to notif)))
-        // Not a notifications window's chips, or none at all: under no window.
-        assertEquals(null, CalendarNotifications.notificationsWindowOf(CalendarNotifications.WindowConfig(listOf(keys[0].substringAfter('/'))), listOf("Search#3" to notif)))
-        assertEquals(null, CalendarNotifications.notificationsWindowOf(CalendarNotifications.WindowConfig(), listOf("Search#3" to SearchDomain.notificationsConfig(since))))
-        // Something else added beside the notifications does not unlink it.
-        assertEquals("Search#3", CalendarNotifications.notificationsWindowOf(calendar, listOf("Search#3" to notif.copy(added = keys + "Alarm/alarm-0"))))
+        assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = opened.added + "Alarm/alarm-0")))
+        assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(query = "break")))
+        assertFalse(SearchDomain.isUntouchedNotificationsWindow(SearchDomain.Config(added = opened.added)))
     }
 
     @Test

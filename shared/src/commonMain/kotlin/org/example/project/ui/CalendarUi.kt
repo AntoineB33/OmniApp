@@ -4048,591 +4048,252 @@ private fun MiniMonthDay(
 }
 
 /**
- * PRD §7/§8 Calendar: a floating, draggable in-app window (not a modal dialog) showing a
- * Google-Calendar style time grid that scrolls through the days ENDLESSLY — [selectedDate] only says
- * where it opens (the leftmost column), and each column runs on into its own next day below. It is
- * meant to be rendered inside
- * the page-content area so it floats over the tree but never over the lateral menu; grab the title
- * bar to move it around.
+ * User rule 2026-11-12: **the parts of the calendar element** ([org.example.project.scheduler.domain.SearchDomain.Kind.Calendar])
+ * a Search window's actions section draws, each one action of it: the calendar itself, its day selector, its display
+ * and its locks.
  */
-@Composable
-fun CalendarFloatingWindow(
-    selectedDate: LocalDate,
-    today: LocalDate,
-    /**
-     * PRD §8 **"locked on task"** (user spec 2026-09-26), set by a task cell's "go to calendar": the task's title
-     * (null = no such option shown), whether the lock is on, the instant it holds at the middle of the view (the
-     * task's closest panel's middle, else the definitive-schedule front — null = nothing to hold), and whether that
-     * panel is still to come (a loading mark). [lockOnTaskNonce] counts the requests: each one turns "Lock to now"
-     * off, the two locks being one or the other.
-     */
-    lockedTaskTitle: String? = null,
-    lockOnTask: Boolean = false,
-    lockTaskMillis: Long? = null,
-    lockTaskPending: Boolean = false,
-    onLockOnTaskChange: (Boolean) -> Unit = {},
-    lockOnTaskNonce: Int = 0,
-    /**
-     * PRD §8: the grid's display mode and its field in the configuration section. View state of the session,
-     * held by the caller so it outlives the window being closed and reopened.
-     */
-    displayMode: CalendarDisplayMode = CalendarDisplayMode.Week,
-    onDisplayModeChange: (CalendarDisplayMode) -> Unit = {},
-    /** The month the day selector shows (its ‹ / › page it), and the day picked in it. */
-    monthAnchor: LocalDate = LocalDate(today.year, today.month, 1),
-    onMonthAnchorChange: (LocalDate) -> Unit = {},
-    onSelectDate: (LocalDate) -> Unit = {},
-    nowMillis: Long,
-    /**
-     * `docs/scheduler_requirements.md` § *$now line$*: **the exact clock**, read afresh on every frame the
-     * now-line is placed on.
-     *
-     * [nowMillis] is the app's QUANTIZED display instant: every band, panel and projection on this calendar is
-     * derived from it, so it may only move as often as those derivations can afford to be redone. The LINE is
-     * not one of those derivations — it is one number — so it is sampled on the frame clock and read back in
-     * the DRAW phase, which re-draws it every frame while recomposing nothing (see [rememberFrameNowMillis]).
-     * Defaults to the quantized instant, which is what a caller with no clock to hand (a test, a preview) gets.
-     */
-    nowExactMillis: () -> Long = { nowMillis },
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
-    records: List<CalendarRecord> = emptyList(),
-    /**
-     * User rule 2026-10-15: **the rules over a longer interval** — the calendar read ahead of the line at every
-     * boundary it names ([CalendarPiece], [extendCalendarChain]). When given, the window draws the piece the line is
-     * in, in place of [records] / [nowMillis] / [today], and moves to the next one ITSELF at the boundary's own
-     * instant: time passing derives nothing ([rememberActivePiece]).
-     */
-    pieces: State<List<CalendarPiece>>? = null,
-    /** The REAL milliseconds the app clock takes to run this many of its own (a time simulation runs it at anything). */
-    realMillisFor: (Long) -> Long = { it },
-    /**
-     * PRD §8: each task's own colour — its place in the one colour space the tree partitions
-     * ([org.example.project.scheduler.domain.TaskColorSpace]). A task panel is drawn in its task's colour
-     * instead of the single `CalColors.event` blue; a task the tree gives no colour keeps that blue.
-     */
-    taskColors: Map<TaskId, Color> = emptyMap(),
-    /**
-     * The SHEET reading of the same hues — the pale tint the task tree's cells wear. The calendar draws its
-     * panels in [taskColors] (accent, on the timeline), but the surfaces it opens ON TOP of the grid are
-     * ordinary light ones, and a label there is tinted like every other place a task is named
-     * ([TaskTitleLabel]). Which reading to use follows the surface's own background, and that is the one
-     * thing a caller configures.
-     */
-    taskSheetColors: Map<TaskId, Color> = emptyMap(),
+enum class CalendarPart { Grid, Day, Display, Locks }
 
-    /**
-     * PRD §9/§17: true while the work plan for a focused future week beyond the near horizon is still being
-     * computed off the UI thread. Surfaces a "Calculating…" hint so the (necessarily slower) distant-week
-     * fill reads as "loading", never as a frozen calendar.
-     */
-    calculating: Boolean = false,
-    /** PRD §8 focus: a press anywhere in the window makes the calendar the focused surface again. */
-    onFocus: () -> Unit = {},
-    /**
-     * PRD §8 contextual menu **"add"** — invoked with the epoch-millis at the right-click position.
-     *
-     * ONE callback for the one entry that replaced the four the menu used to carry ("add a task", "add a
-     * no-screen period", "add an inactivity period", "add reminder"). What is being added is chosen in the
-     * window it opens ([org.example.project.ui.CalendarElementsWindow]), which is where the account's own kinds of
-     * restrictive period can be offered at all — a menu naming two of them by hand could never list them.
-     */
-    onAddAt: (Long) -> Unit = {},
-    /**
-     * PRD §8 drag/resize commit: the block, its new start/end millis, and whether Overlap Mode was armed
-     * (the bounds are raw/overlapping for a move or when armed, else a resize clamped at its neighbours).
-     */
-    onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit = { _, _, _, _ -> },
-    /** PRD §8 task contextual menu "Edit": requests opening the edit window for this block. */
-    onEditChoice: (CalendarEditChoice) -> Unit = {},
-    /**
-     * PRD §8 **"edit…"** with two or more elements at the cursor: open the one add/edit window on them
-     * ([CalendarElementsWindow]), anchored at that instant. The hits are passed raw — `App.kt` turns them
-     * into drafts through [calendarElementDrafts] and seeds what only it holds (a task's resilience, an
-     * alarm's weekdays).
-     */
-    onEditElementsAt: (millis: Long, hits: List<PlacedRecord>) -> Unit = { _, _ -> },
-    /**
-     * PRD §8 task contextual menu "go to task tree": requests selecting the first cell showing this
-     * panel's task. The panel's task id is `null` when its title names no task at all, which is one of the
-     * ways a panel can have no cell to go to — the handler is what says so.
-     */
-    onGoToTaskTree: (TaskId?, String) -> Unit = { _, _ -> },
-    /** PRD §8 task contextual menu "Remove": requests deleting this block. */
-    /** PRD §14 Reminders: a reminder tag was clicked → toggle its checked (done) state. */
-    onToggleReminder: (PlacedRecord) -> Unit = {},
-    /** PRD §8 Overlap Mode: new horizontal weights for panels whose shared-width edge was dragged. */
-    onAdjustWeights: (Map<String, Double>) -> Unit = {},
-    /** PRD §8 Overlap Mode: whether overlap is currently armed (toggled by `O` while the calendar is focused). */
-    overlapArmed: Boolean = false,
-    /** PRD §8 Overlap Mode: `O` toggles "allow overlap" for the next move/resize. */
-    onToggleOverlap: () -> Unit = {},
-    /** PRD §15: whether the calendar draws the screen breaks (cosmetic display toggle). */
-    showScreenBreaks: Boolean = true,
-    /** PRD §15: flip the "Screen breaks" display switch. */
-    onToggleScreenBreaks: (Boolean) -> Unit = {},
-    /** The scheduler engine's time limit after a change, in seconds, and its edit — the configuration section's field. */
-    planCalculationLimitSeconds: Int = org.example.project.scheduler.state.DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
-    onPlanCalculationLimitChange: (Int) -> Unit = {},
-    /** The balance of the score's two criteria (`SchedulerState.minimumTimeWeight`) and its edit. */
-    minimumTimeWeight: Double = org.example.project.scheduler.state.DEFAULT_MINIMUM_TIME_WEIGHT,
-    onMinimumTimeWeightChange: (Double) -> Unit = {},
-    /** The account's sleep schedule and its edit — the configuration section's "Sleep" (user rule 2026-10-07). */
-    sleepSchedule: org.example.project.scheduler.model.SleepSchedule? = null,
-    onSleepScheduleChange: (org.example.project.scheduler.model.SleepSchedule) -> Unit = {},
-    /** The configuration section's width in dp where the caller has a word on it (a menu button's), and each drag told back. */
-    configurationWidthDp: Float? = null,
-    onConfigurationWidthChange: (Float) -> Unit = {},
-    /** Which of the two sections (the grid, the configuration) are retracted, the same way. */
-    sectionsHidden: List<Boolean>? = null,
-    onSectionsHiddenChange: (List<Boolean>) -> Unit = {},
-    /** PRD §14: whether the calendar draws the reminder tags (cosmetic display toggle). */
-    showReminders: Boolean = true,
-    /** PRD §14: flip the "Reminders" display switch. */
-    onToggleReminders: (Boolean) -> Unit = {},
-    /** PRD §7 Automatic Schedule Switch: current state + toggle callback (the configuration section's switch). */
-    automaticSchedule: Boolean = true,
-    onToggleAutomaticSchedule: (Boolean) -> Unit = {},
-    /** PRD §8/§9 calendar history: Ctrl+Z / Ctrl+Y while the calendar holds keyboard focus. */
-    onUndo: () -> Unit = {},
-    onRedo: () -> Unit = {},
-    /** Initial (persisted) drag position; centered by default. */
-    initialOffset: Offset = Offset.Zero,
-    /** Initial size in px; `Size.Zero` opens the window at its default size. */
-    initialSize: Size = Size.Zero,
-    /** Persists the window's new position/size when a move or resize gesture ends (local-only geometry). */
-    onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
-    /**
-     * PRD §8/§9: the day span the endless scroll currently has on screen — its first (top-left) day and
-     * how many days the grid covers. There is no focused WEEK to derive it from any more, so the
-     * schedule horizon and every display projection follow this instead.
-     */
-    onVisibleDaysChanged: (LocalDate, Int) -> Unit = { _, _ -> },
-    /**
-     * PRD §8 / ADR 0009: **how many milliseconds the now-line takes to cross ONE PIXEL** at the zoom in force
-     * — the display's own temporal resolution, reported up because the zoom is Compose-only state that lives
-     * in here.
-     *
-     * It is what bounds how often the app re-derives whatever is pinned to the line (a pose the line drags in
-     * mode 1, the panel growing behind it, a live band ending at it). Those follow the line affinely, so the
-     * only reason to redraw one is that it has moved far enough to see: ~75 s per pixel at the default zoom,
-     * ~0.6 s at the ceiling. Everything else waits for a boundary the rules named
-     * ([SchedulerDomain.displayResampleDelayMillis]).
-     */
-    onNowLineResolutionChanged: (Long) -> Unit = {},
-    /**
-     * PRD §7: bumped on every date pick in the day selector. The grid scrolls away from
-     * [selectedDate] freely, so re-picking the day already selected must still jump back — this is what
-     * makes that pick observable.
-     */
-    jumpNonce: Int = 0,
-    /**
-     * User rule 2026-10-14: the stretch of time (millis) the window opens on, whole — the calendar under an
-     * "unfocused notif" window: its first notification to its last, the now-line included. It opens with "Lock to
-     * now" OFF, which would otherwise pull the view onto the line alone. Null = the ordinary opening.
-     */
-    openingSpan: Pair<Long, Long>? = null,
-) {
-    val frame = rememberWindowFrameState("Calendar", initialOffset, initialSize)
-    // PRD §8 zoom: the zoom mechanics live in WeekView (which owns the scroll state + viewport geometry,
-    // so it can keep the point under the cursor fixed). The keyboard shortcuts here drive it through this
-    // action holder; [ctrlHeld] tracks the Ctrl modifier so WeekView's scroll handler knows when a wheel
-    // turn means "zoom toward the cursor".
-    val zoomActions = remember { CalendarZoomActions() }
-    var ctrlHeld by remember { mutableStateOf(false) }
-    // PRD §8 now-line lock: while on, the grid is held with the now-line at the MIDDLE of the viewport and
-    // a zoom pivots around it instead of the cursor; scrolling (or a date pick) releases it. Like the zoom
-    // itself this is pure per-device view state with no meaning beyond the open window, so it lives only in
-    // Compose state — neither persisted nor synced (CLAUDE.md: local-only view state).
-    // It starts ON: opening the calendar always lands on the present (with the matching [WeekView] zoom
-    // fit), and the window is only composed while it is open, so every open gets this fresh default.
-    var lockNowLine by remember { mutableStateOf(openingSpan == null) }
-    // User rule 2026-10-14 (anomaly: *"the $now line$ is moving forward, so the window is supposed to get larger,
-    // otherwise the configurations of this calendar window are not satisfied"*): **"Lock to notifications"** — the
-    // view HELD on [openingSpan], its end following the line, as "Lock to now" holds the line in the middle. On for a
-    // calendar opened on a stretch, and on again whenever the stretch changes (new notifications, or the link read a
-    // frame late); released like the other locks, by a scroll, a zoom or a date pick of the hand.
-    var lockNotifications by remember { mutableStateOf(openingSpan != null) }
-    LaunchedEffect(openingSpan) {
-        if (openingSpan != null) {
-            lockNowLine = false
-            lockNotifications = true
-        }
-    }
-    // "go to calendar" asked for the task lock: the now-line lock yields to it.
-    LaunchedEffect(lockOnTaskNonce) {
-        if (lockOnTaskNonce > 0) {
-            lockNowLine = false
-            lockNotifications = false
-        }
-    }
-    // The three locks are one or another: turning one on releases the others.
-    fun setLockNowLine(on: Boolean) {
+/**
+ * Draws one [CalendarPart] of the calendar of the Search window it is provided in — `App` provides it, since the
+ * calendar reads and writes most of the app; the actions section only says where. Null outside the app (a preview).
+ */
+val LocalCalendarElement = compositionLocalOf<(@Composable (CalendarPart) -> Unit)?> { null }
+
+/** The calendar's height in a Search window's actions section until its handle is dragged. */
+internal val CALENDAR_ELEMENT_HEIGHT = 520.dp
+
+/**
+ * User rule 2026-11-12: **one Search window's view of the calendar element** — what its parts ([CalendarPart]) share,
+ * each drawn in a row of its own: the zoom's actions and the Ctrl key the grid's wheel reads, the three locks (one or
+ * another), the month the day selector shows, the count of date picks (a pick of the day already picked still jumps),
+ * and the grid's height. Compose-only view state, as the calendar window's was; the day picked and the display are the
+ * window's configuration ([org.example.project.scheduler.domain.SearchDomain.Config.calendarDay]).
+ */
+class CalendarElementView(val openedOn: LocalDate, spanLocked: Boolean = false) {
+    internal val zoomActions = CalendarZoomActions()
+    internal var ctrlHeld by mutableStateOf(false)
+    var lockNowLine by mutableStateOf(!spanLocked)
+    var lockNotifications by mutableStateOf(spanLocked)
+    var monthAnchor by mutableStateOf(LocalDate(openedOn.year, openedOn.month, 1))
+    var jumpNonce by mutableStateOf(0)
+    var gridHeightDp by mutableStateOf(CALENDAR_ELEMENT_HEIGHT.value)
+    internal val focusRequester = FocusRequester()
+
+    /** The three locks are one or another: turning one on releases the others ([releaseTask]: the task lock's). */
+    fun setLockNowLine(on: Boolean, releaseTask: () -> Unit) {
         lockNowLine = on
         if (on) {
-            onLockOnTaskChange(false)
+            releaseTask()
             lockNotifications = false
         }
     }
-    fun setLockNotifications(on: Boolean) {
+
+    fun setLockNotifications(on: Boolean, releaseTask: () -> Unit) {
         lockNotifications = on
         if (on) {
             lockNowLine = false
-            onLockOnTaskChange(false)
-        }
-    }
-    // PRD §8: the calendar owns the keyboard while it is the active surface, so its own shortcuts (O to
-    // toggle overlap, Ctrl+Z/Y to undo/redo the calendar history, Ctrl +/- to zoom) work even though the
-    // tree normally holds focus. Focus is (re)claimed when the window opens, on every press inside it, and whenever
-    // the frame host makes it the focused window ([AppWindowFrame]'s `keyboardFocus`).
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
-    AppWindowFrame(
-        title = "Calendar",
-        state = frame,
-        onClose = onDismiss,
-        defaultWidth = 920.dp,
-        defaultHeight = 560.dp,
-        modifier = modifier
-            .focusRequester(focusRequester)
-            .focusable()
-            // PRD §8: calendar-owned keyboard shortcuts while it is the focused surface.
-            .onPreviewKeyEvent { event ->
-                // Track Ctrl/Cmd on every event (down and up) so Ctrl+scroll zoom (below) knows the state.
-                ctrlHeld = event.isCtrlPressed || event.isMetaPressed
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                val mod = ctrlHeld
-                // PRD §5: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y, read by the app's ONE interpreter of them.
-                val undoRedo = undoRedoIntentFor(event)
-                when {
-                    event.key == Key.O && !mod -> {
-                        onToggleOverlap()
-                        true
-                    }
-                    undoRedo == SchedulerIntent.Undo -> {
-                        onUndo()
-                        true
-                    }
-                    undoRedo == SchedulerIntent.Redo -> {
-                        onRedo()
-                        true
-                    }
-                    // PRD §8 zoom (toward the cursor): Ctrl + '+'/'=' (or numpad +) in, Ctrl + '-' out, Ctrl+0 reset.
-                    mod && (event.key == Key.Equals || event.key == Key.Plus || event.key == Key.NumPadAdd) -> {
-                        zoomActions.zoomIn()
-                        true
-                    }
-                    mod && (event.key == Key.Minus || event.key == Key.NumPadSubtract) -> {
-                        zoomActions.zoomOut()
-                        true
-                    }
-                    mod && (event.key == Key.Zero || event.key == Key.NumPad0) -> {
-                        zoomActions.reset()
-                        true
-                    }
-                    else -> false
-                }
-            }
-            // User rule 2026-10-02: **Space turns "Lock to now" on.** On the way back UP from the focused element,
-            // not in the preview above: a field being edited in the calendar takes its own space first (it
-            // consumes the key it types), and only a space nothing took reaches here.
-            .onKeyEvent { event ->
-                val plain = !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !event.isShiftPressed
-                if (event.type == KeyEventType.KeyDown && event.key == Key.Spacebar && plain) {
-                    setLockNowLine(true)
-                    true
-                } else {
-                    false
-                }
-            },
-        // PRD §8 focus: the frame observes every press inside the window on the Initial pass (without
-        // consuming, so the week view and its blocks still get them). That marks the calendar as the
-        // focused surface AND reclaims the keyboard, so clicking back into the calendar re-engages its
-        // own shortcuts.
-        onRaise = {
-            onFocus()
-            runCatching { focusRequester.requestFocus() }
-        },
-        onGeometryChange = onGeometryChange,
-        // …and so does being focused any other way — its window-bar tab, the lateral menu, `Shift+Alt` navigation, the
-        // launch: the purple tab used to say "focused" while Space went nowhere until a click inside (2026-10-03).
-        keyboardFocus = focusRequester,
-        headTrailing = {
-            // PRD §9/§17: a distant future week fills its plan off the UI thread — show it's working.
-            if (calculating) {
-                Text(
-                    text = "Calculating…",
-                    style = MaterialTheme.typography.labelMedium,
-                    // On the head: the colour drawn on the window's own (`AppWindowFrame`).
-                    color = androidx.compose.material3.LocalContentColor.current,
-                    modifier = Modifier.padding(end = 8.dp),
-                )
-            }
-        },
-    ) {
-        // User rule 2026-10-07: as in the Search window, each of the two sections is retracted to its arrow and
-        // expanded again by it ([SectionArrow]), and the line between them is dragged — up to the edges. Compose-only,
-        // a way of looking at the window. The grid stays COMPOSED while it is retracted or squeezed (laid out at
-        // [CALENDAR_GRID_MIN_WIDTH] at least and cut): its scroll and its zoom are its own, and a week laid out in
-        // no width at all is a case nothing else asks of it.
-        var gridCollapsed by remember { mutableStateOf(sectionsHidden?.getOrNull(0) ?: false) }
-        var configurationCollapsed by remember { mutableStateOf(sectionsHidden?.getOrNull(1) ?: false) }
-        LaunchedEffect(sectionsHidden) {
-            sectionsHidden?.let {
-                gridCollapsed = it.getOrNull(0) ?: false
-                configurationCollapsed = it.getOrNull(1) ?: false
-            }
-        }
-        LaunchedEffect(gridCollapsed, configurationCollapsed) { onSectionsHiddenChange(listOf(gridCollapsed, configurationCollapsed)) }
-        var configurationWidth by remember { mutableStateOf(configurationWidthDp?.dp ?: CALENDAR_CONFIGURATION_WIDTH) }
-        // Given from outside (a menu button putting its window back): taken; a drag tells it back.
-        LaunchedEffect(configurationWidthDp) { configurationWidthDp?.let { configurationWidth = it.dp } }
-        var sectionsWidthPx by remember { mutableStateOf(0) }
-        // The configuration's width as laid out — the whole room while the grid is retracted — which a drag starts from.
-        var configurationShownPx by remember { mutableStateOf(0) }
-        val sectionsDensity = LocalDensity.current
-        Row(Modifier.weight(1f).fillMaxWidth().onSizeChanged { sectionsWidthPx = it.width }) {
-            if (gridCollapsed) {
-                Column(Modifier.fillMaxHeight().padding(horizontal = 6.dp, vertical = 10.dp)) {
-                    SectionArrow(collapsed = true, onToggle = { gridCollapsed = false })
-                }
-            }
-            Box(
-                Modifier
-                    .then(if (gridCollapsed) Modifier.width(0.dp) else Modifier.weight(1f))
-                    .fillMaxHeight()
-                    .keepsWidthAbove(CALENDAR_GRID_MIN_WIDTH),
-            ) {
-                val piece = pieces?.value?.takeIf { it.isNotEmpty() }?.let { rememberActivePiece(it, nowExactMillis, realMillisFor) }
-                WeekView(
-                    selectedDate = selectedDate,
-                    today = piece?.today ?: today,
-                    nowMillis = piece?.startMillis ?: nowMillis,
-                    nowExactMillis = nowExactMillis,
-                    records = piece?.records ?: records,
-                    taskColors = taskColors,
-                    taskSheetColors = taskSheetColors,
-                    zoomActions = zoomActions,
-                    ctrlHeld = ctrlHeld,
-                    onAddAt = onAddAt,
-                    onCommitBounds = onCommitBounds,
-                    onEditChoice = onEditChoice,
-                    onEditElementsAt = onEditElementsAt,
-                    onGoToTaskTree = onGoToTaskTree,
-                    onToggleReminder = onToggleReminder,
-                    onAdjustWeights = onAdjustWeights,
-                    overlapArmed = overlapArmed,
-                    jumpNonce = jumpNonce,
-                    onVisibleDaysChanged = onVisibleDaysChanged,
-                    onNowLineResolutionChanged = onNowLineResolutionChanged,
-                    lockNowLine = lockNowLine,
-                    onLockNowLineChange = ::setLockNowLine,
-                    lockTaskMillis = lockTaskMillis?.takeIf { lockOnTask },
-                    onReleaseTaskLock = { onLockOnTaskChange(false) },
-                    displayMode = displayMode,
-                    spanLock = openingSpan?.takeIf { lockNotifications },
-                    onReleaseSpanLock = { lockNotifications = false },
-                    onCollapse = { gridCollapsed = true },
-                )
-                // The grid's arrow, in its top left corner (the hours' gutter, above the first hour).
-                if (!gridCollapsed) {
-                    Box(Modifier.align(Alignment.TopStart).padding(2.dp)) {
-                        SectionArrow(collapsed = false, onToggle = { gridCollapsed = true })
-                    }
-                }
-            }
-            // Anomaly 2026-10-21 (*"the line must be draggable even if its section got minimized"*): as the task tree
-            // window's — the line is dragged whatever is retracted, and a drag out of a retracted section brings it back
-            // at the width the drag gives it.
-            if (!(gridCollapsed && configurationCollapsed)) {
-                SectionSeparator(
-                    vertical = true,
-                    onDrag = { delta ->
-                        val room = with(sectionsDensity) { sectionsWidthPx.toDp() } - SECTION_SEPARATOR_THICKNESS
-                        // Where the line stands now: at the far left with the grid retracted, the far right with the configuration.
-                        val from =
-                            if (configurationCollapsed) 0.dp
-                            else if (gridCollapsed) with(sectionsDensity) { configurationShownPx.toDp() }
-                            else configurationWidth
-                        configurationWidth =
-                            (from - with(sectionsDensity) { delta.toDp() }).coerceIn(0.dp, room.coerceAtLeast(0.dp))
-                        gridCollapsed = false
-                        configurationCollapsed = false
-                    },
-                    onDragEnd = { onConfigurationWidthChange(configurationWidth.value) },
-                )
-            } else {
-                VerticalDivider()
-            }
-            // The configuration section: the day selector, then the view switches. Beside the grid rather
-            // than above it, so it costs the week none of its height — and on its right, like the task tree
-            // window's.
-            if (configurationCollapsed) {
-                Column(Modifier.fillMaxHeight().padding(horizontal = 6.dp, vertical = 10.dp)) {
-                    SectionArrow(collapsed = true, onToggle = { configurationCollapsed = false })
-                }
-            } else
-            CalendarConfigurationSection(
-                // The whole window while the grid is retracted; else the width the line was dragged to.
-                modifier = (if (gridCollapsed) Modifier.weight(1f) else Modifier.sectionWidth { configurationWidth })
-                    .onSizeChanged { configurationShownPx = it.width },
-                onCollapse = { configurationCollapsed = true },
-                sleepSchedule = sleepSchedule,
-                onSleepScheduleChange = onSleepScheduleChange,
-                monthAnchor = monthAnchor,
-                onMonthAnchorChange = onMonthAnchorChange,
-                selectedDate = selectedDate,
-                today = today,
-                onSelectDate = onSelectDate,
-                displayMode = displayMode,
-                onDisplayModeChange = onDisplayModeChange,
-                automaticSchedule = automaticSchedule,
-                onToggleAutomaticSchedule = onToggleAutomaticSchedule,
-                lockNowLine = lockNowLine,
-                onLockNowLineChange = ::setLockNowLine,
-                lockNotifications = lockNotifications.takeIf { openingSpan != null },
-                onLockNotificationsChange = ::setLockNotifications,
-                lockedTaskTitle = lockedTaskTitle,
-                lockOnTask = lockOnTask,
-                lockTaskPending = lockTaskPending,
-                onLockOnTaskChange = { on ->
-                    if (on) {
-                        lockNowLine = false
-                        lockNotifications = false
-                    }
-                    onLockOnTaskChange(on)
-                },
-                showReminders = showReminders,
-                onToggleReminders = onToggleReminders,
-                showScreenBreaks = showScreenBreaks,
-                onToggleScreenBreaks = onToggleScreenBreaks,
-                planCalculationLimitSeconds = planCalculationLimitSeconds,
-                onPlanCalculationLimitChange = onPlanCalculationLimitChange,
-                minimumTimeWeight = minimumTimeWeight,
-                onMinimumTimeWeightChange = onMinimumTimeWeightChange,
-            )
+            releaseTask()
         }
     }
 }
 
 /**
- * The calendar window's **configuration section**, down its right side: the day selector (it used to sit in the
- * lateral menu), PRD §7's "Auto schedule" switch (from the lateral menu too, 2026-10-02) and the view switches — PRD §8 "Lock to now", PRD §14/§15 "Reminders" / "Screen breaks"
- * (cosmetic; notifications keep firing), which used to hide in a "View ▾" drop-down. Not in the head: the head
- * is the drag handle, and a switch there is a press the drag has to be taught to leave alone. It scrolls on its
- * own when the window is shorter than it.
+ * The calendar element's **calendar** ([CalendarPart.Grid]): the grid of the calendar window, in a row of its own
+ * height whose bottom edge is dragged — the actions section scrolls, and the grid's endless scroll must not fight it.
+ * It holds the keyboard as the calendar window did: O, Ctrl +/-/0 and Space; Ctrl+Z / Ctrl+Y are its Search window's,
+ * where the calendar's changes are made ([org.example.project.scheduler.state.SchedulerIntent.MadeIn]).
  */
 @Composable
-private fun CalendarConfigurationSection(
-    monthAnchor: LocalDate,
-    onMonthAnchorChange: (LocalDate) -> Unit,
+fun CalendarElementGrid(
+    view: CalendarElementView,
     selectedDate: LocalDate,
     today: LocalDate,
-    onSelectDate: (LocalDate) -> Unit,
+    nowMillis: Long,
+    nowExactMillis: () -> Long,
+    records: List<CalendarRecord>,
+    pieces: State<List<CalendarPiece>>?,
+    realMillisFor: (Long) -> Long,
+    taskColors: Map<TaskId, Color>,
+    taskSheetColors: Map<TaskId, Color>,
+    calculating: Boolean,
+    onFocus: () -> Unit,
+    onAddAt: (Long) -> Unit,
+    onCommitBounds: (PlacedRecord, Long, Long, Boolean) -> Unit,
+    onEditChoice: (CalendarEditChoice) -> Unit,
+    onEditElementsAt: (millis: Long, hits: List<PlacedRecord>) -> Unit,
+    onGoToTaskTree: (TaskId?, String) -> Unit,
+    onToggleReminder: (PlacedRecord) -> Unit,
+    onAdjustWeights: (Map<String, Double>) -> Unit,
+    overlapArmed: Boolean,
+    onToggleOverlap: () -> Unit,
     displayMode: CalendarDisplayMode,
-    onDisplayModeChange: (CalendarDisplayMode) -> Unit,
-    automaticSchedule: Boolean,
-    onToggleAutomaticSchedule: (Boolean) -> Unit,
-    lockNowLine: Boolean,
-    onLockNowLineChange: (Boolean) -> Unit,
-    /** "Lock to notifications", or null where the window was opened on no stretch: no switch then. */
-    lockNotifications: Boolean?,
-    onLockNotificationsChange: (Boolean) -> Unit,
-    lockedTaskTitle: String?,
+    lockTaskMillis: Long?,
     lockOnTask: Boolean,
-    lockTaskPending: Boolean,
     onLockOnTaskChange: (Boolean) -> Unit,
-    showReminders: Boolean,
-    onToggleReminders: (Boolean) -> Unit,
-    showScreenBreaks: Boolean,
-    onToggleScreenBreaks: (Boolean) -> Unit,
-    planCalculationLimitSeconds: Int,
-    onPlanCalculationLimitChange: (Int) -> Unit,
-    minimumTimeWeight: Double,
-    onMinimumTimeWeightChange: (Double) -> Unit,
-    /** The section's place in the window's row: its dragged width, or the whole of it while the grid is retracted. */
-    modifier: Modifier = Modifier,
-    /** The section's arrow ([SectionArrow]): retract it to its arrow. */
-    onCollapse: () -> Unit = {},
-    /** The account's sleep schedule and its edit, or null where no one is given (a preview): no "Sleep" then. */
-    sleepSchedule: org.example.project.scheduler.model.SleepSchedule? = null,
-    onSleepScheduleChange: (org.example.project.scheduler.model.SleepSchedule) -> Unit = {},
+    lockOnTaskNonce: Int,
+    openingSpan: Pair<Long, Long>?,
+    onVisibleDaysChanged: (LocalDate, Int) -> Unit,
+    onNowLineResolutionChanged: (Long) -> Unit,
 ) {
-    // A vertical scrollbar on its right (user rule 2026-10-04), the one the Search window's lists have: the section
-    // already scrolled when the window was shorter than it, with nothing saying so.
-    val scroll = rememberScrollState()
-    // Narrowed by the dragged line, it is cut — laid out at its own width at least, never squeezed.
-    // Widened (the grid reduced or retracted, user rule 2026-10-08), its controls keep that same width and stand on
-    // its left: the day selector is not stretched across the room, nor a switch pushed away from its label.
-    Box(modifier.fillMaxHeight().keepsWidthAbove(CALENDAR_CONFIGURATION_WIDTH)) {
-    Column(
-        modifier = Modifier
-            // The whole section scrolls (the wheel over the room beside the controls too); the controls are laid
-            // out at the section's own width, at its start.
-            .fillMaxSize()
-            .verticalScroll(scroll)
-            .wrapContentWidth(Alignment.Start)
-            .width(CALENDAR_CONFIGURATION_WIDTH)
-            .padding(start = 10.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionArrow(collapsed = false, onToggle = onCollapse)
-            Text(
-                "Configuration",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = 1,
-                softWrap = false,
-                modifier = Modifier.togglesSection(onCollapse),
-            )
+    // A stretch to show (the notifications the window lists): held on it, as a calendar opened on one was.
+    LaunchedEffect(openingSpan) {
+        if (openingSpan != null) {
+            view.lockNowLine = false
+            view.lockNotifications = true
         }
-        MiniMonth(
-            monthAnchor = monthAnchor,
-            onMonthAnchorChange = onMonthAnchorChange,
-            selectedDate = selectedDate,
-            today = today,
-            onSelectDate = onSelectDate,
-        )
-        HorizontalDivider()
-        // Each control that can also stand in the lateral menu is a [MenuAddable]: nothing of it changes until the
-        // menu is being customized (user rule 2026-10-08).
-        MenuAddable(MenuControl.CalendarDisplay) { CalendarDisplayModeField(displayMode, onDisplayModeChange) }
-        // PRD §7 Automatic Schedule Switch: while off, the §9 scheduling events wait. Here since 2026-10-02 (it was
-        // in the lateral menu): it is about what this window shows.
-        MenuAddable(MenuControl.AutoSchedule) { CalendarConfigurationSwitch("Auto schedule", automaticSchedule, onToggleAutomaticSchedule) }
-        CalendarConfigurationSwitch("Lock to now", lockNowLine, onLockNowLineChange)
-        // User rule 2026-10-14: the view held on the notifications this window shows, first to last, the line included.
-        if (lockNotifications != null) {
-            CalendarConfigurationSwitch("Lock to notifications", lockNotifications, onLockNotificationsChange)
+    }
+    // "go to calendar" asked for the task lock: the other two yield to it.
+    LaunchedEffect(lockOnTaskNonce) {
+        if (lockOnTaskNonce > 0) {
+            view.lockNowLine = false
+            view.lockNotifications = false
         }
-        // PRD §8 "locked on task": there once a task cell's "go to calendar" named a task. Held on the middle of
-        // its panel closest to the now-line — or, while none exists yet, on the definitive-schedule front, which
-        // the loading mark says.
-        if (lockedTaskTitle != null) {
-            CalendarConfigurationSwitch("Locked on task", lockOnTask, onLockOnTaskChange)
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
-                Text(
-                    text = lockedTaskTitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = CalColors.muted,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (lockTaskPending) {
-                    Spacer(Modifier.width(6.dp))
-                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+    }
+    val density = LocalDensity.current
+    Column(Modifier.fillMaxWidth()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(view.gridHeightDp.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+                .focusRequester(view.focusRequester)
+                .focusable()
+                // A press in the calendar is a press in its window, and gives the calendar the keyboard back.
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        onFocus()
+                        runCatching { view.focusRequester.requestFocus() }
+                    }
                 }
+                .onPreviewKeyEvent { event ->
+                    view.ctrlHeld = event.isCtrlPressed || event.isMetaPressed
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val mod = view.ctrlHeld
+                    when {
+                        event.key == Key.O && !mod -> {
+                            onToggleOverlap()
+                            true
+                        }
+                        mod && (event.key == Key.Equals || event.key == Key.Plus || event.key == Key.NumPadAdd) -> {
+                            view.zoomActions.zoomIn()
+                            true
+                        }
+                        mod && (event.key == Key.Minus || event.key == Key.NumPadSubtract) -> {
+                            view.zoomActions.zoomOut()
+                            true
+                        }
+                        mod && (event.key == Key.Zero || event.key == Key.NumPad0) -> {
+                            view.zoomActions.reset()
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                // Space turns "Lock to now" on — on the way back up, so a field that types a space takes it first.
+                .onKeyEvent { event ->
+                    val plain = !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !event.isShiftPressed
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Spacebar && plain) {
+                        view.setLockNowLine(true) { onLockOnTaskChange(false) }
+                        true
+                    } else {
+                        false
+                    }
+                },
+        ) {
+            val piece = pieces?.value?.takeIf { it.isNotEmpty() }?.let { rememberActivePiece(it, nowExactMillis, realMillisFor) }
+            WeekView(
+                selectedDate = selectedDate,
+                today = piece?.today ?: today,
+                nowMillis = piece?.startMillis ?: nowMillis,
+                nowExactMillis = nowExactMillis,
+                records = piece?.records ?: records,
+                taskColors = taskColors,
+                taskSheetColors = taskSheetColors,
+                zoomActions = view.zoomActions,
+                ctrlHeld = view.ctrlHeld,
+                onAddAt = onAddAt,
+                onCommitBounds = onCommitBounds,
+                onEditChoice = onEditChoice,
+                onEditElementsAt = onEditElementsAt,
+                onGoToTaskTree = onGoToTaskTree,
+                onToggleReminder = onToggleReminder,
+                onAdjustWeights = onAdjustWeights,
+                overlapArmed = overlapArmed,
+                jumpNonce = view.jumpNonce,
+                onVisibleDaysChanged = onVisibleDaysChanged,
+                onNowLineResolutionChanged = onNowLineResolutionChanged,
+                lockNowLine = view.lockNowLine,
+                onLockNowLineChange = { on -> view.setLockNowLine(on) { onLockOnTaskChange(false) } },
+                lockTaskMillis = lockTaskMillis?.takeIf { lockOnTask },
+                onReleaseTaskLock = { onLockOnTaskChange(false) },
+                displayMode = displayMode,
+                spanLock = openingSpan?.takeIf { view.lockNotifications },
+                onReleaseSpanLock = { view.lockNotifications = false },
+            )
+            // PRD §9/§17: a distant future week fills its plan off the UI thread — show it's working.
+            if (calculating) {
+                Text(
+                    text = "Calculating…",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = CalColors.muted,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                )
             }
         }
-        MenuAddable(MenuControl.Reminders) { CalendarConfigurationSwitch("Reminders", showReminders, onToggleReminders) }
-        MenuAddable(MenuControl.ScreenBreaks) { CalendarConfigurationSwitch("Screen breaks", showScreenBreaks, onToggleScreenBreaks) }
-        // User rule 2026-10-15: every action recorded on the computer, a line at each second — where something records them.
+        // The grid's bottom edge, dragged to give it more or less of the section.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(8.dp)
+                .pointerHoverIcon(verticalResizePointerIcon())
+                .pointerInput(Unit) {
+                    detectDragGestures { change, drag ->
+                        change.consume()
+                        val dy = with(density) { drag.y.toDp().value }
+                        view.gridHeightDp = (view.gridHeightDp + dy).coerceIn(CALENDAR_ELEMENT_MIN_HEIGHT.value, CALENDAR_ELEMENT_MAX_HEIGHT.value)
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.width(40.dp).height(3.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.outlineVariant))
+        }
+    }
+}
+
+internal val CALENDAR_ELEMENT_MIN_HEIGHT = 160.dp
+internal val CALENDAR_ELEMENT_MAX_HEIGHT = 2400.dp
+
+/** The calendar element's **day selector** ([CalendarPart.Day]): picking a day takes this window's calendar to it. */
+@Composable
+fun CalendarElementDay(view: CalendarElementView, selectedDate: LocalDate, today: LocalDate, onSelectDate: (LocalDate) -> Unit) {
+    MiniMonth(
+        monthAnchor = view.monthAnchor,
+        onMonthAnchorChange = { view.monthAnchor = it },
+        selectedDate = selectedDate,
+        today = today,
+        onSelectDate = { day ->
+            onSelectDate(day)
+            view.jumpNonce++
+        },
+    )
+}
+
+/**
+ * The calendar element's **display** ([CalendarPart.Display]): day or week, this window's own; and what its calendar
+ * shows of the notifications and the actions recorded on the computer ([LocalCalendarNotifications]).
+ */
+@Composable
+fun CalendarElementDisplay(mode: CalendarDisplayMode, onModeChange: (CalendarDisplayMode) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.width(CALENDAR_CONFIGURATION_WIDTH)) {
+        CalendarDisplayModeField(mode, onModeChange)
         val windowView = LocalCalendarNotifications.current
         if (windowView != null && LocalInputActivity.current != null) {
             CalendarConfigurationSwitch("Recorded actions", windowView.showsActions, windowView.onShowsActionsChange)
         }
-        // User rule 2026-10-13: the notifications THIS calendar window shows as chips, checked in a drop-down.
-        LocalCalendarNotifications.current?.let { notifications ->
+        windowView?.let { notifications ->
             val labels = remember(notifications.options) { notifications.options.associate { it.id to notifications.labelOf(it) } }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(start = 4.dp)) {
                 Text("Notifications", style = MaterialTheme.typography.labelMedium)
@@ -4650,16 +4311,50 @@ private fun CalendarConfigurationSection(
                 )
             }
         }
-        HorizontalDivider()
-        // User rule 2026-10-04: the resources the scheduler engine may use, on THIS device.
-        Text("Scheduler engine", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
-        MenuAddable(MenuControl.PlanTimeLimit) { PlanCalculationLimitField(planCalculationLimitSeconds, onPlanCalculationLimitChange) }
-        MenuAddable(MenuControl.MinimumTimeWeight) { MinimumTimeWeightField(minimumTimeWeight, onMinimumTimeWeightChange) }
-        // The sleep schedule is no longer set here (user rule 2026-10-13: *"put the sleep configurations in the sleep
-        // period actions instead of the calendar window"*): it is the Sleep period's "Sleep schedule" action
-        // ([org.example.project.scheduler.domain.SearchDomain.AddedAction.PeriodSleepSchedule]).
     }
-    ColumnScrollbar(scroll, Modifier.align(Alignment.CenterEnd))
+}
+
+/**
+ * The calendar element's **locks** ([CalendarPart.Locks]): "Lock to now", "Lock to notifications" where the window
+ * shows a stretch of them, "Locked on task" once a task cell's "go to calendar" named one — one or another.
+ */
+@Composable
+fun CalendarElementLocks(
+    view: CalendarElementView,
+    hasSpan: Boolean,
+    lockedTaskTitle: String?,
+    lockOnTask: Boolean,
+    lockTaskPending: Boolean,
+    onLockOnTaskChange: (Boolean) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.width(CALENDAR_CONFIGURATION_WIDTH)) {
+        CalendarConfigurationSwitch("Lock to now", view.lockNowLine) { on -> view.setLockNowLine(on) { onLockOnTaskChange(false) } }
+        if (hasSpan) {
+            CalendarConfigurationSwitch("Lock to notifications", view.lockNotifications) { on ->
+                view.setLockNotifications(on) { onLockOnTaskChange(false) }
+            }
+        }
+        if (lockedTaskTitle != null) {
+            CalendarConfigurationSwitch("Locked on task", lockOnTask) { on ->
+                if (on) {
+                    view.lockNowLine = false
+                    view.lockNotifications = false
+                }
+                onLockOnTaskChange(on)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
+                Text(
+                    text = lockedTaskTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CalColors.muted,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (lockTaskPending) {
+                    Spacer(Modifier.width(6.dp))
+                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
     }
 }
 
@@ -5230,11 +4925,11 @@ internal fun rollingDayAt(anchorDay: LocalDate, row: Int, column: Int): LocalDat
     anchorDay.plus(row + column, DateTimeUnit.DAY)
 
 /**
- * PRD §8 zoom: a holder the calendar's keyboard shortcuts (in [CalendarFloatingWindow]) use to drive the
+ * PRD §8 zoom: a holder the calendar's keyboard shortcuts (in [CalendarElementGrid]) use to drive the
  * zoom whose mechanics live in [WeekView] (which owns the scroll state + viewport geometry needed to keep
  * the point under the cursor fixed). WeekView assigns the lambdas; the key handler invokes them.
  */
-private class CalendarZoomActions {
+internal class CalendarZoomActions {
     var zoomIn: () -> Unit = {}
     var zoomOut: () -> Unit = {}
     var reset: () -> Unit = {}
@@ -5585,7 +5280,7 @@ private fun WeekView(
     val reverseScroll =
         ScrollableDefaults.reverseDirection(LocalLayoutDirection.current, Orientation.Vertical, false)
 
-    // Register the keyboard shortcuts (driven from CalendarFloatingWindow). They pivot around the cursor if
+    // Register the keyboard shortcuts (driven from CalendarElementGrid). They pivot around the cursor if
     // it is over the grid, else the viewport centre.
     zoomActions.zoomIn = { applyZoom(CALENDAR_ZOOM_STEP, focalYpx ?: viewportHpx / 2f) }
     zoomActions.zoomOut = { applyZoom(1f / CALENDAR_ZOOM_STEP, focalYpx ?: viewportHpx / 2f) }

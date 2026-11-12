@@ -655,6 +655,29 @@ internal val ACTION_MENU_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
     )
 
 /**
+ * User rule 2026-11-12: the calendar element's actions that are the account's switches the calendar window held —
+ * drawn by the menu's own code, as the app settings' are ([ACTION_MENU_CONTROLS]).
+ */
+internal val CALENDAR_ACTION_CONTROLS: Map<SearchDomain.AddedAction, MenuControl> =
+    mapOf(
+        SearchDomain.AddedAction.CalendarAutoSchedule to MenuControl.AutoSchedule,
+        SearchDomain.AddedAction.CalendarReminders to MenuControl.Reminders,
+        SearchDomain.AddedAction.CalendarScreenBreaks to MenuControl.ScreenBreaks,
+        SearchDomain.AddedAction.CalendarPlanTimeLimit to MenuControl.PlanTimeLimit,
+        SearchDomain.AddedAction.CalendarMinimumTimeWeight to MenuControl.MinimumTimeWeight,
+        SearchDomain.AddedAction.CalendarSleepSchedule to MenuControl.SleepSchedule,
+    )
+
+/** The calendar element's actions that are parts of the calendar itself, drawn by `App` ([LocalCalendarElement]). */
+private val CALENDAR_ACTION_PARTS: Map<SearchDomain.AddedAction, CalendarPart> =
+    mapOf(
+        SearchDomain.AddedAction.CalendarGrid to CalendarPart.Grid,
+        SearchDomain.AddedAction.CalendarDay to CalendarPart.Day,
+        SearchDomain.AddedAction.CalendarDisplay to CalendarPart.Display,
+        SearchDomain.AddedAction.CalendarLocks to CalendarPart.Locks,
+    )
+
+/**
  * User rule 2026-10-08 (anomaly: a right-click on an action in customize mode did nothing): **an action of the Search
  * window can be added to the lateral menu** — with this window's configuration as it stands, its added elements
  * included, so the item acts on THOSE elements. Named after the action, and after the element when there is one.
@@ -669,7 +692,7 @@ private fun AddableAction(
     MenuAddableBox(
         key = action,
         onAdd = { customizer ->
-            val control = ACTION_MENU_CONTROLS[action]
+            val control = ACTION_MENU_CONTROLS[action] ?: CALENDAR_ACTION_CONTROLS[action]
             if (control != null) {
                 customizer.add(control)
             } else {
@@ -793,6 +816,18 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.ServerControl,
         ->
             ACTION_MENU_CONTROLS[action]?.let { control ->
+                LocalMenuControlHost.current?.let { host -> MenuControlItem(control, null, host) }
+            }
+        // User rule 2026-11-12: the calendar element — the calendar and its view, drawn by `App` for this window; and the
+        // account's switches the calendar window held, by the menu's code.
+        SearchDomain.AddedAction.CalendarGrid, SearchDomain.AddedAction.CalendarDay, SearchDomain.AddedAction.CalendarDisplay,
+        SearchDomain.AddedAction.CalendarLocks,
+        -> CALENDAR_ACTION_PARTS[action]?.let { part -> LocalCalendarElement.current?.invoke(part) }
+        SearchDomain.AddedAction.CalendarAutoSchedule, SearchDomain.AddedAction.CalendarReminders,
+        SearchDomain.AddedAction.CalendarScreenBreaks, SearchDomain.AddedAction.CalendarPlanTimeLimit,
+        SearchDomain.AddedAction.CalendarMinimumTimeWeight, SearchDomain.AddedAction.CalendarSleepSchedule,
+        ->
+            CALENDAR_ACTION_CONTROLS[action]?.let { control ->
                 LocalMenuControlHost.current?.let { host -> MenuControlItem(control, null, host) }
             }
         // User rule 2026-10-13: the two buttons about the group's elements as rows of the list, in ONE micro group —

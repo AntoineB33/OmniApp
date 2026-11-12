@@ -91,19 +91,6 @@ object CalendarNotifications {
     /** How many notifications the drop-down lists besides the selected ones: the list is drawn whole when it opens. */
     const val OPTION_LIMIT: Int = 200
 
-    /**
-     * User rule 2026-10-14: **the "unfocused notif" window a calendar was opened under** — its tab stands beside that
-     * window's on the window bar, a line under the two. Read off what the windows hold, so it comes back after a
-     * restart: the notifications window among [searchWindows] (frame id → its configuration) whose added notifications
-     * are exactly the ones [calendar] shows. A calendar that shows none is under no window.
-     */
-    fun notificationsWindowOf(calendar: WindowConfig, searchWindows: List<Pair<String, SearchDomain.Config>>): String? {
-        val shown = calendar.notifications.toSet().ifEmpty { return null }
-        return searchWindows.firstOrNull { (_, config) ->
-            SearchDomain.isNotificationsWindow(config) &&
-                config.added.filter { it.startsWith(SearchDomain.Kind.Notification.name + "/") }.map { it.substringAfter('/') }.toSet() == shown
-        }?.first
-    }
 
     /**
      * User rule 2026-10-14: **the stretch of time the calendar under an "unfocused notif" window opens on** — from the

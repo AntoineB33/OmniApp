@@ -11,7 +11,8 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
-import org.example.project.ui.CalendarFloatingWindow
+import org.example.project.ui.CalendarElementGrid
+import org.example.project.ui.CalendarElementView
 import org.example.project.ui.CalendarRecord
 import org.jetbrains.skia.Bitmap
 
@@ -21,6 +22,8 @@ import org.jetbrains.skia.Bitmap
  * the old zoom ceiling). A day that tall is ~9 million px, past anything Compose can measure, so the rows lay out only
  * their slice ([org.example.project.ui.DaySlice]). This RENDERS such a calendar headlessly, an eight-hour task panel
  * running through the six seconds: it must lay out at all, and the panel — cut to the slice — must still fill the view.
+ * Since 2026-11-12 the calendar is the calendar element's grid ([CalendarElementGrid]), drawn in the "unfocused notif"
+ * Search window's actions section; it is rendered here alone, as tall as the image.
  */
 class CalendarSecondsRenderTest {
 
@@ -65,17 +68,7 @@ class CalendarSecondsRenderTest {
                     org.example.project.ui.LocalCalendarNotifications provides
                         org.example.project.ui.CalendarNotificationsView(chips, emptySet(), {}, mapOf(day to chips), { it.title }),
                 ) {
-                CalendarFloatingWindow(
-                    selectedDate = day,
-                    today = day,
-                    nowMillis = at(17, 10, 6),
-                    nowExactMillis = { line },
-                    onDismiss = {},
-                    records = listOf(panel),
-                    taskColors = mapOf(TaskId("task-1") to Color.Magenta),
-                    initialSize = androidx.compose.ui.geometry.Size(width.toFloat(), height.toFloat()),
-                    openingSpan = span.value,
-                )
+                grid(nowExactMillis = { line }, records = listOf(panel), openingSpan = span.value, height = height)
                 }
             }
         try {
@@ -91,6 +84,43 @@ class CalendarSecondsRenderTest {
         } finally {
             scene.close()
         }
+    }
+
+    /** The calendar element's grid alone, filling [height] px (at the scene's density of 2) bar its handle. */
+    @androidx.compose.runtime.Composable
+    private fun grid(nowExactMillis: () -> Long, records: List<CalendarRecord>, openingSpan: Pair<Long, Long>?, height: Int) {
+        val view = androidx.compose.runtime.remember { CalendarElementView(day).also { it.gridHeightDp = height / 2f - 8f } }
+        CalendarElementGrid(
+            view = view,
+            selectedDate = day,
+            today = day,
+            nowMillis = at(17, 10, 6),
+            nowExactMillis = nowExactMillis,
+            records = records,
+            pieces = null,
+            realMillisFor = { it },
+            taskColors = mapOf(TaskId("task-1") to Color.Magenta),
+            taskSheetColors = emptyMap(),
+            calculating = false,
+            onFocus = {},
+            onAddAt = {},
+            onCommitBounds = { _, _, _, _ -> },
+            onEditChoice = {},
+            onEditElementsAt = { _, _ -> },
+            onGoToTaskTree = { _, _ -> },
+            onToggleReminder = {},
+            onAdjustWeights = {},
+            overlapArmed = false,
+            onToggleOverlap = {},
+            displayMode = org.example.project.ui.CalendarDisplayMode.Week,
+            lockTaskMillis = null,
+            lockOnTask = false,
+            onLockOnTaskChange = {},
+            lockOnTaskNonce = 0,
+            openingSpan = openingSpan,
+            onVisibleDaysChanged = { _, _ -> },
+            onNowLineResolutionChanged = {},
+        )
     }
 
     private fun measureRun(bitmap: Bitmap, width: Int, height: Int): Double {
@@ -131,48 +161,6 @@ class CalendarSecondsRenderTest {
         // 17:09:00 (the stretch 17:09:00–17:10:06), and the panel must fill 63/66 of it — the view followed.
         val (before, after) = panelRuns(at(17, 10, 3), listOf(at(17, 10, 0) to at(17, 10, 6), at(17, 9, 0) to at(17, 10, 6)))
         assertTrue(after > before * 1.5, "the panel ran down ${before * 100} % then ${after * 100} %")
-    }
-
-    @Test
-    fun the_grid_sections_title_retracts_it_like_its_arrow() {
-        // User rule 2026-10-14: "the title of both sections must be clickable to expand or retract like the arrow
-        // button". A click on the month ("October 2026", the grid's title) retracts the grid: the panel is gone.
-        val width = 1800
-        val height = 1000
-        val panel = CalendarRecord(
-            title = "Work", range = TaskTimeRange(at(12, 0), at(20, 0)), scheduled = true, manual = true,
-            entryId = "panel-1", entryIds = listOf("panel-1"), taskId = TaskId("task-1"),
-        )
-        val scene =
-            ImageComposeScene(width = width, height = height, density = Density(2f)) {
-                CalendarFloatingWindow(
-                    selectedDate = day,
-                    today = day,
-                    nowMillis = at(17, 10, 6),
-                    onDismiss = {},
-                    records = listOf(panel),
-                    taskColors = mapOf(TaskId("task-1") to Color.Magenta),
-                    initialSize = androidx.compose.ui.geometry.Size(width.toFloat(), height.toFloat()),
-                )
-            }
-        try {
-            var time = 0L
-            fun frames(): Double {
-                var image = scene.render(time)
-                repeat(6) { time += 50_000_000L; image = scene.render(time) }
-                return measureRun(Bitmap.makeFromImage(image), width, height)
-            }
-            assertTrue(frames() > 0.6, "the grid is there before the click")
-            // The month label, at the top left of the grid (24..226 px, 108..140 px in this window).
-            val title = androidx.compose.ui.geometry.Offset(120f, 124f)
-            scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, title)
-            scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Press, title)
-            scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Release, title)
-            val after = frames()
-            assertTrue(after < 0.05, "the panel still runs down ${after * 100} % after the title was clicked")
-        } finally {
-            scene.close()
-        }
     }
 
     @Test

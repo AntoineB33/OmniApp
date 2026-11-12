@@ -120,6 +120,14 @@ object SearchDomain {
          * ([Filters.blocksOf], [blocksSearchConfig]); opening one opens what is on the calendar there.
          */
         CalendarBlock("calendar block"),
+
+        /**
+         * User rule 2026-11-12: **the calendar** — one element ([CALENDAR_ID]) whose actions are the calendar itself
+         * ([AddedAction.CalendarGrid]), its day selector and the options of its view. There is no calendar window any
+         * more: a Search window holding this element shows the calendar in its actions section, each window its own
+         * view of it (the day it was taken to, its display, its locks — [Config.calendarDay], [Config.calendarDayMode]).
+         */
+        Calendar("calendar"),
         HistoryUnit("history unit"),
 
         /**
@@ -405,9 +413,23 @@ object SearchDomain {
      */
     fun isUntouchedNotificationsWindow(config: Config): Boolean {
         val since = config.filters.notificationsSinceMillis ?: return false
-        return config.copy(added = emptyList()) == notificationsConfig(since) &&
-            config.added.all { it.startsWith(Kind.Notification.name + "/") }
+        // What the app writes itself (the calendar's view of the notifications) and what the hand opens or picks in the
+        // actions section are no change of the window's search; an element added beside the calendar is.
+        val search = config.copy(added = emptyList(), calendarView = "", calendarDay = null, calendarDayMode = null, toggledActionRows = emptySet())
+        return search == notificationsConfig(since) && config.added.all { it == CALENDAR_KEY }
     }
+
+    /**
+     * User rule 2026-11-12: **the "unfocused notif" window** — one Search window: the notifications posted since
+     * [sinceMillis] in its search section ([notificationsConfig]), the calendar element added, and the calendar in its
+     * actions section showing [notificationIds] as chips. It was a Search window and a calendar window under it.
+     */
+    fun notificationsWindowConfig(sinceMillis: Long, notificationIds: List<String>): Config =
+        calendarWindowConfig(
+            notificationsConfig(sinceMillis).copy(
+                calendarView = org.example.project.scheduler.domain.CalendarNotifications.WindowConfig(notificationIds).encode(),
+            ),
+        )
 
     /** What a Search window is called, on its head and on its tab of the window bar. */
     const val WINDOW_TITLE: String = "Search"
@@ -690,6 +712,15 @@ object SearchDomain {
          * this is set. Null for a window that did not come from the calendar.
          */
         val calendarClickMillis: Long? = null,
+        /**
+         * User rule 2026-11-12: **this window's view of the calendar element** — the day its day selector took it to
+         * (ISO, null = the day the window opened on), its display (null = the account's, [SchedulerState.calendarDayMode])
+         * and what its calendar shows of the notifications and the actions (a [CalendarNotifications.WindowConfig], what
+         * a calendar window held). A change of the window like any other: one History Unit, its Ctrl+Z.
+         */
+        val calendarDay: String? = null,
+        val calendarDayMode: Boolean? = null,
+        val calendarView: String = "",
         /** Where "Add to the calendar" lays the added elements, and until when ([Placement], user rule 2026-10-05). */
         val placement: Placement = Placement(),
         /**
@@ -803,6 +834,9 @@ object SearchDomain {
                     notificationsSinceMillis = filters.notificationsSinceMillis,
                     notificationSources = NotificationSource.entries.filter { it in filters.notificationSources }.map { it.name },
                     calendarClickMillis = calendarClickMillis,
+                    calendarDay = calendarDay,
+                    calendarDayMode = calendarDayMode,
+                    calendarView = calendarView,
                     blocksOf = filters.blocksOf.sorted(),
                     excludedElements = filters.excludedElements.sorted(),
                     includedElements = filters.includedElements.sorted(),
@@ -919,6 +953,9 @@ object SearchDomain {
                     compactChronos = stored.compactChronos,
                     resiliencePeriod = stored.resiliencePeriod,
                     calendarClickMillis = stored.calendarClickMillis,
+                    calendarDay = stored.calendarDay,
+                    calendarDayMode = stored.calendarDayMode,
+                    calendarView = stored.calendarView,
                     placement = Placement(
                         startMillis = stored.placeStartMillis,
                         endByDelta = stored.placeEndByDelta,
@@ -1582,6 +1619,7 @@ object SearchDomain {
         ShortcutSort(Kind.Shortcut, "Sort by", sorts = true),
         WorkplaceSetupSort(Kind.WorkplaceSetup, "Sort by", sorts = true),
         AppSettingSort(Kind.AppSetting, "Sort by", sorts = true),
+        CalendarSort(Kind.Calendar, "Sort by", sorts = true),
         WindowSort(Kind.Window, "Sort by", sorts = true),
         CreationSort(Kind.Creation, "Sort by", sorts = true),
         PromptSort(Kind.ClaudePrompt, "Sort by", sorts = true),
@@ -1964,6 +2002,10 @@ object SearchDomain {
         /** New 2026-10-07 (the calendar filter's third state): absent = the filter keeps whatever can be added. */
         val calendarAddKeeping: Boolean = false,
         val calendarClickMillis: Long? = null,
+        /** New 2026-11-12 (the calendar element's view): absent = the opening day, the account's display, nothing shown. */
+        val calendarDay: String? = null,
+        val calendarDayMode: Boolean? = null,
+        val calendarView: String = "",
         /** New 2026-10-01 (the calendar's "edit…"): absent = off, no position. */
         val calendarAtOn: Boolean = false,
         val calendarAtMillis: Long? = null,
@@ -2566,6 +2608,7 @@ object SearchDomain {
                 Kind.AppSetting -> AppSettingEntry.entries.map { setting ->
                     ItemResult(kind, setting.name, setting.title, appSettingDetail(state, setting, claudeLogs))
                 }
+                Kind.Calendar -> listOf(calendarResult())
                 // Every configuration of a Search window, named by its label, the type it is about beside it.
                 Kind.SearchConfiguration -> Setting.entries.map { setting ->
                     ItemResult(kind, setting.name, setting.label, setting.section?.label ?: "general")
@@ -2991,7 +3034,8 @@ object SearchDomain {
                 Kind.Window -> filters.windowStatus == null || windowStatusOf(result) == filters.windowStatus
                 // [Filters.blocksOf] is asked of the whole list at once ([results]).
                 // The logs' filters are asked as their rows are made ([claudeResults]).
-                Kind.Creation, Kind.AppSetting, Kind.CalendarBlock, Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning -> true
+                Kind.Creation, Kind.AppSetting, Kind.Calendar, Kind.CalendarBlock, Kind.ClaudePrompt, Kind.ClaudeAnswer,
+                Kind.ClaudeReasoning -> true
             }
         }
     }
@@ -3398,6 +3442,34 @@ object SearchDomain {
             is ItemResult -> result.kind.name + "/" + result.id
         }
 
+    /** The calendar element's id ([Kind.Calendar]): there is one. */
+    const val CALENDAR_ID: String = "calendar"
+
+    /** The calendar element's row. */
+    fun calendarResult(): ItemResult = ItemResult(Kind.Calendar, CALENDAR_ID, "Calendar", "the plan and what was done")
+
+    /** The calendar element's key, as the added elements hold it. */
+    val CALENDAR_KEY: String = Kind.Calendar.name + "/" + CALENDAR_ID
+
+    /** Whether [config]'s window shows the calendar: it holds the calendar element (user rule 2026-11-12). */
+    fun showsCalendar(config: Config): Boolean = CALENDAR_KEY in config.added
+
+    /**
+     * User rule 2026-11-12: **a Search window that is a calendar** — [base] with the calendar element added, the
+     * group of its actions and its "Calendar" row open, so the calendar is what the actions section shows. What the
+     * calendar window was, and what every way to "open the calendar" opens now.
+     */
+    fun calendarWindowConfig(base: Config = Config(kinds = setOf(Kind.Calendar))): Config {
+        val added = (base.added - CALENDAR_KEY) + CALENDAR_KEY
+        val calendar = calendarResult()
+        val groups = actionGroups(actionsFor(addedActions(base.actionQuery, Kind.entries.toSet(), setOf(Kind.Calendar)), listOf(calendar)), listOf(calendar))
+        val group = groups.firstOrNull { g -> g.members.any { keyOf(it) == CALENDAR_KEY } }
+        val open =
+            listOfNotNull(group?.id, group?.let { microGroupId(it, AddedAction.CalendarGrid) })
+                .filter { !isActionRowOpen(base, it, top = it == group?.id) }
+        return base.copy(added = added, toggledActionRows = base.toggledActionRows + open)
+    }
+
     /** A task's key — its result row's, and a cell of an expanded row's sub-tree that holds it. */
     fun taskKey(taskId: TaskId): String = Kind.Task.name + "/" + taskId.value
 
@@ -3617,6 +3689,21 @@ object SearchDomain {
         AlarmTimeNow(Kind.Alarm, "Set to the current time"),
         ReminderTimeNow(Kind.Reminder, "Set to the current time"),
         /** The sound setting's slider ([AppSettingEntry.Sound], [SchedulerIntent.SetSoundVolume]). */
+        /**
+         * User rule 2026-11-12: **the calendar element's actions** — the calendar itself, drawn in a row of its own
+         * height ([CalendarGrid]); the day selector; its display and its locks, this window's own view of it; and the
+         * account's switches the calendar window held, drawn by the menu's own code.
+         */
+        CalendarGrid(Kind.Calendar, "Calendar"),
+        CalendarDay(Kind.Calendar, "Day"),
+        CalendarDisplay(Kind.Calendar, "Display"),
+        CalendarLocks(Kind.Calendar, "Lock"),
+        CalendarAutoSchedule(Kind.Calendar, "Auto schedule"),
+        CalendarReminders(Kind.Calendar, "Reminders"),
+        CalendarScreenBreaks(Kind.Calendar, "Screen breaks"),
+        CalendarPlanTimeLimit(Kind.Calendar, "Time limit after a change"),
+        CalendarMinimumTimeWeight(Kind.Calendar, "Minimum time weight"),
+        CalendarSleepSchedule(Kind.Calendar, "Sleep schedule"),
         SoundVolume(Kind.AppSetting, "Global volume"),
         /** The voice's and the notifications' switches ([AppSettingEntry.Voice], [AppSettingEntry.Notifications]). */
         VoiceSwitch(Kind.AppSetting, "Voice"),

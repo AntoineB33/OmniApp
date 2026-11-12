@@ -9,6 +9,32 @@ Global rules that always apply: `CLAUDE.md`.
 
 → ADR 0002.
 
+### The calendar is an element, not a window
+
+User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`), `SearchDomain.calendarWindowConfig`,
+`ui/CalendarUi.kt` (`CalendarPart`, `CalendarElementView`, `CalendarElementGrid` / `Day` / `Display` / `Locks`), `App`'s
+`CalendarElementPart`; `CalendarElementTest`.
+
+- **There is no calendar window.** A Search window holding the calendar element draws the calendar in its actions
+  section: the element's actions are the calendar itself (`AddedAction.CalendarGrid`), its day selector, its display,
+  its locks, and the account's switches the calendar window held (drawn by the menu's own code,
+  `CALENDAR_ACTION_CONTROLS`). Everything this file says of "the calendar" is said of that grid.
+- **"Open the calendar" is ONE funnel**: `openWindowOnItsPage(FloatingWindow.Calendar, …)` — the lateral menu's button,
+  a notification's click, "go to calendar", "Drag on the calendar", a box bound picked on the calendar, the element's
+  row. With no view asked it brings back an open Search window showing the calendar (the focused one first), else
+  opens a copy with `calendarWindowConfig`. `FloatingWindow.Calendar` stays only as that name: nothing draws it.
+- **Each window has its own view of it.** The day picked (`Config.calendarDay`), the display (`calendarDayMode`, null =
+  the account's) and the chips (`calendarView`, a `CalendarNotifications.WindowConfig`) are the Search window's
+  configuration — one History Unit each, that window's Ctrl+Z. The locks, the zoom, the month shown and the grid's
+  height are Compose-only (`CalendarElementView`, by frame id in `App`).
+- **The grid is a row of its own height** (`CALENDAR_ELEMENT_HEIGHT`, its bottom edge dragged): the actions section
+  scrolls, and the grid's endless scroll must not fight it. It holds the keyboard as the window did (O, Ctrl +/-/0,
+  Space); Ctrl+Z / Ctrl+Y are its window's. What it changes is `MadeIn(Search, that window's copy)`.
+- **The horizon follows the grids on screen** (`calendarSpans`, by frame id): a grid that leaves the composition (its
+  row closed, its window closed) takes its days off.
+- **The calendar windows an older build left open come back as Search windows showing the calendar**
+  (`CalendarWindowMigration`, run once on the loaded rows): where they stood, their chips kept, global if they were.
+
 ### The layers and what they read
 
 - **Two orthogonal things, and keeping them orthogonal is the point.** The **layers** say who was at a
@@ -1373,8 +1399,8 @@ User spec 2026-10-01. `ui/CalendarUi.kt` (`CalendarDisplayMode`, `columnStepPx`,
 - **`columnShifts` is a derived state**, so in day mode the columns recompose when a column's top crosses a
   midnight and not per scrolled pixel; the rows are still placed by a layout-phase read (`display-hot-path.md`).
 - **A date pick in day mode** anchors on the picked day's midnight and zooms so the whole day spans the columns.
-- Compose-only view state held by `App` (it survives closing the window, not a restart): never persisted,
-  never synced.
+- The mode is each Search window's (`Config.calendarDayMode`, user rule 2026-11-12), the account's
+  (`SchedulerState.calendarDayMode`, the app setting's "Display") until that window picks one.
 
 ### "Go to calendar" and the lock on a task
 
@@ -1385,8 +1411,10 @@ User spec 2026-09-26. `scheduler/domain/CalendarLockDomain.kt`; the task cell me
   view (`WeekView(lockTaskMillis)`): the same centring, released the same ways (a scroll, a date pick). The two
   are one or the other — "go to calendar" and the switch turn "Lock to now" off, and "Lock to now" turns the task
   lock off. Never a second centring mechanism.
+- **"Go to calendar" brings a Search window showing the calendar**, and the lock is THAT window's
+  (`calendarLockWindow`, user rule 2026-11-12); another window's calendar has no "Locked on task".
 - **Space turns "Lock to now" on, and does nothing else** (user rule 2026-10-02). It is read on the way back UP
-  (`onKeyEvent` on the calendar frame), so a field being edited takes its own space first. So **no control of the
+  (`onKeyEvent` on the calendar grid), so a field being edited takes its own space first. So **no control of the
   configuration section may take the keyboard** (`leavesKeyboardToCalendar`): a focused `clickable`/`Switch`
   consumes Space as a press of itself, which made Space flip whichever switch was clicked last (2026-10-03). A new
   control in that section opts out the same way.

@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar is an element; the "unfocused notif" window is one Search window — 2026-11-12
+
+User rule: the calendar window is gone. `SearchDomain.Kind.Calendar` is one element whose actions are the calendar
+itself (`CalendarGrid`, a row of its own height), its day selector, its display, its locks and the account's switches
+the calendar window held. A Search window holding it shows the calendar; each window has its own view (`Config.calendarDay`,
+`calendarDayMode`, `calendarView`: one History Unit each). Every way to open the calendar goes through
+`openWindowOnItsPage(FloatingWindow.Calendar)`, which brings back or opens such a Search window. The "unfocused notif"
+window is one Search window: the notifications in its search section, the calendar element added, the calendar showing
+them as chips (`notificationsWindowConfig`). Open calendar windows of an older build come back as Search windows
+(`CalendarWindowMigration`). `CalendarFloatingWindow` and its configuration section are deleted (`CalendarSectionsTest`
+with them; `CalendarSecondsRenderTest` renders the grid part). `CalendarElementTest`. No SQLite or Supabase migration.
+
 ### Each copy of a window has its own history — 2026-11-12
 
 User rule (first step of moving the calendar into a calendar element shown in Search windows): a unit records the copy

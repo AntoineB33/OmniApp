@@ -261,7 +261,7 @@ object KeyboardShortcutCatalog {
             ),
             KeyboardShortcutGroup(
                 title = "Calendar",
-                note = "While the calendar window is the focused surface.",
+                note = "While a calendar holds the keyboard — the calendar element's, in a Search window's actions.",
                 shortcuts = listOf(
                     KeyboardShortcut("O", "Toggle overlapping blocks side by side"),
                     KeyboardShortcut("Ctrl + + / Ctrl + −", "Zoom in / out"),

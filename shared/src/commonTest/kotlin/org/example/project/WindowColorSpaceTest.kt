@@ -120,14 +120,14 @@ class WindowColorSpaceTest {
     @Test
     fun a_changed_unfocused_notif_window_is_left_alone_and_the_next_one_has_a_colour_of_its_own() {
         val t0 = 1_800_000_000_000L
-        val opened = SearchDomain.notificationsConfig(t0)
+        val opened = SearchDomain.notificationsWindowConfig(t0, listOf("$t0#0"))
         assertTrue(SearchDomain.isUntouchedNotificationsWindow(opened))
         assertTrue(SearchDomain.isUntouchedNotificationsWindow(SearchDomain.Config.decode(opened.encode())!!))
-        // Changed by the user — its search configuration, or an added element that is not a notification: no longer
-        // the one that gathers. The notifications themselves are added by the app (user rule 2026-10-13).
+        // Changed by the user — its search configuration, or an element added beside the calendar: no longer the one
+        // that gathers. The chips its calendar shows are written by the app (user rule 2026-11-12).
         assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(query = "timer")))
-        assertTrue(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = listOf("Notification/$t0#0"))))
-        assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = listOf("Notification/$t0#0", "Alarm/alarm-0"))))
+        assertTrue(SearchDomain.isUntouchedNotificationsWindow(opened.copy(calendarView = "")))
+        assertFalse(SearchDomain.isUntouchedNotificationsWindow(opened.copy(added = opened.added + "Alarm/alarm-0")))
         assertFalse(SearchDomain.isUntouchedNotificationsWindow(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Notification))))
         // The window is a default window of its own, apart from the Search windows; the second one, opened beside
         // the changed one, is in the same part and away from it.
