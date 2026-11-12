@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### One pin per window and one for the whole app; a change keeps the other windows' redo — 2026-11-12
+
+User rule: Ctrl+Shift+Y moves the whole app's pin forward, passing over what a window's Ctrl+Y redid — so the pin is
+stored (`SchedulerHistories.wholePin`, an extra `history_pointer` row `WholePin`, kept off the wire;
+`HistoryPointerRow.pointer` is a Long now). A window's Ctrl+Z brings it down to the newest applied change. A new change
+orphans only its window's undone changes (and the menu's), locally and in `dropHistoryBranch` (filtered per window).
+`HistoryReachTest`. No SQLite migration (the column was already INTEGER), no Supabase migration (the `window` column
+exists).
+
 ### Ctrl+Z walks the focused window, Ctrl+Shift+Z every window; the calendar's day is a unit — 2026-11-12
 
 Anomaly: in the calendar, going to a later day then Ctrl+Z reduced the calendar. Read off the release DB: the day was no

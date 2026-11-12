@@ -875,14 +875,15 @@ object SchedulerReducer {
             is SchedulerIntent.RecordSupabaseUsage -> reduceRecordSupabaseUsage(state, intent)
             is SchedulerIntent.MergePeerHistory -> reduceMergePeerHistory(state, intent)
             SchedulerIntent.Undo ->
-                if (state.editSession != null) undo(state, HistoryCategory.Edit) else undoIn(state, changesOf(state))
+                if (state.editSession != null) undo(state, HistoryCategory.Edit)
+                else snapWholePin(undoIn(state, changesOf(state)))
             SchedulerIntent.Redo ->
                 if (state.editSession != null) redo(state, HistoryCategory.Edit) else redoIn(state, changesOf(state))
             // An Edit Mode session's keystrokes are the one history open while it is: the whole walk is its walk then.
             SchedulerIntent.UndoAll ->
-                if (state.editSession != null) undo(state, HistoryCategory.Edit) else undoIn(state, ALL_CHANGES)
+                if (state.editSession != null) undo(state, HistoryCategory.Edit) else undoAll(state)
             SchedulerIntent.RedoAll ->
-                if (state.editSession != null) redo(state, HistoryCategory.Edit) else redoIn(state, ALL_CHANGES)
+                if (state.editSession != null) redo(state, HistoryCategory.Edit) else redoAll(state)
             SchedulerIntent.UndoSelection -> undoIn(state, selectionsOf(state))
             SchedulerIntent.RedoSelection -> redoIn(state, selectionsOf(state))
             SchedulerIntent.UndoPosition -> undoIn(state, POSITIONS)
@@ -933,17 +934,86 @@ object SchedulerReducer {
      * back instead of what the user did last (anomaly 2026-11-01).
      */
     private fun changesOf(state: SchedulerState): HistoryWalk =
-        HistoryWalk(listOf(HistoryCategory.Main, HistoryCategory.Calendar)) { category, unit ->
-            !unit.delta.authoredByApp && !isAppWide(unit) &&
-                (unit.window ?: if (category == HistoryCategory.Calendar) HistoryWindow.Calendar else HistoryWindow.Tree) ==
-                state.focusedWindow
+        HistoryWalk(CHANGE_CATEGORIES) { category, unit ->
+            !unit.delta.authoredByApp && !isAppWide(unit) && windowOf(category, unit) == state.focusedWindow
         }
 
+    /** The categories of the changes ([changesOf], [ALL_CHANGES]): what Ctrl+Z and Ctrl+Shift+Z walk. */
+    private val CHANGE_CATEGORIES = listOf(HistoryCategory.Main, HistoryCategory.Calendar)
+
     /**
-     * `Ctrl+Shift+Z` / `Ctrl+Shift+Y`: **every change**, whichever window it was made in (user rule 2026-11-12). Undo
-     * takes the newest applied one, so a unit a window's own Ctrl+Z already undid is skipped; redo the oldest undone
-     * one, so the windows' undone units come back in the order made and each window's own history stays one pin
-     * (applied up to a point, undone after it) whichever of the two walks moved it.
+     * The window a change belongs to: its stamp, or - written before units knew theirs, or by a headless host - the
+     * calendar for a calendar unit and the tree for any other, which is where each was undone from then.
+     */
+    internal fun windowOf(category: HistoryCategory, unit: HistoryUnit): HistoryWindow =
+        unit.window ?: defaultWindowOf(category)
+
+    internal fun defaultWindowOf(category: HistoryCategory): HistoryWindow =
+        if (category == HistoryCategory.Calendar) HistoryWindow.Calendar else HistoryWindow.Tree
+
+    /** This device's changes the whole walk ([ALL_CHANGES]) accepts: each with its category and index. */
+    private fun wholeChanges(state: SchedulerState): List<Triple<HistoryCategory, Int, HistoryUnit>> {
+        val me = deviceId()
+        return CHANGE_CATEGORIES.flatMap { category ->
+            state.histories.forCategory(category).units.mapIndexedNotNull { index, unit ->
+                if (unit.ownedBy(me) && ALL_CHANGES.accepts(category, unit)) Triple(category, index, unit) else null
+            }
+        }
+    }
+
+    /**
+     * User rule 2026-11-12: where the whole app's pin stands ([SchedulerHistories.wholePin]) - this device's newest
+     * applied change until it was first moved.
+     */
+    fun wholePinOf(state: SchedulerState): Long =
+        state.histories.wholePin
+            ?: wholeChanges(state).filter { !it.third.undone }.maxOfOrNull { it.third.deviceSeq } ?: 0L
+
+    private fun withWholePin(state: SchedulerState, pin: Long): SchedulerState =
+        state.copy(histories = state.histories.copy(wholePin = pin))
+
+    /**
+     * `Ctrl+Shift+Z`: undo the newest applied change at or under the whole pin - a change its window's Ctrl+Z already
+     * undid is skipped - and put the pin on the newest applied change under it.
+     */
+    private fun undoAll(state: SchedulerState): SchedulerState {
+        val pin = wholePinOf(state)
+        val (category, index, unit) =
+            wholeChanges(state).filter { !it.third.undone && it.third.deviceSeq <= pin }.maxByOrNull { it.third.deviceSeq }
+                ?: return state
+        val walked = walkUnit(state, category, index, undo = true)
+        val under =
+            wholeChanges(walked).filter { !it.third.undone && it.third.deviceSeq < unit.deviceSeq }
+                .maxOfOrNull { it.third.deviceSeq } ?: 0L
+        return withWholePin(walked, under)
+    }
+
+    /**
+     * `Ctrl+Shift+Y`: move the whole pin forward to the next undone change over it and redo it - a change a window's
+     * Ctrl+Y already redid is applied, so it is passed over.
+     */
+    private fun redoAll(state: SchedulerState): SchedulerState {
+        val pin = wholePinOf(state)
+        val (category, index, unit) =
+            wholeChanges(state).filter { it.third.undone && it.third.deviceSeq > pin }.minByOrNull { it.third.deviceSeq }
+                ?: return state
+        return withWholePin(walkUnit(state, category, index, undo = false), unit.deviceSeq)
+    }
+
+    /**
+     * After a window's Ctrl+Z: the whole pin never stands on an undone change - it goes down to the newest applied one
+     * at or under it (user example 2026-11-12: two changes in A, Ctrl+Z in A, and both pins are on the first).
+     */
+    private fun snapWholePin(state: SchedulerState): SchedulerState {
+        val pin = state.histories.wholePin ?: return state
+        val snapped =
+            wholeChanges(state).filter { !it.third.undone && it.third.deviceSeq <= pin }.maxOfOrNull { it.third.deviceSeq } ?: 0L
+        return if (snapped == pin) state else withWholePin(state, snapped)
+    }
+
+    /**
+     * `Ctrl+Shift+Z` / `Ctrl+Shift+Y`: **every change**, whichever window it was made in (user rule 2026-11-12),
+     * walked from the whole app's pin ([wholePinOf], [undoAll], [redoAll]).
      */
     private val ALL_CHANGES =
         HistoryWalk(listOf(HistoryCategory.Main, HistoryCategory.Calendar)) { _, unit -> !unit.delta.authoredByApp }
@@ -4614,10 +4684,27 @@ object SchedulerReducer {
         val history = state.histories.forCategory(category)
         val me = deviceId()
 
+        // PRD §5: where the change was made. A merged gesture below keeps the previous unit's window along with its
+        // timestamp - one gesture is one window.
+        val stamp = if (stampsWindow) newState.focusedWindow else null
+
         // PRD §5 Branching: a new mutation after an undo orphans the redo units — THIS device's undone units are
         // dropped (`docs/invariants/persistence.md` § *One history, per-device undo*); another device's are its own.
         // A change the app authored is no new branch: the work the line banks must not cost the user their Ctrl+Y.
-        val retained = if (forward.authoredByApp) history.units else history.units.filterNot { it.ownedBy(me) && it.undone }
+        // A change orphans only ITS WINDOW's redo (user rule 2026-11-12: two changes in A, Ctrl+Z, a change in B - A's
+        // Ctrl+Y is still there), and the undone changes of the menu, which only the whole pin could redo and which it
+        // just passed.
+        val retained =
+            when {
+                forward.authoredByApp -> history.units
+                category in CHANGE_CATEGORIES -> {
+                    val where = stamp ?: defaultWindowOf(category)
+                    history.units.filterNot {
+                        it.ownedBy(me) && it.undone && (windowOf(category, it) == where || it.window == HistoryWindow.Menu)
+                    }
+                }
+                else -> history.units.filterNot { it.ownedBy(me) && it.undone }
+            }
 
         // PRD §5/§6: a live-edited field commits on every keystroke, so a unit carrying a
         // [Delta.coalesceKey] is offered to the unit at the pointer first — the same field, in the same
@@ -4640,7 +4727,8 @@ object SchedulerReducer {
                                 changedAtMillis = clock.nowMillis(),
                             )
                     }
-                return newState.copy(histories = state.histories.withCategory(category, historyOf(absorbed, me)))
+                val merged = newState.copy(histories = state.histories.withCategory(category, historyOf(absorbed, me)))
+                return if (category in CHANGE_CATEGORIES && !forward.authoredByApp) withWholePin(merged, previous.deviceSeq) else merged
             }
         }
 
@@ -4657,9 +4745,7 @@ object SchedulerReducer {
                 chronoId = chronoId,
                 delta = forward,
                 debugTainted = debugTainting(),
-                // PRD §6: where the change was made. A merged gesture above keeps the previous unit's
-                // window along with its timestamp — one gesture is one window.
-                window = if (stampsWindow) newState.focusedWindow else null,
+                window = stamp,
                 deviceId = me,
                 deviceSeq = deviceSeqOf(now, chronoId),
                 changedAtMillis = now,
@@ -4673,7 +4759,9 @@ object SchedulerReducer {
         val overflow = (appendedUnits.size - MAX_HISTORY_UNITS).coerceAtLeast(0)
         val (cappedUnits, _) = dropOldestUntainted(appendedUnits, overflow)
 
-        return newState.copy(histories = state.histories.withCategory(category, historyOf(cappedUnits, me)))
+        val committed = newState.copy(histories = state.histories.withCategory(category, historyOf(cappedUnits, me)))
+        // A new change is where the whole app stands.
+        return if (category in CHANGE_CATEGORIES && !forward.authoredByApp) withWholePin(committed, newUnit.deviceSeq) else committed
     }
 
     /**

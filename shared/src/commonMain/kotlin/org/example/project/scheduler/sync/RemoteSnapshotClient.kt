@@ -386,8 +386,18 @@ class RemoteSnapshotClient(
      * Marks the redo branch this device discarded as dropped: its undone units of [category] older than its newest
      * applied unit ([newestAppliedMillis]) — a new edit only ever drops the units undone before it. The delta is
      * emptied; the other devices forget the unit on their next pull.
+     *
+     * [windows]: only the units stamped with one of these windows ([withUnstamped]: or with none) — a change orphans
+     * only its window's redo (user rule 2026-11-12). Null: every unit of the category.
      */
-    suspend fun dropHistoryBranch(session: SupabaseSession, deviceId: String, category: String, newestAppliedMillis: Long) {
+    suspend fun dropHistoryBranch(
+        session: SupabaseSession,
+        deviceId: String,
+        category: String,
+        newestAppliedMillis: Long,
+        windows: List<String>? = null,
+        withUnstamped: Boolean = false,
+    ) {
         val response =
             http.patch("${config.restUrl}/history_unit") {
                 authHeaders(session)
@@ -399,6 +409,10 @@ class RemoteSnapshotClient(
                 url.parameters.append("undone", "is.true")
                 url.parameters.append("dropped", "is.false")
                 url.parameters.append("time_millis", "lt.$newestAppliedMillis")
+                if (windows != null) {
+                    val terms = windows.map { "window.eq.$it" } + listOfNotNull("window.is.null".takeIf { withUnstamped })
+                    url.parameters.append("or", terms.joinToString(",", "(", ")"))
+                }
                 setBody("""{"dropped":true,"delta":""}""")
             }
         if (!response.status.isSuccess()) throw response.toException()

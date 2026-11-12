@@ -289,6 +289,14 @@ data class SchedulerHistories(
     val calendar: SchedulerHistory = SchedulerHistory(),
     val main: SchedulerHistory = SchedulerHistory(),
     val windowNav: SchedulerHistory = SchedulerHistory(),
+    /**
+     * User rule 2026-11-12: **the whole app's pin** — the `deviceSeq` of this device's unit the whole history
+     * (`Ctrl+Shift+Z` / `Ctrl+Shift+Y`) stands on, `0` before the first. Null: never moved since it was introduced, read
+     * as this device's newest applied change. Each window's own pin is its newest applied change; this one is stored
+     * because it can stand below changes a window redid, which `Ctrl+Shift+Y` then skips. Local to the device: kept off
+     * the wire like the view state ([SchedulerState.withLocalViewStateNeutralized]).
+     */
+    val wholePin: Long? = null,
 ) {
     fun forCategory(category: HistoryCategory): SchedulerHistory =
         when (category) {
@@ -1353,7 +1361,8 @@ data class SchedulerState(
             recordRewrites = other.recordRewrites,
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, other.histories.forCategory(HistoryCategory.WindowNav))
-                .withCategory(HistoryCategory.Selection, other.histories.forCategory(HistoryCategory.Selection)),
+                .withCategory(HistoryCategory.Selection, other.histories.forCategory(HistoryCategory.Selection))
+                .copy(wholePin = other.histories.wholePin),
         )
 
     /** See [withLocalViewStateFrom]: the local-only view state reset to canonical constants for the fingerprint. */
@@ -1379,7 +1388,8 @@ data class SchedulerState(
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, SchedulerHistory())
                 .withCategory(HistoryCategory.Selection, SchedulerHistory())
-                .withoutLocalOnlyUnits(),
+                .withoutLocalOnlyUnits()
+                .copy(wholePin = null),
         )
 
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots

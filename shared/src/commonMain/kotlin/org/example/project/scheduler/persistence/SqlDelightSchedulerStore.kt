@@ -53,7 +53,7 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                 }
         val pointers =
             queries.selectAllPointers(account).executeAsList().map { row ->
-                HistoryPointerRow(category = row.category, pointer = row.pointer.toInt())
+                HistoryPointerRow(category = row.category, pointer = row.pointer)
             }
         return PersistedSnapshot(payload, history, pointers)
     }
@@ -91,7 +91,7 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
             saveHistory(account, snapshot.history)
             queries.deleteAllPointers(account)
             snapshot.pointers.forEach { row ->
-                queries.insertPointer(account_id = account, category = row.category, pointer = row.pointer.toLong())
+                queries.insertPointer(account_id = account, category = row.category, pointer = row.pointer)
             }
         }
     }

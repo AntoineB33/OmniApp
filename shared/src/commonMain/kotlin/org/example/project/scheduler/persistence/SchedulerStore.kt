@@ -47,12 +47,18 @@ data class HistoryRow(
     var deltaHash: Long = HistoryDigest.UNKNOWN_HASH
 }
 
-/** A history category's Ctrl+Z/Y cursor, mirrored as a row in the `history_pointer` table. */
+/**
+ * A history category's Ctrl+Z/Y cursor, mirrored as a row in the `history_pointer` table — and one more row,
+ * [WHOLE_PIN_ROW], holding the whole app's pin (`SchedulerHistories.wholePin`, a `deviceSeq`, hence a Long).
+ */
 @Serializable
 data class HistoryPointerRow(
     val category: String,
-    val pointer: Int,
+    val pointer: Long,
 )
+
+/** The `history_pointer` row of the whole app's pin: no category's name, so an older build ignores it. */
+const val WHOLE_PIN_ROW: String = "WholePin"
 
 /**
  * The full durable scheduler payload as the store sees it: the non-history state serialized into

@@ -291,7 +291,7 @@ object SchedulerStateCodec {
         val rows = mutableListOf<HistoryRow>()
         val pointers = mutableListOf<HistoryPointerRow>()
         for ((category, history) in state.histories.all()) {
-            pointers.add(HistoryPointerRow(category.name, history.pointer))
+            pointers.add(HistoryPointerRow(category.name, history.pointer.toLong()))
             history.units.forEachIndexed { index, unit ->
                 val encoded = encodedDeltaOf(unit)
                 rows.add(
@@ -307,6 +307,7 @@ object SchedulerStateCodec {
                 )
             }
         }
+        state.histories.wholePin?.let { pointers.add(HistoryPointerRow(WHOLE_PIN_ROW, it)) }
         return PersistedSnapshot(statePayload, rows, pointers)
     }
 
@@ -473,10 +474,11 @@ object SchedulerStateCodec {
             histories =
                 histories.withCategory(
                     category,
-                    SchedulerHistory(pointer = pointerByCategory[category.name] ?: -1, units = units),
+                    SchedulerHistory(pointer = (pointerByCategory[category.name] ?: -1L).toInt(), units = units),
                 )
         }
-        return histories
+        // A snapshot written before the whole app's pin existed has no row: the pin is then read off the units.
+        return histories.copy(wholePin = pointerByCategory[WHOLE_PIN_ROW])
     }
 
     /**
