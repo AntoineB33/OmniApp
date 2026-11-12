@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Each copy of a window has its own history — 2026-11-12
+
+User rule (first step of moving the calendar into a calendar element shown in Search windows): a unit records the copy
+of its window (`HistoryUnit.instance`), stored with the window as the copy's frame id (`Search#2`) in the existing
+`window` column, locally and on the server. Ctrl+Z, the window's pin and its redo branch are per copy; the server's
+branch drop filters on the frame id. The calendar's own `MadeIn` and its day pick name their copy. A row written before
+is the original's (`""`). `HistoryReachTest`. No migration.
+
 ### One pin per window and one for the whole app; a change keeps the other windows' redo — 2026-11-12
 
 User rule: Ctrl+Shift+Y moves the whole app's pin forward, passing over what a window's Ctrl+Y redid — so the pin is

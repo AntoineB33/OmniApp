@@ -354,6 +354,13 @@ data class HistoryUnit(
      */
     val window: HistoryWindow? = null,
     /**
+     * User rule 2026-11-12: **which copy** of [window] the change was made in — `""` for the original (and for every
+     * unit written before copies were told apart), `"#2"` for its second copy: what [SchedulerState.focusedInstance]
+     * held. A window's Ctrl+Z walks its own copy's changes, never another copy's. Stored with [window] as one text, the
+     * copy's frame id ([windowColumn]).
+     */
+    val instance: String = "",
+    /**
      * `docs/invariants/persistence.md` § *One history, per-device undo*: the device that made the change. Every
      * device of the account holds the same history, and Ctrl+Z / Ctrl+Y / Alt+arrows only ever walk the units of
      * the device they are pressed on. `""` is a unit written before units had an owner; the device that loads it
@@ -1689,3 +1696,13 @@ data class SchedulerState(
 
 /** The key of a window's entry in [SchedulerState.windowSelections]: the window, and the copy (`""`, `"#2"`). */
 fun windowSelectionKey(window: HistoryWindow, instance: String = ""): String = window.name + instance
+
+/**
+ * How a unit's [HistoryUnit.window] and [HistoryUnit.instance] are stored, in the store's and the server's `window`
+ * column: the copy's frame id — `Search`, `Search#2` — or null for a unit that names no window.
+ */
+fun HistoryUnit.windowColumn(): String? = window?.let { it.name + instance }
+
+/** The copy part of a stored `window` column ([windowColumn]): `"#2"` of `Search#2`, `""` of `Search`. */
+fun instanceOfWindowColumn(column: String?): String =
+    column?.indexOf('#')?.takeIf { it >= 0 }?.let { column.substring(it) } ?: ""

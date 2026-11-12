@@ -935,7 +935,8 @@ object SchedulerReducer {
      */
     private fun changesOf(state: SchedulerState): HistoryWalk =
         HistoryWalk(CHANGE_CATEGORIES) { category, unit ->
-            !unit.delta.authoredByApp && !isAppWide(unit) && windowOf(category, unit) == state.focusedWindow
+            !unit.delta.authoredByApp && !isAppWide(unit) &&
+                windowOf(category, unit) == state.focusedWindow && unit.instance == state.focusedInstance
         }
 
     /** The categories of the changes ([changesOf], [ALL_CHANGES]): what Ctrl+Z and Ctrl+Shift+Z walk. */
@@ -4687,6 +4688,8 @@ object SchedulerReducer {
         // PRD §5: where the change was made. A merged gesture below keeps the previous unit's window along with its
         // timestamp - one gesture is one window.
         val stamp = if (stampsWindow) newState.focusedWindow else null
+        // ...and in which copy of it (user rule 2026-11-12): each copy of a window is a window of its own.
+        val stampInstance = if (stampsWindow) newState.focusedInstance else ""
 
         // PRD §5 Branching: a new mutation after an undo orphans the redo units — THIS device's undone units are
         // dropped (`docs/invariants/persistence.md` § *One history, per-device undo*); another device's are its own.
@@ -4700,7 +4703,8 @@ object SchedulerReducer {
                 category in CHANGE_CATEGORIES -> {
                     val where = stamp ?: defaultWindowOf(category)
                     history.units.filterNot {
-                        it.ownedBy(me) && it.undone && (windowOf(category, it) == where || it.window == HistoryWindow.Menu)
+                        it.ownedBy(me) && it.undone &&
+                            ((windowOf(category, it) == where && it.instance == stampInstance) || it.window == HistoryWindow.Menu)
                     }
                 }
                 else -> history.units.filterNot { it.ownedBy(me) && it.undone }
@@ -4746,6 +4750,7 @@ object SchedulerReducer {
                 delta = forward,
                 debugTainted = debugTainting(),
                 window = stamp,
+                instance = stampInstance,
                 deviceId = me,
                 deviceSeq = deviceSeqOf(now, chronoId),
                 changedAtMillis = now,

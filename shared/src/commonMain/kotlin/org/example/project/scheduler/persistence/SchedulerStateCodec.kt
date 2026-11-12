@@ -32,6 +32,8 @@ import org.example.project.scheduler.domain.ChronoDomain
 import org.example.project.scheduler.domain.QuotaDomain
 import org.example.project.scheduler.model.QuotaEntry
 import org.example.project.scheduler.model.QuotaLoop
+import org.example.project.scheduler.state.instanceOfWindowColumn
+import org.example.project.scheduler.state.windowColumn
 import org.example.project.scheduler.state.QuotasDelta
 import org.example.project.scheduler.state.DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS
 import org.example.project.scheduler.state.MAX_PLAN_CALCULATION_LIMIT_SECONDS
@@ -302,7 +304,7 @@ object SchedulerStateCodec {
                         chronoId = unit.chronoId,
                         debugTainted = unit.debugTainted,
                         deltaJson = encoded.json,
-                        window = unit.window?.name,
+                        window = unit.windowColumn(),
                     ).also { it.deltaHash = encoded.hash },
                 )
             }
@@ -391,6 +393,7 @@ object SchedulerStateCodec {
                 delta = decodeMigrating<PersistedDelta>(text).toDelta(),
                 debugTainted = tainted,
                 window = window?.let { name -> windowNamed(name) },
+                instance = instanceOfWindowColumn(window),
                 deviceId = deviceId,
                 deviceSeq = deviceSeq,
                 undone = undone,
@@ -451,6 +454,7 @@ object SchedulerStateCodec {
                             window = row.window?.let { name ->
                                 windowNamed(name)
                             },
+                            instance = instanceOfWindowColumn(row.window),
                         ).also {
                             // Seed the memo from the text we were just handed: re-serializing a unit the
                             // store (or a peer's snapshot) already spelled out would be pure waste, and it
@@ -3398,8 +3402,11 @@ private data class PersistedTimeRange(
  * `Reminders`, the list of every reminder, recorded reminder edits — the Search window's, where a reminder is now
  * opened (its own window takes no focus of its own, so its edits are stamped with Search's).
  */
-private fun windowNamed(name: String): HistoryWindow? =
-    RETIRED_WINDOWS[name] ?: HistoryWindow.entries.firstOrNull { it.name == name }
+/** A stored window name — or a copy's frame id, `Search#2` ([windowColumn]): its window. */
+private fun windowNamed(stored: String): HistoryWindow? {
+    val name = stored.substringBefore('#')
+    return RETIRED_WINDOWS[name] ?: HistoryWindow.entries.firstOrNull { it.name == name }
+}
 
 private val RETIRED_WINDOWS: Map<String, HistoryWindow> =
     mapOf("TaskList" to HistoryWindow.Tree, "Reminders" to HistoryWindow.Search)

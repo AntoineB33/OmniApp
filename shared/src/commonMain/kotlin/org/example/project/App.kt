@@ -408,10 +408,12 @@ private class ViewHistoryRecorder {
         coalesceKey: String? = null,
         /** Where it was made, when that is not the focused window. */
         madeIn: org.example.project.scheduler.state.HistoryWindow? = null,
+        /** ...and in which copy of it: `""` for the original, `"#2"` for the second. */
+        madeInInstance: String = "",
     ) {
         if (!enabled || applyingDepth > 0 || before == after) return
         val intent = SchedulerIntent.RecordExternal(key, before, after, label, coalesceKey)
-        dispatch(if (madeIn != null) SchedulerIntent.MadeIn(madeIn, "", intent) else intent)
+        dispatch(if (madeIn != null) SchedulerIntent.MadeIn(madeIn, madeInInstance, intent) else intent)
     }
 
     fun onLayout(id: String, previous: WindowPlacement, next: WindowPlacement) {
@@ -3031,7 +3033,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             else org.example.project.ui.CalendarDisplayMode.Week
         // PRD §6 (user rule 2026-10-06): a block dragged or resized on the calendar is a History Unit MADE IN THE
         // CALENDAR, whichever window had the focus when the press landed (a drag does not have to take it).
-        fun dispatchFromCalendar(intent: SchedulerIntent) = vm.dispatch(SchedulerIntent.MadeIn(HistoryWindow.Calendar, "", intent))
+        // In the copy it was made in ([calendarId], its frame id): each copy has its own Ctrl+Z.
+        fun dispatchFromCalendar(calendarId: String, intent: SchedulerIntent) =
+            vm.dispatch(SchedulerIntent.MadeIn(HistoryWindow.Calendar, calendarId.removePrefix(FloatingWindow.Calendar.name), intent))
         // A task cell's "go to calendar": the calendar opened (or brought back) and focused, locked on the task.
         fun goToCalendar(taskId: TaskId) {
             calendarLockTask = taskId
@@ -4788,6 +4792,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     org.example.project.scheduler.state.ExternalKeys.CALENDAR_DAY + calendarId,
                                     selectedDate.toString(), day.toString(), "Go to day",
                                     madeIn = org.example.project.scheduler.state.HistoryWindow.Calendar,
+                                    madeInInstance = calendarId.removePrefix(FloatingWindow.Calendar.name),
                                 )
                                 jumpCalendarTo(calendarId, day)
                             },
@@ -4838,7 +4843,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     val move =
                                         calendarMoveOf(schedulerState, block, newStart, newEnd, allowOverlap, nowMillis, tz)
                                 ) {
-                                    is CalendarMove.Dispatch -> dispatchFromCalendar(move.intent)
+                                    is CalendarMove.Dispatch -> dispatchFromCalendar(calendarId, move.intent)
                                     // A screen break is no panel but this device's own break history and the
                                     // machine the line carries, which are the engine's to rewrite.
                                     is CalendarMove.Break ->

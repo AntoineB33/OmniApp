@@ -353,4 +353,44 @@ class HistoryReachTest {
         assertEquals(null, loaded.histories.wholePin)
         assertEquals(main(loaded).filter { !it.undone }.maxOf { it.deviceSeq }, SchedulerReducer.wholePinOf(loaded))
     }
+
+    /** A change [value] made in the copy [instance] of [window]. */
+    private fun editIn(state: SchedulerState, window: HistoryWindow, instance: String, value: String): SchedulerState {
+        val focused = r(state, SchedulerIntent.FocusWindow(window, instance))
+        return r(focused, SchedulerIntent.RecordExternal(ExternalKeys.WINDOW_TITLE + window.name + instance, "$value-", value, "Title"))
+    }
+
+    /** User rule 2026-11-12: each copy of a window is a window of its own, with its own Ctrl+Z, pin and redo. */
+    @Test
+    fun each_copy_of_a_window_has_its_own_history() {
+        var s = SchedulerState.empty()
+        s = editIn(s, HistoryWindow.Search, "", "one")
+        s = editIn(s, HistoryWindow.Search, "#2", "two")
+        assertEquals("#2", main(s).last().instance)
+        // Ctrl+Z in the original takes back its own change, under the copy's newer one.
+        s = r(r(s, SchedulerIntent.FocusWindow(HistoryWindow.Search, "")), SchedulerIntent.Undo)
+        assertEquals("one-", s.externalRestores.last().to)
+        assertEquals(s, r(s, SchedulerIntent.Undo), "the copy's change is not the original's")
+        // A change in the copy keeps the original's redo.
+        s = editIn(s, HistoryWindow.Search, "#2", "three")
+        s = r(r(s, SchedulerIntent.FocusWindow(HistoryWindow.Search, "")), SchedulerIntent.Redo)
+        assertEquals("one", s.externalRestores.last().to)
+    }
+
+    /** The copy is stored with the window, as its frame id, and a unit written before copies is the original's. */
+    @Test
+    fun the_copy_survives_the_store_and_the_wire() {
+        var s = SchedulerState.empty()
+        s = editIn(s, HistoryWindow.Search, "#3", "x")
+        val snapshot = SchedulerStateCodec.encodeSnapshot(s)
+        assertTrue(snapshot.history.any { it.window == "Search#3" })
+        val back = assertNotNull(SchedulerStateCodec.decodeSnapshot(snapshot))
+        assertEquals(HistoryWindow.Search to "#3", main(back).last().let { it.window to it.instance })
+        val unit = main(s).last()
+        val row = SchedulerStateCodec.encodeUnit(unit)
+        val peer = assertNotNull(SchedulerStateCodec.decodeUnit(1L, 0L, false, "Search#3", "d", 1L, false, row))
+        assertEquals(HistoryWindow.Search to "#3", peer.window to peer.instance)
+        val older = assertNotNull(SchedulerStateCodec.decodeUnit(1L, 0L, false, "Search", "d", 1L, false, row))
+        assertEquals(HistoryWindow.Search to "", older.window to older.instance)
+    }
 }

@@ -176,6 +176,12 @@ by ctrl+z, ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history unit
   for a per-copy selection, the focused copy's) — **selections of rows only**: the day a calendar is taken to is a
   change of that calendar (`ExternalKeys.CALENDAR_DAY`, walked by its `Ctrl+Z`); `Shift+Alt+←/→` every Selection and
   WindowNav unit (`Ctrl+Alt+←/→` did too, 2026-11-11 to 2026-11-12).
+- **Each copy of a window is a window of its own** (user rule 2026-11-12): a unit records the copy it was made in
+  (`HistoryUnit.instance`, what `focusedInstance` held: `""` for the original, `"#2"`…), stored with its window as ONE
+  text, the copy's frame id (`windowColumn`: `Search#2`), in the store's and the server's `window` column — so no
+  column was added and the server's branch drop filters on it exactly. A row written before reads as the original's.
+  `Ctrl+Z`, the window's pin and its redo branch are the copy's; a change made in a copy from outside it is
+  `SchedulerIntent.MadeIn(window, instance, …)` with that copy's instance, never `""`.
 - **One pin per window, and one for the whole app** (user rule 2026-11-12, `HistoryReachTest`). A window's pin is its
   newest applied change. The whole app's is STORED (`SchedulerHistories.wholePin`, a `deviceSeq`; persisted as the
   `history_pointer` row `WHOLE_PIN_ROW`, kept off the wire like the view state; absent, it reads as the newest applied

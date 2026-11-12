@@ -1,6 +1,7 @@
 package org.example.project.scheduler.sync
 
 import kotlin.uuid.ExperimentalUuidApi
+import org.example.project.scheduler.state.windowColumn
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -670,7 +671,7 @@ open class SchedulerSyncEngine(
                         chronoId = unit.chronoId,
                         tainted = unit.debugTainted,
                         undone = unit.undone,
-                        window = unit.window?.name,
+                        window = unit.windowColumn(),
                         delta = org.example.project.scheduler.persistence.SchedulerStateCodec.encodeUnit(unit),
                     )
                 }
@@ -686,21 +687,22 @@ open class SchedulerSyncEngine(
                 if (historyCategory == org.example.project.scheduler.state.HistoryCategory.Main || historyCategory == org.example.project.scheduler.state.HistoryCategory.Calendar) {
                     // User rule 2026-11-12: a change orphans only its window's redo (and the menu's), as `commitDelta`
                     // drops them — so each window this push committed into is asked about its own units alone.
-                    val windows =
-                        committed.filter { it.first == category }
-                            .map { org.example.project.scheduler.state.SchedulerReducer.windowOf(historyCategory, it.second) }.toSet()
-                    for (window in windows) {
+                    // Each COPY of a window is a window (its frame id, as the rows' `window` column holds it).
+                    fun copyOf(unit: org.example.project.scheduler.state.HistoryUnit) =
+                        org.example.project.scheduler.state.SchedulerReducer.windowOf(historyCategory, unit) to unit.instance
+                    val copies = committed.filter { it.first == category }.map { copyOf(it.second) }.toSet()
+                    for ((window, instance) in copies) {
                         // What the app banked is no new branch ([Delta.authoredByApp]): the user's Ctrl+Y stays alive past it.
                         val newestApplied =
                             list.filter {
-                                it.ownedBy(me) && !it.undone && !it.delta.authoredByApp &&
-                                    org.example.project.scheduler.state.SchedulerReducer.windowOf(historyCategory, it) == window
+                                it.ownedBy(me) && !it.undone && !it.delta.authoredByApp && copyOf(it) == (window to instance)
                             }.maxOfOrNull { it.timeMillis } ?: continue
                         withAuth(session) {
                             client.dropHistoryBranch(
                                 it, me, category, newestApplied,
-                                windows = listOf(window.name, org.example.project.scheduler.state.HistoryWindow.Menu.name).distinct(),
-                                withUnstamped = window == org.example.project.scheduler.state.SchedulerReducer.defaultWindowOf(historyCategory),
+                                windows = listOf(window.name + instance, org.example.project.scheduler.state.HistoryWindow.Menu.name).distinct(),
+                                withUnstamped = instance.isEmpty() &&
+                                    window == org.example.project.scheduler.state.SchedulerReducer.defaultWindowOf(historyCategory),
                             )
                         }
                     }
