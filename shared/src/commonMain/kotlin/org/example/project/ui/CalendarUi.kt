@@ -1784,7 +1784,7 @@ fun LateralMenu(
             transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
             // At the pointer (anomaly 2026-11-01): declared here, it hung from the top of the menu, wherever the click was.
             // User rule 2026-11-12: the menu is a Search window of its entries.
-            ActionMenu(
+            ActionMenu("LateralMenu",
                 open = backgroundMenu,
                 onDismiss = { backgroundMenu = false },
                 actions = listOf(
@@ -3122,7 +3122,7 @@ private fun <T> HistoryDropdownField(
                 style = MaterialTheme.typography.labelSmall,
             )
             // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-            OptionSearchMenu(
+            OptionSearchMenu("HistoryDropdownField",
                 open = open,
                 onDismiss = { open = false },
                 options = choiceOptions(options, { it.first }) { (_, value) ->
@@ -3725,7 +3725,7 @@ internal fun RecurrenceUnitDropdown(unit: ChoreRecurrenceUnit, onSelect: (ChoreR
             Text("▾", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
         }
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-        OptionSearchMenu(
+        OptionSearchMenu("RecurrenceUnitDropdown",
             open = expanded,
             onDismiss = { expanded = false },
             options = choiceOptions(ChoreRecurrenceUnit.entries, { it.label }) { entry ->
@@ -3822,7 +3822,7 @@ private fun PageNavButton(page: OmniPage, onPageSelected: (OmniPage) -> Unit) {
         MenuButton(label = page.label, active = false, onClick = { expanded = true })
         // User rule 2026-11-12: the menu is a Search window of its entries.
         // The current page in bold no more: it is ticked.
-        OptionSearchMenu(
+        OptionSearchMenu("PageNavButton",
             open = expanded,
             onDismiss = { expanded = false },
             options = SearchOptions(
@@ -4307,7 +4307,7 @@ fun CalendarElementDisplay(mode: CalendarDisplayMode, onModeChange: (CalendarDis
             val labels = remember(notifications.options) { notifications.options.associate { it.id to notifications.labelOf(it) } }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(start = 4.dp)) {
                 Text("Notifications", style = MaterialTheme.typography.labelMedium)
-                CheckBoxDropDown(
+                CheckBoxDropDown("CalendarElementDisplay",
                     options = notifications.options.map { it.id },
                     checked = notifications.selected,
                     face = when (notifications.selected.size) {
@@ -7205,7 +7205,7 @@ private fun DayColumn(
                     add(MenuAction("add…") { onAddAt(millisAt(anchor.y)) })
                 }
             }
-        ActionMenu(
+        ActionMenu("calendar grid menu",
             open = anchor != null,
             onDismiss = { closeMenu() },
             actions = calendarMenuActions,
@@ -7223,7 +7223,7 @@ private fun DayColumn(
         }
         val heldMenuAt = heldDrag?.menuAt
         // User rule 2026-11-12: the menu is a Search window of its entries.
-        ActionMenu(
+        ActionMenu("calendar held drag menu",
             open = heldMenuAt != null,
             onDismiss = { resumeHeldDrag() },
             actions = listOf(
@@ -11102,7 +11102,7 @@ private fun EditModeSelector(options: List<EditModeOption>, focusPreserving: Boo
             Text("▾", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
         }
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-        OptionSearchMenu(
+        OptionSearchMenu("EditModeSelector",
             open = expanded,
             onDismiss = { expanded = false },
             options = choiceOptions(options, { it.label }) { option ->
@@ -11188,7 +11188,7 @@ internal fun EditMenuRow(
             // PRD §4: "go to task" is GREYED, never absent, when the row's task is nowhere in the tree. The row is still a task
             // the field can be pointed at; what it has not got is a place to go, and a vanishing entry would read as "this row has
             // no menu" instead of saying so.
-            ActionMenu(
+            ActionMenu("EditMenuRow",
                 open = menuOpen,
                 onDismiss = { menuOpen = false },
                 actions = listOf(MenuAction("go to task", enabled = actions.onGoToTask != null) { actions.onGoToTask?.invoke() }),

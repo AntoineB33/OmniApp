@@ -46,7 +46,7 @@ class DropDownRightClickTest {
             ImageComposeScene(width = 500, height = 700, density = Density(1f)) {
                 MaterialTheme {
                     Column(Modifier.fillMaxSize()) {
-                        CheckBoxDropDown(
+                        CheckBoxDropDown("a_right_click_on_an_option_picks_it_alone_and_opens_no_menu_under_the_list",
                             options = listOf(0, 1, 2, 3, 4),
                             checked = probe.checked,
                             face = "kinds",

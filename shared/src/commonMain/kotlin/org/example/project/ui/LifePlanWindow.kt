@@ -167,7 +167,7 @@ private fun SectionField(section: LifePlanSection, onPick: (LifePlanSection) -> 
                 .padding(horizontal = 10.dp, vertical = 8.dp),
         )
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-        OptionSearchMenu(
+        OptionSearchMenu("SectionField",
             open = open,
             onDismiss = { open = false },
             options = choiceOptions(LifePlanSection.entries, { it.label }) { choice ->
@@ -340,7 +340,7 @@ private fun TabField(
             modifier = Modifier.fillMaxWidth(),
         )
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]): each tab with its drop button, then "+ New tab".
-        OptionSearchMenu(
+        OptionSearchMenu("TabField",
             open = open,
             onDismiss = { open = false },
             options = SearchOptions(

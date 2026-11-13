@@ -74,8 +74,8 @@ class SearchConfigurationStatesTest {
     /** A registry over one window's configuration, as `App` gives it: [windows] by id. */
     private fun registry(windows: MutableMap<String, SearchDomain.Config>) =
         ArrowSearches(
-            read = { windows.getValue(it).arrows },
-            write = { id, arrows -> windows[id] = windows.getValue(id).copy(arrows = arrows) },
+            read = { windows.getValue(it).inside },
+            write = { id, arrows -> windows[id] = windows.getValue(id).copy(inside = arrows) },
         )
 
     @Test
@@ -94,7 +94,7 @@ class SearchConfigurationStatesTest {
         arrows.set("Search", "▾", SearchDomain.CONFIGURATION_SEARCH.copy(query = "sort"))
         assertEquals(listOf("▾"), arrows.listed("Search"))
         assertEquals("sort", arrows.of("Search", "▾").query)
-        assertEquals(setOf("▾"), windows.getValue("Search").arrows.keys)
+        assertEquals(setOf("▾"), windows.getValue("Search").inside.keys)
         // Put back as it opens: saved no more, and nothing left in the window's configuration.
         arrows.set("Search", "▾", SearchDomain.CONFIGURATION_SEARCH)
         assertEquals(emptyList(), arrows.listed("Search"))
@@ -137,7 +137,7 @@ class SearchConfigurationStatesTest {
         assertTrue(again.of("Search", "▾▾").filters.matchCase)
         assertEquals(listOf("▾", "▾▾"), again.listed("Search"))
         // Written before 2026-11-13: none.
-        assertEquals(emptyMap(), SearchDomain.Config.decode("""{"query":"tea"}""")!!.arrows)
+        assertEquals(emptyMap(), SearchDomain.Config.decode("""{"query":"tea"}""")!!.inside)
     }
 
     /**
@@ -147,10 +147,52 @@ class SearchConfigurationStatesTest {
     @Test
     fun aMenuButtonKeepsTheDownArrowConfigurationsAndTheSearchIsNotThem() {
         val plain = SearchDomain.Config()
-        val changed = plain.copy(arrows = arrowsWith(emptyMap(), "▾", SearchDomain.CONFIGURATION_SEARCH.copy(query = "sort")))
+        val changed = plain.copy(inside = arrowsWith(emptyMap(), "▾", SearchDomain.CONFIGURATION_SEARCH.copy(query = "sort")))
         assertFalse(SearchDomain.sameSearchWindowState(plain.encode(), changed.encode()))
         assertTrue(SearchDomain.sameSearchWindowState(changed.encode(), SearchDomain.Config.decode(changed.encode())!!.encode()))
         assertTrue(SearchDomain.sameSearchConfigurations(plain.encode(), changed.encode()))
-        assertEquals("sort", SearchDomain.Config.decode(SearchDomain.Config.decode(changed.encode())!!.arrows["▾"])!!.query)
+        assertEquals("sort", SearchDomain.Config.decode(SearchDomain.Config.decode(changed.encode())!!.inside["▾"])!!.query)
+    }
+
+    /**
+     * User rule 2026-11-13: a field's own search is kept with the window it stands in — the "List of parents" set to a
+     * parent distance of 3 is still at 3 after a restart — and is not kept once it is back to what it opens with.
+     */
+    @Test
+    fun aFieldsOwnConfigurationComesBackWithItsWindow() {
+        val windows = mutableMapOf("Search" to SearchDomain.Config())
+        val inside = registry(windows)
+        val opened = SearchDomain.parentsListConfig(listOf("Chrono/a"))
+        val field = "/field:row/list of parents"
+        assertEquals(opened, inside.of("Search", field, opened))
+        inside.set("Search", field, opened.copy(filters = opened.filters.copy(parentDistance = 3)), opened)
+        val back = mutableMapOf("Search" to SearchDomain.Config.decode(windows.getValue("Search").encode())!!)
+        assertEquals(3, registry(back).of("Search", field, opened).filters.parentDistance)
+        // Its ▾ window is its own, kept beside it; a field is no ▾ window.
+        inside.set("Search", "$field▾", SearchDomain.CONFIGURATION_SEARCH.copy(query = "dist"))
+        assertEquals(listOf("$field▾"), inside.listed("Search"))
+        // Back to what it opens with: nothing of it is kept.
+        inside.set("Search", field, opened, opened)
+        assertEquals(setOf("$field▾"), windows.getValue("Search").inside.keys)
+    }
+
+    /** User rule 2026-11-13: *"Every typing must create a history unit"* — a run of keystrokes in one bar is one unit. */
+    @Test
+    fun typingInABarInsideAWindowIsToldFromAnyOtherChange() {
+        fun with(map: Map<String, String>, key: String, config: SearchDomain.Config) = arrowsWith(map, key, config)
+        val base = SearchDomain.CONFIGURATION_SEARCH
+        val one = with(emptyMap(), "▾", base.copy(query = "s"))
+        val two = with(one, "▾", base.copy(query = "so"))
+        // The first letter (the entry appears), the next, and the last one erased (it goes): the same run.
+        assertEquals("▾", SearchDomain.insideTypedIn(emptyMap(), one))
+        assertEquals("▾", SearchDomain.insideTypedIn(one, two))
+        assertEquals("▾", SearchDomain.insideTypedIn(one, emptyMap()))
+        // A switch set there is no typing; nor two windows changed at once.
+        val switched = with(one, "▾", base.copy(query = "s", filters = SearchDomain.Filters(matchCase = true)))
+        assertNull(SearchDomain.insideTypedIn(one, switched))
+        assertNull(SearchDomain.insideTypedIn(emptyMap(), with(emptyMap(), "▾", base.copy(filters = SearchDomain.Filters(matchCase = true)))))
+        assertNull(SearchDomain.insideTypedIn(emptyMap(), with(one, "▾▾", base.copy(query = "x"))))
+        // Each bar its own run.
+        assertEquals("/field:row/add a parent", SearchDomain.insideTypedIn(one, with(one, "/field:row/add a parent", SearchDomain.ADD_PARENT_SEARCH.copy(query = "t"))))
     }
 }

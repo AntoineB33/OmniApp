@@ -83,7 +83,7 @@ internal fun CalendarDragEditor(
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             NoteText("the block", color = MaterialTheme.colorScheme.onSurface)
-            CheckBoxDropDown(
+            CheckBoxDropDown("dragged blocks",
                 options = options.map(::calendarDragKey),
                 checked = checked,
                 face =

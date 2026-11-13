@@ -91,7 +91,7 @@ internal fun NudgeMenu(enabled: Boolean, stepsMillis: List<Long>, onNudge: (delt
         field()
         // User rule 2026-11-12: the menu is a Search window of its entries.
         // The menu stays open: a nudge is pressed in turn.
-        ActionMenu(
+        ActionMenu("NudgeMenu",
             open = open,
             onDismiss = { open = false },
             actions = stepsMillis.map { delta -> MenuAction(nudgeLabel(delta), keepsOpen = true) { onNudge(delta) } },

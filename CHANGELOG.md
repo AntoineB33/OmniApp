@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Typing in a ▾ bar is a History Unit; drop-downs are named; a field's own search is kept — 2026-11-13
+
+User rules: *"Every typing must create a history unit"*; and fix three gaps of the entry below. `Config.arrows` is now
+`Config.inside` (stored `inside`; `arrows`, written for a few hours and never deployed, is no longer read): the
+configuration of EVERY Search window drawn inside a window — its ▾ windows, a field's list ("List of parents": its bar,
+its parent distance), a drop-down's or a menu's list (not what is typed in its bar) — written by `App.setSearchInside`,
+each change a History Unit, a run of keystrokes in one bar one unit (`SearchDomain.insideTypedIn`). Every drop-down and
+menu is named where it is called (`name`, the first parameter of `OptionSearchMenu`, `ActionMenu`, `ChoiceDropDown`,
+`CheckBoxDropDown`, `EnumPicker`, `KindsDropDown`, `ElementsDropDown`; 75 call sites): its id was a place in the code,
+which a rebuild could change. The Added elements configurations window is given the ids of the Search window it acts on.
+No migration.
+
 ### The ▾ configurations are kept with their window; embedded Search windows have ids — 2026-11-13
 
 User rules: *"when the app opens again A appears the same as before, with the right changes in the search

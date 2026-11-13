@@ -82,7 +82,7 @@ fun TaskLinkWindow(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     NoteText("Task tree", color = MaterialTheme.colorScheme.onSurface)
-                    ChoiceDropDown(
+                    ChoiceDropDown("TaskLinkWindow",
                         options = others,
                         selected = tree,
                         label = { it.title.ifBlank { SchedulerDomain.UNTITLED_LABEL } },

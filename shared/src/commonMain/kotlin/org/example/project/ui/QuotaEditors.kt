@@ -717,7 +717,7 @@ internal fun LengthField(
             // Left, it reads the stored length again: a length that was not one is not left on screen.
             modifier = Modifier.width(96.dp).endsEditOnOutsidePress { draft = millis?.let { QuotaDomain.lengthIn(it, unit) }.orEmpty() },
         )
-        ChoiceDropDown(
+        ChoiceDropDown("LengthField",
             options = units,
             selected = unit,
             label = { it.label },

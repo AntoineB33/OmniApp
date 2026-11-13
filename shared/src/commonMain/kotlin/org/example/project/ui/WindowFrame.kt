@@ -1878,7 +1878,7 @@ class HeadMenuEntry(val label: String, val enabled: Boolean = true, val onClick:
 @Composable
 private fun HeadMenu(open: Boolean, onDismiss: () -> Unit, entries: List<HeadMenuEntry>) {
     // User rule 2026-11-12: the menu is a Search window of its entries.
-    ActionMenu(
+    ActionMenu("HeadMenu",
         open = open,
         onDismiss = onDismiss,
         actions = entries.map { entry -> MenuAction(entry.label, enabled = entry.enabled, onClick = entry.onClick) },
@@ -2149,7 +2149,7 @@ fun WindowBar(
         val any = host.selectedTabs.isNotEmpty()
         val globalizable = host.selectedTabs.filter(canBeGlobal)
         val allGlobal = globalizable.isNotEmpty() && globalizable.all(isGlobal)
-        ActionMenu(
+        ActionMenu("window bar menu",
             open = menuAt != null,
             onDismiss = { menuAt = null },
             actions = listOf(
@@ -2265,7 +2265,7 @@ private fun WindowBarMoreButton(onUndo: () -> Unit, onRedo: () -> Unit) {
                 .padding(horizontal = 10.dp, vertical = 6.dp),
         )
         // User rule 2026-11-12: the menu is a Search window of its entries.
-        ActionMenu(
+        ActionMenu("WindowBarMoreButton",
             open = open,
             onDismiss = { open = false },
             // As before: the menu stays open, "undo" pressed in turn.

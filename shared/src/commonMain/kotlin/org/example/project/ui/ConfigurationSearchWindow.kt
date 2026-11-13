@@ -174,7 +174,7 @@ fun ConfigurationSearchWindow(
             ) {
                 val pages = SearchDomain.FEATURE_PAGES
                 val picked = pages.filter { it.id in own.pages }
-                CheckBoxDropDown(
+                CheckBoxDropDown("ConfigurationSearchWindow",
                     options = pages,
                     checked = picked.toSet(),
                     face =
@@ -187,7 +187,7 @@ fun ConfigurationSearchWindow(
                     onChange = { checked -> onOwnChange(own.copy(pages = checked.mapTo(HashSet()) { it.id })) },
                     modifier = Modifier.weight(1f),
                 )
-                KindsDropDown(
+                KindsDropDown("ConfigurationSearchWindow#2",
                     kinds = own.kinds,
                     onKindsChange = { onOwnChange(own.copy(kinds = it)) },
                     modifier = Modifier.weight(1f),
@@ -314,7 +314,7 @@ private fun ClaudeFilterEditor(
     when (setting) {
         SearchDomain.Setting.PromptProject, SearchDomain.Setting.AnswerProject, SearchDomain.Setting.ReasoningProject ->
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                ChoiceDropDown(
+                ChoiceDropDown("ClaudeFilterEditor",
                     options = claudeLogs.projects,
                     selected = f.claudeProject,
                     // By the last folder, as a row names it: whole paths all read the same in the field's width.
@@ -395,7 +395,7 @@ internal fun SettingEditor(
             )
         // The Search window's own type selector — a field with a drop-down — not a second drawing of it.
         SearchDomain.Setting.Types ->
-            KindsDropDown(kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = config.offeredKinds)
+            KindsDropDown(setting.name, kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = config.offeredKinds)
         // User rule 2026-11-04: the search bar's two filters, also in its right-click menu.
         SearchDomain.Setting.MatchCase ->
             androidx.compose.material3.Switch(checked = f.matchCase, onCheckedChange = { filters(f.copy(matchCase = it)) })
@@ -427,7 +427,7 @@ internal fun SettingEditor(
         }
         // "any" is no list: it does not appear by default (user rule 2026-11-02).
         SearchDomain.Setting.CompletionList ->
-            EnumPicker(SearchDomain.Completion.entries, config.completion, { it.label }) { onChange(config.copy(completion = it)) }
+            EnumPicker(setting.name, SearchDomain.Completion.entries, config.completion, { it.label }) { onChange(config.copy(completion = it)) }
         // The calendar filter: its three states (user rule 2026-10-07 — what can be added without removing anything
         // where the user right-clicked, what can be added, or no filter), the instant, and — only for a window the
         // calendar's "add…" opened — the button that puts the instant back on that right-click.
@@ -437,7 +437,7 @@ internal fun SettingEditor(
                 androidx.compose.foundation.layout.Box {
                     FrameButton(f.calendarAddFilter.label + " ▾") { statesOpen = true }
                     // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-                    OptionSearchMenu(
+                    OptionSearchMenu(setting.name,
                         open = statesOpen,
                         onDismiss = { statesOpen = false },
                         options = choiceOptions(SearchDomain.CalendarAddFilter.entries, { (if (it == f.calendarAddFilter) "● " else "○ ") + it.label }) { choice ->
@@ -494,17 +494,17 @@ internal fun SettingEditor(
                 if (f.blocksOf.isNotEmpty()) FrameButton("✕") { filters(f.copy(blocksOf = emptySet())) }
             }
         SearchDomain.Setting.ExcludedElements ->
-            ElementsDropDown(state, f.excludedElements, windows) { filters(f.copy(excludedElements = it)) }
+            ElementsDropDown(setting.name, state, f.excludedElements, windows) { filters(f.copy(excludedElements = it)) }
         SearchDomain.Setting.IncludedElements ->
-            ElementsDropDown(state, f.includedElements, windows) { filters(f.copy(includedElements = it)) }
+            ElementsDropDown(setting.name, state, f.includedElements, windows) { filters(f.copy(includedElements = it)) }
         // User rule 2026-11-12: only the parents of these elements (what the "List of parents" asks).
         SearchDomain.Setting.ParentsOf ->
-            ElementsDropDown(state, f.parentsOf, windows) { filters(f.copy(parentsOf = it)) }
+            ElementsDropDown(setting.name, state, f.parentsOf, windows) { filters(f.copy(parentsOf = it)) }
         // User rule 2026-11-13: how far above them — an integer, picked in a list of integers with no end.
         SearchDomain.Setting.ParentDistance -> ParentDistanceField(state, f) { filters(f.copy(parentDistance = it)) }
         // User rule 2026-11-12: the kinds no parent of a listed element may be — the app's one check-box drop-down.
         SearchDomain.Setting.NoParentOfKinds ->
-            CheckBoxDropDown(
+            CheckBoxDropDown(setting.name,
                 options = SearchDomain.Kind.entries.filter(org.example.project.scheduler.domain.ElementTree::isElement),
                 checked = f.noParentOfKinds,
                 face = if (f.noParentOfKinds.isEmpty()) "any parent" else SearchDomain.Kind.entries.filter { it in f.noParentOfKinds }.joinToString(", ") { it.label },
@@ -518,7 +518,7 @@ internal fun SettingEditor(
         // User rule 2026-10-11: only the periods drawn one way — the period's own drawing field, as a filter.
         SearchDomain.Setting.PeriodDrawingSetting ->
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                ChoiceDropDown(
+                ChoiceDropDown(setting.name,
                     options = org.example.project.scheduler.domain.PeriodDrawing.entries,
                     selected = f.periodDrawing,
                     label = { it.label },
@@ -562,17 +562,17 @@ internal fun SettingEditor(
                 filters(f.copy(reminderRepeats = it))
             }
         SearchDomain.Setting.HistoryCategorySetting ->
-            EnumPicker(HistoryCategory.entries, f.historyCategory, { historyCategoryLabel(it) }) {
+            EnumPicker(setting.name, HistoryCategory.entries, f.historyCategory, { historyCategoryLabel(it) }) {
                 filters(f.copy(historyCategory = it))
             }
         SearchDomain.Setting.HistoryWindowSetting ->
             // The windows — and the scheduler engine, where the sets of rules were made ([SearchDomain.MadeIn]).
-            EnumPicker(SearchDomain.MADE_IN_CHOICES, f.madeIn, { it.label }) { filters(f.withMadeIn(it)) }
+            EnumPicker(setting.name, SearchDomain.MADE_IN_CHOICES, f.madeIn, { it.label }) { filters(f.withMadeIn(it)) }
         SearchDomain.Setting.HistoryUndoneSetting ->
             Choices(SearchDomain.Tri.entries, f.historyUndone, { it.label }) { filters(f.copy(historyUndone = it)) }
         // The kinds of element the unit changed: the app's one check-box drop-down, so several can be ticked.
         SearchDomain.Setting.HistoryChangedKindsSetting ->
-            CheckBoxDropDown(
+            CheckBoxDropDown(setting.name,
                 options = SearchDomain.HISTORY_CHANGED_KINDS,
                 checked = f.historyChangedKinds,
                 face = changedKindsFace(f.historyChangedKinds),
@@ -580,7 +580,7 @@ internal fun SettingEditor(
                 onChange = { filters(f.copy(historyChangedKinds = it)) },
             )
         SearchDomain.Setting.NotificationSourceSetting ->
-            CheckBoxDropDown(
+            CheckBoxDropDown(setting.name,
                 options = org.example.project.scheduler.state.NotificationSource.entries,
                 checked = f.notificationSources,
                 face = if (f.notificationSources.isEmpty()) "anything"
@@ -598,7 +598,7 @@ internal fun SettingEditor(
         SearchDomain.Setting.TaskTreeDatedSetting ->
             Choices(SearchDomain.Tri.entries, f.taskTreeDated, { it.label }) { filters(f.copy(taskTreeDated = it)) }
         SearchDomain.Setting.RelationSectionSetting ->
-            EnumPicker(TaskRelationsDomain.Section.entries, f.relationSection, { SearchDomain.relationSectionLabel(it) }) {
+            EnumPicker(setting.name, TaskRelationsDomain.Section.entries, f.relationSection, { SearchDomain.relationSectionLabel(it) }) {
                 filters(f.copy(relationSection = it))
             }
         SearchDomain.Setting.ShortcutReboundSetting ->
@@ -609,7 +609,7 @@ internal fun SettingEditor(
                 filters(f.copy(windowDuplicates = it))
             }
         SearchDomain.Setting.WindowStatusSetting ->
-            EnumPicker(SearchDomain.WindowStatus.entries, f.windowStatus, { it.label }) { filters(f.copy(windowStatus = it)) }
+            EnumPicker(setting.name, SearchDomain.WindowStatus.entries, f.windowStatus, { it.label }) { filters(f.copy(windowStatus = it)) }
         // User rule 2026-10-30: the whole list's Sort by has the configuration's default sorting a click away —
         // grey where the configuration has none (`SearchDomain.defaultSortsOf`).
         SearchDomain.Setting.SortResults ->
@@ -654,7 +654,7 @@ private fun ParentDistanceField(state: SchedulerState, f: SearchDomain.Filters, 
     var count by remember(open, highest) { mutableStateOf(maxOf(highest, INTEGER_PAGE)) }
     Box {
         FrameButton(SearchDomain.parentDistanceLabel(f.parentDistance, highest) + " ▾") { open = true }
-        OptionSearchMenu(
+        OptionSearchMenu("ParentDistanceField",
             open = open,
             onDismiss = { open = false },
             options = SearchOptions(
@@ -701,7 +701,7 @@ private fun SortMethodPicker(
                 .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]), "Select all" its first element.
-        OptionSearchMenu(
+        OptionSearchMenu("sort by",
             open = open,
             onDismiss = { open = false },
             modifier = Modifier.checkRangeShift(range),
@@ -862,7 +862,7 @@ private fun historyCategoryLabel(category: HistoryCategory): String =
 
 /** "any", or one of [options] — a drop-down, for the choices too many to lay out as chips. */
 @Composable
-private fun <T> EnumPicker(options: List<T>, selected: T?, label: (T) -> String, onSelect: (T?) -> Unit) {
+private fun <T> EnumPicker(name: String, options: List<T>, selected: T?, label: (T) -> String, onSelect: (T?) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         Text(
@@ -876,7 +876,7 @@ private fun <T> EnumPicker(options: List<T>, selected: T?, label: (T) -> String,
                 .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]), "any" first.
-        OptionSearchMenu(
+        OptionSearchMenu(name,
             open = open,
             onDismiss = { open = false },
             options = choiceOptions(listOf<T?>(null) + options, { it?.let(label) ?: "any" }) {
@@ -951,7 +951,7 @@ private fun changedKindsFace(kinds: Set<SearchDomain.Kind>): String =
  * list, so what is checked can always be unchecked. An element gone stands there under its key.
  */
 @Composable
-private fun ElementsDropDown(
+private fun ElementsDropDown(name: String,
     state: SchedulerState,
     checked: Set<String>,
     windows: List<SearchDomain.WindowEntry>,
@@ -966,7 +966,7 @@ private fun ElementsDropDown(
     val reached = elements.take(shown).map { it.first }
     fun nameOf(key: String) = names[key] ?: SearchDomain.changedElementTitle(state, key, windows)
     val options = checked.filterNot { it in reached }.sortedBy(::nameOf) + reached
-    CheckBoxDropDown(
+    CheckBoxDropDown(name,
         options = options,
         checked = checked,
         face = if (checked.isEmpty()) "none" else checked.map(::nameOf).sorted().joinToString(", "),

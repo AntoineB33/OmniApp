@@ -1599,7 +1599,7 @@ private fun WeightTableHeader(
                 ) {
                     ColumnDragHandle(active = draggedColumn == column)
                     // User rule 2026-11-12: the menu is a Search window of its entries.
-                    org.example.project.ui.ActionMenu(
+                    org.example.project.ui.ActionMenu("priority weight column menu",
                         open = menuOpen,
                         onDismiss = { menuOpen = false },
                         actions = listOfNotNull(
@@ -2309,7 +2309,7 @@ internal fun RelativePriorityWindow(
                     }
                     // User rule 2026-11-12: the menu is a Search window of its entries.
                     // Root first, then this cell's ancestors from the root-most down to its parent.
-                    org.example.project.ui.ActionMenu(
+                    org.example.project.ui.ActionMenu("RelativePriorityWindow",
                         open = relativeToMenuOpen,
                         onDismiss = { relativeToMenuOpen = false },
                         actions = options.map { option -> org.example.project.ui.MenuAction(relativeToLabel(state, option)) { relativeTo = option } },
@@ -3051,7 +3051,7 @@ internal fun TaskRow(
             if (cellMenu != null) {
                 // User rule 2026-11-12: the menu is a Search window of its entries, its bar taking typing — so, the user's
                 // choice, the press that closes it is its own (PRD §13 had it reach the cell under it).
-                org.example.project.ui.ActionMenu(
+                org.example.project.ui.ActionMenu("task cell menu",
                     open = contextMenuOpen,
                     onDismiss = { contextMenuOpen = false },
                     actions = taskCellMenuActions(cellMenu),
@@ -3343,7 +3343,7 @@ internal fun TaskRow(
                         // Same rule as the row's own menu: dismissed by the app-root observer, so the
                         // press that closes it still selects whatever it landed on.
                         // User rule 2026-11-12: the menu is a Search window of its entries.
-                        org.example.project.ui.ActionMenu(
+                        org.example.project.ui.ActionMenu("priority column menu",
                             open = priorityMenuOpen,
                             onDismiss = { priorityMenuOpen = false },
                             actions = listOf(
@@ -4286,7 +4286,7 @@ internal fun PeriodCombinationsSection(
 /** One period selector field: the check-box drop-down over [allKinds], its face the checked kinds. */
 @Composable
 private fun PeriodSelectorField(allKinds: List<String>, kinds: Set<String>, onChange: (Set<String>) -> Unit) {
-    org.example.project.ui.CheckBoxDropDown(
+    org.example.project.ui.CheckBoxDropDown("PeriodSelectorField",
         options = allKinds,
         checked = kinds,
         face = if (kinds.isEmpty()) "choose periods" else allKinds.filter { it in kinds }.joinToString(" + "),

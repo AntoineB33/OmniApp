@@ -81,7 +81,7 @@ fun TaskCategoryCell(
         // offered as a row that makes it. Typing in the bar narrows the rows.
         val categories = state.categories.filter { it.kind == CategoryKind.TaskId }
             .sortedWith(compareBy({ it.id !in carried.map { c -> c.id } }, { it.title.lowercase() }))
-        OptionSearchMenu(
+        OptionSearchMenu("TaskCategoryCell",
             open = open,
             onDismiss = { open = false },
             options = SearchOptions(

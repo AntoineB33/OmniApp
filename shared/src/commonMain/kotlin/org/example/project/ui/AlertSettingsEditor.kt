@@ -156,7 +156,7 @@ private fun AlertSoundDropdown(tone: AlertSound, enabled: Boolean, onSelect: (Al
             )
         }
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-        OptionSearchMenu(
+        OptionSearchMenu("AlertSoundDropdown",
             open = expanded,
             onDismiss = { expanded = false },
             options = choiceOptions(AlertSound.entries, { it.label }) { entry ->

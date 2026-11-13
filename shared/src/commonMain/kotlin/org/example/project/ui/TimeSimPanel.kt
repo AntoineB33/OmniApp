@@ -184,7 +184,7 @@ fun TimeSimPanel(
                             .padding(vertical = 2.dp, horizontal = 8.dp),
                     )
                     // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-                    OptionSearchMenu(
+                    OptionSearchMenu("TimeSimPanel",
                         open = menuOpen,
                         onDismiss = { menuOpen = false },
                         options = choiceOptions(scopes, { it.label }) { scope ->

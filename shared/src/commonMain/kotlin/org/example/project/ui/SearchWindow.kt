@@ -1743,7 +1743,7 @@ class MenuAction(
  * entries are its rows, a click runs one and closes the menu (but a [MenuAction.keepsOpen] one), the bar finds among them.
  */
 @Composable
-internal fun ActionMenu(
+internal fun ActionMenu(name: String,
     open: Boolean,
     onDismiss: () -> Unit,
     actions: List<MenuAction>,
@@ -1753,7 +1753,7 @@ internal fun ActionMenu(
 ) {
     val latest by rememberUpdatedState(actions)
     val latestDismiss by rememberUpdatedState(onDismiss)
-    OptionSearchMenu(
+    OptionSearchMenu(name,
         open = open,
         onDismiss = onDismiss,
         modifier = modifier,
@@ -1830,6 +1830,8 @@ private val OPTION_MENU_BAR_HEIGHT = 56.dp
  */
 @Composable
 internal fun OptionSearchMenu(
+    /** What list this is, in a few words: its id ends with it, and its configuration is kept under it. */
+    name: String,
     open: Boolean,
     onDismiss: () -> Unit,
     options: SearchOptions,
@@ -1854,16 +1856,25 @@ internal fun OptionSearchMenu(
         atPointer = atPointer,
     ) {
         val opened = if (options.integers != null) SearchDomain.INTEGER_SEARCH else SearchDomain.OPTION_SEARCH
-        // User rule 2026-11-13: a drop-down's list has an id — the window's it opens over, and where it stands in it.
-        val listId = embeddedSearchId("list:" + androidx.compose.runtime.currentCompositeKeyHash.toString(36))
+        // User rule 2026-11-13: a drop-down's list has an id — the window's it opens over, and its [name], which says
+        // what list it is (written where it is called: a place in the code would change from one build to the next).
+        val listId = embeddedSearchId("list:$name")
         androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides listId) {
-        var config by remember { mutableStateOf(opened.copy(dropButtons = options.onDrop != null)) }
+        // Its configuration is kept with that window ([rememberInsideConfig]) — but what is typed in its bar, which
+        // finds an entry for this opening and starts empty at the next.
+        var kept by rememberInsideConfig(listId, opened.copy(dropButtons = options.onDrop != null))
+        var typed by remember { mutableStateOf("") }
+        val config = kept.copy(query = typed)
+        val setConfig = { next: SearchDomain.Config ->
+            typed = next.query
+            kept = next.copy(query = "")
+        }
         var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
         // No account is searched: the options are the rows.
         val nothing = remember { SchedulerState.empty() }
         val rows = (options.integers?.let { it.count + 1 } ?: options.options.size) + (if (options.checked != null) 1 else 0) + (if (options.onCreate != null) 1 else 0)
         val height = (OPTION_MENU_BAR_HEIGHT + RESULT_ROW_HEIGHT * rows.coerceAtLeast(1)).coerceAtMost(OPTION_MENU_MAX_HEIGHT)
-        RegisterEmbeddedSearch(listId, SearchDomain.windowTitle(config), config, open = true, saved = false, set = { config = it })
+        RegisterEmbeddedSearch(listId, name, config, open = true, saved = false, set = setConfig)
         SearchWindow(
             state = nothing,
             openers = OPTION_OPENERS,
@@ -1874,7 +1885,7 @@ internal fun OptionSearchMenu(
             onIntent = {},
             onDismiss = onDismiss,
             config = config,
-            onConfigChange = { config = it },
+            onConfigChange = setConfig,
             onOpenConfigurations = {},
             splits = splits,
             onSplitsChange = { splits = it },
@@ -1948,7 +1959,7 @@ internal fun SectionArrow(collapsed: Boolean, onToggle: () -> Unit) {
 @Composable
 internal fun SearchPartsMenu(open: Boolean, onDismiss: () -> Unit, removed: SearchSplits, onToggle: (SearchPart) -> Unit) {
     // User rule 2026-11-12: the menu is a Search window of its entries.
-    ActionMenu(
+    ActionMenu("SearchPartsMenu",
         open = open,
         onDismiss = onDismiss,
         actions = SearchPart.entries.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed))) { onToggle(part) } },
@@ -2249,7 +2260,7 @@ private fun AddedElementsList(
                     }
                     // User rule 2026-11-12: the menu is a Search window of its entries.
                     val picked = selected.ifEmpty { setOf(key) }
-                    ActionMenu(
+                    ActionMenu("added elements menu",
                         open = menuOpen,
                         onDismiss = { menuOpen = false },
                         actions = listOfNotNull(
@@ -2396,7 +2407,7 @@ internal fun OutlinedTextButton(text: String, enabled: Boolean, onClick: () -> U
  * several can be ticked in turn. One drop-down for the Search window and the Configuration Search window.
  */
 @Composable
-internal fun KindsDropDown(
+internal fun KindsDropDown(name: String,
     kinds: Set<SearchDomain.Kind>,
     onKindsChange: (Set<SearchDomain.Kind>) -> Unit,
     modifier: Modifier = Modifier.width(170.dp),
@@ -2406,7 +2417,7 @@ internal fun KindsDropDown(
     /** The kinds listed; the checks of the others stay as they are. */
     options: List<SearchDomain.Kind> = SearchDomain.Kind.entries,
 ) {
-    CheckBoxDropDown(
+    CheckBoxDropDown(name,
         options = options,
         checked = options.filterTo(HashSet()) { it in kinds },
         face = kindsLabel(kinds, options),
@@ -2425,7 +2436,7 @@ internal fun KindsDropDown(
  * kinds and the period edit window's period selector fields.
  */
 @Composable
-internal fun <T> CheckBoxDropDown(
+internal fun <T> CheckBoxDropDown(name: String,
     options: List<T>,
     checked: Set<T>,
     face: String,
@@ -2471,7 +2482,7 @@ internal fun <T> CheckBoxDropDown(
         val latestChecked by rememberUpdatedState(checked)
         val latestOptions by rememberUpdatedState(options)
         fun optionAt(id: String): T? = id.toIntOrNull()?.let { latestOptions.getOrNull(it) }
-        OptionSearchMenu(
+        OptionSearchMenu(name,
             open = open,
             onDismiss = { open = false },
             modifier = Modifier.checkRangeShift(range),
@@ -2549,7 +2560,7 @@ private const val NEAR_END_PX: Int = 96
  * period edit window's drawing swatches).
  */
 @Composable
-internal fun <T> ChoiceDropDown(
+internal fun <T> ChoiceDropDown(name: String,
     options: List<T>,
     selected: T?,
     label: (T) -> String,
@@ -2580,7 +2591,7 @@ internal fun <T> ChoiceDropDown(
             )
         }
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]), closing on the one picked.
-        OptionSearchMenu(
+        OptionSearchMenu(name,
             open = open,
             onDismiss = { open = false },
             options = SearchOptions(
@@ -3065,7 +3076,7 @@ private fun TaskPathBox(
     }
     menu?.let { shown ->
         // User rule 2026-11-12: the menu is a Search window of its entries.
-        ActionMenu(
+        ActionMenu("TaskPathBox",
             open = menuOpen,
             onDismiss = { menuOpen = false },
             actions = org.example.project.scheduler.ui.taskCellMenuActions(shown),
@@ -3106,7 +3117,7 @@ private fun TaskPathBox(
                 // User rule 2026-11-12: the menu is a Search window of its entries.
                 // The task's paths, each a row: a click — or a right-click — opens the row's menu for THAT path's occurrence (one menu
                 // at a time: this list closes).
-                ActionMenu(
+                ActionMenu("TaskPathBox#2",
                     open = listOpen,
                     onDismiss = { listOpen = false },
                     actions = result.paths.map { path ->
@@ -3215,7 +3226,7 @@ internal fun TaskIdentityRow(
             item.actions?.let { actions ->
                 // User rule 2026-11-12: the menu is a Search window of its entries.
                 // PRD §4: "go to task" is GREYED, never absent, when the row's task is nowhere in the tree.
-                ActionMenu(
+                ActionMenu("TaskIdentityRow",
                     open = menuOpen,
                     onDismiss = { menuOpen = false },
                     actions = listOf(MenuAction("go to task", enabled = actions.onGoToTask != null) { actions.onGoToTask?.invoke() }),
@@ -3368,7 +3379,7 @@ private fun ItemResultRow(
                 SearchDomain.Kind.WorkplaceSetup -> "apply"
                 else -> null
             }
-        ActionMenu(
+        ActionMenu("ItemResultRow",
             open = menuOpen,
             onDismiss = { menuOpen = false },
             actions = listOfNotNull(
@@ -3463,7 +3474,7 @@ private fun ElementChildren(
             }
             // The menu, on the selected children: added to the window's elements, as a result row's "add" adds.
             // User rule 2026-11-12: the menu is a Search window of its entries.
-            ActionMenu(
+            ActionMenu("ElementChildren",
                 open = menuOpen,
                 onDismiss = { menuOpen = false },
                 actions = listOf(

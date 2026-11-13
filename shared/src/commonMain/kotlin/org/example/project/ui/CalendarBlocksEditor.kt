@@ -141,7 +141,7 @@ internal fun CalendarBlocksEditor(
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            CheckBoxDropDown(
+            CheckBoxDropDown("calendar blocks",
                 options = blocks.map { it.id },
                 checked = checked,
                 face =

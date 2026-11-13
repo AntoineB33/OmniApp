@@ -159,7 +159,7 @@ fun AddedElementsConfigurationWindow(
                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
                         .revertsOnEscape(config.actionQuery) { onConfigChange(config.copy(actionQuery = it)) },
                 )
-                KindsDropDown(kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
+                KindsDropDown("AddedElementsConfigurationWindow", kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
                 ResetButton(enabled = config.actionQuery.isNotEmpty() || own.kinds.isNotEmpty()) {
                     onConfigChange(config.copy(actionQuery = ""))
                     onOwnChange(own.copy(kinds = emptySet()))
@@ -1018,7 +1018,7 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.WorkplaceOsChoice -> {
             val setups = SearchDomain.addedWorkplaceSetupsOrDefault(state, added)
             val common = setups.map { it.os }.distinct().singleOrNull()
-            ChoiceDropDown(
+            ChoiceDropDown("workplace operating system",
                 options = org.example.project.scheduler.domain.WorkplaceOs.entries,
                 selected = common,
                 label = { it.label },
@@ -1426,7 +1426,7 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.PeriodDrawing -> {
             val periods = SearchDomain.addedPeriodKinds(state, added)
             val shared = periods.map { state.periodKindConfig.drawing(it) }.distinct().singleOrNull()
-            ChoiceDropDown(
+            ChoiceDropDown("period drawing",
                 options = PeriodDrawing.entries,
                 selected = shared,
                 label = { it.label },
@@ -1617,7 +1617,7 @@ private fun LowestCountdownEditor(
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CheckBoxDropDown(
+            CheckBoxDropDown("picked timers",
                 options = sorted.map { it.id },
                 checked = checked,
                 face = if (shown.size == 1) line(shown.single().id) else "${shown.size} timers",
@@ -1747,7 +1747,7 @@ private fun HighestCountEditor(
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CheckBoxDropDown(
+            CheckBoxDropDown("picked chronos",
                 options = sorted.map { it.id },
                 checked = checked,
                 face = if (shown.size == 1) line(shown.single().id) else "${shown.size} chronos",
@@ -1853,7 +1853,7 @@ private fun ShortcutWindowEditor(added: List<SearchDomain.Result>, handlers: Add
                                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
                         )
                         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]); the window it brings, ticked.
-                        OptionSearchMenu(
+                        OptionSearchMenu("ShortcutWindowEditor",
                             open = open,
                             onDismiss = { open = false },
                             options = SearchOptions(
@@ -2040,7 +2040,7 @@ private fun ResilienceEditor(
     val value = draft.trim().removeSuffix("%").trim().replace(',', '.').toDoubleOrNull()?.let { PeriodKinds.clamp(it / 100.0) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            ChoiceDropDown(
+            ChoiceDropDown("ResilienceEditor",
                 options = SearchDomain.resilienceKinds(state),
                 selected = kind,
                 label = { it },
@@ -2395,9 +2395,14 @@ private fun ElementParentsEditor(
 ) {
     val tree = org.example.project.scheduler.domain.ElementTree
     val children = added.map(SearchDomain::keyOf)
-    // Each window's own configuration (its bar, its settings): the window's view, Compose-only, kept while the row is.
-    var listConfig by remember(children) { mutableStateOf<SearchDomain.Config?>(null) }
-    var addConfig by remember(children) { mutableStateOf(SearchDomain.ADD_PARENT_SEARCH) }
+    // Each window's own configuration (its bar, its settings — the parent distance): kept with the Search window the
+    // row stands in (user rule 2026-11-13, [rememberInsideConfig]), under the field's id ([PopupSearchField]).
+    var listConfig by rememberInsideConfig(
+        embeddedSearchId("field:" + rowId + "/" + SearchDomain.ParentsChild.List.placeholder), SearchDomain.parentsListConfig(children),
+    )
+    var addConfig by rememberInsideConfig(
+        embeddedSearchId("field:" + rowId + "/" + SearchDomain.ParentsChild.Add.placeholder), SearchDomain.ADD_PARENT_SEARCH,
+    )
     // The tasks one of the added elements can be put under: the tree's own rule ([ElementTree.canLink]).
     val below = remember(children, state.elementLinks, state.lists, state.tasks) { children.associateWith { tree.descendantsOf(state, it) } }
     val eligible = remember(below, state.cells) {
@@ -2544,7 +2549,7 @@ private fun NewElementTimesEditor(
         if (withDate) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 NoteText("date", color = MaterialTheme.colorScheme.onSurface)
-                ChoiceDropDown(
+                ChoiceDropDown("NewElementTimesEditor",
                     options = org.example.project.scheduler.domain.NewDate.entries,
                     selected = times.date,
                     label = { it.label },
@@ -2555,7 +2560,7 @@ private fun NewElementTimesEditor(
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             NoteText("time", color = MaterialTheme.colorScheme.onSurface)
-            ChoiceDropDown(
+            ChoiceDropDown("NewElementTimesEditor#2",
                 options = org.example.project.scheduler.domain.NewTime.entries,
                 selected = times.time,
                 label = { it.label },

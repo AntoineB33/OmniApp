@@ -572,7 +572,7 @@ internal class TreeKeeper {
  * has also its own ▾ window or search configuration"*. An id is its owner's and [ARROW] (`Search#2▾`, `Search#2▾▾`),
  * or its owner's and a category of the tree (`Search#2▾/general`).
  *
- * **A ▾ window's configuration is kept with the Search window it hangs from** ([SearchDomain.Config.arrows], through
+ * **A ▾ window's configuration is kept with the Search window it hangs from** ([SearchDomain.Config.inside], through
  * [read] and [write], `App`'s): it comes back with that window after a restart, and a menu button keeps it with the
  * window's. [open] holds the ▾ windows on screen. [embedded] holds the Search windows drawn inside another — a field's
  * list, a drop-down's, the actions section — while they are open or hold a configuration of their own: they are in no
@@ -585,13 +585,16 @@ class ArrowSearches(
     val open = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
     val embedded = androidx.compose.runtime.mutableStateMapOf<String, SearchDomain.SearchWindowState>()
 
-    /** The configuration of the ▾ window [relative] of the window [root]: its own, else what a ▾ window opens with. */
-    fun of(root: String, relative: String): SearchDomain.Config =
-        SearchDomain.Config.decode(read(root)[relative]) ?: SearchDomain.CONFIGURATION_SEARCH
+    /**
+     * The configuration of the window [relative] drawn inside the window [root] — a ▾ window, a field's list, a
+     * drop-down's: its own, else what it opens with ([opened]; a ▾ window's by default).
+     */
+    fun of(root: String, relative: String, opened: SearchDomain.Config = SearchDomain.CONFIGURATION_SEARCH): SearchDomain.Config =
+        SearchDomain.Config.decode(read(root)[relative]) ?: opened
 
-    fun set(root: String, relative: String, config: SearchDomain.Config) {
+    fun set(root: String, relative: String, config: SearchDomain.Config, opened: SearchDomain.Config = SearchDomain.CONFIGURATION_SEARCH) {
         val all = read(root)
-        val next = arrowsWith(all, relative, config)
+        val next = arrowsWith(all, relative, config, opened)
         if (next != all) write(root, next)
     }
 
@@ -608,9 +611,14 @@ class ArrowSearches(
     }
 }
 
-/** [arrows] with the ▾ window [relative] holding [config] — or without it, once it holds what a ▾ window opens with. */
-internal fun arrowsWith(arrows: Map<String, String>, relative: String, config: SearchDomain.Config): Map<String, String> =
-    if (config == SearchDomain.CONFIGURATION_SEARCH) arrows - relative else arrows + (relative to config.encode())
+/** [arrows] with the window [relative] holding [config] — or without it, once it holds what it opens with ([opened]). */
+internal fun arrowsWith(
+    arrows: Map<String, String>,
+    relative: String,
+    config: SearchDomain.Config,
+    opened: SearchDomain.Config = SearchDomain.CONFIGURATION_SEARCH,
+): Map<String, String> =
+    if (config == opened) arrows - relative else arrows + (relative to config.encode())
 
 /**
  * The ids [ArrowSearches.listed] gives: the [open] ▾ windows and the [saved] ones, and every ▾ window one of them hangs
@@ -633,7 +641,7 @@ val LocalArrowSearches = androidx.compose.runtime.staticCompositionLocalOf<Arrow
 /** The id of the Search window the arrows drawn here are of ([ArrowSearches]); null: outside any. */
 val LocalArrowOwner = androidx.compose.runtime.compositionLocalOf<String?> { null }
 
-/** The id of the Search window of the app that keeps the ▾ configurations of what is drawn here ([SearchDomain.Config.arrows]). */
+/** The id of the Search window of the app that keeps the ▾ configurations of what is drawn here ([SearchDomain.Config.inside]). */
 val LocalArrowRoot = androidx.compose.runtime.compositionLocalOf<String?> { null }
 
 /** The id of a Search window drawn inside the one the composition stands in ([LocalArrowOwner]): its and [part]. */
@@ -663,6 +671,30 @@ internal fun RegisterEmbeddedSearch(
             registry.embedded[id] = SearchDomain.SearchWindowState(id, title, config, open, if (writes) { next -> latestSet?.invoke(next) } else null)
         }
         onDispose { registry.embedded.remove(id) }
+    }
+}
+
+/**
+ * User rule 2026-11-13: **the own configuration of a Search window drawn inside another** ([id]: a field's list, a
+ * drop-down's) — kept with the Search window it stands in ([ArrowSearches], [SearchDomain.Config.inside]) while it is no
+ * longer what it opens with ([opened]), so it comes back with that window after a restart; where no window of the app
+ * stands above it, by the composition, for as long as [opened] is the same.
+ */
+@Composable
+internal fun rememberInsideConfig(id: String?, opened: SearchDomain.Config): androidx.compose.runtime.MutableState<SearchDomain.Config> {
+    val registry = LocalArrowSearches.current
+    val root = LocalArrowRoot.current
+    val local = remember(id, opened) { mutableStateOf(opened) }
+    if (registry == null || id == null || root == null || !id.startsWith(root)) return local
+    val relative = id.removePrefix(root)
+    return remember(registry, root, relative, opened) {
+        object : androidx.compose.runtime.MutableState<SearchDomain.Config> {
+            override var value: SearchDomain.Config
+                get() = registry.of(root, relative, opened)
+                set(next) = registry.set(root, relative, next, opened)
+            override fun component1() = value
+            override fun component2(): (SearchDomain.Config) -> Unit = { value = it }
+        }
     }
 }
 

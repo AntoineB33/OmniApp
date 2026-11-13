@@ -31,7 +31,7 @@ class CheckBoxDropDownRenderTest {
         val scene =
             ImageComposeScene(width = 500, height = 700, density = Density(1f)) {
                 MaterialTheme {
-                    CheckBoxDropDown(
+                    CheckBoxDropDown("render",
                         options = probe.options,
                         checked = emptySet(),
                         face = "blocks",

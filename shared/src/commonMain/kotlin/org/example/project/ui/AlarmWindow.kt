@@ -1400,7 +1400,7 @@ private fun CountdownField(
         // User rule 2026-11-12: the menu is a Search window of its entries.
         // The menu STAYS OPEN: "+10 s" three times is three clicks, not three right-clicks. It leaves like any menu, on the
         // first press outside it (popups.md).
-        ActionMenu(
+        ActionMenu("time nudge menu",
             open = menuOpen,
             onDismiss = { menuOpen = false },
             actions = NUDGE_STEPS.map { step ->

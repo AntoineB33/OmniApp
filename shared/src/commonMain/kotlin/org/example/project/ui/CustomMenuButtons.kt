@@ -219,7 +219,7 @@ fun MenuAddableBox(key: Any?, onAdd: (MenuCustomizer) -> Unit, modifier: Modifie
         content()
         if (active) {
             // User rule 2026-11-12: the menu is a Search window of its entries.
-            ActionMenu(
+            ActionMenu("MenuAddableBox",
                 open = menuOpen,
                 onDismiss = { menuOpen = false },
                 actions = listOf(MenuAction("add in the left-side menu") { customizer?.let(onAdd) }),
@@ -1166,7 +1166,7 @@ internal fun CustomMenuSection(
                                 }
                             }
                             // User rule 2026-11-12: the menu is a Search window of its entries.
-                            ActionMenu(
+                            ActionMenu("lateral menu button menu",
                                 open = menuOpen,
                                 onDismiss = { menuOpen = false },
                                 actions = buildList {

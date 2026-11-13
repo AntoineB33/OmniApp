@@ -179,7 +179,7 @@ private fun SleepTimeChoice(
             Text("▾", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-        OptionSearchMenu(
+        OptionSearchMenu("SleepTimeChoice",
             open = open,
             onDismiss = { open = false },
             options = choiceOptions(SchedulerDomain.NightTime.entries, { it.label }) { entry ->

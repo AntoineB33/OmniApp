@@ -1619,17 +1619,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             )
         }
         // User rule 2026-11-13: the ▾ windows, by id. Each one's configuration is kept WITH the Search window it hangs
-        // from (`SearchDomain.Config.arrows`), on that window's placement row: it comes back with the window after a
-        // restart, and a menu button's "Update" keeps it. No History Unit: a ▾ window's own search is no edit of the search.
-        fun setSearchArrows(id: String, arrows: Map<String, String>) {
+        // from (`SearchDomain.Config.inside`), on that window's placement row: it comes back with the window after a
+        // restart, and a menu button's "Update" keeps it. So is the own configuration of a field's list and of a
+        // drop-down's (`SearchDomain.Config.inside`). User rule 2026-11-13: each change is a History Unit — a run of
+        // keystrokes in one of their bars one unit, as in the Search window's own bar.
+        fun setSearchInside(id: String, inside: Map<String, String>) {
             val before = searchConfigOf(id)
-            if (before.arrows == arrows) return
-            val config = before.copy(arrows = arrows)
+            if (before.inside == inside) return
+            val config = before.copy(inside = inside)
             searchConfigs[id] = config
             updatePlacementById(id) { it.copy(config = config.encode()) }
+            val typedIn = SearchDomain.insideTypedIn(before.inside, inside)
+            viewHistory.record(
+                SEARCH_KEY + id, before.encode(), config.encode(), "Search configuration inside " + id,
+                coalesceKey = typedIn?.let { SEARCH_KEY + id + "/inside/" + it },
+            )
         }
         val arrowSearches = remember {
-            org.example.project.ui.ArrowSearches(read = { searchConfigOf(it).arrows }, write = { id, arrows -> setSearchArrows(id, arrows) })
+            org.example.project.ui.ArrowSearches(read = { searchConfigOf(it).inside }, write = { id, inside -> setSearchInside(id, inside) })
         }
         // User rule 2026-11-12: **there is no calendar window** — "the calendar" is every Search window holding the
         // calendar element ([SearchDomain.showsCalendar]), which draws it in its actions section.
@@ -5505,8 +5512,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     }
                                 // The ▾ windows a saved window keeps with it: shown, as that window is.
                                 val savedArrows = saved.flatMap { window ->
-                                    window.config.arrows.keys.sorted().mapNotNull { relative ->
-                                        SearchDomain.Config.decode(window.config.arrows[relative])
+                                    window.config.inside.keys.sorted().mapNotNull { relative ->
+                                        SearchDomain.Config.decode(window.config.inside[relative])
                                             ?.let { SearchDomain.SearchWindowState(window.id + relative, SearchDomain.windowTitle(it), it, open = false) }
                                     }
                                 }
@@ -5861,7 +5868,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             ) {
                                 SearchDomain.resolve(schedulerState, targetConfig.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)
                             }
-                        CompositionLocalProvider(org.example.project.ui.LocalEmbeddedSearch provides embeddedSearchOf(target)) {
+                        CompositionLocalProvider(
+                            org.example.project.ui.LocalEmbeddedSearch provides embeddedSearchOf(target),
+                            // User rule 2026-11-13: what is drawn here is inside the Search window it acts on — the same
+                            // ids, the same kept configurations as in that window's own actions section.
+                            org.example.project.ui.LocalArrowSearches provides arrowSearches,
+                            org.example.project.ui.LocalArrowOwner provides target,
+                            org.example.project.ui.LocalArrowRoot provides target,
+                        ) {
                         AddedElementsConfigurationWindow(
                             state = schedulerState,
                             added = added,

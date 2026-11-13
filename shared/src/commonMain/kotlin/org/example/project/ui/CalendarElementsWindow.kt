@@ -190,7 +190,7 @@ fun CalendarElementsWindow(
                             style = MaterialTheme.typography.bodySmall,
                         )
                         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-                        OptionSearchMenu(
+                        OptionSearchMenu("CalendarElementsWindow",
                             open = kindMenuOpen,
                             onDismiss = { kindMenuOpen = false },
                             options = choiceOptions(offeredKinds, { it.label }) { option ->
