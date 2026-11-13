@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The added elements list is a Search window — 2026-11-13
+
+User rule: *"Make the 'added elements' list also a Search window."* `AddedElementsList` (its own rows, selection and
+menu) is gone: under the section's head stands the real `SearchWindow` (`addedList = AddedSearchRows(...)`, search
+section alone), its rows the added elements drawn as result rows are, with its own bar, ▾ and configuration, kept with
+the window under `<window>/added`. `TaskCellMenuActions.extra` and `ItemResultRow`'s `menuActions` carry "remove",
+"remove the others" and "show only its actions" where a result row has "add". **Behaviour changes:** the list has a
+search bar that keeps the elements whose name answers it; a task element's menu is the task cell's (start, go to task
+tree…) with the three entries; a double-click on a task element enters its rename instead of opening it; the first
+row is drawn selected as the list opens; the wheel and keys are the result list's. Not yet: the list's own sorting and
+filters (it stays in the order added). No migration.
+
 ### A field's cross and arrow show once clicked; the Edit Mode rectangle never hides them — 2026-11-13
 
 User rules: *"If the user doesn't click on the 'list of parents' field, then the cross button and the down arrow are not

@@ -3530,6 +3530,7 @@ internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.exampl
         cellMenu.onAdd?.let { add(org.example.project.ui.MenuAction("add", onClick = it)) }
         // ... and the same, emptying the added elements first: they become what this adds (user rule 2026-10-01).
         cellMenu.onAddReplacing?.let { add(org.example.project.ui.MenuAction(ADD_REPLACING_LABEL, onClick = it)) }
+        addAll(cellMenu.extra)
         // PRD §13: named "edit task" — the calendar's panel menu offers the very same window beside its own panel "Edit"
         // (PRD §8), so the two surfaces must not call it two things.
         cellMenu.onEdit?.let { add(org.example.project.ui.MenuAction("edit task", onClick = it)) }
@@ -3595,6 +3596,8 @@ internal class TaskCellMenuActions(
     val onAdd: (() -> Unit)? = null,
     /** PRD §7 Search: [onAdd] with every element added before removed from the added elements; null elsewhere. */
     val onAddReplacing: (() -> Unit)? = null,
+    /** Entries of the surface the row stands in, where "add" stands elsewhere: an added element's "remove" (user rule 2026-11-13). */
+    val extra: List<org.example.project.ui.MenuAction> = emptyList(),
     /** User rule 2026-10-20: "link to a task of another tree" — the account's tree window only ([LocalTaskLinker]); null elsewhere. */
     val onLink: (() -> Unit)? = null,
 )

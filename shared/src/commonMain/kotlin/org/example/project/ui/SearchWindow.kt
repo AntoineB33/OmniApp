@@ -503,6 +503,11 @@ fun SearchWindow(
      * a group or an action, each opened by its arrow, an open action's controls under it.
      */
     actionRows: ActionSearchRows? = null,
+    /**
+     * User rule 2026-11-13: **the added elements list** ([AddedSearchRows]): its rows are the elements added to the
+     * window it is drawn in, a row's menu and its drop button taking them off that list.
+     */
+    addedList: AddedSearchRows? = null,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -561,7 +566,11 @@ fun SearchWindow(
     // (`searchSelection`, shared by every sub-tree), a row's is the window's own; a press on either left the other
     // drawn. This names the sub-tree the last press went to — "result/<task>" or "added/<task>" — and is null once
     // a row took the selection back. Sticky, unlike [subtreeFocusOwner]: a press in another window changes nothing.
-    var selectionSurface by remember { mutableStateOf<String?>(null) }
+    // The added elements list shows it through the window it is drawn in ([AddedSurface]): one surface for the two.
+    val ownSurface = remember { mutableStateOf<String?>(null) }
+    val surfaceState: androidx.compose.runtime.MutableState<String?> =
+        addedList?.surface?.let { shared -> remember(shared) { AddedSurface(shared) } } ?: ownSurface
+    var selectionSurface by surfaceState
     // The "Children" action's sub-tree holding the keyboard (user rule 2026-11-12), apart from the rows' own.
     var actionsSubtreeFocus by remember { mutableStateOf<TaskId?>(null) }
     // The pinned parent row of the result list ([pinnedItemIndex]): the list's top in the window, which an expanded
@@ -590,7 +599,12 @@ fun SearchWindow(
             if (searchesTasks) SearchDomain.allPathsInAnyTree(state) else emptyMap()
         }
     val results: List<SearchDomain.Result> =
-        if (options?.integers != null) {
+        if (addedList != null) {
+            // The added elements, in the order they were added; the bar keeps those whose name answers it.
+            remember(addedList.rows, query) {
+                if (query.isBlank()) addedList.rows else addedList.rows.filter { SearchDomain.matchRank(it.name, query) != null }
+            }
+        } else if (options?.integers != null) {
             // User rule 2026-11-13: a list of integers, with no end ([SearchDomain.integerResults]).
             val integers = options.integers
             remember(integers, query) { SearchDomain.integerResults(integers.highestLabel, integers.highest, integers.count, query) }
@@ -844,6 +858,10 @@ fun SearchWindow(
      * leaves the list first, so it holds exactly these.
      */
     fun addKeys(keys: List<String>, replacing: Boolean = false) {
+        if (addedList != null) {
+            addedList.onAdd(keys, replacing)
+            return
+        }
         val current = latestConfig
         val next = SearchDomain.withAdded(if (replacing) emptyList() else current.added, keys)
         if (next != current.added) onConfigChange(current.copy(added = next))
@@ -878,6 +896,21 @@ fun SearchWindow(
      * list of paths): "go to task tree" goes to THAT occurrence, and the entries that act on a cell (deep copy,
      * collapse, add the default sub-tree) act on it. Built on demand, so it never closes over a stale state.
      */
+    /**
+     * User rule 2026-11-13: what a row's menu holds in the added elements list, where a result row's holds "add": the
+     * selected elements off the list, the list down to them, and the actions of the row under the pointer alone.
+     */
+    fun addedMenu(row: SearchDomain.Result): List<MenuAction>? {
+        val given = addedList ?: return null
+        val picked = latestSelectedShown.toSet().ifEmpty { setOf(resultKey(row)) }
+        return listOfNotNull(
+            MenuAction(if (picked.size == 1) "remove" else "remove ${picked.size}") { given.onRemove(picked) },
+            // Nothing to offer once the selection is all the list holds.
+            MenuAction(REMOVE_OTHERS_LABEL) { given.onKeepOnly(picked) }.takeIf { given.rows.size > picked.size },
+            // About the row under the pointer alone, whatever is selected: a group is ONE element's.
+            MenuAction(SHOW_ONLY_ACTIONS_LABEL) { given.onShowOnlyActions(row) },
+        )
+    }
     fun taskActions(result: SearchDomain.TaskResult, path: List<String>?): TaskCellMenuActions {
         val state = currentState
         val taskId = result.taskId
@@ -898,8 +931,9 @@ fun SearchWindow(
             // User rule 2026-10-01: the menu's "add" adds every SELECTED row — the right-click selected this one first
             // when it was not among them.
             // A picker's rows add once its added elements are shown (user rule 2026-11-11).
-            onAdd = if (picker == null || !addedRemoved) { { addSelected() } } else null,
-            onAddReplacing = if (picker == null || !addedRemoved) { { addSelected(replacing = true) } } else null,
+            onAdd = if (addedList == null && (picker == null || !addedRemoved)) { { addSelected() } } else null,
+            onAddReplacing = if (addedList == null && (picker == null || !addedRemoved)) { { addSelected(replacing = true) } } else null,
+            extra = addedMenu(result).orEmpty(),
             calendarTaskId = taskId,
             // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
             onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
@@ -971,7 +1005,7 @@ fun SearchWindow(
               addedRemoved = it.addedRemoved
           }
       }
-      // The added elements' scroll, told by their list ([AddedElementsList]).
+      // The added elements' scroll, told by their list ([AddedSearchRows]).
       var addedScroll by remember { mutableStateOf((splits?.scrolls?.getOrNull(2) ?: 0) to (splits?.scrolls?.getOrNull(3) ?: 0)) }
       fun splitsNow() =
           SearchSplits(
@@ -1395,7 +1429,8 @@ fun SearchWindow(
                                         // row and a workplace setup are the exceptions: commands, not elements to add.
                                         onDoubleClick = {
                                             if (option != null) Unit
-                                            else if (SearchRowOpeners.doubleClickOpens(result.kind)) openers.open(state, result)
+                                            // An added element is added already: its double-click opens it.
+                                            else if (addedList != null || SearchRowOpeners.doubleClickOpens(result.kind)) openers.open(state, result)
                                             else addKeys(listOf(resultKey(result)))
                                         },
                                         checkBox = option?.checked?.takeIf { !selectAll && result.id != SearchDomain.CREATE_OPTION }?.let { result.id in it },
@@ -1404,6 +1439,7 @@ fun SearchWindow(
                                         enabled = option == null || result.id !in option.disabled,
                                         onAdd = { addSelected() },
                                         onAddReplacing = { addSelected(replacing = true) },
+                                        menuActions = addedMenu(result),
                                         timerRun = if (result.kind == SearchDomain.Kind.Timer) {
                                             {
                                                 actionHandlers.timerRun(
@@ -1590,54 +1626,99 @@ fun SearchWindow(
             else if (!(actionsCollapsed && addedCollapsed)) SectionSeparator(vertical = false, onDrag = dragTopRightShare, onDragEnd = tellSplits)
             else HorizontalDivider()
             // --- The added elements (bottom right) ---------------------------------------------------
-            if (!addedRemoved) AddedElementsList(
-                initialScroll = addedScroll,
-                onScrolled = { addedScroll = it },
-                expandedTasks = expandedAdded,
-                onExpandedTasksChange = { expandedAdded = it },
-                rows = addedRows,
-                state = state,
-                priorities = priorities,
-                onIntent = onIntent,
-                onSetWeightWindow = onSetWeightWindow,
-                onSetRelativeWindow = onSetRelativeWindow,
-                onOpenTaskEdit = openers.onOpenTaskEdit,
-                onOpenCategory = openers.onOpenCategory,
-                onDeepCopyCell = onDeepCopyCell,
-                onGoToTaskTree = { taskId -> onGoToTaskTree(taskId, null) },
-                onAddTasks = addTasks,
-                taskColors = taskColors,
-                selectionSurface = selectionSurface,
-                onSelectionSurface = { selectionSurface = it },
-                onOpen = { openers.open(state, it) },
-                elementCategories = elementCategories,
-                expandedElements = expandedElements,
-                onToggleElement = toggleElement,
-                elementChildren = { key, width ->
-                    ElementChildren(
-                        key, ADDED_SURFACE, 1, setOf(key), state, windows, schedulerRuns, claudeLogs,
-                        expandedElements, toggleElement, openers, onIntent, width, childSelection,
-                    )
-                },
-                onRemove = { key -> onConfigChange(config.copy(added = config.added - key)) },
-                onKeepOnly = { keys -> onConfigChange(config.copy(added = SearchDomain.keepingOnly(config.added, keys))) },
-                onRemoveAll = { keys -> onConfigChange(config.copy(added = SearchDomain.removing(config.added, keys))) },
-                // User rule 2026-11-02: only the groups of actions that can apply to this element open, as for a new one.
-                onShowOnlyActions = { row ->
-                    SearchDomain.withOnlyGroupsOf(config, addedRows, row)?.let { (next, groupId) ->
-                        onConfigChange(next)
-                        actionsCollapsed = false
-                        actionReveal = groupId to ((actionReveal?.second ?: 0) + 1)
-                    }
-                },
-                collapsed = addedCollapsed,
-                onToggleCollapsed = { addedCollapsed = !addedCollapsed },
+            if (!addedRemoved) Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .then(if (addedCollapsed && !actionsRemoved) Modifier else Modifier.weight(1f))
                     .clipToBounds()
                     .padding(horizontal = 14.dp, vertical = 10.dp),
-            )
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SectionArrow(addedCollapsed) { addedCollapsed = !addedCollapsed }
+                    Text(
+                        text = "Added elements" + if (addedRows.isEmpty()) "" else "  ·  ${addedRows.size}",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.togglesSection { addedCollapsed = !addedCollapsed },
+                    )
+                }
+                if (!addedCollapsed && addedRows.isEmpty()) {
+                    Text(
+                        text = "Right-click selected rows of the results and choose add (Ctrl+A selects them all).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (!addedCollapsed) {
+                    // User rule 2026-11-13: *"Make the 'added elements' list also a Search window."* The very
+                    // [SearchWindow], its search section alone: its rows the added elements ([AddedSearchRows]), drawn as
+                    // result rows are, its own bar, its own ▾ and configuration (kept with this window, under its id).
+                    val addedId = embeddedSearchId("added")
+                    var addedConfig by rememberInsideConfig(addedId, ADDED_LIST_SEARCH)
+                    RegisterEmbeddedSearch(addedId, "added elements", addedConfig, open = true, saved = addedConfig != ADDED_LIST_SEARCH, set = { addedConfig = it })
+                    // The rows open and the scroll are this window's ([SearchSplits]): given at first, told back since.
+                    var addedSplits by remember {
+                        mutableStateOf(
+                            EMBEDDED_SEARCH_SPLITS.copy(
+                                expandedResults = expandedAdded.mapTo(HashSet()) { it.value },
+                                expandedElements = addedListElements(expandedElements),
+                                scrolls = listOf(addedScroll.first, addedScroll.second),
+                            ),
+                        )
+                    }
+                    androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides addedId) {
+                        SearchWindow(
+                            state = state,
+                            openers = openers,
+                            onStartTaskNow = onStartTaskNow,
+                            onGoToTaskTree = onGoToTaskTree,
+                            onDeepCopyCell = onDeepCopyCell,
+                            actionHandlers = actionHandlers,
+                            calendarLayerKindsAt = calendarLayerKindsAt,
+                            onIntent = onIntent,
+                            onSetWeightWindow = onSetWeightWindow,
+                            onSetRelativeWindow = onSetRelativeWindow,
+                            windows = windows,
+                            schedulerRuns = schedulerRuns,
+                            nowMillis = nowMillis,
+                            claudeLogs = claudeLogs,
+                            onDismiss = {},
+                            config = addedConfig,
+                            onConfigChange = { addedConfig = it },
+                            openedConfig = ADDED_LIST_SEARCH,
+                            onOpenConfigurations = {},
+                            splits = addedSplits,
+                            onSplitsChange = { next ->
+                                addedSplits = next
+                                expandedAdded = next.expandedResults.mapTo(HashSet()) { TaskId(it) }
+                                expandedElements = withAddedListElements(expandedElements, next.expandedElements)
+                                addedScroll = (next.scrolls.getOrNull(0) ?: 0) to (next.scrolls.getOrNull(1) ?: 0)
+                            },
+                            embedded = true,
+                            // Its drop button takes the element off the list, never off the account.
+                            onDrop = { row -> onConfigChange(latestConfig.copy(added = latestConfig.added - resultKey(row))) },
+                            addedList = AddedSearchRows(
+                                rows = addedRows,
+                                surface = surfaceState,
+                                onAdd = { keys, replacing -> addKeys(keys, replacing) },
+                                onRemove = { keys -> onConfigChange(latestConfig.copy(added = SearchDomain.removing(latestConfig.added, keys))) },
+                                onKeepOnly = { keys -> onConfigChange(latestConfig.copy(added = SearchDomain.keepingOnly(latestConfig.added, keys))) },
+                                // User rule 2026-11-02: only the groups of actions that can apply to this element open.
+                                onShowOnlyActions = { row ->
+                                    SearchDomain.withOnlyGroupsOf(latestConfig, addedRows, row)?.let { (next, groupId) ->
+                                        onConfigChange(next)
+                                        actionsCollapsed = false
+                                        actionReveal = groupId to ((actionReveal?.second ?: 0) + 1)
+                                    }
+                                },
+                            ),
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                        )
+                    }
+                }
+            }
         }
       }
       // Where the two lines cross: drawn over both strips, it drags the three sections at once. Placed only once
@@ -2053,297 +2134,53 @@ private const val REMOVE_OTHERS_LABEL: String = "remove the others"
 private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
 
 /**
- * The added elements, in the order they were added: each row its kind, its name and its detail (a task's
- * shortest path), a double-click opens it as the result list does ([SearchRowOpeners]), and its ✕ takes it off
- * the list — never off the account.
+ * User rule 2026-11-13: **what the added elements list gives the Search window that is it** ([SearchWindow]'s
+ * `addedList`): its [rows] — the elements added to the window it is drawn in, in the order they were added — the
+ * selection surface of that window ([surface]: one sub-tree of the two lists shows a selection of cells at a time), and
+ * what its menus do there: "add" from a sub-tree's cells ([onAdd]), "remove" ([onRemove]), "remove the others"
+ * ([onKeepOnly]) and "show only its actions" ([onShowOnlyActions]).
  */
-@Composable
-private fun AddedElementsList(
-    /** Where the list is scrolled when it is first drawn, and its scroll once it comes to rest ([SearchSplits.scrolls]). */
-    initialScroll: Pair<Int, Int>,
-    onScrolled: (Pair<Int, Int>) -> Unit,
-    rows: List<SearchDomain.Result>,
-    /** What an expanded task element's sub-tree needs — the result list's own ([SearchSubtree]). */
-    state: SchedulerState,
-    priorities: Map<TaskId, Double>,
-    onIntent: (SchedulerIntent) -> Unit,
-    onSetWeightWindow: (CellListId?) -> Unit,
-    onSetRelativeWindow: (CellId?) -> Unit,
-    onOpenTaskEdit: (TaskId) -> Unit,
-    onOpenCategory: (CategoryId) -> Unit,
-    onDeepCopyCell: (CellId) -> Unit,
-    onGoToTaskTree: (TaskId) -> Unit,
-    onAddTasks: (taskIds: List<TaskId>, replacing: Boolean) -> Unit,
-    /** The tasks' colours, the tree's own: the arrow of a task element sits on its task's, as a tree row's does. */
-    taskColors: Map<TaskId, Color>,
-    /** The surface showing a selection of cells (the window's), and a press here taking it or giving it back. */
-    selectionSurface: String?,
-    onSelectionSurface: (String?) -> Unit,
-    onOpen: (SearchDomain.Result) -> Unit,
-    /** The categories a row of another kind than a task carries, the rows open, a row's arrow, and what shows under one ([ElementChildren]). */
-    elementCategories: Map<String, List<String>>,
-    expandedElements: Set<String>,
-    onToggleElement: (String) -> Unit,
-    elementChildren: @Composable (key: String, kindWidth: Dp) -> Unit,
-    onRemove: (String) -> Unit,
-    /** The row menu's "remove the others": the list holds the selected elements alone. */
-    onKeepOnly: (Set<String>) -> Unit,
-    /** The row menu's "remove": the selected elements leave the list. */
-    onRemoveAll: (Set<String>) -> Unit,
-    /** The row menu's "show only its actions": the actions section shows the row's groups alone ([SHOW_ONLY_ACTIONS_LABEL]). */
-    onShowOnlyActions: (SearchDomain.Result) -> Unit,
-    /** The task elements whose sub-tree is open ([SearchSplits.expandedAdded]). */
-    expandedTasks: Set<TaskId>,
-    onExpandedTasksChange: (Set<TaskId>) -> Unit,
-    /** Whether the section is retracted to its head, and its arrow's press ([SectionArrow], user rule 2026-10-04). */
-    collapsed: Boolean = false,
-    onToggleCollapsed: () -> Unit = {},
-    modifier: Modifier = Modifier,
-) {
-    // User rule 2026-10-03: the rows are selected the way the result list's are ([ClickSelection]: a click selects one
-    // row, Ctrl+click adds or takes one, Shift+click the range from the anchor), and a right-click selects its row
-    // alone unless it is already selected — the menu acts on the selection. Compose-only, like the result list's
-    // multi-selection: a way of picking some, not a fact about them.
-    var selection by remember { mutableStateOf(emptySet<String>()) }
-    var selectionAnchor by remember { mutableStateOf<String?>(null) }
-    var selectionMain by remember { mutableStateOf<String?>(null) }
-    val pressModifiers = remember { PressModifiers() }
-    val order = rows.map(::resultKey)
-    val currentOrder by rememberUpdatedState(order)
-    // A row that left the list is not selected any more.
-    val selected = selection.filterTo(LinkedHashSet()) { it in order }
-    // Anomaly 2026-11-03: a press anywhere but on a row (its menu included) leaves none selected, as in the result list.
-    val selectedRows = rememberOutsidePressEditor(active = selected.isNotEmpty()) {
-        selection = emptySet()
-        selectionMain = null
-    }
-    val currentSelected by rememberUpdatedState(selected)
-    // User rule 2026-10-07: a task element has its expansion arrow here too, and shows its sub-tree as a result row
-    // does ([SearchSubtree]) — with the list's pinned parent row ([pinnedItemIndex]).
-    var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
-    var listTop by remember { mutableStateOf<Float?>(null) }
-    var nestedPin by remember { mutableStateOf<TaskId?>(null) }
-    val kindWidth = rememberKindSectionWidth(rows)
-    // A sub-tree of this list shows the cells' selection: the rows' own is not drawn beside it.
-    val rowsShowSelection = selectionSurface?.startsWith(ADDED_SURFACE) != true
-    fun rowTakesSelection() {
-        if (!rowsShowSelection) onSelectionSurface(null)
-    }
-    fun childListOf(row: SearchDomain.Result): CellListId? =
-        (row as? SearchDomain.TaskResult)?.let { state.tasks[it.taskId]?.childListId }
-            ?.takeIf { state.lists[it]?.cellIds?.isNotEmpty() == true }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionArrow(collapsed, onToggleCollapsed)
-            Text(
-                text = "Added elements" + if (rows.isEmpty()) "" else "  ·  ${rows.size}",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = 1,
-                softWrap = false,
-                modifier = Modifier.togglesSection(onToggleCollapsed),
-            )
-        }
-        if (collapsed) return@Column
-        if (rows.isEmpty()) {
-            Text(
-                text = "Right-click selected rows of the results and choose add (Ctrl+A selects them all).",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            return@Column
-        }
-        val listState = rememberLazyListState(initialScroll.first, initialScroll.second)
-        val currentOnScrolled by rememberUpdatedState(onScrolled)
-        LaunchedEffect(listState) {
-            androidx.compose.runtime.snapshotFlow {
-                if (listState.isScrollInProgress) null else listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-            }
-                .filterNotNull()
-                .distinctUntilChanged()
-                .drop(1)
-                .collect { currentOnScrolled(it) }
-        }
-        val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
-        val pinnedIndex by remember(listState, bandPx) { derivedStateOf { pinnedItemIndex(listState, bandPx) } }
-        val pinScope = rememberCoroutineScope()
-        Box(
-            Modifier.fillMaxWidth().weight(1f).keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH)
-                .onGloballyPositioned { listTop = it.positionInWindow().y },
-        ) {
-            // An element's row, for the list and for its pinned copy ([pinnedAt]: the item it is the copy of — a
-            // press on the copy scrolls the list up to its real row, the tree's rule): one drawing.
-            val head: @Composable (SearchDomain.Result, Int?) -> Unit = { row, pinnedAt ->
-                    val key = resultKey(row)
-                    // The right-click menu, on the selection: "remove", and "remove the others" (user rule
-                    // 2026-10-02) where there are others.
-                    var menuOpen by remember(key) { mutableStateOf(false) }
-                    val currentOnOpen by rememberUpdatedState(onOpen)
-                    val currentRow by rememberUpdatedState(row)
-                    val workplaceRuns = LocalWorkplaceRuns.current
-                    Box(Modifier.outsidePressPart(selectedRows)) {
-                    Row(
-                        modifier = resultRowModifier(
-                            selected = rowsShowSelection && key in selected && key == selectionMain,
-                            inSelection = rowsShowSelection && key in selected && key != selectionMain,
-                        )
-                            .resultRowGestures(
-                                key = key,
-                                onSelect = {
-                                    val next =
-                                        ClickSelection.click(
-                                            currentOrder, currentSelected, selectionAnchor, key,
-                                            shift = pressModifiers.shift, ctrl = pressModifiers.ctrl,
-                                        )
-                                    selection = next.selected
-                                    selectionAnchor = next.anchor
-                                    selectionMain = key
-                                    rowTakesSelection()
-                                    if (pinnedAt != null) pinScope.launch { listState.animateScrollToItem(pinnedAt) }
-                                },
-                                onSecondarySelect = {
-                                    if (key !in currentSelected) {
-                                        selection = setOf(key)
-                                        selectionAnchor = key
-                                    }
-                                    selectionMain = key
-                                    rowTakesSelection()
-                                },
-                                onOpen = { currentOnOpen(currentRow) },
-                                onOpenMenu = { menuOpen = true },
-                            ),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        KindSection(row.kind, kindWidth)
-                        if (row is SearchDomain.TaskResult) {
-                            val taskId = row.taskId
-                            // On the task's colour, as every tree row's arrow is (anomaly 2026-10-07: it had none here).
-                            val taskColor = taskColors[taskId]
-                            TaskSheetExpandArrow(
-                                hasChildren = childListOf(row) != null,
-                                expanded = taskId in expandedTasks,
-                                onToggle = {
-                                    onExpandedTasksChange(if (taskId in expandedTasks) expandedTasks - taskId else expandedTasks + taskId)
-                                },
-                                color = taskColor?.let(TaskPalette::foreground) ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                                background = taskColor,
-                            )
-                        } else if (row.kind != SearchDomain.Kind.Creation) {
-                            SectionArrow(ADDED_SURFACE + key !in expandedElements) { onToggleElement(ADDED_SURFACE + key) }
-                        }
-                        Text(
-                            text = row.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = logEntryColor(row.kind) ?: Color.Unspecified,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        Text(
-                            text = when (row) {
-                                is SearchDomain.TaskResult ->
-                                    if (row.shownPath.isEmpty()) "no path" else SearchDomain.pathLabel(row.shownPath)
-                                is SearchDomain.ItemResult ->
-                                    withCategories(SearchDomain.shownDetail(row) { workplaceRuns?.isRunning(it) == true }, elementCategories[key].orEmpty())
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = logEntryColor(row.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            text = "✕",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { onRemove(key) }
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                    }
-                    // User rule 2026-11-12: the menu is a Search window of its entries.
-                    val picked = selected.ifEmpty { setOf(key) }
-                    ActionMenu("added elements menu",
-                        open = menuOpen,
-                        onDismiss = { menuOpen = false },
-                        actions = listOfNotNull(
-                            MenuAction(if (picked.size == 1) "remove" else "remove ${picked.size}") { onRemoveAll(picked) },
-                            // Nothing to offer once the selection is all the list holds.
-                            MenuAction(REMOVE_OTHERS_LABEL) { onKeepOnly(picked) }.takeIf { rows.size > picked.size },
-                            // About the row under the pointer alone, whatever is selected: a group is ONE element's.
-                            MenuAction(SHOW_ONLY_ACTIONS_LABEL) { onShowOnlyActions(currentRow) },
-                        ),
-                        atPointer = LocalRowMenusAtPointer.current,
-                    )
-                    }
-            }
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().padding(end = 12.dp).recordPressModifiers(pressModifiers),
-            ) {
-                itemsIndexed(rows, key = { _, r -> resultKey(r) }) { _, row ->
-                    Column(Modifier.fillMaxWidth()) {
-                        head(row, null)
-                        val childListId = childListOf(row)
-                        if (row is SearchDomain.TaskResult && childListId != null && row.taskId in expandedTasks) {
-                            val taskId = row.taskId
-                            SearchSubtree(
-                                state = state,
-                                listId = childListId,
-                                // A task cut from the tree: looked through, never modified.
-                                readOnly = remember(taskId, state.cells, state.lists, state.tasks) {
-                                    SchedulerDomain.firstTaskOccurrence(state, taskId) == null
-                                },
-                                priorities = priorities,
-                                focused = subtreeFocusOwner == taskId,
-                                onFocus = { focused ->
-                                    if (focused) {
-                                        subtreeFocusOwner = taskId
-                                        onSelectionSurface(ADDED_SURFACE + taskId.value)
-                                    } else if (subtreeFocusOwner == taskId) {
-                                        subtreeFocusOwner = null
-                                    }
-                                },
-                                showSelection = selectionSurface == ADDED_SURFACE + taskId.value,
-                                onTakeSelection = { onSelectionSurface(ADDED_SURFACE + taskId.value) },
-                                onIntent = onIntent,
-                                onSetWeightWindow = onSetWeightWindow,
-                                onSetRelativeWindow = onSetRelativeWindow,
-                                onOpenTaskEdit = onOpenTaskEdit,
-                                onOpenCategory = onOpenCategory,
-                                onDeepCopyCell = onDeepCopyCell,
-                                onGoToTaskTree = onGoToTaskTree,
-                                onAddTasks = onAddTasks,
-                                clipTop = { listTop },
-                                scrollListBy = { px -> listState.animateScrollBy(px) },
-                                onNestedPin = { on -> if (on) nestedPin = taskId else if (nestedPin == taskId) nestedPin = null },
-                            )
-                        }
-                        if (row is SearchDomain.ItemResult && ADDED_SURFACE + resultKey(row) in expandedElements) {
-                            elementChildren(resultKey(row), kindWidth)
-                        }
-                    }
-                }
-            }
-            // The pinned parent row: the element whose sub-tree shows under the top band, once its row left the top.
-            val pinnedAt = pinnedIndex
-            val pinnedRow =
-                pinnedAt?.let(rows::getOrNull)
-                    ?.takeIf { it is SearchDomain.TaskResult && it.taskId in expandedTasks && it.taskId != nestedPin }
-            if (pinnedRow != null) {
-                Box(
-                    Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .padding(end = 12.dp)
-                        .height(RESULT_ROW_HEIGHT)
-                        .clipToBounds()
-                        .background(MaterialTheme.colorScheme.surface),
-                ) {
-                    head(pinnedRow, pinnedAt)
-                }
-            }
-            ListScrollbar(listState, Modifier.align(Alignment.CenterEnd))
-        }
-    }
+class AddedSearchRows(
+    val rows: List<SearchDomain.Result>,
+    val surface: androidx.compose.runtime.MutableState<String?>,
+    val onAdd: (keys: List<String>, replacing: Boolean) -> Unit,
+    val onRemove: (Set<String>) -> Unit,
+    val onKeepOnly: (Set<String>) -> Unit,
+    val onShowOnlyActions: (SearchDomain.Result) -> Unit,
+)
+
+/**
+ * The added elements list's Search window as it opens: every kind (its rows are given, not searched), a drop button on
+ * each row. What the user makes of it since is kept with the window it is drawn in ([rememberInsideConfig]).
+ */
+internal val ADDED_LIST_SEARCH: SearchDomain.Config by lazy {
+    SearchDomain.Config(kinds = SearchDomain.Kind.entries.toSet(), pageTypesOnly = false, dropButtons = true)
 }
+
+/**
+ * The window's selection surface as the added elements list reads and writes it ([AddedSearchRows.surface]): the list
+ * names its sub-trees as any Search window does ([RESULT_SURFACE]), the window it is drawn in keeps them as the added
+ * list's ([ADDED_SURFACE]) — so a press in a sub-tree of either list takes the selection from the other's.
+ */
+private class AddedSurface(private val shared: androidx.compose.runtime.MutableState<String?>) : androidx.compose.runtime.MutableState<String?> {
+    override var value: String?
+        get() = shared.value?.takeIf { it.startsWith(ADDED_SURFACE) }?.let { RESULT_SURFACE + it.removePrefix(ADDED_SURFACE) }
+        set(next) {
+            shared.value = next?.let { ADDED_SURFACE + it.removePrefix(RESULT_SURFACE) }
+        }
+
+    override fun component1(): String? = value
+
+    override fun component2(): (String?) -> Unit = { value = it }
+}
+
+/** The open rows of the added elements list ([SearchSplits.expandedElements]'s [ADDED_SURFACE] ones) as its own window names them. */
+internal fun addedListElements(expanded: Set<String>): Set<String> =
+    expanded.filter { it.startsWith(ADDED_SURFACE) }.mapTo(HashSet()) { RESULT_SURFACE + it.removePrefix(ADDED_SURFACE) }
+
+/** [expanded] with the added elements list's open rows being [ofList], as its own window names them. */
+internal fun withAddedListElements(expanded: Set<String>, ofList: Set<String>): Set<String> =
+    expanded.filterNotTo(HashSet()) { it.startsWith(ADDED_SURFACE) } + ofList.map { ADDED_SURFACE + it.removePrefix(RESULT_SURFACE) }
 
 /**
  * A row's leftmost section: which kind of thing it is. One width for the whole list, so every row's name starts
@@ -3308,6 +3145,8 @@ private fun ItemResultRow(
     leading: (@Composable () -> Unit)? = null,
     /** False for a drop-down's option: its right-click is its own ([SearchOptions.onSolo]), no menu. */
     hasMenu: Boolean = true,
+    /** What the menu holds in place of "add" and "add and remove the others" (the added elements list); null: those two. */
+    menuActions: List<MenuAction>? = null,
     /** A drop-down's option: what its right-click does, on the RELEASE ([pickOnSecondaryRelease]). */
     onSecondaryRelease: (() -> Unit)? = null,
     /** False: greyed, a menu entry that can do nothing now. */
@@ -3382,11 +3221,8 @@ private fun ItemResultRow(
         ActionMenu("ItemResultRow",
             open = menuOpen,
             onDismiss = { menuOpen = false },
-            actions = listOfNotNull(
-                MenuAction("add") { onAdd() },
-                MenuAction(ADD_REPLACING_LABEL) { onAddReplacing() },
-                elsewhere?.let { MenuAction(it) { onOpen() } },
-            ),
+            actions = (menuActions ?: listOf(MenuAction("add") { onAdd() }, MenuAction(ADD_REPLACING_LABEL) { onAddReplacing() })) +
+                listOfNotNull(elsewhere?.let { MenuAction(it) { onOpen() } }),
             atPointer = LocalRowMenusAtPointer.current,
         )
     }

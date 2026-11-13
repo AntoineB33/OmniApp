@@ -1117,6 +1117,20 @@ suggestions before it was ever entered.
     the list's order — its own configuration, **what says where it stands first** (`LEADING_ACTIONS`: a quota's target
     progression, a timer's or chrono's run, an alarm's state), then its title and the rest — with its kind's set
     actions when it is the only one of its kind.
+  - **The added elements list is a Search window too** (user rule 2026-11-13: *"Make the 'added elements' list also a
+    Search window."*; `SearchWindow`'s `addedList`, `AddedSearchRows`, `ADDED_LIST_SEARCH`, `AddedListSearchTest`). Under
+    the section's head ("Added elements · n", its arrow), the very `SearchWindow`, its search section alone: its rows are
+    the window's added elements in the order they were added, **drawn by the result rows' own code** (a task row with
+    its path, percentage and sub-tree; any other with its arrow and children), its bar keeping those whose name answers
+    it, its own ▾ and configuration, kept with the window under `<window>/added` (`Config.inside`). Each row has its
+    drop button (off the list, never off the account). **A row's menu holds, where a result row's holds "add"**:
+    "remove" (the selected rows), "remove the others", "show only its actions" (the row under the pointer) — a task
+    row's after the task cell's own entries (`TaskCellMenuActions.extra`); "add" from a sub-tree's cells or an element's
+    children adds to the window the list is drawn in. A double-click on a row opens it (it is added already); a task
+    row's enters its rename, as a result row's. The rows open and the scroll stay the window's (`SearchSplits.expandedAdded`,
+    its `added/` elements, `scrolls`), given to the list and told back (`addedListElements`, `withAddedListElements`).
+    **One sub-tree of the two lists shows a selection of cells at a time**: the list reads the window's selection
+    surface (`AddedSurface`). Its sorting and filters are not applied yet: the list is in the order added.
   - **The section is a Search window whose results are actions** (user rule 2026-11-12: *"The action section is
     simply a Search window with the two other sections hidden, a header hidden, and the right-click menu giving the
     right-click menu of the Search window it is embedded in. All the actions are action elements, so they must be rows,
