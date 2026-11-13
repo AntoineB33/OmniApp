@@ -103,6 +103,27 @@ class ElementTreeTest {
         assertEquals(emptyList(), run(linked, ElementTree.parentIntents(linked, listOf(a), one, on = false)).elementLinks)
     }
 
+    /**
+     * Anomaly 2026-11-13 (*"I clicked New task 2 in add a parent, then clicked list of parents and the list was empty"*):
+     * "New task 2" was made from the Search window, in no tree — the tree cannot put anything under a task it does not
+     * hold, so the path changed nothing, and yet "add a parent" offered it. ONE answer: what the path can do.
+     */
+    @Test
+    fun a_task_in_no_tree_is_offered_as_no_task_s_parent() {
+        val s = withTasks("One")
+        val loose = org.example.project.scheduler.model.Task(org.example.project.scheduler.model.TaskId("loose"), "New task 2")
+        val state = s.copy(tasks = s.tasks + (loose.id to loose))
+        val one = taskKey(state, "One")
+        val looseKey = SearchDomain.taskKey(loose.id)
+        assertFalse(ElementTree.canLink(state, looseKey, one), "nothing can be put under a task the tree does not hold")
+        assertEquals(state, run(state, ElementTree.parentIntents(state, listOf(one), looseKey, on = true)), "and nothing is asked")
+        assertFalse(org.example.project.scheduler.domain.TaskPathsDomain.canAddUnder(state, TaskIdOf(one), loose.id))
+        // A task the tree holds with no sub-list yet is still offered, and given one.
+        assertTrue(ElementTree.canLink(state, one, looseKey))
+    }
+
+    private fun TaskIdOf(key: String) = org.example.project.scheduler.model.TaskId(key.substringAfter('/'))
+
     @Test
     fun the_parent_index_is_parents_of_every_element() {
         val category = Category(CategoryId("health"), "Health")

@@ -95,9 +95,12 @@ object TaskPathsDomain {
      */
     fun canAddUnder(state: SchedulerState, taskId: TaskId, parentTaskId: TaskId?): Boolean {
         if (parentTaskId == taskId) return false
+        // Anomaly 2026-11-13: a parent with no list is given one on one of its cells (the reducer's `applyAddTaskPath`) —
+        // so it needs a place in the tree. A task in no tree (made from the Search window) can hold no child.
         val listId =
             if (parentTaskId == null) state.rootListId
-            else state.tasks[parentTaskId]?.childListId ?: return state.tasks[parentTaskId]?.title?.isNotEmpty() == true
+            else state.tasks[parentTaskId]?.childListId
+                ?: return state.tasks[parentTaskId]?.title?.isNotEmpty() == true && occurrences(state, parentTaskId).isNotEmpty()
         val placeholder = placeholderOf(state, listId) ?: return false
         return SchedulerDomain.canAssignTaskId(state, placeholder, taskId)
     }

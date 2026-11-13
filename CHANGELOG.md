@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A task in no tree is offered as no task's parent — 2026-11-13
+
+Anomaly (*"I clicked New task 2 in add a parent, then clicked list of parents and the list was empty"*), found with the
+`[parents]` log and a copy of the try account's data: both tasks were made from the Search window's "New task" row, in no
+tree. `applyAddTaskPath` gives a parent with no sub-list one on one of its cells, so it refuses a parent with none — but
+`TaskPathsDomain.canAddUnder`, which "add a parent" (and every other "add under") asks, said yes on the title alone. It now
+asks the same: a parent with no sub-list must stand in the tree. No migration.
+
 ### "Parents" fields: the Search bar's look; picks logged; the list follows the links — 2026-11-13
 
 Anomaly: *"in List of parents, when I hover over the down arrow, the search bar looks different than the search bar of
