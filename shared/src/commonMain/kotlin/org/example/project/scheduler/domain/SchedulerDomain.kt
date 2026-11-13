@@ -586,12 +586,26 @@ object SchedulerDomain {
         return state.copy(lists = lists)
     }
 
-    /** Parent task owning [listId] (its `childListId`); ROOT_TASK for the viewport list. */
+    /**
+     * Parent task owning [listId] (its `childListId`); ROOT_TASK for the viewport list. User rule 2026-11-13 (*"If A becomes
+     * the parent of B, but A is not a descendant of a root, there is no reason for A to automatically become a descendant
+     * of a root"*): a sub-list no cell owns is the sub-list of a task that stands in no tree — read off its id, which a
+     * sub-list takes from its task (`<task>/children`, `task-tree.md` § *A sub-list belongs to the task id*).
+     */
     fun parentTaskIdOfList(state: SchedulerState, listId: CellListId): TaskId? {
         val list = state.lists[listId] ?: return null
-        val parentCellId = list.parentCellId ?: return WellKnownIds.ROOT_TASK
+        val parentCellId = list.parentCellId ?: return ownerOfCelllessSubList(state, listId) ?: WellKnownIds.ROOT_TASK
         return state.cells[parentCellId]?.taskId
     }
+
+    /** The task whose sub-list [listId] is, read off the list's id, where that task names it as its own; else null. */
+    fun ownerOfCelllessSubList(state: SchedulerState, listId: CellListId): TaskId? {
+        val id = listId.value.removeSuffix(SUB_LIST_SUFFIX).takeIf { it != listId.value } ?: return null
+        return TaskId(id).takeIf { state.tasks[it]?.childListId == listId }
+    }
+
+    /** What a task's sub-list id is made of: the task's id, then this. */
+    const val SUB_LIST_SUFFIX: String = "/children"
 
     /** [taskId] together with every task reachable through its `childTaskIds` links. */
     fun descendantTaskIds(state: SchedulerState, taskId: TaskId): Set<TaskId> {
@@ -7576,11 +7590,10 @@ object SchedulerDomain {
             list.defaultWeights.getOrElse(c) { defaultWeightAt(c) }
         }
 
+    /** The task [cellId]'s list belongs to — [parentTaskIdOfList], the one answer. */
     fun parentTaskId(state: SchedulerState, cellId: CellId): TaskId? {
         val cell = state.cells[cellId] ?: return null
-        val list = state.lists[cell.parentListId] ?: return null
-        if (list.parentCellId == null) return WellKnownIds.ROOT_TASK
-        return state.cells[list.parentCellId]?.taskId
+        return parentTaskIdOfList(state, cell.parentListId)
     }
 
     /**

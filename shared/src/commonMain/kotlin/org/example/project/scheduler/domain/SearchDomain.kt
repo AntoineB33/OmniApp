@@ -2816,6 +2816,8 @@ object SearchDomain {
         placementOwnLength: Long? = null,
         /** The Claude Code logs as last read, for the logs' kinds ([CLAUDE_KINDS]) — `App` reads them. */
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+        /** The global root among the tasks: a picker that can pick it ("add a parent", user rule 2026-11-13). */
+        withRoot: Boolean = false,
         /** The search bar's match case, whole word and regular expression ([Filters.queryOptions]). */
         match: TaskTreeSearch.Options = TaskTreeSearch.Options(),
         /** User rule 2026-11-06: the bars added to [query] and their formula ([Config.extraQueries], [SearchBarFormula]). */
@@ -2833,7 +2835,7 @@ object SearchDomain {
                 .filter { it in kinds }
                 .flatMap { kind ->
                     if (kind == Kind.Task) {
-                        taskResults(state, kindQuery, allPaths(), withRoot = Kind.Task in filters.noParentOfKinds)
+                        taskResults(state, kindQuery, allPaths(), withRoot = withRoot || Kind.Task in filters.noParentOfKinds)
                     } else if (kind in CLAUDE_KINDS) {
                         claudeResults(kind, kindQuery, claudeLogs, filters, timeZone)
                     } else {

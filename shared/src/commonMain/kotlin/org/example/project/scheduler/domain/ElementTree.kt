@@ -89,7 +89,7 @@ object ElementTree {
     fun parentsOf(state: SchedulerState, key: String): List<String> {
         val links = state.elementLinks.filter { it.child == key }.map { it.parent }
         val taskId = taskIdOf(key) ?: return links
-        val parents = TaskPathsDomain.occurrences(state, taskId).mapNotNull { it.parentTaskId }.map(SearchDomain::taskKey)
+        val parents = TaskPathsDomain.places(state, taskId).map { SearchDomain.taskKey(it.second) }.distinct()
         val categories = state.tasks[taskId]?.categoryIds.orEmpty().map(::categoryKey)
         return (parents + categories + links).distinct()
     }
@@ -101,7 +101,7 @@ object ElementTree {
     fun parentIndex(state: SchedulerState): Map<String, Set<String>> {
         val out = HashMap<String, MutableSet<String>>()
         fun add(child: String, parent: String) = out.getOrPut(child, ::LinkedHashSet).add(parent)
-        for ((task, parents) in TaskPathsDomain.liveParents(state)) parents.forEach { add(SearchDomain.taskKey(task), SearchDomain.taskKey(it)) }
+        for ((task, parents) in TaskPathsDomain.allParents(state)) parents.forEach { add(SearchDomain.taskKey(task), SearchDomain.taskKey(it)) }
         for (task in state.tasks.values) task.categoryIds.forEach { add(SearchDomain.taskKey(task.id), categoryKey(it)) }
         for (link in state.elementLinks) add(link.child, link.parent)
         return out
@@ -163,8 +163,8 @@ object ElementTree {
         if (child in claudeChildren(parent, claudeLogs)) return false
         val taskId = taskIdOf(child) ?: return true
         if (kindOf(parent) != Kind.Task) return true
-        val places = TaskPathsDomain.occurrences(state, taskId)
-        return places.size > 1 && places.any { it.parentTaskId?.let(SearchDomain::taskKey) == parent }
+        val places = TaskPathsDomain.places(state, taskId)
+        return places.size > 1 && places.any { SearchDomain.taskKey(it.second) == parent }
     }
 
     /**
@@ -185,8 +185,8 @@ object ElementTree {
                         if (on) {
                             out += SchedulerIntent.AddTaskPath(task, parentId)
                         } else {
-                            TaskPathsDomain.occurrences(state, task).firstOrNull { it.parentTaskId == parentId }
-                                ?.let { out += SchedulerIntent.RemoveTaskPath(it.cellId) }
+                            TaskPathsDomain.places(state, task).firstOrNull { it.second == parentId }
+                                ?.let { out += SchedulerIntent.RemoveTaskPath(it.first) }
                         }
                     }
                     true

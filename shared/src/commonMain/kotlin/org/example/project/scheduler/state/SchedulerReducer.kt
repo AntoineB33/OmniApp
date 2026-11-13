@@ -5301,6 +5301,22 @@ private fun addTasksPathDelta(state: SchedulerState, taskIds: List<TaskId>, pare
     return TreeMutationDelta(before = state.captureTree(), after = working.captureTree(), label = "Add path")
 }
 
+/**
+ * [taskId]'s sub-list, minted where no cell of it can: `<task>/children` with its placeholder, owned by no cell — the task
+ * stands in no tree ([SchedulerDomain.ownerOfCelllessSubList]).
+ */
+private fun withCelllessSubList(state: SchedulerState, taskId: TaskId): SchedulerState {
+    val task = state.tasks[taskId] ?: return state
+    if (task.childListId != null) return state
+    val subListId = CellListId(taskId.value + SchedulerDomain.SUB_LIST_SUFFIX)
+    val (placeholderId, working) = state.allocateCellId(subListId)
+    return working.copy(
+        cells = working.cells + (placeholderId to Cell(id = placeholderId, parentListId = subListId, taskId = null)),
+        lists = working.lists + (subListId to CellList(id = subListId, parentCellId = null, cellIds = listOf(placeholderId))),
+        tasks = working.tasks + (taskId to task.copy(childListId = subListId)),
+    )
+}
+
 /** [taskId] put at the bottom of [parentTaskId]'s list (null = the top level), or null where the rule refuses it. */
 private fun applyAddTaskPath(state: SchedulerState, taskId: TaskId, parentTaskId: TaskId?): SchedulerState? {
     val task = state.tasks[taskId]?.takeIf { it.title.isNotEmpty() } ?: return null
@@ -5308,8 +5324,15 @@ private fun applyAddTaskPath(state: SchedulerState, taskId: TaskId, parentTaskId
     if (parentTaskId != null) {
         val parent = working.tasks[parentTaskId]?.takeIf { it.title.isNotEmpty() } ?: return null
         if (parent.childListId == null) {
-            val parentCell = TaskPathsDomain.occurrences(working, parentTaskId).firstOrNull()?.cellId ?: return null
-            working = applySetCellTitle(working, parentCell, parent.title, forceTaskId = parentTaskId)
+            val parentCell = TaskPathsDomain.occurrences(working, parentTaskId).firstOrNull()?.cellId
+            working =
+                if (parentCell != null) {
+                    applySetCellTitle(working, parentCell, parent.title, forceTaskId = parentTaskId)
+                } else {
+                    // User rule 2026-11-13: a parent in no tree stays in none — its sub-list is owned by no cell, read off
+                    // its id ([SchedulerDomain.parentTaskIdOfList]), and kept as a detached parent's once it holds the child.
+                    withCelllessSubList(working, parentTaskId)
+                }
         }
     }
     val listId =
@@ -5330,8 +5353,9 @@ private fun removeTaskPathDelta(state: SchedulerState, cellId: CellId): Delta? {
     if (state.editSession != null) return null
     val cell = state.cells[cellId] ?: return null
     val taskId = cell.taskId ?: return null
-    val places = TaskPathsDomain.occurrences(state, taskId)
-    if (places.size < 2 || places.none { it.cellId == cellId }) return null
+    // Every place the task stands — under a task in no tree too (user rule 2026-11-13, [TaskPathsDomain.places]).
+    val places = TaskPathsDomain.places(state, taskId).map { it.first }
+    if (places.size < 2 || cellId !in places) return null
     val task = state.tasks.getValue(taskId)
     val cells = state.cells.toMutableMap()
     cells[cellId] = cell.copy(taskId = null)
@@ -5341,7 +5365,7 @@ private fun removeTaskPathDelta(state: SchedulerState, cellId: CellId): Delta? {
     task.childListId?.let { childListId ->
         val childList = lists[childListId]
         if (childList != null && childList.parentCellId == cellId) {
-            val heir = places.first { it.cellId != cellId }.cellId
+            val heir = places.first { it != cellId }
             lists[childListId] = childList.copy(parentCellId = heir)
         }
     }

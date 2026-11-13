@@ -11,13 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
-### A task in no tree is offered as no task's parent — 2026-11-13
+### A task in no tree can be a parent and stays in none; the global root is a parent like another — 2026-11-13
 
-Anomaly (*"I clicked New task 2 in add a parent, then clicked list of parents and the list was empty"*), found with the
-`[parents]` log and a copy of the try account's data: both tasks were made from the Search window's "New task" row, in no
-tree. `applyAddTaskPath` gives a parent with no sub-list one on one of its cells, so it refuses a parent with none — but
-`TaskPathsDomain.canAddUnder`, which "add a parent" (and every other "add under") asks, said yes on the title alone. It now
-asks the same: a parent with no sub-list must stand in the tree. No migration.
+User rules: *"If A becomes the parent of B, but A is not a descendant of a root, there is no reason for A to automatically
+become a descendant of a root."* and *"There is a task that is the global root (the user can't delete it). Any task that
+is the direct child of it is the root of a new tree."* Replaces the same day's refusal (a task in no tree offered as no
+parent, found from the anomaly *"I clicked New task 2 in add a parent, then clicked list of parents and the list was
+empty"*: both tasks were made from the Search window, in no tree, and the path changed nothing).
+`applyAddTaskPath` gives a parent with no sub-list and no cell a sub-list no cell owns (`withCelllessSubList`:
+`<task>/children`, `parentCellId = null`) — once it holds the child, a detached parent, kept by `pruneDetachedTree`.
+`SchedulerDomain.parentTaskIdOfList` reads such a sub-list's owner off its id (`ownerOfCelllessSubList`) instead of taking
+it for the root's; `parentTaskId` goes through it (it held a second copy of the rule). A task's parents are read from every
+place it stands (`TaskPathsDomain.places` / `allParents`), the global root included — so a tree's top task has the root as
+its parent, and "Has no parent of the types: task" lists the root and the tasks in no tree. `RemoveTaskPath` reads those
+places too, so a parent in no tree can be dropped. "add a parent" offers the global root (`results(withRoot)` where the
+picker can pick it). New on-disk shape: a list with `parentCellId = null` other than the root's — written and read by the
+existing codec, tested through a save and load. No migration.
 
 ### "Parents" fields: the Search bar's look; picks logged; the list follows the links — 2026-11-13
 

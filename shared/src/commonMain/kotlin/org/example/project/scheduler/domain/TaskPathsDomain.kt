@@ -73,16 +73,21 @@ object TaskPathsDomain {
     }
 
     /**
-     * Every task's parents in the live tree, in one walk: [occurrences]' `parentTaskId` of every task at once (the root
-     * task is no parent, a top-level task has none). For a question about many tasks ([ElementTree.parentIndex]).
+     * User rule 2026-11-13: **every place [taskId] stands — under which task, in which cell** — in the tree or not: under
+     * the global root (a tree's own root, *"Any task that is the direct child of it is the root of a new tree"*), under
+     * another task, or under a task that stands in no tree itself (a detached parent). What "a task's parents" reads
+     * ([ElementTree.parentsOf]); [occurrences] is the places the tree reaches, with their paths.
      */
-    fun liveParents(state: SchedulerState): Map<TaskId, Set<TaskId>> {
-        val walk = LiveWalk(state)
+    fun places(state: SchedulerState, taskId: TaskId): List<Pair<CellId, TaskId>> =
+        if (SchedulerDomain.isRootTask(taskId)) emptyList()
+        else state.cells.values.filter { it.taskId == taskId }.mapNotNull { cell -> SchedulerDomain.parentTaskIdOfList(state, cell.parentListId)?.let { cell.id to it } }
+
+    /** [places] of every task at once, as each task's parents: one pass over the cells ([ElementTree.parentIndex]). */
+    fun allParents(state: SchedulerState): Map<TaskId, Set<TaskId>> {
         val out = HashMap<TaskId, MutableSet<TaskId>>()
-        for (cellId in walk.cellPath.keys) {
-            val cell = state.cells[cellId] ?: continue
-            val taskId = cell.taskId ?: continue
-            val parent = SchedulerDomain.parentTaskIdOfList(state, cell.parentListId)?.takeUnless { SchedulerDomain.isRootTask(it) } ?: continue
+        for (cell in state.cells.values) {
+            val taskId = cell.taskId?.takeUnless { SchedulerDomain.isRootTask(it) } ?: continue
+            val parent = SchedulerDomain.parentTaskIdOfList(state, cell.parentListId) ?: continue
             out.getOrPut(taskId, ::LinkedHashSet).add(parent)
         }
         return out
@@ -95,12 +100,11 @@ object TaskPathsDomain {
      */
     fun canAddUnder(state: SchedulerState, taskId: TaskId, parentTaskId: TaskId?): Boolean {
         if (parentTaskId == taskId) return false
-        // Anomaly 2026-11-13: a parent with no list is given one on one of its cells (the reducer's `applyAddTaskPath`) —
-        // so it needs a place in the tree. A task in no tree (made from the Search window) can hold no child.
+        // A parent with no list yet is given one when the path is added — on one of its cells, else one no cell owns: a
+        // task in no tree holds children all the same (user rule 2026-11-13).
         val listId =
             if (parentTaskId == null) state.rootListId
-            else state.tasks[parentTaskId]?.childListId
-                ?: return state.tasks[parentTaskId]?.title?.isNotEmpty() == true && occurrences(state, parentTaskId).isNotEmpty()
+            else state.tasks[parentTaskId]?.childListId ?: return state.tasks[parentTaskId]?.title?.isNotEmpty() == true
         val placeholder = placeholderOf(state, listId) ?: return false
         return SchedulerDomain.canAssignTaskId(state, placeholder, taskId)
     }

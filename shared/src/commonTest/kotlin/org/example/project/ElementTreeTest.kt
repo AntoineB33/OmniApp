@@ -104,22 +104,52 @@ class ElementTreeTest {
     }
 
     /**
-     * Anomaly 2026-11-13 (*"I clicked New task 2 in add a parent, then clicked list of parents and the list was empty"*):
-     * "New task 2" was made from the Search window, in no tree — the tree cannot put anything under a task it does not
-     * hold, so the path changed nothing, and yet "add a parent" offered it. ONE answer: what the path can do.
+     * User rule 2026-11-13: *"If A becomes the parent of B, but A is not a descendant of a root, there is no reason for A to
+     * automatically become a descendant of a root."* (Anomaly 2026-11-13: "New task 2", made from the Search window, was
+     * offered as a parent and the pick changed nothing.) A task in no tree takes the child in a sub-list no cell owns, and
+     * stays in no tree; the child lists it as its parent, through an edit boundary and the store, and drops it.
      */
     @Test
-    fun a_task_in_no_tree_is_offered_as_no_task_s_parent() {
+    fun a_task_in_no_tree_becomes_a_parent_and_stays_in_no_tree() {
         val s = withTasks("One")
         val loose = org.example.project.scheduler.model.Task(org.example.project.scheduler.model.TaskId("loose"), "New task 2")
         val state = s.copy(tasks = s.tasks + (loose.id to loose))
         val one = taskKey(state, "One")
         val looseKey = SearchDomain.taskKey(loose.id)
-        assertFalse(ElementTree.canLink(state, looseKey, one), "nothing can be put under a task the tree does not hold")
-        assertEquals(state, run(state, ElementTree.parentIntents(state, listOf(one), looseKey, on = true)), "and nothing is asked")
-        assertFalse(org.example.project.scheduler.domain.TaskPathsDomain.canAddUnder(state, TaskIdOf(one), loose.id))
-        // A task the tree holds with no sub-list yet is still offered, and given one.
-        assertTrue(ElementTree.canLink(state, one, looseKey))
+        assertTrue(ElementTree.canLink(state, looseKey, one))
+        val linked = run(state, ElementTree.parentIntents(state, listOf(one), looseKey, on = true))
+        assertTrue(looseKey in ElementTree.parentsOf(linked, one), "One lists it as its parent")
+        assertTrue(one in ElementTree.childrenOf(linked, looseKey))
+        assertEquals(emptyList(), org.example.project.scheduler.domain.TaskPathsDomain.occurrences(linked, loose.id), "it stays in no tree")
+        assertTrue(org.example.project.scheduler.domain.SchedulerDomain.isDetachedParentTask(linked, loose.id), "a detached parent: kept")
+        // Through an edit boundary, which prunes what nothing keeps, and through the store.
+        val pruned = org.example.project.scheduler.domain.SchedulerDomain.pruneDetachedTree(linked)
+        assertTrue(looseKey in ElementTree.parentsOf(pruned, one), "kept by the prune")
+        val back = SchedulerStateCodec.decode(SchedulerStateCodec.encode(linked))!!
+        assertTrue(looseKey in ElementTree.parentsOf(back, one), "kept by the store")
+        // The list of parents lists it; its drop takes it off.
+        val listed = SearchDomain.parentsListConfig(listOf(one))
+        assertTrue(looseKey in SearchDomain.results(linked, listed.searchedKinds, "", filters = listed.filters).map(SearchDomain::keyOf))
+        val dropped = run(linked, ElementTree.parentIntents(linked, listOf(one), looseKey, on = false))
+        assertFalse(looseKey in ElementTree.parentsOf(dropped, one))
+    }
+
+    /**
+     * User rule 2026-11-13: *"There is a task that is the global root (the user can't delete it). Any task that is the direct
+     * child of it is the root of a new tree."* The global root is a parent like another: listed, given, dropped.
+     */
+    @Test
+    fun the_global_root_is_a_parent_like_another() {
+        val s = withTasks("One")
+        val loose = org.example.project.scheduler.model.Task(org.example.project.scheduler.model.TaskId("loose"), "Loose")
+        val state = s.copy(tasks = s.tasks + (loose.id to loose))
+        val root = SearchDomain.taskKey(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK)
+        val looseKey = SearchDomain.taskKey(loose.id)
+        assertEquals(listOf(root), ElementTree.parentsOf(state, taskKey(state, "One")), "a tree's top task stands under it")
+        assertTrue(ElementTree.canLink(state, root, looseKey))
+        val given = run(state, ElementTree.parentIntents(state, listOf(looseKey), root, on = true))
+        assertEquals(listOf(root), ElementTree.parentsOf(given, looseKey), "the root of a new tree")
+        assertTrue(org.example.project.scheduler.domain.TaskPathsDomain.occurrences(given, loose.id).isNotEmpty())
     }
 
     private fun TaskIdOf(key: String) = org.example.project.scheduler.model.TaskId(key.substringAfter('/'))
@@ -146,7 +176,8 @@ class ElementTreeTest {
         assertFalse(root in keys(SearchDomain.Filters()), "the root task is no result of an ordinary search")
         val tops = keys(SearchDomain.Filters(noParentOfKinds = setOf(Kind.Task)))
         assertTrue(root in tops)
-        assertTrue(taskKey(s, "One") in tops)
+        // User rule 2026-11-13: a tree's top task stands under the global root — a task parent.
+        assertFalse(taskKey(s, "One") in tops)
         assertFalse(taskKey(s, "Two") in tops, "Two stands under One")
         // The filter about another kind keeps every task, and offers no root.
         assertFalse(root in keys(SearchDomain.Filters(noParentOfKinds = setOf(Kind.Chrono))))

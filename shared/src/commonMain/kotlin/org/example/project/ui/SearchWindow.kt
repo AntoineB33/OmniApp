@@ -618,6 +618,8 @@ fun SearchWindow(
                     schedulerRuns = schedulerRuns, placement = config.placement,
                     placementOwnLength = if (filters.calendarAddKeeping) SearchDomain.placementDefaultLength(state, addedRows) else null,
                     claudeLogs = claudeLogs,
+                    // User rule 2026-11-13: the global root is a parent a picker can give ("add a parent").
+                    withRoot = picker?.eligible?.contains(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK) == true,
                     match = config.filters.queryOptions,
                     extraQueries = config.extraQueries,
                     queryFormula = config.queryFormula,
