@@ -19,6 +19,7 @@ import androidx.compose.ui.layout.onPlaced
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyListState
@@ -256,6 +257,8 @@ data class AddedActionHandlers(
      * ([SearchDomain.CLAUDE_ENTRY_ACTIONS]); the directory they are read from set, and read again.
      */
     val claudeLogs: () -> org.example.project.claudelogs.ClaudeLogCatalog = { org.example.project.claudelogs.ClaudeLogCatalog.EMPTY },
+    /** User rule 2026-11-13: every Search window open or saved, by id ([SearchDomain.AddedAction.ConfigurationStates]). */
+    val searchWindows: () -> List<SearchDomain.SearchWindowState> = { emptyList() },
     val onSetClaudeLogsDirectory: (String) -> Unit = {},
     val onRefreshClaudeLogs: () -> Unit = {},
     /** How loud Claude Code's own sounds are, null where nothing here sets it, and the change. */
@@ -904,6 +907,8 @@ private fun AddedActionBlocks(
                 enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Voice),
             )
         // User rule 2026-10-18: every sound of the app off on this device — the lateral menu's switch, here too.
+        // User rule 2026-11-13: an added search configuration's state in each Search window, by window id.
+        SearchDomain.AddedAction.ConfigurationStates -> ConfigurationStatesAction(state, added, handlers.searchWindows(), handlers.claudeLogs())
         SearchDomain.AddedAction.MuteSwitch ->
             androidx.compose.material3.Switch(
                 checked = state.soundMuted,
@@ -2323,6 +2328,50 @@ private fun ElementChooser(cellId: String, options: List<Pair<String, String>>, 
         suggestions = { draft -> matching(draft).map { it.second }.filter { !it.equals(draft.trim(), ignoreCase = true) } },
         onPick = { key -> if (options.any { it.first == key }) onPick(key) },
     )
+}
+
+/**
+ * User rule 2026-11-13: **an added search configuration shows its state for each window id** — every Search window open
+ * and every one saved ([SearchDomain.SearchWindowState]): under the window's id and title, the configuration's own
+ * control ([SettingEditor], the one drawing of it) holding that window's state. It writes that window's configuration
+ * where the window can be written from here; a saved one (a menu button's) is shown, greyed, and takes no press.
+ */
+@Composable
+private fun ConfigurationStatesAction(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    windows: List<SearchDomain.SearchWindowState>,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+) {
+    val settings = added.mapNotNull(SearchDomain::settingOf)
+    for (setting in settings) {
+        ElementHeading(setting.label, settings.size)
+        if (windows.isEmpty()) NoteText("No Search window is open or saved.")
+        for (window in windows) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    window.id + "  ·  " + window.title + if (window.open) "" else "  ·  saved",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Box(if (window.set == null) Modifier.graphicsLayer { alpha = 0.6f } else Modifier) {
+                    SettingEditor(state, setting, window.config, null, { window.set?.invoke(it) }, claudeLogs = claudeLogs)
+                    if (window.set == null) {
+                        // Shown, not changed from here: every press stops on it.
+                        Box(
+                            Modifier.matchParentSize().pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).changes.forEach { it.consume() }
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** How many elements a selector lists: what is typed narrows the rest. */

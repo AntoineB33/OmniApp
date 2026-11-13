@@ -122,7 +122,8 @@ class ParentDistanceTest {
     @Test
     fun everySearchConfigurationHasOneOfTheFourCategoriesButReset() {
         assertEquals(listOf(Setting.ResetSearch), Setting.entries.filter { SearchDomain.roleOf(it) == null })
-        assertEquals(SettingRole.entries.toSet(), Setting.entries.mapNotNullTo(HashSet(), SearchDomain::roleOf))
+        // The fifth is a node's of the tree: no configuration that changes something has it.
+        assertEquals(SettingRole.entries.toSet() - SettingRole.Group, Setting.entries.mapNotNullTo(HashSet(), SearchDomain::roleOf))
         for (setting in Setting.entries.filter { it.sorts }) assertEquals(SettingRole.Sort, SearchDomain.roleOf(setting), setting.name)
         // Whatever narrows the list is a filter: every one the filters can say is on.
         val on = SearchDomain.Filters(parentsOf = setOf(key("a")), parentDistance = 2, matchCase = true)

@@ -1584,6 +1584,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The configuration each Search window OPENED with — what its Reset goes back to, after cancelling it all
         // (`SearchDomain.resetConfig`). Compose-only: a window still open at a restart opened with what it held then.
         val searchOpenedConfigs = remember { mutableStateMapOf<String, SearchDomain.Config>() }
+        // User rule 2026-11-13: the ▾ windows, by id — those open, and those holding a configuration of their own.
+        val arrowSearches = remember { org.example.project.ui.ArrowSearches() }
         // The logs are read once they are wanted: on their page, or by a Search window that checks one of their kinds, on
         // any page (user rule 2026-10-31: the window is the same on both). Off the composition, which a keystroke must not redo.
         LaunchedEffect(Unit) {
@@ -2267,6 +2269,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // The configuration held in memory is re-read from the row written here.
             searchConfigs.remove(id)
             searchOpenedConfigs.remove(id)
+            arrowSearches.forget(id)
             configSearches.remove(id)
             calendarConfigs.remove(id)
             // A window closed under this id left its calendar's view behind (its locks released, its zoom): not this one's.
@@ -5477,6 +5480,25 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         AddedActionHandlers(
                             workplaceRuns = workplaceRuns,
                             claudeLogs = { claudeLogs },
+                            // User rule 2026-11-13: every Search window open or saved, by id: the frames, the menu
+                            // buttons' (saved: shown, not written from there) and the ▾ windows with an id.
+                            searchWindows = {
+                                val open = openSearchFrames().map { id ->
+                                    val held = searchConfigOf(id)
+                                    SearchDomain.SearchWindowState(id, SearchDomain.windowTitle(held), held, open = true) { setSearchConfig(id, it) }
+                                }
+                                val saved = CustomMenuButtons.PAGES.flatMap(::menuButtonsOfPage).distinctBy { it.id }
+                                    .filter { it.control == null && it.action == null && lateralWindowOf(it.windowId) == FloatingWindow.Search }
+                                    .mapNotNull { button ->
+                                        SearchDomain.Config.decode(button.config)
+                                            ?.let { SearchDomain.SearchWindowState("button:" + button.id, button.title, it, open = false) }
+                                    }
+                                val arrows = arrowSearches.listed().map { id ->
+                                    val held = arrowSearches.of(id)
+                                    SearchDomain.SearchWindowState(id, SearchDomain.windowTitle(held), held, open = id in arrowSearches.open) { arrowSearches.set(id, it) }
+                                }
+                                open + saved + arrows
+                            },
                             onSetClaudeLogsDirectory = { setClaudeLogsDirectory(it) },
                             onRefreshClaudeLogs = { refreshClaudeLogs() },
                             claudeSoundsVolume = { claudeSoundsVolume },
@@ -5608,6 +5630,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         CompositionLocalProvider(
                             org.example.project.ui.LocalCalendarElement provides { part -> CalendarElementPart(searchId, part) },
                             org.example.project.ui.LocalEmbeddedSearch provides embeddedSearchOf(searchId),
+                            // Its ▾ windows are named after it ([ArrowSearches]).
+                            org.example.project.ui.LocalArrowSearches provides arrowSearches,
+                            org.example.project.ui.LocalArrowOwner provides searchId,
                         ) {
                         SearchWindow(
                             // User rule 2026-11-04: the configurations tree's box bounds are picked on the calendar too.

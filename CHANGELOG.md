@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A fifth category; a search configuration's state per window id; the ▾ windows have ids — 2026-11-13
+
+User rules: *"Add a fifth category for the search configuration elements … that have search configuration children but
+don't change the search configuration themselves (e.g. 'Recently changed')"*; an added search configuration with no such
+children *"shows in the action section its state for each window id"*; *"The ▾ windows must have ids if they are open or
+saved"*. `SettingRole.Group`; the tree's nodes are `Kind.SearchConfiguration` rows (`node:<id>`), their children derived
+(`ElementTree.childrenOf`). New action "State in each window" (`AddedAction.ConfigurationStates`): per Search window — the
+open frames, the menu buttons' saved ones (read-only), the ▾ windows with an id — the configuration's own control.
+`ArrowSearches` (kept by `App`, for the session) names a ▾ window after its owner. **Behaviour change:** a ▾ window's
+search text now outlives its pop-up and its Search window's closing, until the app closes. Supersedes the "not built" note
+of the entry below; the window's parts stay what they were (not search configurations — the user's word). No migration.
+
 ### Parent distance, the integer type, four categories of search configuration — 2026-11-13
 
 User rules: the "List of parents" has a **parent distance**, 1 by default, picked in a Search window of integers

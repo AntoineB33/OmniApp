@@ -58,6 +58,10 @@ object ElementTree {
      */
     fun childrenOf(state: SchedulerState, key: String, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): List<String> {
         val links = state.elementLinks.filter { it.parent == key }.sortedWith(compareBy({ it.rank }, { it.id })).map { it.child }
+        // User rule 2026-11-13: a node of the configurations tree has its search configurations as children, derived.
+        if (kindOf(key) == Kind.SearchConfiguration) {
+            return (SearchDomain.configurationChildIds(idOf(key)).map { Kind.SearchConfiguration.name + "/" + it } + links).distinct()
+        }
         val derived = claudeChildren(key, claudeLogs)
         val own = if (derived.isEmpty()) links else (derived + links).distinct()
         val taskId = taskIdOf(key)
@@ -188,6 +192,8 @@ object ElementTree {
     fun canUnlink(state: SchedulerState, parent: String, child: String, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): Boolean {
         // What the logs make a child (a prompt's answer) is read off them, so no ✕ takes it out.
         if (child in claudeChildren(parent, claudeLogs)) return false
+        // Nor what the configurations tree makes a child of one of its nodes.
+        if (kindOf(parent) == Kind.SearchConfiguration && idOf(child) in SearchDomain.configurationChildIds(idOf(parent))) return false
         val taskId = taskIdOf(child) ?: return true
         if (kindOf(parent) != Kind.Task) return true
         val places = TaskPathsDomain.places(state, taskId)

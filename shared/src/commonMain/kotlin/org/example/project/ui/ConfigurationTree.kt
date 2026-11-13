@@ -70,7 +70,10 @@ internal fun ConfigurationTreeArrow(
 ) {
     var open by remember { mutableStateOf(false) }
     // The configuration of the search this pop-up IS (user rule 2026-11-11, [SearchDomain.CONFIGURATION_SEARCH]).
-    var own by remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
+    // User rule 2026-11-13: a ▾ window has an id — its owner's and "▾" — and its configuration is kept under it
+    // ([ArrowSearches]), where a window with an id owns it; one without (a drop-down's list) keeps it itself.
+    val arrowId = LocalArrowOwner.current?.let { it + ArrowSearches.ARROW }
+    var own by rememberArrowSearch(arrowId, open, LocalArrowOwner.current)
     // The category revealing its children at each depth, by id.
     var path by remember { mutableStateOf(listOf<String>()) }
     // User rule 2026-11-11: the pop-up IS a Search window, its header and its two right sections hidden as it opens;
@@ -161,6 +164,8 @@ internal fun ConfigurationTreeArrow(
             LocalTreeKeeper provides keeper,
             LocalTreePrefix provides prefix,
             LocalBarPath provides emptyList(),
+            // The arrows in this pop-up are of the window it is.
+            LocalArrowOwner provides arrowId,
         ) {
         AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
         SearchPopupParts(SearchDomain.windowTitle(own), 320.dp, parts, { parts = it }, onClose = { close() }) {
@@ -373,6 +378,9 @@ private fun TreeColumn(
                         }
                     }
                     val reveal = { if (!revealing) onPathChange(path.take(depth) + node.id) }
+                    // A category's pop-up is a ▾ window too: its owner's id and the category.
+                    val owner = LocalArrowOwner.current
+                    val branchId = owner?.let { it + "/" + node.id }
                     Box {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -394,6 +402,7 @@ private fun TreeColumn(
                                 LocalMenuHover provides branch,
                                 // The arrow in this pop-up's bar opens a tree standing at this category.
                                 LocalBarPath provides branchPath,
+                                LocalArrowOwner provides branchId,
                             ) {
                                 AppDropdownMenu(
                                     expanded = true,
@@ -406,7 +415,7 @@ private fun TreeColumn(
                                     // Anomaly 2026-11-11: this field wrote into the parent pop-up's too — both
                                     // were the root's one query. Each pop-up is a search of its own over its
                                     // category's children ([SearchDomain.CONFIGURATION_SEARCH]), which goes with it.
-                                    var own by remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
+                                    var own by rememberArrowSearch(branchId, true, owner)
                                     // Anomaly 2026-11-11 (*"the right-click menu doesn't appear on the background of the
                                     // 2nd headless search window"*): it is a Search window too, as the root's pop-up is.
                                     var parts by remember { mutableStateOf(CellEditPopupHost.PICKER_SPLITS) }
@@ -555,6 +564,92 @@ internal class TreeKeeper {
     fun bringBack(address: List<List<String>>) {
         walkTarget = address
         wanted = address
+    }
+}
+
+/**
+ * User rule 2026-11-13: **the ▾ windows have ids while they are open or saved** — *"saved in the sense that this window
+ * has also its own ▾ window or search configuration"*. Kept by `App`, so a ▾ window's configuration outlives its pop-up
+ * (for the session: Compose-only, like the configuration a Search window opened with).
+ *
+ * An id is its owner's and [ARROW] (`Search#2▾`, `Search#2▾▾`), or its owner's and a category of the tree
+ * (`Search#2▾/general`). [configs] holds those whose configuration is no longer the one a ▾ window opens with; [open]
+ * those on screen; [owners] what each hangs from.
+ */
+class ArrowSearches {
+    val configs = androidx.compose.runtime.mutableStateMapOf<String, SearchDomain.Config>()
+    val open = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
+    private val owners = HashMap<String, String>()
+
+    fun of(id: String): SearchDomain.Config = configs[id] ?: SearchDomain.CONFIGURATION_SEARCH
+
+    fun set(id: String, config: SearchDomain.Config) {
+        if (config == SearchDomain.CONFIGURATION_SEARCH) configs.remove(id) else configs[id] = config
+    }
+
+    fun owned(id: String, owner: String) {
+        owners[id] = owner
+    }
+
+    /** The ▾ windows that have an id now, in order: the open ones, the saved ones, and those one of them hangs from. */
+    fun listed(): List<String> = listedArrowIds(open.keys, configs.keys, owners)
+
+    /** The ▾ windows of the window [id] are forgotten with it. */
+    fun forget(id: String) {
+        val gone = (configs.keys + open.keys + owners.keys).filter { it.startsWith(id + ARROW) }
+        gone.forEach {
+            configs.remove(it)
+            open.remove(it)
+            owners.remove(it)
+        }
+    }
+
+    companion object {
+        const val ARROW: String = "▾"
+    }
+}
+
+/**
+ * The ids [ArrowSearches.listed] gives: the [open] ▾ windows and the [saved] ones, and every ▾ window one of them hangs
+ * from ([owners]: it *"has also its own ▾ window"*), sorted so a window stands before what hangs from it.
+ */
+internal fun listedArrowIds(open: Set<String>, saved: Set<String>, owners: Map<String, String>): List<String> {
+    val out = HashSet<String>()
+    for (id in open + saved) {
+        var at: String? = id
+        while (at != null && ArrowSearches.ARROW in at && out.add(at)) at = owners[at]
+    }
+    return out.sorted()
+}
+
+/** The registry of the ▾ windows ([ArrowSearches]); null where no `App` provides one (a test). */
+val LocalArrowSearches = androidx.compose.runtime.staticCompositionLocalOf<ArrowSearches?> { null }
+
+/** The id of the Search window the arrows drawn here are of ([ArrowSearches]); null: a window with no id. */
+val LocalArrowOwner = androidx.compose.runtime.compositionLocalOf<String?> { null }
+
+/**
+ * The configuration of the ▾ window [id], kept by the registry while it has an id and one is provided — and said open
+ * while [open] — else by the composition, as before 2026-11-13.
+ */
+@Composable
+private fun rememberArrowSearch(id: String?, open: Boolean, owner: String?): androidx.compose.runtime.MutableState<SearchDomain.Config> {
+    val registry = LocalArrowSearches.current
+    val local = remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
+    if (registry == null || id == null) return local
+    if (owner != null) registry.owned(id, owner)
+    DisposableEffect(registry, id, open) {
+        if (open) registry.open[id] = true
+        onDispose { registry.open.remove(id) }
+    }
+    return remember(registry, id) {
+        object : androidx.compose.runtime.MutableState<SearchDomain.Config> {
+            override var value: SearchDomain.Config
+                get() = registry.of(id)
+                set(next) = registry.set(id, next)
+            override fun component1() = value
+            override fun component2(): (SearchDomain.Config) -> Unit = { value = it }
+        }
     }
 }
 

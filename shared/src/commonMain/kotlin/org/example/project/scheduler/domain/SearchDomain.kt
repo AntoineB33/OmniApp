@@ -1819,6 +1819,12 @@ object SearchDomain {
         Sort("sort"),
         Display("display"),
         Children("children"),
+
+        /**
+         * User rule 2026-11-13, the fifth: a search configuration that **has search configuration children and changes
+         * nothing itself** — a node of the configurations tree ("Recently changed", "General", a page, a type).
+         */
+        Group("group"),
     }
 
     /**
@@ -1905,6 +1911,47 @@ object SearchDomain {
             ?.let { ConfigurationCategory("context", "For this list", it.map(::ConfigurationLeaf)) }
         return listOfNotNull(context, ConfigurationCategory("recent", "Recently changed", recent), general) + pages
     }
+
+    /** What the id of a node of the configurations tree wears as a [Kind.SearchConfiguration] row; a leaf's is its [Setting]'s name. */
+    const val CONFIGURATION_NODE_PREFIX: String = "node:"
+
+    /** Every node of the configurations tree that has children ([SettingRole.Group]), top down, as a window opened on nothing has them. */
+    fun configurationCategories(): List<ConfigurationCategory> = CONFIGURATION_CATEGORIES
+
+    private val CONFIGURATION_CATEGORIES: List<ConfigurationCategory> by lazy {
+        fun walk(nodes: List<ConfigurationNode>): List<ConfigurationCategory> =
+            nodes.filterIsInstance<ConfigurationCategory>().flatMap { listOf(it) + walk(it.children) }
+        walk(configurationTree(Config()))
+    }
+
+    /** The search configuration children of the [Kind.SearchConfiguration] row [id], by id: a node's, in the tree's order; a leaf has none. */
+    fun configurationChildIds(id: String): List<String> {
+        if (!id.startsWith(CONFIGURATION_NODE_PREFIX)) return emptyList()
+        val node = configurationCategories().firstOrNull { it.id == id.removePrefix(CONFIGURATION_NODE_PREFIX) } ?: return emptyList()
+        return node.children.map {
+            when (it) {
+                is ConfigurationLeaf -> it.setting.name
+                is ConfigurationCategory -> CONFIGURATION_NODE_PREFIX + it.id
+            }
+        }
+    }
+
+    /** The [Setting] an added [Kind.SearchConfiguration] row is, where it has no search configuration children; else null. */
+    fun settingOf(row: Result): Setting? =
+        (row as? ItemResult)?.takeIf { it.kind == Kind.SearchConfiguration }?.let { item -> Setting.entries.firstOrNull { it.name == item.id } }
+
+    /**
+     * User rule 2026-11-13: **one Search window as the "State in each window" action lists it** ([AddedAction.ConfigurationStates]):
+     * its [id] — a frame id (`Search#2`), a menu button's, or a ▾ window's (its owner's id and "▾") — its [title], the
+     * [config] it holds, [open] or only saved, and [set], what writes its configuration (null: shown, not changed from there).
+     */
+    class SearchWindowState(
+        val id: String,
+        val title: String,
+        val config: Config,
+        val open: Boolean,
+        val set: ((Config) -> Unit)? = null,
+    )
 
     /**
      * User rule 2026-11-11: **the search configuration of a pop-up of the configurations tree** as it opens — the tree is
@@ -2842,6 +2889,9 @@ object SearchDomain {
                 Kind.SearchConfiguration -> Setting.entries.map { setting ->
                     // ...and its category ([SettingRole]).
                     ItemResult(kind, setting.name, setting.label, listOfNotNull(setting.section?.label ?: "general", roleOf(setting)?.label).joinToString(" · "))
+                } + configurationCategories().map { node ->
+                    // The nodes of the tree are search configurations too: the fifth category ([SettingRole.Group]).
+                    ItemResult(kind, CONFIGURATION_NODE_PREFIX + node.id, node.label, SettingRole.Group.label)
                 }
             }
         return items
@@ -4055,6 +4105,13 @@ object SearchDomain {
         SupabaseUsageControl(Kind.AppSetting, "Supabase free tier"),
         MemoryLimitsControl(Kind.AppSetting, "Memory limits"),
         ServerControl(Kind.AppSetting, "Server"),
+
+        /**
+         * User rule 2026-11-13: an added search configuration with no search configuration children ([settingOf]) shows
+         * **its state for each window id** — every Search window open, and every one saved (a menu button's, the
+         * "unfocused notif", a ▾ window that is open or holds a configuration of its own): [SearchWindowState].
+         */
+        ConfigurationStates(Kind.SearchConfiguration, "State in each window"),
     }
 
     /** The actions that show a Claude Code log entry, each one block per added entry. */
@@ -4189,6 +4246,8 @@ object SearchDomain {
                             (severalChronos || it != AddedAction.ChronoHighestCount) &&
                             (sleepAdded || it != AddedAction.PeriodSleepSchedule) &&
                             (treeRootAdded || it != AddedAction.TaskTreeName) &&
+                            // A node of the tree changes nothing itself: no state to show.
+                            (it != AddedAction.ConfigurationStates || added.any { row -> settingOf(row) != null }) &&
                             // A menu control's action is its setting's alone: listed where that setting is added.
                             APP_SETTING_CONTROL_ACTIONS[it]?.let { setting -> appSettingAdded(added, setting) } != false
                     }
@@ -4539,6 +4598,7 @@ object SearchDomain {
             AddedAction.PromptSession, AddedAction.AnswerSession, AddedAction.ReasoningSession ->
                 "project session title id date file copy"
             AddedAction.ClaudeLogsDirectory -> "folder path read refresh load"
+            AddedAction.ConfigurationStates -> "window id open saved value filter sort"
             AddedAction.MuteSwitch -> "silence quiet sound voice ring alarm notification off on"
             else -> ""
         }

@@ -129,7 +129,9 @@ class ConfigurationTreeTest {
         assertEquals(setOf(SearchDomain.Kind.SearchConfiguration), level.searchedKinds)
         assertEquals("", level.query)
         val rows = SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.SearchConfiguration), "")
-        assertEquals(Setting.entries.map { it.name }.toSet(), rows.map { (it as SearchDomain.ItemResult).id }.toSet())
+        // User rule 2026-11-13: the tree's nodes are search configurations too (the fifth category), beside every setting.
+        val nodes = SearchDomain.configurationCategories().map { SearchDomain.CONFIGURATION_NODE_PREFIX + it.id }
+        assertEquals((Setting.entries.map { it.name } + nodes).toSet(), rows.map { (it as SearchDomain.ItemResult).id }.toSet())
         // Its search text finds configurations by name, as the pop-up's field does.
         val found = SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.SearchConfiguration), Setting.MatchCase.label)
         assertTrue(found.isNotEmpty() && found.all { it.name.contains(Setting.MatchCase.label, ignoreCase = true) })

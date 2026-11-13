@@ -1138,7 +1138,10 @@ fun SearchWindow(
                 }
                 // User rule 2026-11-04: the header is the bar alone, and at its right the arrow that opens the tree of
                 // every configuration (the types, Reset, the filters, the sorting — what the header's buttons were).
-                ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar)
+                // A window drawn inside another has no id of its own: its ▾ window keeps its own state ([ArrowSearches]).
+                androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides LocalArrowOwner.current.takeIf { !embedded }) {
+                    ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar)
+                }
             }
             val completionOptions =
                 remember(config.completion, query, state.titleToTaskIds) { SearchDomain.completionOptions(state, config.completion, query) }
@@ -1845,6 +1848,8 @@ internal fun OptionSearchMenu(
         atPointer = atPointer,
     ) {
         val opened = if (options.integers != null) SearchDomain.INTEGER_SEARCH else SearchDomain.OPTION_SEARCH
+        // A drop-down's list has no id: nothing in it is a ▾ window of the window it opens over.
+        androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides null) {
         var config by remember { mutableStateOf(opened.copy(dropButtons = options.onDrop != null)) }
         var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
         // No account is searched: the options are the rows.
@@ -1871,6 +1876,7 @@ internal fun OptionSearchMenu(
             canDrop = { row -> (row as? SearchDomain.ItemResult)?.id?.let { it != SearchDomain.SELECT_ALL_OPTION && options.canDrop(it) } == true },
             modifier = Modifier.width(width).height(height),
         )
+        }
     }
 }
 

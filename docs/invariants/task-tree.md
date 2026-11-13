@@ -962,13 +962,28 @@ suggestions before it was ever entered.
 
 #### The grouped configurations
 
-- **A SEARCH CONFIGURATION HAS ONE OF FOUR CATEGORIES, BY WHAT IT DOES TO THE RESULT LIST** (user rule 2026-11-13;
-  `SearchDomain.SettingRole`, `roleOf`, `ParentDistanceTest`): it keeps rows out (**filter**), orders them (**sort**),
-  changes how every row is drawn (**display**), or changes the children the rows have in that list (**children**).
-  `roleOf` is the one statement of it; a row of the search over search configurations says it beside its type. "Reset"
-  is a command and no state: it has none. **Not built yet** (open questions put to the user 2026-11-13): the window's
-  parts ("hide the header"…, `SearchSplits`) as search configurations and the background menu as a search over them;
-  an added search configuration's state per window id.
+- **A SEARCH CONFIGURATION HAS ONE OF FIVE CATEGORIES** (user rules 2026-11-13; `SearchDomain.SettingRole`, `roleOf`,
+  `ParentDistanceTest`, `SearchConfigurationStatesTest`). Four by what it does to the result list of its window — it
+  keeps rows out (**filter**), orders them (**sort**), changes how every row is drawn (**display**), or changes the
+  children the rows have in that list (**children**) — and the fifth, **group**, for one that *"has search
+  configuration children but doesn't change the search configuration itself"*: a node of the ▾ tree ("Recently
+  changed", "General", a page, a type). `roleOf` is the one statement of the four; a row of the search over search
+  configurations says its category. The nodes are rows of that search too (`CONFIGURATION_NODE_PREFIX`,
+  `configurationCategories`), their children derived from the tree (`ElementTree.childrenOf`, never links, never
+  taken out). "Reset" is a command and no state: it has none. The window's parts ("hide the header"…) are NOT search
+  configurations (the user's word): they are the entries of the background menu, which is a Search window of them.
+- **AN ADDED SEARCH CONFIGURATION WITH NO SUCH CHILDREN SHOWS ITS STATE FOR EACH WINDOW ID** (user rule 2026-11-13;
+  `AddedAction.ConfigurationStates`, `SearchDomain.settingOf`, `SearchWindowState`, `ConfigurationStatesAction`,
+  `AddedActionHandlers.searchWindows`). One block per Search window: its id, its title, and the configuration's own
+  control (`SettingEditor`, the one drawing) holding that window's state. The windows: every open Search frame
+  (the "unfocused notif" among them), written through `App.setSearchConfig`; every menu button's saved Search window
+  (`button:<id>`, shown greyed, not written from there); every ▾ window with an id. A group has no such action.
+- **A ▾ WINDOW HAS AN ID WHILE IT IS OPEN OR SAVED** (user rule 2026-11-13: *"saved in the sense that this window has
+  also its own ▾ window or search configuration"*; `ArrowSearches`, `listedArrowIds`, `LocalArrowOwner`). Its id is its
+  owner's and "▾" (`Search#2▾`, `Search#2▾▾`), a category's pop-up its owner's and the category
+  (`Search#2▾/general`). `App` keeps their configurations by id, so one outlives its pop-up — for the session only
+  (Compose-only; not on a placement row). A Search window drawn inside another (a drop-down's list, a field's list)
+  has no id: its ▾ window keeps its own state as before, and is not listed.
 - **THE CONFIGURATIONS A CONTEXT IS ABOUT COME FIRST IN THE ▾ TREE** (user rule 2026-11-13: *"the user should very
   easily see the search configuration element about the parent distance"*; `SearchDomain.contextSettings`,
   `configurationTree(config, opened)`). What the window was opened with says its context: the filters it set, and what

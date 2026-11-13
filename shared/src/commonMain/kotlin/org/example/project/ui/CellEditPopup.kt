@@ -391,6 +391,8 @@ internal fun PopupSearchField(
                     }
                 },
         )
+        // The field's window has no id: its ▾ window is not the enclosing window's ([ArrowSearches]).
+        androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides null) {
         ConfigurationTreeArrow(
             state = state,
             config = config,
@@ -400,6 +402,7 @@ internal fun PopupSearchField(
             windows = emptyList(),
             claudeLogs = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
         )
+        }
     }
     if (!open || search == null || host == null) return
     val request =
