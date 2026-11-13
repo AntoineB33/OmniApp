@@ -4345,7 +4345,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     )
                 // The lateral menu is omitted entirely while collapsed, so the content takes the full width
                 // ("completely disappear to the left"). The collapse toggle lives outside it (see below).
-                if (!menuCollapsed) LateralMenu(
+                // User rule 2026-11-13: the left-side menu is a Search window — its configuration kept as any Search
+                // window's (its placement row, its History Units), its ▾ windows named after it.
+                val menuSearchConfig =
+                    searchConfigs[org.example.project.ui.LATERAL_MENU_ID]
+                        ?: (SearchDomain.Config.decode(placements[org.example.project.ui.LATERAL_MENU_ID]?.config) ?: org.example.project.ui.LATERAL_MENU_SEARCH)
+                            .also { searchConfigs[org.example.project.ui.LATERAL_MENU_ID] = it }
+                if (!menuCollapsed) CompositionLocalProvider(
+                    org.example.project.ui.LocalArrowSearches provides arrowSearches,
+                    org.example.project.ui.LocalArrowOwner provides org.example.project.ui.LATERAL_MENU_ID,
+                    org.example.project.ui.LocalArrowRoot provides org.example.project.ui.LATERAL_MENU_ID,
+                ) {
+                LateralMenu(
+                    config = menuSearchConfig,
+                    onConfigChange = { setSearchConfig(org.example.project.ui.LATERAL_MENU_ID, it, follow = false) },
                     page = page,
                     onPageSelected = {
                         if (it != page) {
@@ -4358,8 +4371,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     customizing = menuCustomizer.active,
                     onCustomize = { menuCustomizer.active = it },
                     onReset = { resetMenuButtons() },
-                    items = {
+                    items = { menuQuery ->
                         CustomMenuSection(
+                            query = menuQuery,
                             buttons = menuButtons.filter(::menuButtonShown),
                             // PRD §7: every window button of the menu opens a NEW window ([openNewWindow]).
                             onClick = { pressed ->
@@ -4433,6 +4447,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     },
                 )
+                }
 
                 // PRD §4: a pop-up opened from the default-sub-tree window reads the TEMPLATE and writes
                 // back into it; one opened from the tree reads and writes the live state as it always did.
@@ -5517,7 +5532,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             ?.let { SearchDomain.SearchWindowState(window.id + relative, SearchDomain.windowTitle(it), it, open = false) }
                                     }
                                 }
-                                val arrows = openSearchFrames().flatMap { root ->
+                                // The left-side menu is one of them.
+                                val menuId = org.example.project.ui.LATERAL_MENU_ID
+                                val menu = listOfNotNull(
+                                    searchConfigs[menuId]?.let { held ->
+                                        SearchDomain.SearchWindowState(menuId, "left-side menu", held, open = !menuCollapsed) { setSearchConfig(menuId, it, follow = false) }
+                                    },
+                                )
+                                val arrows = (openSearchFrames() + menuId).flatMap { root ->
                                     arrowSearches.listed(root).map { relative ->
                                         val held = arrowSearches.of(root, relative)
                                         SearchDomain.SearchWindowState(root + relative, SearchDomain.windowTitle(held), held, open = (root + relative) in arrowSearches.open) {
@@ -5527,7 +5549,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 }
                                 // The windows drawn inside another (a field's list, a drop-down's, the actions section).
                                 val inside = arrowSearches.embedded.keys.sorted().mapNotNull { arrowSearches.embedded[it] }
-                                open + inside + arrows + saved + savedArrows
+                                open + menu + inside + arrows + saved + savedArrows
                             },
                             onSetClaudeLogsDirectory = { setClaudeLogsDirectory(it) },
                             onRefreshClaudeLogs = { refreshClaudeLogs() },

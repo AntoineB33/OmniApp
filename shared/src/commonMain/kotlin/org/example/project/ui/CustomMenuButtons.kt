@@ -781,6 +781,18 @@ object CustomMenuButtons {
         }
     }
 
+    /** What an item is called: the name the user gave it, else its control's own. */
+    fun titleOf(button: CustomMenuButton): String = button.title.ifBlank { MenuControl.of(button.control)?.title.orEmpty() }
+
+    /**
+     * User rule 2026-11-13, the left-side menu's search bar: [rows] it finds — those whose name holds [query], whatever
+     * the case, where they stand, at their depth — and all of them while it is empty.
+     */
+    fun answering(rows: List<MenuRow>, query: String): List<MenuRow> {
+        val needle = query.trim()
+        return if (needle.isEmpty()) rows else rows.filter { titleOf(it.button).contains(needle, ignoreCase = true) }
+    }
+
     /** The ids of everything inside the folder [id], at any depth. */
     fun descendantIds(buttons: List<CustomMenuButton>, id: String): Set<String> {
         val byId = buttons.associateBy { it.id }
@@ -1033,6 +1045,8 @@ internal fun CustomMenuSection(
     onGroup: (id: String, targetId: String) -> Unit = { _, _ -> },
     /** The arrow of the folder [id] pressed. */
     onToggleFolder: (id: String) -> Unit = {},
+    /** User rule 2026-11-13: what the menu's search bar holds — the items it finds are drawn ([CustomMenuButtons.answering]). */
+    query: String = "",
 ) {
     // User rule 2026-10-08: "in customization mode, the user can drag the buttons or fields in the left-side menu".
     // Each drawn item's row (its top and height in this column), the one held and how far the hand has it. The held
@@ -1040,7 +1054,7 @@ internal fun CustomMenuSection(
     val rows = remember { androidx.compose.runtime.mutableStateMapOf<String, Pair<Float, Float>>() }
     var draggedId by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
-    val visible = CustomMenuButtons.visibleRows(buttons)
+    val visible = CustomMenuButtons.answering(CustomMenuButtons.visibleRows(buttons), query)
     // What a drag can land on: not on itself, nor inside itself.
     fun others(): List<CustomMenuButtons.DropRow> {
         val id = draggedId ?: return emptyList()

@@ -93,6 +93,19 @@ means.
   the frame on `WindowInstance.menuKey`). One host for every frame, so no window is wired for it one by one.
   A window about something transient (a calendar edit draft, the elements at a spot, the constraint picker, a
   companion, a notice) has no ☆: a saved button would have nothing to come back to.
+  - **The left-side menu is a Search window, on its own background colour** (user rule 2026-11-13: *"Make the
+    left-side menu a Search window as well, with a specific background color."*; `LateralMenu`, `SearchWindow`'s
+    `menuList`, `MenuSearchRows`, `LATERAL_MENU_SEARCH`, `LATERAL_MENU_ID`, `LateralMenuSearchTest`). The page button
+    stays on top — the one thing of the menu that is not the user's, and it no longer scrolls away with the items.
+    Under it stands the very `SearchWindow`, its search section alone, at the menu's width (never a section's least):
+    its **bar** keeps the items whose name holds what it holds (`CustomMenuButtons.answering`), its **▾** opens its
+    configurations, its **background menu** holds "Customize" and "Reset" then the window's parts. **Its list is the
+    menu's items, drawn by the menu's own code** (`CustomMenuSection`): their order, their folders, their drag in
+    customization and their own right-click menus are unchanged — they are not result rows (no row selection, no
+    sorting: the order is the user's). Its background is the menu's (`CalColors.menuBackground`), not the windows'. Its
+    configuration is kept by `App` as any Search window's (`searchConfigs[LATERAL_MENU_ID]`, its placement row, its
+    History Units), its ▾ windows are named after it (`LateralMenu▾`), and "State in each window" lists it. Which of
+    its parts are shown is not kept across a restart.
   - **A button's right-click "Update" saves its window's state as it stands** (user rule 2026-10-07;
     `CustomMenuButtons.needsUpdate` / `updated`, `CustomMenuButtonsTest`): offered only while the window THE BUTTON
     opened or brought back is open (`App`'s `menuButtonWindows`, Compose-only — forgotten when that window closes;

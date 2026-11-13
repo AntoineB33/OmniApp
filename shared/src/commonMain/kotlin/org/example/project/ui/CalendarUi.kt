@@ -1744,8 +1744,8 @@ private fun hourLabel(hour: Int): String {
 fun LateralMenu(
     page: OmniPage,
     onPageSelected: (OmniPage) -> Unit,
-    /** Everything under the page button: the user's items ([CustomMenuSection]). */
-    items: @Composable () -> Unit = {},
+    /** Everything under the page button: the user's items ([CustomMenuSection]), given what the menu's bar holds. */
+    items: @Composable (query: String) -> Unit = {},
     /** Whether the menu is being customized, and a right-click on its empty part starting or ending it. */
     customizing: Boolean = false,
     onCustomize: (Boolean) -> Unit = {},
@@ -1754,24 +1754,28 @@ fun LateralMenu(
     /** Held by the caller, which scrolls the menu to its end when it adds an item there. */
     scrollState: ScrollState = rememberScrollState(),
     modifier: Modifier = Modifier,
+    /**
+     * User rule 2026-11-13: the menu is a Search window — its configuration (what its bar holds, its ▾'s settings), kept
+     * by `App` as any Search window's; null where nothing keeps it (a test): the menu keeps it while it is drawn.
+     */
+    config: org.example.project.scheduler.domain.SearchDomain.Config? = null,
+    onConfigChange: (org.example.project.scheduler.domain.SearchDomain.Config) -> Unit = {},
 ) {
     var backgroundMenu by remember { mutableStateOf(false) }
+    val ownActions = listOf(
+        MenuAction(if (customizing) "Stop customizing" else "Customize") { onCustomize(!customizing) },
+        MenuAction("Reset") { onReset() },
+    )
     Column(
         modifier = modifier
             .fillMaxHeight()
             .width(188.dp)
+            // User rule 2026-11-13: *"with a specific background color"* — the menu's own, not the windows'.
             .background(CalColors.menuBackground)
             .border(1.dp, CalColors.grid)
             // A right-click no item answered (they consume theirs): the menu's own, on its empty part.
             .then(contextMenuModifier(enabled = true, key = "menu-background") { backgroundMenu = true })
-            // Scroll when the buttons exceed the available height (e.g. short windows / calendar
-            // expanded) so nothing is clipped off the bottom.
-            .verticalScroll(scrollState)
-            // The window bar is drawn OVER this menu along the bottom of the app (WindowBar), so the scrolled
-            // content ends a bar's height lower: scrolled to the end, the last button always clears the bar.
-            // Always, not only while the bar shows — the menu does not jump when a window opens or closes, and
-            // without the bar the last button simply sits that much above the floor.
-            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp + MINIMIZED_BAR_HEIGHT),
+            .padding(top = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // First element: page navigation (persistent across all feature pages), styled like the buttons below.
@@ -1779,22 +1783,58 @@ fun LateralMenu(
         // visible after the whole menu (this button included) slides off-screen.
         // In a box with the selector, never a child of this column of its own: open, a menu is a node of the layout, and
         // the column's gap, given to it, moved every button under it (anomaly 2026-11-01, `LateralMenuShiftTest`).
-        Box(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
             PageNavButton(page = page, onPageSelected = onPageSelected)
             transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
             // At the pointer (anomaly 2026-11-01): declared here, it hung from the top of the menu, wherever the click was.
             // User rule 2026-11-12: the menu is a Search window of its entries.
-            ActionMenu("LateralMenu",
-                open = backgroundMenu,
-                onDismiss = { backgroundMenu = false },
-                actions = listOf(
-                    MenuAction(if (customizing) "Stop customizing" else "Customize") { onCustomize(!customizing) },
-                    MenuAction("Reset") { onReset() },
-                ),
-                atPointer = true,
-            )
+            ActionMenu("LateralMenu", open = backgroundMenu, onDismiss = { backgroundMenu = false }, actions = ownActions, atPointer = true)
         }
-        items()
+        // User rule 2026-11-13: *"Make the left-side menu a Search window as well"*. Under the page button — the one
+        // thing of the menu that is not the user's — the very [SearchWindow], its search section alone: its bar finds
+        // among the items, its ▾ opens its configurations, its background menu shows its parts after the menu's own
+        // entries. Its list is the menu's items, drawn by the menu's code ([MenuSearchRows]): they keep their order,
+        // their folders and their drag.
+        var held by remember { mutableStateOf(LATERAL_MENU_SEARCH) }
+        var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
+        val nothing = remember { org.example.project.scheduler.state.SchedulerState.empty() }
+        SearchWindow(
+            state = nothing,
+            openers = OPTION_OPENERS,
+            onStartTaskNow = {},
+            onGoToTaskTree = { _, _ -> },
+            onDeepCopyCell = {},
+            actionHandlers = OPTION_HANDLERS,
+            onIntent = {},
+            onDismiss = {},
+            config = config ?: held,
+            onConfigChange = { if (config == null) held = it else onConfigChange(it) },
+            openedConfig = LATERAL_MENU_SEARCH,
+            onOpenConfigurations = {},
+            splits = splits,
+            onSplitsChange = { splits = it },
+            embedded = true,
+            menuList = MenuSearchRows(
+                content = { query ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            // Scroll when the buttons exceed the available height (e.g. short windows / calendar
+                            // expanded) so nothing is clipped off the bottom.
+                            .verticalScroll(scrollState)
+                            // The window bar is drawn OVER this menu along the bottom of the app (WindowBar), so the scrolled
+                            // content ends a bar's height lower: scrolled to the end, the last button always clears the bar.
+                            // Always, not only while the bar shows — the menu does not jump when a window opens or closes, and
+                            // without the bar the last button simply sits that much above the floor.
+                            .padding(top = 6.dp, bottom = 12.dp + MINIMIZED_BAR_HEIGHT),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) { items(query) }
+                },
+                backgroundActions = ownActions,
+            ),
+            // The Search window's section has its own margin: with this much more, its items stand under the page button.
+            modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 2.dp),
+        )
     }
 }
 

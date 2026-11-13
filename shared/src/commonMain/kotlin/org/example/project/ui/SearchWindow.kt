@@ -508,6 +508,11 @@ fun SearchWindow(
      * window it is drawn in, a row's menu and its drop button taking them off that list.
      */
     addedList: AddedSearchRows? = null,
+    /**
+     * User rule 2026-11-13: **the left-side menu** ([MenuSearchRows], [LateralMenu]): its list is the menu's items, drawn
+     * by the menu's own code, the bar keeping those it finds; laid out at the menu's width, never at a section's least.
+     */
+    menuList: MenuSearchRows? = null,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -1087,6 +1092,7 @@ fun SearchWindow(
           open = backgroundMenu,
           onDismiss = { backgroundMenu = false },
           removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved, barRemoved = barRemoved),
+          more = menuList?.backgroundActions.orEmpty(),
       ) { part ->
           val next = part.toggled(splitsNow())
           headerRemoved = next.headerRemoved
@@ -1195,7 +1201,9 @@ fun SearchWindow(
 
             // --- The result list --------------------------------------------------------------------
             // Narrowed, the list is cut — laid out at the sections' least width, never squeezed row by row.
-            Box(
+            // The left-side menu's list is the menu's own items, at the menu's width ([MenuSearchRows]).
+            if (menuList != null) Box(Modifier.fillMaxWidth().weight(1f)) { menuList.content(query) }
+            else Box(
                 Modifier.fillMaxWidth().weight(1f).keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH)
                     .onGloballyPositioned { resultListTop = it.positionInWindow().y },
             ) {
@@ -2050,12 +2058,19 @@ internal fun SectionArrow(collapsed: Boolean, onToggle: () -> Unit) {
  * ([LocalMenuHover]), so going to it does not close that pop-up.
  */
 @Composable
-internal fun SearchPartsMenu(open: Boolean, onDismiss: () -> Unit, removed: SearchSplits, onToggle: (SearchPart) -> Unit) {
+internal fun SearchPartsMenu(
+    open: Boolean,
+    onDismiss: () -> Unit,
+    removed: SearchSplits,
+    /** What the window adds of its own, before the parts: the left-side menu's "Customize" and "Reset". */
+    more: List<MenuAction> = emptyList(),
+    onToggle: (SearchPart) -> Unit,
+) {
     // User rule 2026-11-12: the menu is a Search window of its entries.
     ActionMenu("SearchPartsMenu",
         open = open,
         onDismiss = onDismiss,
-        actions = SearchPart.entries.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed))) { onToggle(part) } },
+        actions = more + SearchPart.entries.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed))) { onToggle(part) } },
         atPointer = true,
     )
 }
@@ -2144,6 +2159,22 @@ private const val REMOVE_OTHERS_LABEL: String = "remove the others"
  * element, the section starting at the first of them ([SearchDomain.withOnlyGroupsOf]).
  */
 private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
+
+/**
+ * User rule 2026-11-13: **what the left-side menu gives the Search window that is it** ([LateralMenu]): its list
+ * ([content], given what the bar holds: the items answering it), and what its background menu holds of its own before
+ * the window's parts ([backgroundActions]: "Customize", "Reset").
+ */
+class MenuSearchRows(
+    val content: @Composable (query: String) -> Unit,
+    val backgroundActions: List<MenuAction> = emptyList(),
+)
+
+/** The left-side menu's Search window as it opens: its items are given, not searched; nothing typed. */
+val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Option), pageTypesOnly = false) }
+
+/** The left-side menu's id as a Search window: what its ▾ windows and its kept configuration are named after. */
+const val LATERAL_MENU_ID: String = "LateralMenu"
 
 /** The part of its window's id the actions section's own ends with ([embeddedSearchId]). */
 internal const val ACTIONS_SECTION_PART: String = "actions"

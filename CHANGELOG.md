@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The left-side menu is a Search window — 2026-11-13
+
+User rule: *"Make the left-side menu a Search window as well, with a specific background color."* Under the page button,
+`LateralMenu` draws the real `SearchWindow` (`menuList = MenuSearchRows(...)`, search section alone, at the menu's
+width): a bar that keeps the items it finds (`CustomMenuSection`'s `query`, `CustomMenuButtons.answering`), the ▾ to its
+configurations, and a background menu of "Customize", "Reset" and the window's parts (`SearchPartsMenu`'s `more`). The
+items are still drawn by the menu's code, on the menu's background. Its configuration is `App`'s
+(`searchConfigs["LateralMenu"]`), listed by "State in each window". **Behaviour changes:** the menu has a search bar
+under the page button; the page button no longer scrolls with the items; a right-click beside the items also offers
+the window's parts. Not kept across a restart: which parts are shown. No migration.
+
 ### The actions section has its own added list and actions; an added action's contexts and states — 2026-11-13
 
 User rule (use case): add the row holding "list of parents" to the actions section, show the section's own actions, and
