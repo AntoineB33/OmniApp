@@ -39,16 +39,44 @@ class TreeNameTest {
             .flatMap { it.second }.contains(AddedAction.TaskTreeName)
     }
 
+    /** User rule 2026-11-13: *"the tree action should be in all tasks belonging to a tree."* */
     @Test
-    fun a_tree_root_is_offered_its_tree_name_and_no_other_task_is() {
+    fun every_task_of_a_tree_is_offered_its_tree_name_and_a_task_in_no_tree_is_not() {
         val s = account()
-        assertTrue(offered(s, "Top"), "directly under the global root: a tree's root")
-        assertFalse(offered(s, "Child"))
-        // Given the global root as a parent, a task becomes a tree's root and has it.
-        val child = SearchDomain.taskKey(s.tasks.values.first { it.title == "Child" }.id)
+        assertTrue(offered(s, "Top"), "the tree's root")
+        assertTrue(offered(s, "Child"), "a task of the tree")
+        val loose = org.example.project.scheduler.model.Task(org.example.project.scheduler.model.TaskId("loose"), "Loose")
+        val withLoose = s.copy(tasks = s.tasks + (loose.id to loose))
+        assertFalse(offered(withLoose, "Loose"), "in no tree")
+        // Given the global root as a parent, it is a tree's root and has it.
         val root = SearchDomain.taskKey(WellKnownIds.ROOT_TASK)
-        val moved = ElementTree.parentIntents(s, listOf(child), root, on = true).fold(s, ::r)
-        assertTrue(offered(moved, "Child"))
+        val moved = ElementTree.parentIntents(withLoose, listOf(SearchDomain.taskKey(loose.id)), root, on = true).fold(withLoose, ::r)
+        assertTrue(offered(moved, "Loose"))
+    }
+
+    @Test
+    fun a_task_s_tree_name_names_its_root_s_tree() {
+        val s = account()
+        val named = SearchDomain.addedIntents(s, added(s, "Child"), SearchDomain.AddedCommand.TreeName("Health"), 0L).fold(s, ::r)
+        assertEquals("Health", named.tasks.values.first { it.title == "Top" }.treeName, "the tree's root holds it")
+        assertEquals("", named.tasks.values.first { it.title == "Child" }.treeName)
+    }
+
+    /** User rule 2026-11-13: the paths begin with the name of the tree they run through. */
+    @Test
+    fun a_path_begins_with_its_tree_s_name() {
+        val s = account()
+        val top = s.tasks.values.first { it.title == "Top" }
+        val child = s.tasks.values.first { it.title == "Child" }
+        val before = SearchDomain.shortestPathsInAnyTree(s).getValue(child.id)
+        assertEquals("Top", before.last())
+        val named = r(s, SchedulerIntent.SetTreeName(listOf(top.id), "Health"))
+        assertEquals(listOf("Health", "Top"), SearchDomain.shortestPathsInAnyTree(named).getValue(child.id))
+        assertEquals(listOf("Health"), SearchDomain.shortestPathsInAnyTree(named).getValue(top.id))
+        assertEquals(listOf(listOf("Health", "Top")), SearchDomain.allPathsInAnyTree(named).getValue(child.id))
+        // "Go to task tree" from that path finds the cell.
+        assertTrue(SearchDomain.occurrenceAtPath(named, child.id, listOf("Health", "Top")) != null)
+        assertTrue(SearchDomain.occurrenceAtPath(named, child.id, listOf("Other", "Top")) == null)
     }
 
     @Test
@@ -60,9 +88,6 @@ class TreeNameTest {
         assertEquals("Health", top.treeName)
         assertEquals("Top", top.title, "the task keeps its title")
         assertEquals("", r(named, SchedulerIntent.Undo).tasks.values.first { it.title == "Top" }.treeName, "one undo")
-        // A task that is no tree's root is given none.
-        val child = added(s, "Child")
-        assertEquals(emptyList(), SearchDomain.addedIntents(s, child, SearchDomain.AddedCommand.TreeName("X"), 0L))
     }
 
     @Test

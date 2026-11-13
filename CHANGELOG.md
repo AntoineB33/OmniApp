@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every task of a tree has "Tree name"; a path begins with its tree's name — 2026-11-13
+
+User rules: *"the tree action should be in all tasks belonging to a tree"* and the paths' first segment is the tree's name.
+`SearchDomain.treeRootsByTask` (one walk down from each task standing directly under the global root) gives each task row
+the trees it belongs to (`TaskResult.treeRoots`, replacing `treeRoot`; `belongsToTree`, `treeRootsOf`): "Tree name" is
+offered on every task of a tree and names its root's tree(s). The path walks (`shortestPaths`, `allPathsInAnyTree`) begin a
+path with its top task's `treeName`, else the tree's label as before (`treeLabel`); `occurrenceAtPath` reads that first
+segment per tree. The stamped last paths of tasks cut from the tree follow. No migration.
+
 ### A tree root's "Tree name" — 2026-11-13
 
 User rule: *"Giving the global root as a parent of a task gives this task actions relative to the tree (renaming it for

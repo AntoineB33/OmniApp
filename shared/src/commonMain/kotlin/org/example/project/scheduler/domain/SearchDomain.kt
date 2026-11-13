@@ -2200,6 +2200,12 @@ object SearchDomain {
             ?: state.tasks[WellKnownIds.ROOT_TASK]?.title?.takeIf { it.isNotBlank() }
             ?: "root"
 
+    /**
+     * User rule 2026-11-13: **the first segment of a path through [top]**, a task standing directly under the global root
+     * — the name of the tree it is the root of ([Task.treeName]), else [fallback] (the tree's own label, as before).
+     */
+    private fun treeLabel(top: Task, fallback: String): String = top.treeName.ifBlank { fallback }
+
     private fun sources(state: SchedulerState): List<TreeSource> = buildList {
         add(TreeSource(state.cells, state.lists, state.tasks, state.rootListId, liveRootLabel(state)))
         for (entry in state.taskTrees) {
@@ -2228,9 +2234,11 @@ object SearchDomain {
                     val taskId = source.cells[cellId]?.taskId ?: continue
                     val task = source.tasks[taskId] ?: continue
                     if (task.title.isEmpty()) continue
-                    if (!SchedulerDomain.isRootTask(taskId) && taskId !in shortest) shortest[taskId] = prefix
+                    // At the top: the path begins with the tree's name (user rule 2026-11-13).
+                    val at = if (listId == source.rootListId) listOf(treeLabel(task, source.rootLabel)) else prefix
+                    if (!SchedulerDomain.isRootTask(taskId) && taskId !in shortest) shortest[taskId] = at
                     val childListId = task.childListId ?: continue
-                    if (visited.add(childListId)) next.add(childListId to prefix + task.title)
+                    if (visited.add(childListId)) next.add(childListId to at + task.title)
                 }
             }
             frontier = next
@@ -2285,12 +2293,14 @@ object SearchDomain {
                         val taskId = source.cells[cellId]?.taskId ?: continue
                         val task = source.tasks[taskId] ?: continue
                         if (task.title.isEmpty()) continue
+                        // At the top: the path begins with the tree's name (user rule 2026-11-13).
+                        val at = if (listId == source.rootListId) listOf(treeLabel(task, source.rootLabel)) else prefix
                         if (!SchedulerDomain.isRootTask(taskId)) {
                             val paths = found.getOrPut(taskId) { mutableListOf() }
-                            if (paths.size < MAX_PATHS_PER_TASK && prefix !in paths) paths.add(prefix)
+                            if (paths.size < MAX_PATHS_PER_TASK && at !in paths) paths.add(at)
                         }
                         val childListId = task.childListId ?: continue
-                        if (childListId !in chain) next.add(Triple(childListId, prefix + task.title, chain + childListId))
+                        if (childListId !in chain) next.add(Triple(childListId, at + task.title, chain + childListId))
                     }
                 }
                 frontier = next
@@ -2310,7 +2320,8 @@ object SearchDomain {
      * depth) once — titles repeat, so several cells may match a segment and each is tried in reading order.
      */
     fun occurrenceAtPath(state: SchedulerState, taskId: TaskId, path: List<String>): SchedulerDomain.TaskOccurrence? {
-        if (path.firstOrNull() != liveRootLabel(state)) return null
+        val first = path.firstOrNull() ?: return null
+        val live = liveRootLabel(state)
         val titles = path.drop(1)
         val seen = HashSet<Pair<CellListId, Int>>()
         fun walk(listId: CellListId, depth: Int, ancestors: List<CellId>): SchedulerDomain.TaskOccurrence? {
@@ -2318,6 +2329,8 @@ object SearchDomain {
             val list = state.lists[listId] ?: return null
             for (cellId in list.cellIds) {
                 val cellTaskId = state.cells[cellId]?.taskId ?: continue
+                // The first segment names the tree the path runs through: its top task's tree name, else the live label.
+                if (depth == 0 && state.tasks[cellTaskId]?.let { treeLabel(it, live) } != first) continue
                 if (depth == titles.size) {
                     if (cellTaskId == taskId && SchedulerDomain.isSelectableCell(state, cellId)) {
                         return SchedulerDomain.TaskOccurrence(cellId, ancestors)
@@ -2485,8 +2498,12 @@ object SearchDomain {
         val title: String,
         val paths: List<List<String>>,
         val inTaskTree: Boolean,
-        /** User rule 2026-11-13: it stands directly under the global root — the root of a tree, with its tree's actions. */
-        val treeRoot: Boolean = false,
+        /**
+         * User rule 2026-11-13: *"the tree action should be in all tasks belonging to a tree"* — the roots of the trees this
+         * task belongs to (the tasks standing directly under the global root it stands under, itself if it is one), whose
+         * names its "Tree name" edits. Empty: in no tree.
+         */
+        val treeRoots: Set<TaskId> = emptySet(),
     ) : Result {
         override val kind: Kind get() = Kind.Task
         override val name: String get() = title
@@ -2510,8 +2527,8 @@ object SearchDomain {
     ): List<TaskResult> {
         val inTree = shortestPathsInAnyTree(state)
         val lastPaths = lastPaths(state)
-        // The tasks standing directly under the global root: each the root of a tree (user rule 2026-11-13).
-        val treeRoots = state.lists[state.rootListId]?.cellIds.orEmpty().mapNotNullTo(HashSet()) { state.cells[it]?.taskId }
+        // The trees each task belongs to (user rule 2026-11-13).
+        val treeRoots = treeRootsByTask(state)
         val candidates = LinkedHashMap<TaskId, Task>()
         for (entry in state.taskTrees) {
             if (entry.id == state.activeTaskTreeId) continue
@@ -2532,7 +2549,7 @@ object SearchDomain {
                     } else {
                         listOfNotNull(lastPaths[task.id])
                     }
-                rank to TaskResult(task.id, task.title, paths, held, treeRoot = task.id in treeRoots)
+                rank to TaskResult(task.id, task.title, paths, held, treeRoots = treeRoots[task.id].orEmpty())
             }
             .sortedWith(
                 compareBy<Pair<Int, TaskResult>>(
@@ -3741,9 +3758,9 @@ object SearchDomain {
         TaskScheduleUnit(Kind.Task, "Schedule unit"),
         TaskText(Kind.Task, "Text"),
         /**
-         * User rule 2026-11-13: **the name of the tree a task standing directly under the global root is the root of**
-         * ([org.example.project.scheduler.model.Task.treeName]) — its own, not the task's title. Listed for such a task
-         * alone ([TaskResult.treeRoot]).
+         * User rule 2026-11-13: **the name of the tree a task belongs to** — its root's, the task standing directly under the
+         * global root ([org.example.project.scheduler.model.Task.treeName]), its own and not the task's title. *"the tree
+         * action should be in all tasks belonging to a tree"*: listed for every task of a tree ([TaskResult.treeRoots]).
          */
         TaskTreeName(Kind.Task, "Tree name"),
         TaskPaths(Kind.Task, "Paths"),
@@ -4054,8 +4071,8 @@ object SearchDomain {
                 val severalChronos = added.count { it.kind == Kind.Chrono } > 1
                 // The Sleep schedule is the Sleep period's: listed where that period is added.
                 val sleepAdded = added.any(::isSleepPeriod)
-                // A tree's actions are a tree root's: listed where one is added (user rule 2026-11-13).
-                val treeRootAdded = added.any(::isTreeRoot)
+                // A tree's actions are those of every task belonging to a tree (user rule 2026-11-13).
+                val treeRootAdded = added.any(::belongsToTree)
                 (
                     kind to actions.filter {
                         (severalTimers || it != AddedAction.TimerLowestCountdown) &&
@@ -4167,8 +4184,34 @@ object SearchDomain {
             AddedAction.PeriodSleepSchedule,
         ) + CLAUDE_ENTRY_ACTIONS
 
-    /** Whether [result] is a task standing directly under the global root — the root of a tree ([TaskResult.treeRoot]). */
-    fun isTreeRoot(result: Result): Boolean = (result as? TaskResult)?.treeRoot == true
+    /** Whether [result] is a task belonging to a tree ([TaskResult.treeRoots]): it has the tree's actions. */
+    fun belongsToTree(result: Result): Boolean = (result as? TaskResult)?.treeRoots?.isNotEmpty() == true
+
+    /** The roots of the trees [rows] belong to, each once, in order: what their "Tree name" names. */
+    fun treeRootsOf(rows: List<Result>): List<TaskId> = rows.flatMap { (it as? TaskResult)?.treeRoots.orEmpty() }.distinct()
+
+    /**
+     * User rule 2026-11-13: **the trees every task of the live tree belongs to** — each task standing directly under the
+     * global root is a tree's root, and the tree is what stands under it, at any depth (a mirrored task in several).
+     * One walk down from each root, each sub-list once per tree; a task in no tree has none.
+     */
+    fun treeRootsByTask(state: SchedulerState): Map<TaskId, Set<TaskId>> {
+        val out = HashMap<TaskId, MutableSet<TaskId>>()
+        fun titled(id: TaskId?) = id?.takeIf { state.tasks[it]?.title?.isNotEmpty() == true }
+        val tops = state.lists[state.rootListId]?.cellIds.orEmpty().mapNotNull { titled(state.cells[it]?.taskId) }.distinct()
+        for (top in tops) {
+            val seenLists = HashSet<CellListId>()
+            val pending = ArrayDeque(listOf(top))
+            while (pending.isNotEmpty()) {
+                val task = pending.removeLast()
+                if (!out.getOrPut(task, ::LinkedHashSet).add(top)) continue
+                val list = state.tasks[task]?.childListId ?: continue
+                if (!seenLists.add(list)) continue
+                state.lists[list]?.cellIds?.forEach { cell -> titled(state.cells[cell]?.taskId)?.let(pending::add) }
+            }
+        }
+        return out
+    }
 
     /** Whether [result] is the Sleep period — the one element the Sleep schedule's fields are an action of. */
     fun isSleepPeriod(result: Result): Boolean =
@@ -4596,7 +4639,7 @@ object SearchDomain {
         fun of(element: Result, kind: Kind?, actions: List<AddedAction>) =
             if (element.kind == Kind.Creation && kind != Kind.Creation) actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS }
             // The Sleep schedule is the Sleep period's own, and no other period's.
-            else actions.filter { (it != AddedAction.PeriodSleepSchedule || isSleepPeriod(element)) && (it != AddedAction.TaskTreeName || isTreeRoot(element)) }
+            else actions.filter { (it != AddedAction.PeriodSleepSchedule || isSleepPeriod(element)) && (it != AddedAction.TaskTreeName || belongsToTree(element)) }
         fun own(actions: List<AddedAction>) =
             actions.filterNot(::isSetAction).let { mine -> LEADING_ACTIONS.filter { it in mine } + mine.filterNot { it in LEADING_ACTIONS } }
         fun set(actions: List<AddedAction>) = actions.filter(::isSetAction)
@@ -4938,7 +4981,7 @@ object SearchDomain {
 
         data class Text(val text: String) : AddedCommand
 
-        /** User rule 2026-11-13: the name of the tree every added tree root is the root of. */
+        /** User rule 2026-11-13: the name of every tree the added tasks belong to. */
         data class TreeName(val name: String) : AddedCommand
 
         /** Null = the top level. */
@@ -6221,7 +6264,7 @@ object SearchDomain {
             is AddedCommand.Text ->
                 if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksText(taskIds.distinct(), command.text))
             is AddedCommand.TreeName -> {
-                val roots = added.filter(::isTreeRoot).mapNotNull { (it as? TaskResult)?.taskId }.distinct()
+                val roots = treeRootsOf(added)
                 if (roots.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTreeName(roots, command.name))
             }
             is AddedCommand.AddUnder ->
