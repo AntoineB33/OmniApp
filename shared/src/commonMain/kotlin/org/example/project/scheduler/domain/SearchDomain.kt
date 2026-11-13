@@ -832,6 +832,13 @@ object SearchDomain {
          */
         val elementSource: String? = null,
         /**
+         * User rule 2026-11-13: **the ▾ windows of this window that hold a configuration of their own**, kept WITH it — so
+         * they come back with the window after a restart, and a menu button's "Update" keeps them. By the ▾ window's id
+         * without this window's (`▾`, `▾▾`, `▾/general`, `/actions▾`), each its own configuration as stored
+         * ([encode]). Local view state like the rest; not the search ([searchConfigurations]).
+         */
+        val arrows: Map<String, String> = emptyMap(),
+        /**
          * User rule 2026-11-02: the search bar's **completion list** — what it offers, or null for none, the default
          * ([Completion], [completionOptions]).
          */
@@ -944,6 +951,7 @@ object SearchDomain {
                     page = page,
                     openedFrom = openedFrom,
                     elementSource = elementSource,
+                    arrows = arrows,
                     completion = completion?.name,
                     pageTypesOnly = pageTypesOnly,
                     settingsChangedAt = settingsChangedAt.mapKeys { it.key.name },
@@ -1068,6 +1076,7 @@ object SearchDomain {
                     page = stored.page,
                     openedFrom = stored.openedFrom,
                     elementSource = stored.elementSource,
+                    arrows = stored.arrows,
                     completion = Completion.entries.firstOrNull { it.name == stored.completion },
                     pageTypesOnly = stored.pageTypesOnly,
                     extraQueries = stored.extraQueries,
@@ -1634,6 +1643,7 @@ object SearchDomain {
             openedFrom = null,
             settingsChangedAt = emptyMap(),
             elementSource = null,
+            arrows = emptyMap(),
         )
 
     /** Whether two Search windows' configurations, as stored, have the same [searchConfigurations]. */
@@ -2279,6 +2289,8 @@ object SearchDomain {
         val openedFrom: String? = null,
         /** New 2026-11-02: absent = the window comes from no element. */
         val elementSource: String? = null,
+        /** New 2026-11-13: absent = no ▾ window holds a configuration of its own. */
+        val arrows: Map<String, String> = emptyMap(),
         /** New 2026-11-02: absent = no completion list. */
         val completion: String? = null,
         /** New 2026-11-04: absent = every type offered, as before the switch ([Config.pageTypesOnly]). */

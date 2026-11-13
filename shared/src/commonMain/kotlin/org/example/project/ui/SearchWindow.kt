@@ -1550,7 +1550,13 @@ fun SearchWindow(
                 onConfigChange = onConfigChange,
                 // User rule 2026-11-06: the section's bar has the arrow to every search configuration, as the search's has.
                 configurationArrow = {
-                    ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar)
+                    // User rule 2026-11-13: the section is a Search window with an id of its own — this window's and
+                    // "/actions" — so its ▾ window is its own, not this window's bar's.
+                    val sectionId = embeddedSearchId("actions")
+                    RegisterEmbeddedSearch(sectionId, "actions", config, open = true, saved = true, set = onConfigChange)
+                    androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides sectionId) {
+                        ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar)
+                    }
                 },
                 handlers = actionHandlers,
                 onIntent = onIntent,
@@ -1848,14 +1854,16 @@ internal fun OptionSearchMenu(
         atPointer = atPointer,
     ) {
         val opened = if (options.integers != null) SearchDomain.INTEGER_SEARCH else SearchDomain.OPTION_SEARCH
-        // A drop-down's list has no id: nothing in it is a ▾ window of the window it opens over.
-        androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides null) {
+        // User rule 2026-11-13: a drop-down's list has an id — the window's it opens over, and where it stands in it.
+        val listId = embeddedSearchId("list:" + androidx.compose.runtime.currentCompositeKeyHash.toString(36))
+        androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides listId) {
         var config by remember { mutableStateOf(opened.copy(dropButtons = options.onDrop != null)) }
         var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
         // No account is searched: the options are the rows.
         val nothing = remember { SchedulerState.empty() }
         val rows = (options.integers?.let { it.count + 1 } ?: options.options.size) + (if (options.checked != null) 1 else 0) + (if (options.onCreate != null) 1 else 0)
         val height = (OPTION_MENU_BAR_HEIGHT + RESULT_ROW_HEIGHT * rows.coerceAtLeast(1)).coerceAtMost(OPTION_MENU_MAX_HEIGHT)
+        RegisterEmbeddedSearch(listId, SearchDomain.windowTitle(config), config, open = true, saved = false, set = { config = it })
         SearchWindow(
             state = nothing,
             openers = OPTION_OPENERS,

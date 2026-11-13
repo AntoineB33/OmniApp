@@ -73,7 +73,7 @@ internal fun ConfigurationTreeArrow(
     // User rule 2026-11-13: a ▾ window has an id — its owner's and "▾" — and its configuration is kept under it
     // ([ArrowSearches]), where a window with an id owns it; one without (a drop-down's list) keeps it itself.
     val arrowId = LocalArrowOwner.current?.let { it + ArrowSearches.ARROW }
-    var own by rememberArrowSearch(arrowId, open, LocalArrowOwner.current)
+    var own by rememberArrowSearch(arrowId, open)
     // The category revealing its children at each depth, by id.
     var path by remember { mutableStateOf(listOf<String>()) }
     // User rule 2026-11-11: the pop-up IS a Search window, its header and its two right sections hidden as it opens;
@@ -415,7 +415,7 @@ private fun TreeColumn(
                                     // Anomaly 2026-11-11: this field wrote into the parent pop-up's too — both
                                     // were the root's one query. Each pop-up is a search of its own over its
                                     // category's children ([SearchDomain.CONFIGURATION_SEARCH]), which goes with it.
-                                    var own by rememberArrowSearch(branchId, true, owner)
+                                    var own by rememberArrowSearch(branchId, true)
                                     // Anomaly 2026-11-11 (*"the right-click menu doesn't appear on the background of the
                                     // 2nd headless search window"*): it is a Search window too, as the root's pop-up is.
                                     var parts by remember { mutableStateOf(CellEditPopupHost.PICKER_SPLITS) }
@@ -569,55 +569,60 @@ internal class TreeKeeper {
 
 /**
  * User rule 2026-11-13: **the ▾ windows have ids while they are open or saved** — *"saved in the sense that this window
- * has also its own ▾ window or search configuration"*. Kept by `App`, so a ▾ window's configuration outlives its pop-up
- * (for the session: Compose-only, like the configuration a Search window opened with).
+ * has also its own ▾ window or search configuration"*. An id is its owner's and [ARROW] (`Search#2▾`, `Search#2▾▾`),
+ * or its owner's and a category of the tree (`Search#2▾/general`).
  *
- * An id is its owner's and [ARROW] (`Search#2▾`, `Search#2▾▾`), or its owner's and a category of the tree
- * (`Search#2▾/general`). [configs] holds those whose configuration is no longer the one a ▾ window opens with; [open]
- * those on screen; [owners] what each hangs from.
+ * **A ▾ window's configuration is kept with the Search window it hangs from** ([SearchDomain.Config.arrows], through
+ * [read] and [write], `App`'s): it comes back with that window after a restart, and a menu button keeps it with the
+ * window's. [open] holds the ▾ windows on screen. [embedded] holds the Search windows drawn inside another — a field's
+ * list, a drop-down's, the actions section — while they are open or hold a configuration of their own: they are in no
+ * window bar, and have an id all the same.
  */
-class ArrowSearches {
-    val configs = androidx.compose.runtime.mutableStateMapOf<String, SearchDomain.Config>()
+class ArrowSearches(
+    private val read: (root: String) -> Map<String, String>,
+    private val write: (root: String, arrows: Map<String, String>) -> Unit,
+) {
     val open = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
-    private val owners = HashMap<String, String>()
+    val embedded = androidx.compose.runtime.mutableStateMapOf<String, SearchDomain.SearchWindowState>()
 
-    fun of(id: String): SearchDomain.Config = configs[id] ?: SearchDomain.CONFIGURATION_SEARCH
+    /** The configuration of the ▾ window [relative] of the window [root]: its own, else what a ▾ window opens with. */
+    fun of(root: String, relative: String): SearchDomain.Config =
+        SearchDomain.Config.decode(read(root)[relative]) ?: SearchDomain.CONFIGURATION_SEARCH
 
-    fun set(id: String, config: SearchDomain.Config) {
-        if (config == SearchDomain.CONFIGURATION_SEARCH) configs.remove(id) else configs[id] = config
+    fun set(root: String, relative: String, config: SearchDomain.Config) {
+        val all = read(root)
+        val next = arrowsWith(all, relative, config)
+        if (next != all) write(root, next)
     }
 
-    fun owned(id: String, owner: String) {
-        owners[id] = owner
-    }
-
-    /** The ▾ windows that have an id now, in order: the open ones, the saved ones, and those one of them hangs from. */
-    fun listed(): List<String> = listedArrowIds(open.keys, configs.keys, owners)
-
-    /** The ▾ windows of the window [id] are forgotten with it. */
-    fun forget(id: String) {
-        val gone = (configs.keys + open.keys + owners.keys).filter { it.startsWith(id + ARROW) }
-        gone.forEach {
-            configs.remove(it)
-            open.remove(it)
-            owners.remove(it)
-        }
-    }
+    /** The ▾ windows of [root] that have an id now, by their id without [root]'s, a window before what hangs from it. */
+    fun listed(root: String): List<String> =
+        // `Search`'s are not `Search#2`'s: what follows the window's id is a ▾ or a part of the window.
+        listedArrowIds(
+            open.keys.filter { it.startsWith(root + ARROW) || it.startsWith("$root/") }.mapTo(HashSet()) { it.removePrefix(root) },
+            read(root).keys,
+        )
 
     companion object {
         const val ARROW: String = "▾"
     }
 }
 
+/** [arrows] with the ▾ window [relative] holding [config] — or without it, once it holds what a ▾ window opens with. */
+internal fun arrowsWith(arrows: Map<String, String>, relative: String, config: SearchDomain.Config): Map<String, String> =
+    if (config == SearchDomain.CONFIGURATION_SEARCH) arrows - relative else arrows + (relative to config.encode())
+
 /**
  * The ids [ArrowSearches.listed] gives: the [open] ▾ windows and the [saved] ones, and every ▾ window one of them hangs
- * from ([owners]: it *"has also its own ▾ window"*), sorted so a window stands before what hangs from it.
+ * from (it *"has also its own ▾ window"*: each part of the id that ends with "▾"), sorted so a window stands before
+ * what hangs from it.
  */
-internal fun listedArrowIds(open: Set<String>, saved: Set<String>, owners: Map<String, String>): List<String> {
+internal fun listedArrowIds(open: Set<String>, saved: Set<String>): List<String> {
     val out = HashSet<String>()
     for (id in open + saved) {
-        var at: String? = id
-        while (at != null && ArrowSearches.ARROW in at && out.add(at)) at = owners[at]
+        if (ArrowSearches.ARROW !in id) continue
+        out.add(id)
+        id.indices.filter { id[it].toString() == ArrowSearches.ARROW && it < id.length - 1 }.forEach { out.add(id.substring(0, it + 1)) }
     }
     return out.sorted()
 }
@@ -625,28 +630,62 @@ internal fun listedArrowIds(open: Set<String>, saved: Set<String>, owners: Map<S
 /** The registry of the ▾ windows ([ArrowSearches]); null where no `App` provides one (a test). */
 val LocalArrowSearches = androidx.compose.runtime.staticCompositionLocalOf<ArrowSearches?> { null }
 
-/** The id of the Search window the arrows drawn here are of ([ArrowSearches]); null: a window with no id. */
+/** The id of the Search window the arrows drawn here are of ([ArrowSearches]); null: outside any. */
 val LocalArrowOwner = androidx.compose.runtime.compositionLocalOf<String?> { null }
 
+/** The id of the Search window of the app that keeps the ▾ configurations of what is drawn here ([SearchDomain.Config.arrows]). */
+val LocalArrowRoot = androidx.compose.runtime.compositionLocalOf<String?> { null }
+
+/** The id of a Search window drawn inside the one the composition stands in ([LocalArrowOwner]): its and [part]. */
+@Composable
+internal fun embeddedSearchId(part: String): String? = LocalArrowOwner.current?.let { "$it/$part" }
+
 /**
- * The configuration of the ▾ window [id], kept by the registry while it has an id and one is provided — and said open
- * while [open] — else by the composition, as before 2026-11-13.
+ * User rule 2026-11-13: a Search window drawn inside another **has an id** ([embeddedSearchId]), though no window bar
+ * shows it. It is known to the app ([ArrowSearches.embedded]) while it is [open] or [saved] — it holds a configuration
+ * of its own — with what writes its configuration ([set]; null: shown, not written).
  */
 @Composable
-private fun rememberArrowSearch(id: String?, open: Boolean, owner: String?): androidx.compose.runtime.MutableState<SearchDomain.Config> {
+internal fun RegisterEmbeddedSearch(
+    id: String?,
+    title: String,
+    config: SearchDomain.Config,
+    open: Boolean,
+    saved: Boolean,
+    set: ((SearchDomain.Config) -> Unit)?,
+) {
+    val registry = LocalArrowSearches.current ?: return
+    id ?: return
+    val latestSet by rememberUpdatedState(set)
+    val writes = set != null
+    DisposableEffect(registry, id, title, config, open, saved, writes) {
+        if (open || saved) {
+            registry.embedded[id] = SearchDomain.SearchWindowState(id, title, config, open, if (writes) { next -> latestSet?.invoke(next) } else null)
+        }
+        onDispose { registry.embedded.remove(id) }
+    }
+}
+
+/**
+ * The configuration of the ▾ window [id]: kept with the Search window it hangs from ([ArrowSearches]) where one stands
+ * above it ([LocalArrowRoot]) — and said open while [open] — else by the composition, as before 2026-11-13.
+ */
+@Composable
+private fun rememberArrowSearch(id: String?, open: Boolean): androidx.compose.runtime.MutableState<SearchDomain.Config> {
     val registry = LocalArrowSearches.current
+    val root = LocalArrowRoot.current
     val local = remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
-    if (registry == null || id == null) return local
-    if (owner != null) registry.owned(id, owner)
+    if (registry == null || id == null || root == null || !id.startsWith(root)) return local
+    val relative = id.removePrefix(root)
     DisposableEffect(registry, id, open) {
         if (open) registry.open[id] = true
         onDispose { registry.open.remove(id) }
     }
-    return remember(registry, id) {
+    return remember(registry, root, relative) {
         object : androidx.compose.runtime.MutableState<SearchDomain.Config> {
             override var value: SearchDomain.Config
-                get() = registry.of(id)
-                set(next) = registry.set(id, next)
+                get() = registry.of(root, relative)
+                set(next) = registry.set(root, relative, next)
             override fun component1() = value
             override fun component2(): (SearchDomain.Config) -> Unit = { value = it }
         }

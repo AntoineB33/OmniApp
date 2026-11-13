@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The ▾ configurations are kept with their window; embedded Search windows have ids — 2026-11-13
+
+User rules: *"when the app opens again A appears the same as before, with the right changes in the search
+configurations"*, a menu button's Update keeps them; windows drawn inside another *"still have an id"*; the actions
+section's arrow does not share its window's ▾ id. New `SearchDomain.Config.arrows` (local view state; stored `arrows`,
+absent = none): every ▾ window's configuration, at any depth, by its id without the window's — written by
+`App.setSearchArrows` to the window's placement row, no History Unit. It replaces the session-only registry of the entry
+below (`ArrowSearches` now reads and writes the owning window's configuration). A window drawn inside another has an id
+(`embeddedSearchId`: `/actions`, `/field:…`, `/list:…`) and its own ▾ window; "State in each window" lists them, and
+the ▾ windows a menu button saved. Found by its test: `Search` listed the ▾ windows of `Search#2`. No migration.
+
 ### A fifth category; a search configuration's state per window id; the ▾ windows have ids — 2026-11-13
 
 User rules: *"Add a fifth category for the search configuration elements … that have search configuration children but

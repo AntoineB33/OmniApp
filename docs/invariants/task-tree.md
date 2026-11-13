@@ -978,12 +978,23 @@ suggestions before it was ever entered.
   control (`SettingEditor`, the one drawing) holding that window's state. The windows: every open Search frame
   (the "unfocused notif" among them), written through `App.setSearchConfig`; every menu button's saved Search window
   (`button:<id>`, shown greyed, not written from there); every ▾ window with an id. A group has no such action.
-- **A ▾ WINDOW HAS AN ID WHILE IT IS OPEN OR SAVED** (user rule 2026-11-13: *"saved in the sense that this window has
-  also its own ▾ window or search configuration"*; `ArrowSearches`, `listedArrowIds`, `LocalArrowOwner`). Its id is its
-  owner's and "▾" (`Search#2▾`, `Search#2▾▾`), a category's pop-up its owner's and the category
-  (`Search#2▾/general`). `App` keeps their configurations by id, so one outlives its pop-up — for the session only
-  (Compose-only; not on a placement row). A Search window drawn inside another (a drop-down's list, a field's list)
-  has no id: its ▾ window keeps its own state as before, and is not listed.
+- **A ▾ WINDOW HAS AN ID WHILE IT IS OPEN OR SAVED, AND ITS CONFIGURATION IS KEPT WITH THE WINDOW IT HANGS FROM** (user
+  rules 2026-11-13: *"saved in the sense that this window has also its own ▾ window or search configuration"*; *"when
+  the app opens again A appears the same as before, with the right changes in the search configurations"*;
+  `ArrowSearches`, `listedArrowIds`, `LocalArrowOwner`, `LocalArrowRoot`, `SearchDomain.Config.arrows`,
+  `App.setSearchArrows`, `SearchConfigurationStatesTest`). Its id is its owner's and "▾" (`Search#2▾`, `Search#2▾▾`),
+  a category's pop-up its owner's and the category (`Search#2▾/general`). The configuration of every ▾ window of a
+  Search window, at any depth, is a field of THAT window's configuration (`Config.arrows`: the id without the window's
+  → the stored configuration; one that holds what a ▾ window opens with is not kept). So it is on the window's
+  placement row and comes back with it after a restart, and a menu button's "Update" keeps it — it is part of the
+  window's whole state (`searchWindowState`), never of the search that brings a window back (`searchConfigurations`).
+  Writing one is no History Unit. `Search` never claims the ▾ windows of `Search#2`.
+- **A SEARCH WINDOW DRAWN INSIDE ANOTHER HAS AN ID TOO** (user rule 2026-11-13: *"They don't appear in the system tray,
+  but they still have an id"*; `embeddedSearchId`, `RegisterEmbeddedSearch`, `ArrowSearches.embedded`): the window's it
+  stands in and its part — `/actions` (the actions section), `/field:<row>/<field>` (a field's list, "List of
+  parents"), `/list:<place>` (a drop-down's list, by where it stands in the composition; not stable across builds).
+  Each has its OWN ▾ window (`Search/actions▾` is not `Search▾`), kept as any other. It is listed by "State in each
+  window" while it is open or holds a configuration of its own.
 - **THE CONFIGURATIONS A CONTEXT IS ABOUT COME FIRST IN THE ▾ TREE** (user rule 2026-11-13: *"the user should very
   easily see the search configuration element about the parent distance"*; `SearchDomain.contextSettings`,
   `configurationTree(config, opened)`). What the window was opened with says its context: the filters it set, and what

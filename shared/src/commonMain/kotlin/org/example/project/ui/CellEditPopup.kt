@@ -344,10 +344,15 @@ internal fun PopupSearchField(
     picker: ((close: () -> Unit) -> SearchPicker)? = null,
     onDrop: ((SearchDomain.Result) -> Unit)? = null,
     canDrop: (SearchDomain.Result) -> Boolean = { true },
+    /** What tells this field's window from the others of the window it stands in: its id ends with it. */
+    fieldId: String = placeholder,
 ) {
     val search = LocalEmbeddedSearch.current
     val host = LocalFieldSearchPopupHost.current
     var open by remember { mutableStateOf(false) }
+    // User rule 2026-11-13: the field's window has an id — the window's it stands in, and the field.
+    val windowId = embeddedSearchId("field:$fieldId")
+    RegisterEmbeddedSearch(windowId, placeholder, config, open = open, saved = config != openedConfig, set = onConfigChange)
     var bounds by remember { mutableStateOf<Rect?>(null) }
     val focusManager = LocalFocusManager.current
     val close = {
@@ -391,8 +396,8 @@ internal fun PopupSearchField(
                     }
                 },
         )
-        // The field's window has no id: its ▾ window is not the enclosing window's ([ArrowSearches]).
-        androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides null) {
+        // Its ▾ window is its own, not the enclosing window's ([ArrowSearches]).
+        androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides windowId) {
         ConfigurationTreeArrow(
             state = state,
             config = config,

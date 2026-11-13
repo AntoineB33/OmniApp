@@ -2414,6 +2414,7 @@ private fun ElementParentsEditor(
                         config = SearchDomain.parentsListConfig(children, listConfig),
                         onConfigChange = { listConfig = it },
                         openedConfig = SearchDomain.parentsListConfig(children),
+                        fieldId = rowId + "/" + child.placeholder,
                         modifier = Modifier.fillMaxWidth(),
                         // Dropped: no longer a parent of any added element.
                         onDrop = { parent -> run(SearchDomain.AddedCommand.ElementParent(SearchDomain.keyOf(parent), on = false)) },
@@ -2428,6 +2429,7 @@ private fun ElementParentsEditor(
                         config = addConfig,
                         onConfigChange = { addConfig = it },
                         openedConfig = SearchDomain.ADD_PARENT_SEARCH,
+                        fieldId = rowId + "/" + child.placeholder,
                         modifier = Modifier.weight(1f),
                         picker = { close ->
                             SearchPicker(

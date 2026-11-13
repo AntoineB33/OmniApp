@@ -12,6 +12,7 @@ import org.example.project.scheduler.domain.SearchDomain.Kind
 import org.example.project.scheduler.domain.SearchDomain.Setting
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.ui.ArrowSearches
+import org.example.project.ui.arrowsWith
 import org.example.project.ui.listedArrowIds
 
 /**
@@ -70,46 +71,86 @@ class SearchConfigurationStatesTest {
         assertNull(SearchDomain.settingOf(SearchDomain.ItemResult(Kind.Option, Setting.MatchCase.name, "", "")))
     }
 
+    /** A registry over one window's configuration, as `App` gives it: [windows] by id. */
+    private fun registry(windows: MutableMap<String, SearchDomain.Config>) =
+        ArrowSearches(
+            read = { windows.getValue(it).arrows },
+            write = { id, arrows -> windows[id] = windows.getValue(id).copy(arrows = arrows) },
+        )
+
     @Test
     fun aDownArrowWindowHasAnIdWhileOpenOrSaved() {
-        val arrows = ArrowSearches()
-        assertEquals(emptyList(), arrows.listed())
+        val windows = mutableMapOf("Search" to SearchDomain.Config())
+        val arrows = registry(windows)
+        assertEquals(emptyList(), arrows.listed("Search"))
         // Open: listed, with the configuration every ▾ window opens with.
-        arrows.owned("Search▾", "Search")
         arrows.open["Search▾"] = true
-        assertEquals(listOf("Search▾"), arrows.listed())
-        assertEquals(SearchDomain.CONFIGURATION_SEARCH, arrows.of("Search▾"))
+        assertEquals(listOf("▾"), arrows.listed("Search"))
+        assertEquals(SearchDomain.CONFIGURATION_SEARCH, arrows.of("Search", "▾"))
         // Closed with nothing of its own: no id any more.
         arrows.open.remove("Search▾")
-        assertEquals(emptyList(), arrows.listed())
-        // A configuration of its own: saved, open or not.
-        arrows.set("Search▾", SearchDomain.CONFIGURATION_SEARCH.copy(query = "sort"))
-        assertEquals(listOf("Search▾"), arrows.listed())
-        assertEquals("sort", arrows.of("Search▾").query)
-        // Put back as it opens: saved no more.
-        arrows.set("Search▾", SearchDomain.CONFIGURATION_SEARCH)
-        assertEquals(emptyList(), arrows.listed())
+        assertEquals(emptyList(), arrows.listed("Search"))
+        // A configuration of its own: saved, open or not — kept WITH the window it hangs from.
+        arrows.set("Search", "▾", SearchDomain.CONFIGURATION_SEARCH.copy(query = "sort"))
+        assertEquals(listOf("▾"), arrows.listed("Search"))
+        assertEquals("sort", arrows.of("Search", "▾").query)
+        assertEquals(setOf("▾"), windows.getValue("Search").arrows.keys)
+        // Put back as it opens: saved no more, and nothing left in the window's configuration.
+        arrows.set("Search", "▾", SearchDomain.CONFIGURATION_SEARCH)
+        assertEquals(emptyList(), arrows.listed("Search"))
+        assertEquals(SearchDomain.Config(), windows.getValue("Search"))
     }
 
     @Test
     fun aWindowWithItsOwnDownArrowWindowIsSavedToo() {
-        val owners = mapOf("Search▾" to "Search", "Search▾/general" to "Search▾", "Search▾/general▾" to "Search▾/general")
-        // The ▾ window of a category's pop-up holds a configuration: the two it hangs from have ids too, not the frame.
-        assertEquals(
-            listOf("Search▾", "Search▾/general", "Search▾/general▾"),
-            listedArrowIds(open = emptySet(), saved = setOf("Search▾/general▾"), owners = owners),
-        )
-        assertEquals(listOf("Search#2▾"), listedArrowIds(setOf("Search#2▾"), emptySet(), mapOf("Search#2▾" to "Search#2")))
+        // The ▾ window of the ▾ window of a category's pop-up holds a configuration: every ▾ window it hangs from has an id.
+        assertEquals(listOf("▾", "▾/general▾", "▾/general▾▾"), listedArrowIds(open = emptySet(), saved = setOf("▾/general▾▾")))
+        assertEquals(listOf("▾"), listedArrowIds(setOf("▾"), emptySet()))
+        // The actions section's ▾ window is its own: not the window's bar's.
+        assertEquals(listOf("/actions▾"), listedArrowIds(setOf("/actions▾"), emptySet()))
+        // One window's ▾ windows are not another's.
+        val windows = mutableMapOf("Search" to SearchDomain.Config(), "Search#2" to SearchDomain.Config())
+        val arrows = registry(windows)
+        arrows.set("Search#2", "▾", SearchDomain.CONFIGURATION_SEARCH.copy(query = "x"))
+        arrows.open["Search#2▾▾"] = true
+        assertEquals(emptyList(), arrows.listed("Search"))
+        assertEquals(listOf("▾", "▾▾"), arrows.listed("Search#2"))
     }
 
+    /**
+     * User rule 2026-11-13: *"the user closes the app without closing A, then when the app opens again A appears the same
+     * as before, with the right changes in the search configurations"* — at every depth: the ▾ configurations are in A's
+     * stored configuration, which is what its placement row holds.
+     */
     @Test
-    fun theDownArrowWindowsOfAWindowAreForgottenWithIt() {
-        val arrows = ArrowSearches()
-        for (id in listOf("Search▾", "Search#2▾")) {
-            arrows.owned(id, id.removeSuffix("▾"))
-            arrows.set(id, SearchDomain.CONFIGURATION_SEARCH.copy(query = "x"))
-        }
-        arrows.forget("Search")
-        assertEquals(listOf("Search#2▾"), arrows.listed())
+    fun theDownArrowConfigurationsComeBackWithTheirWindow() {
+        val windows = mutableMapOf("Search" to SearchDomain.Config(query = "tea"))
+        val arrows = registry(windows)
+        arrows.set("Search", "▾", SearchDomain.CONFIGURATION_SEARCH.copy(query = "sort"))
+        arrows.set("Search", "▾▾", SearchDomain.CONFIGURATION_SEARCH.copy(filters = SearchDomain.Filters(matchCase = true)))
+        val stored = windows.getValue("Search").encode()
+        // The app restarts: the row is read again.
+        val back = mutableMapOf("Search" to SearchDomain.Config.decode(stored)!!)
+        val again = registry(back)
+        assertEquals("tea", back.getValue("Search").query)
+        assertEquals("sort", again.of("Search", "▾").query)
+        assertTrue(again.of("Search", "▾▾").filters.matchCase)
+        assertEquals(listOf("▾", "▾▾"), again.listed("Search"))
+        // Written before 2026-11-13: none.
+        assertEquals(emptyMap(), SearchDomain.Config.decode("""{"query":"tea"}""")!!.arrows)
+    }
+
+    /**
+     * User rule 2026-11-13: a menu button's "Update" keeps them — they are part of the window's whole state, which the
+     * button saves and compares; they are not the search, which is what brings a window back.
+     */
+    @Test
+    fun aMenuButtonKeepsTheDownArrowConfigurationsAndTheSearchIsNotThem() {
+        val plain = SearchDomain.Config()
+        val changed = plain.copy(arrows = arrowsWith(emptyMap(), "▾", SearchDomain.CONFIGURATION_SEARCH.copy(query = "sort")))
+        assertFalse(SearchDomain.sameSearchWindowState(plain.encode(), changed.encode()))
+        assertTrue(SearchDomain.sameSearchWindowState(changed.encode(), SearchDomain.Config.decode(changed.encode())!!.encode()))
+        assertTrue(SearchDomain.sameSearchConfigurations(plain.encode(), changed.encode()))
+        assertEquals("sort", SearchDomain.Config.decode(SearchDomain.Config.decode(changed.encode())!!.arrows["▾"])!!.query)
     }
 }
