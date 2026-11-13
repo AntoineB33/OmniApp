@@ -16,38 +16,46 @@ import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
-import org.example.project.ui.cellEditPopupOffset
+import org.example.project.ui.cellEditPopupBounds
 
 /** User rule 2026-11-02: the rectangle of a task cell in Edit Mode, and the search bar's completion list. */
 class CellEditPopupRulesTest {
     private val popup = IntSize(300, 200)
     private val room = IntSize(1000, 800)
 
+    private fun rect(left: Int, top: Int, right: Int, bottom: Int) = androidx.compose.ui.unit.IntRect(left, top, right, bottom)
+
     @Test
     fun the_rectangle_stands_below_the_cell() {
-        assertEquals(IntOffset(100, 130), cellEditPopupOffset(Rect(100f, 100f, 250f, 130f), popup, room))
+        assertEquals(rect(100, 130, 400, 330), cellEditPopupBounds(Rect(100f, 100f, 250f, 130f), popup, room))
     }
 
     @Test
     fun above_when_there_is_not_enough_room_below() {
-        assertEquals(IntOffset(100, 500), cellEditPopupOffset(Rect(100f, 700f, 250f, 730f), popup, room))
+        assertEquals(rect(100, 500, 400, 700), cellEditPopupBounds(Rect(100f, 700f, 250f, 730f), popup, room))
     }
 
+    /**
+     * User rule 2026-11-13: it never hides the cell's cross and arrow, which stand on the cell's line beside it — so it
+     * is never on that line: no more at the cell's left or right, nor over it.
+     */
     @Test
-    fun on_the_left_when_neither_below_nor_above_fit() {
+    fun fitting_neither_below_nor_above_it_takes_the_larger_room_and_is_as_tall_as_it() {
         val tall = IntSize(300, 500)
-        assertEquals(IntOffset(300, 300), cellEditPopupOffset(Rect(600f, 400f, 750f, 430f), tall, IntSize(1000, 800)))
+        // 370 below, 400 above: above, down to the cell's top.
+        assertEquals(rect(600, 0, 900, 400), cellEditPopupBounds(Rect(600f, 400f, 750f, 430f), tall, IntSize(1000, 800)))
+        // 470 below, 300 above: below, down to the room's end.
+        assertEquals(rect(100, 330, 400, 800), cellEditPopupBounds(Rect(100f, 300f, 250f, 330f), tall, IntSize(1000, 800)))
     }
 
     @Test
-    fun on_the_right_when_the_left_has_no_room_either() {
-        val tall = IntSize(300, 500)
-        assertEquals(IntOffset(250, 300), cellEditPopupOffset(Rect(100f, 400f, 250f, 430f), tall, IntSize(1000, 800)))
-    }
-
-    @Test
-    fun fitting_nowhere_it_stands_below_as_far_as_the_room_lets_it() {
-        assertEquals(IntOffset(0, 0), cellEditPopupOffset(Rect(10f, 100f, 90f, 130f), IntSize(100, 200), IntSize(100, 200)))
+    fun it_never_stands_on_the_cells_line() {
+        for (top in 0..770 step 35) {
+            val cell = Rect(500f, top.toFloat(), 650f, top + 30f)
+            val bounds = cellEditPopupBounds(cell, IntSize(560, 440), IntSize(1000, 800))
+            kotlin.test.assertTrue(bounds.bottom <= top || bounds.top >= top + 30, "cell at $top: $bounds")
+            kotlin.test.assertTrue(bounds.top >= 0 && bounds.bottom <= 800 && bounds.left >= 0 && bounds.right <= 1000, "cell at $top: $bounds")
+        }
     }
 
     private fun r(state: SchedulerState, intent: SchedulerIntent) = SchedulerReducer.reduce(state, intent)

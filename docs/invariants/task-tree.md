@@ -327,8 +327,11 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
   - The session stays local until it ends (`sync-and-accounts.md`), and the save and the push stay debounced.
 
 - **A cell in Edit Mode shows a rectangle, over every window, and no menu under the row** (user rule 2026-11-02;
-  `ui/CellEditPopup.kt`, `CellEditPopupRulesTest`, `CellEditPopupTest`). It stands below the cell, else above, else on its
-  left, else on its right, each only where it fits whole (`cellEditPopupOffset`). One switch, "switch task" on (the
+  `ui/CellEditPopup.kt`, `CellEditPopupRulesTest`, `CellEditPopupTest`). It stands below the cell, else above, each where it fits whole; fitting neither,
+  in the larger of the two rooms and as tall as it — **never on the cell's line**, so it never hides the cell's cross
+  and arrow (user rule 2026-11-13; `cellEditPopupBounds`; it stood at the cell's left or right, or over it, before).
+  A field that opens such a window ("List of parents") shows its cross and arrow once clicked, as a cell shows them in
+  Edit Mode alone (`PopupSearchField`). One switch, "switch task" on (the
   default) or "rename" off, the session's Mode through `cellEditModeOptions`; none on a cell being created. Under it, a
   Search window (`SearchPicker`) with no head, no added elements and no actions, nor what serves them: the kinds,
   the configurations arrow, and no row opens a sub-tree. **They are hidden, not missing** (user rule 2026-11-11): the

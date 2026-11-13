@@ -55,20 +55,25 @@ private val CELL_EDIT_POPUP_HEIGHT = 440.dp
 
 /**
  * User rule 2026-11-02: where the rectangle of a cell in Edit Mode stands, all in the same coordinates: **below** the
- * cell, else **above** it, else on its **left**, else on its **right**, each only where it fits whole in [room]. Fitting
- * nowhere, it stands below as far as the room lets it.
+ * cell, else **above** it, each where it fits whole in [room].
+ *
+ * User rule 2026-11-13: *"the search window that pop-ups when entering edit mode must never hide the cross button and
+ * down arrow"* — they stand on the cell's line, beside it. So the rectangle NEVER stands on that line: it stood at the
+ * cell's left or right where neither below nor above fitted, and over the cell where nothing did. Fitting neither
+ * below nor above, it takes the larger of the two rooms and is as tall as that room.
  */
-internal fun cellEditPopupOffset(anchor: Rect, popup: IntSize, room: IntSize): IntOffset {
+internal fun cellEditPopupBounds(anchor: Rect, popup: IntSize, room: IntSize): androidx.compose.ui.unit.IntRect {
     val width = popup.width
     val height = popup.height
-    val alignedX = anchor.left.toInt().coerceIn(0, (room.width - width).coerceAtLeast(0))
-    val alignedY = anchor.top.toInt().coerceIn(0, (room.height - height).coerceAtLeast(0))
+    val x = anchor.left.toInt().coerceIn(0, (room.width - width).coerceAtLeast(0))
+    val top = anchor.top.toInt().coerceIn(0, room.height)
+    val bottom = anchor.bottom.toInt().coerceIn(0, room.height)
+    val below = room.height - bottom
     return when {
-        anchor.bottom + height <= room.height -> IntOffset(alignedX, anchor.bottom.toInt())
-        anchor.top - height >= 0f -> IntOffset(alignedX, anchor.top.toInt() - height)
-        anchor.left - width >= 0f -> IntOffset(anchor.left.toInt() - width, alignedY)
-        anchor.right + width <= room.width -> IntOffset(anchor.right.toInt(), alignedY)
-        else -> IntOffset(alignedX, (room.height - height).coerceAtLeast(0))
+        height <= below -> androidx.compose.ui.unit.IntRect(x, bottom, x + width, bottom + height)
+        height <= top -> androidx.compose.ui.unit.IntRect(x, top - height, x + width, top)
+        below >= top -> androidx.compose.ui.unit.IntRect(x, bottom, x + width, room.height)
+        else -> androidx.compose.ui.unit.IntRect(x, 0, x + width, top)
     }
 }
 
@@ -168,7 +173,7 @@ internal fun PublishCellEditPopup(request: CellEditPopupRequest) {
 }
 
 /**
- * User rule 2026-11-02: **a task cell in Edit Mode shows a rectangle** ([cellEditPopupOffset]): one switch, "switch task"
+ * User rule 2026-11-02: **a task cell in Edit Mode shows a rectangle** ([cellEditPopupBounds]): one switch, "switch task"
  * on (the default) or "rename" off, over a Search window reduced to its search section ([SearchPicker]). The bar IS the
  * cell's draft, both ways, and starts with its completion list on the task titles.
  *
@@ -278,16 +283,13 @@ internal fun CellEditPopupLayer(
     ) { measurables, constraints ->
         val width = CELL_EDIT_POPUP_WIDTH.roundToPx().coerceAtMost(constraints.maxWidth)
         val height = CELL_EDIT_POPUP_HEIGHT.roundToPx().coerceAtMost(constraints.maxHeight)
-        val placeable = measurables.single().measure(Constraints.fixed(width, height))
+        // Placed before it is measured: where it fits neither below nor above, it is as tall as the room it takes.
+        val bounds = request.anchor()?.let {
+            cellEditPopupBounds(it.translate(-origin), IntSize(width, height), IntSize(constraints.maxWidth, constraints.maxHeight))
+        }
+        val placeable = measurables.single().measure(Constraints.fixed(bounds?.width ?: width, bounds?.height ?: height))
         layout(constraints.maxWidth, constraints.maxHeight) {
-            val anchor = request.anchor() ?: return@layout
-            placeable.place(
-                cellEditPopupOffset(
-                    anchor.translate(-origin),
-                    IntSize(width, height),
-                    IntSize(constraints.maxWidth, constraints.maxHeight),
-                ),
-            )
+            if (bounds != null) placeable.place(bounds.topLeft)
         }
     }
 }
@@ -377,7 +379,9 @@ internal fun PopupSearchField(
             },
             singleLine = true,
             label = { Text(placeholder) },
-            trailingIcon = { SearchBarCross(config.query) { onConfigChange(config.copy(query = "")) } },
+            // User rule 2026-11-13: the cross and the arrow show once the field is clicked, as a task cell's show in
+            // its Edit Mode alone.
+            trailingIcon = if (open) { { SearchBarCross(config.query) { onConfigChange(config.copy(query = "")) } } } else null,
             modifier = Modifier
                 .weight(1f)
                 // A click on it gives it the caret: that is what opens the window.
@@ -397,7 +401,7 @@ internal fun PopupSearchField(
                 },
         )
         // Its ▾ window is its own, not the enclosing window's ([ArrowSearches]).
-        androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides windowId) {
+        if (open) androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides windowId) {
         ConfigurationTreeArrow(
             state = state,
             config = config,
@@ -425,7 +429,7 @@ internal fun PopupSearchField(
 
 /**
  * The window a [PopupSearchField] opens, drawn over every window as the cell's Edit Mode rectangle is (a layer of the
- * content area, no `Popup`: the field keeps the caret), placed by the same rule ([cellEditPopupOffset]).
+ * content area, no `Popup`: the field keeps the caret), placed by the same rule ([cellEditPopupBounds]).
  */
 @Composable
 internal fun FieldSearchPopupLayer(host: FieldSearchPopupHost, modifier: Modifier = Modifier) {
@@ -459,12 +463,12 @@ internal fun FieldSearchPopupLayer(host: FieldSearchPopupHost, modifier: Modifie
     ) { measurables, constraints ->
         val width = CELL_EDIT_POPUP_WIDTH.roundToPx().coerceAtMost(constraints.maxWidth)
         val height = CELL_EDIT_POPUP_HEIGHT.roundToPx().coerceAtMost(constraints.maxHeight)
-        val placeable = measurables.single().measure(Constraints.fixed(width, height))
+        val bounds = request.anchor()?.let {
+            cellEditPopupBounds(it.translate(-origin), IntSize(width, height), IntSize(constraints.maxWidth, constraints.maxHeight))
+        }
+        val placeable = measurables.single().measure(Constraints.fixed(bounds?.width ?: width, bounds?.height ?: height))
         layout(constraints.maxWidth, constraints.maxHeight) {
-            val anchor = request.anchor() ?: return@layout
-            placeable.place(
-                cellEditPopupOffset(anchor.translate(-origin), IntSize(width, height), IntSize(constraints.maxWidth, constraints.maxHeight)),
-            )
+            if (bounds != null) placeable.place(bounds.topLeft)
         }
     }
 }

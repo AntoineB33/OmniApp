@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A field's cross and arrow show once clicked; the Edit Mode rectangle never hides them — 2026-11-13
+
+User rules: *"If the user doesn't click on the 'list of parents' field, then the cross button and the down arrow are not
+showing. Same logic for the task elements. Also, the search window that pop-ups when entering edit mode must never hide
+the cross button and down arrow."* `PopupSearchField` draws its cross and its ▾ only while its window is open (a task
+cell already showed them in Edit Mode alone). `cellEditPopupOffset` is replaced by `cellEditPopupBounds`: below the cell,
+else above, else the larger of the two rooms and as tall as it — never on the cell's line. **Behaviour change:** the
+rectangle no longer stands at the cell's left or right, nor over the cell; where it fits neither below nor above it is
+shorter than its usual height. No migration.
+
 ### Typing in a ▾ bar is a History Unit; drop-downs are named; a field's own search is kept — 2026-11-13
 
 User rules: *"Every typing must create a history unit"*; and fix three gaps of the entry below. `Config.arrows` is now
