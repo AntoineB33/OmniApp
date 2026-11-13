@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The actions section has its own added list and actions; an added action's contexts and states — 2026-11-13
+
+User rule (use case): add the row holding "list of parents" to the actions section, show the section's own actions, and
+change the state there per context — *"the context element will have the values A, B and C, and the state element will be
+the exact 'list of parents' element"*. A row of the section has the row menu ("add"); the section keeps its own added
+rows, bar and open rows under `<window>/actions` (`ACTIONS_SECTION_OWN`), and opens with its actions and added elements
+shown once it holds some. New `Kind.Action` action "Contexts and states" (`AddedAction.ActionContexts`,
+`SearchDomain.actionContexts` / `actionStateOf`, `ActionSectionHost`, `ActionContextsEditor`): the action's elements
+gathered by state, each context with the action's own editor over its elements. Only "Parents" (by the parents) and the
+actions about a set are gathered; any other action is one context per element until its state is read. **Fixed on the
+way:** the section's ▾ window shared its window's id (the wrapper written for it stood on a parameter nothing drew): it
+is now `<window>/actions▾`, and the fields inside the section are `<window>/actions/field:…`. No migration.
+
 ### The added elements list is a Search window — 2026-11-13
 
 User rule: *"Make the 'added elements' list also a Search window."* `AddedElementsList` (its own rows, selection and

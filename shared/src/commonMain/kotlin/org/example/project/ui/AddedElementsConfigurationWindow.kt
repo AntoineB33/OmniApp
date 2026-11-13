@@ -409,22 +409,57 @@ private fun AddedActionList(
     val rows = SearchDomain.actionListRows(groups, config)
     val latestConfig by rememberUpdatedState(config)
     val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(latestConfig, id, listed)) }
+    // User rule 2026-11-13: the section is a Search window with its OWN added elements (rows of it, added by their menu),
+    // its own actions section over them and that section's bar and open rows — kept with the window it stands in, under
+    // the section's id ([rememberInsideConfig]). The rows open in the section itself stay this window's
+    // ([SearchDomain.Config.toggledActionRows], through [toggle]): two lists of rows, two sets.
+    val sectionId = embeddedSearchId(ACTIONS_SECTION_PART)
+    var own by rememberInsideConfig(sectionId, ACTIONS_SECTION_OWN)
     // Its configuration is this window's: the actions its type, its bar the section's; what it changes of it comes back.
-    val inner = config.copy(kinds = setOf(SearchDomain.Kind.Action), pageTypesOnly = false, query = highlighted, added = emptyList())
+    val inner = config.copy(
+        kinds = setOf(SearchDomain.Kind.Action), pageTypesOnly = false, query = highlighted,
+        added = own.added, toggledActionRows = own.toggledActionRows, actionSearch = own.actionSearch, actionQuery = own.actionQuery,
+    )
     val onInner = { next: SearchDomain.Config ->
         val current = latestConfig
-        onConfigChange(
+        val changed =
             current.copy(
                 actionSearch = if (ownBar) next.query else current.actionSearch,
                 actionsGrouped = next.actionsGrouped,
                 actionsExpanded = next.actionsExpanded,
                 actionSearchSortsOnly = next.actionSearchSortsOnly,
-                toggledActionRows = next.toggledActionRows,
-            ),
-        )
+            )
+        if (changed != current) onConfigChange(changed)
+        // After the window's own: what the section keeps is written into the window's configuration as it then stands.
+        val kept = own.copy(added = next.added, toggledActionRows = next.toggledActionRows, actionSearch = next.actionSearch, actionQuery = next.actionQuery)
+        if (kept != own) own = kept
     }
-    var splits by remember { mutableStateOf(if (ownBar) EMBEDDED_SEARCH_SPLITS else EMBEDDED_SEARCH_SPLITS.copy(barRemoved = true)) }
+    // One action over some of its elements, as the section shows it — and as a context shows its state ([ActionContextsEditor]).
+    val editor: @Composable (SearchDomain.ActionListRow, List<SearchDomain.Result>, String) -> Unit = { row, members, rowId ->
+        val action = row.action
+        if (action != null) {
+            // Every action goes through the app's own intents ([SearchDomain.addedIntents]), over its group's elements.
+            val run = { command: SearchDomain.AddedCommand ->
+                SearchDomain.addedIntents(state, members, command, nowMillis()).forEach(onIntent)
+            }
+            AddedActionEditor(
+                state, action, members, config, onConfigChange, handlers, run, nowMillis,
+                onOpenEach = { onOpenEach(members) }, onClear = { onClear(members) }, titled = false, rowId = rowId,
+            )
+        }
+    }
+    // The section its own actions are about is the one it stands in ([ActionSectionHost.parent]).
+    val host = ActionSectionHost(state, rows.associateBy { it.key }, editor, LocalActionSectionHost.current)
+    RegisterEmbeddedSearch(sectionId, "actions", config, open = true, saved = true, set = onConfigChange)
+    // Its search section alone as it opens — with its own actions and added elements where it holds some (user rule
+    // 2026-11-13: what was added to it comes back shown, a restart later).
+    var splits by remember {
+        val parts = if (own.added.isEmpty()) EMBEDDED_SEARCH_SPLITS else EMBEDDED_SEARCH_SPLITS.copy(actionsRemoved = false, addedRemoved = false)
+        mutableStateOf(if (ownBar) parts else parts.copy(barRemoved = true))
+    }
     HighlightsSearch(highlighted) {
+      // What is drawn in the section is inside IT: its id names its fields' windows and its own actions section's.
+      androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides sectionId, LocalActionSectionHost provides host) {
         SearchWindow(
             state = state,
             openers = OPTION_OPENERS,
@@ -443,20 +478,7 @@ private fun AddedActionList(
             actionRows = ActionSearchRows(
                 rows = rows,
                 onToggle = toggle,
-                content = { row ->
-                    val action = row.action
-                    if (action != null) {
-                        val members = row.group.members
-                        // Every action goes through the app's own intents ([SearchDomain.addedIntents]), over its group's elements.
-                        val run = { command: SearchDomain.AddedCommand ->
-                            SearchDomain.addedIntents(state, members, command, nowMillis()).forEach(onIntent)
-                        }
-                        AddedActionEditor(
-                            state, action, members, config, onConfigChange, handlers, run, nowMillis,
-                            onOpenEach = { onOpenEach(members) }, onClear = { onClear(members) }, titled = false, rowId = row.id,
-                        )
-                    }
-                },
+                content = { row -> editor(row, row.group.members, row.id) },
                 // User rule 2026-10-08: while the lateral menu is being customized, a right-click on an action offers "add in
                 // the left-side menu" — the action, with the elements it acts on here ([AddableAction]).
                 wrap = { row, draw ->
@@ -468,6 +490,63 @@ private fun AddedActionList(
             ),
             modifier = modifier,
         )
+      }
+    }
+}
+
+/**
+ * What the actions section keeps of its own, as it opens: nothing added, no bar text. Its type is the action
+ * ([SearchDomain.Kind.Action]); the rest of its configuration is the window's it stands in.
+ */
+internal val ACTIONS_SECTION_OWN: SearchDomain.Config by lazy {
+    SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Action), pageTypesOnly = false)
+}
+
+/**
+ * User rule 2026-11-13: **the actions section, as the actions over ITS rows see it** ([ActionContextsEditor]): its rows
+ * by key, the account they are read from, and what draws one of its actions over some of that action's elements — the
+ * very editor the section shows under the row ([draw]: the row, the elements, and what names its fields' windows).
+ */
+internal class ActionSectionHost(
+    val state: SchedulerState,
+    val rows: Map<String, SearchDomain.ActionListRow>,
+    val draw: @Composable (SearchDomain.ActionListRow, List<SearchDomain.Result>, String) -> Unit,
+    /** The actions section this one is the actions section OF: where the rows added to its list come from. */
+    val parent: ActionSectionHost? = null,
+)
+
+/** The actions section the composition stands in ([ActionSectionHost]); null outside one. */
+internal val LocalActionSectionHost = androidx.compose.runtime.compositionLocalOf<ActionSectionHost?> { null }
+
+/**
+ * User rule 2026-11-13: **the contexts and states of an added action** ([SearchDomain.AddedAction.ActionContexts]) — for
+ * each action row added to the actions section's own list, its contexts ([SearchDomain.actionContexts]): the elements
+ * that share one state, named, and under them that state — *"the exact … element the user would find in the action
+ * section of A, B or C"*, the action's own editor over those elements, so a change there changes it for them all.
+ */
+@Composable
+private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
+    // Drawn in the section OF the section the added actions are rows of.
+    val host = LocalActionSectionHost.current?.parent
+    for (item in added) {
+        val row = (item as? SearchDomain.ItemResult)?.takeIf { it.kind == SearchDomain.Kind.Action }?.let { host?.rows?.get(it.id) }
+        ElementHeading(item.name, added.size)
+        val action = row?.action
+        if (host == null || row == null || action == null) {
+            NoteText("A group of elements has no state of its own: add one of its actions.")
+            continue
+        }
+        val contexts = SearchDomain.actionContexts(host.state, action, row.group.members)
+        contexts.forEachIndexed { index, members ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "Context  ·  " + members.joinToString(", ") { it.name },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                host.draw(row, members, row.id + "/context/" + index)
+            }
+        }
     }
 }
 
@@ -909,6 +988,8 @@ private fun AddedActionBlocks(
         // User rule 2026-10-18: every sound of the app off on this device — the lateral menu's switch, here too.
         // User rule 2026-11-13: an added search configuration's state in each Search window, by window id.
         SearchDomain.AddedAction.ConfigurationStates -> ConfigurationStatesAction(state, added, handlers.searchWindows(), handlers.claudeLogs())
+        // User rule 2026-11-13: an action added to the actions section's own list — its contexts, and its state in each.
+        SearchDomain.AddedAction.ActionContexts -> ActionContextsEditor(added)
         SearchDomain.AddedAction.MuteSwitch ->
             androidx.compose.material3.Switch(
                 checked = state.soundMuted,

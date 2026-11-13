@@ -4142,7 +4142,35 @@ object SearchDomain {
          * "unfocused notif", a ▾ window that is open or holds a configuration of its own): [SearchWindowState].
          */
         ConfigurationStates(Kind.SearchConfiguration, "State in each window"),
+
+        /**
+         * User rule 2026-11-13: an ACTION added to the actions section's own list ([Kind.Action]) shows **its contexts and
+         * states** — the elements it acts on, gathered by the state it has for them ([actionContexts]): each context the
+         * elements sharing one state, and under it that state, the very action as their own actions section shows it.
+         */
+        ActionContexts(Kind.Action, "Contexts and states"),
     }
+
+    /**
+     * User rule 2026-11-13: **the contexts of [action] over [members]** — *"if the same state … is set the same for the
+     * task elements A, B and C, then the context element will have the values A, B and C"*: the elements gathered by the
+     * state the action has for them ([actionStateOf]), in the list's order, a context standing where its first element does.
+     */
+    fun actionContexts(state: SchedulerState, action: AddedAction, members: List<Result>): List<List<Result>> =
+        members.groupBy { actionStateOf(state, action, it) }.values.toList()
+
+    /**
+     * What [action] holds for [row], as far as telling two elements apart goes — equal for the elements a context gathers
+     * ([actionContexts]). "Parents": the element's parents. An action about a set as such ([isSetAction]) has one state
+     * for them all. Any other is taken to differ from one element to the next — each its own context — until its state is
+     * read here: gathering two elements that differ would show one's state as the other's.
+     */
+    fun actionStateOf(state: SchedulerState, action: AddedAction, row: Result): Any =
+        when {
+            action == AddedAction.ElementParents -> ElementTree.parentsOf(state, keyOf(row)).toSet()
+            isSetAction(action) -> Unit
+            else -> keyOf(row)
+        }
 
     /** The actions that show a Claude Code log entry, each one block per added entry. */
     val CLAUDE_ENTRY_ACTIONS: Set<AddedAction> by lazy {
@@ -4256,7 +4284,8 @@ object SearchDomain {
                 // 2026-10-12): with nothing but timers added there is no block to list.
                 val onlyTimers = added.all { it.kind == Kind.Timer }
                 // A creation row is no element, and tasks alone have their own category actions.
-                val elements = added.any { ElementTree.isElement(it.kind) }
+                // ...nor is a row of the actions section, added to that section's own list (user rule 2026-11-13).
+                val elements = added.any { ElementTree.isElement(it.kind) && it.kind != Kind.Action }
                 val onlyTasks = added.all { it.kind == Kind.Task }
                 actions.filter {
                     (onCalendar || it !in CALENDAR_ACTIONS) && !(onlyTimers && it == AddedAction.CalendarBlocks) &&
@@ -4629,6 +4658,7 @@ object SearchDomain {
                 "project session title id date file copy"
             AddedAction.ClaudeLogsDirectory -> "folder path read refresh load"
             AddedAction.ConfigurationStates -> "window id open saved value filter sort"
+            AddedAction.ActionContexts -> "context state elements same value group"
             AddedAction.MuteSwitch -> "silence quiet sound voice ring alarm notification off on"
             else -> ""
         }

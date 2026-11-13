@@ -1131,6 +1131,24 @@ suggestions before it was ever entered.
     its `added/` elements, `scrolls`), given to the list and told back (`addedListElements`, `withAddedListElements`).
     **One sub-tree of the two lists shows a selection of cells at a time**: the list reads the window's selection
     surface (`AddedSurface`). Its sorting and filters are not applied yet: the list is in the order added.
+  - **The actions section has its own added elements and its own actions over them** (user rule 2026-11-13, the use
+    case *"right-click on the element with the 'list of parents' field and select 'add' … right-click on the background
+    of the action section, select 'show the actions'"*; `AddedActionList`, `ACTIONS_SECTION_OWN`, `ActionSectionHost`,
+    `ActionContextsEditor`, `ActionContextsTest`). A row of the section has the row menu ("add", "add and remove the
+    others"): it is added to **the section's own list** (`Kind.Action` rows, by key; one whose row is gone is not
+    listed), kept with the window under `<window>/actions` (`Config.inside`: its added rows, its own actions section's
+    bar and open rows — the rows open in the section itself stay `Config.toggledActionRows`, two lists, two sets). The
+    section's background menu is its own: it shows its actions and its added elements; holding added rows, it opens
+    with both shown. **An added action has "Contexts and states"** (`AddedAction.ActionContexts`): the elements it acts
+    on gathered by the state it has for them (`SearchDomain.actionContexts`, `actionStateOf`) — *"if the same state …
+    is set the same for the task elements A, B and C, then the context element will have the values A, B and C, and the
+    state element will be the exact 'list of parents' element the user would find in the action section of A, B or
+    C"*: each context names its elements, and under it stands the action's own editor over them, so a change there is
+    made for them all. What tells two elements apart is read per action: "Parents" by the element's parents; an action
+    about a set has one context; **any other is one context per element until its state is read in `actionStateOf`**
+    — never two differing elements shown as one. An action row is no element of the account: no "Parents" of its own.
+    What is drawn in the section is inside it: its fields' windows are `<window>/actions/field:…`, its own actions
+    section `<window>/actions/actions`.
   - **The section is a Search window whose results are actions** (user rule 2026-11-12: *"The action section is
     simply a Search window with the two other sections hidden, a header hidden, and the right-click menu giving the
     right-click menu of the Search window it is embedded in. All the actions are action elements, so they must be rows,
@@ -1145,7 +1163,7 @@ suggestions before it was ever entered.
     elements beside its title), **Expand the results** (`actionsExpanded`, off: on, the top rows open, never their
     children) and **Search sorts, hides nothing** (`actionSearchSortsOnly`, on: the behaviour below; off, the bar
     filters — an action listed only if it answers, a group while one of its actions or its own title does,
-    `SearchDomain.shownActionGroups`). A right-click on its background is the enclosing Search window's menu.
+    `SearchDomain.shownActionGroups`). A right-click on its background is ITS OWN menu (it showed the enclosing window's until 2026-11-13 in the text only: the code always gave it its own).
   - **The section has a SEARCH BAR, which sorts the actions inside each group and moves no group** (user rule
     2026-10-11: *"The actions are separated into macro groups (for each set of elements the actions will apply to)
     and micro groups ('add to calendar' actions, 'Combinations' actions (for periods), etc…). The search bar sorts

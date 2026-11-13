@@ -585,6 +585,16 @@ fun SearchWindow(
     // state, which every engine tick replaces (records live on the tasks) — ADR 0009.
     // The added elements (the right half), read off the live state the way the result list reads its rows.
     val addedRows =
+        if (actionRows != null) {
+            // User rule 2026-11-13: the actions section's own added elements are rows of it — actions, by their key; one
+            // whose row is gone (its elements left the window's list) is not listed.
+            remember(config.added, actionRows.rows) {
+                config.added.mapNotNull { key ->
+                    actionRows.byKey[key.removePrefix(SearchDomain.Kind.Action.name + "/")]
+                        ?.let { SearchDomain.ItemResult(SearchDomain.Kind.Action, it.key, it.title, it.detail) }
+                }
+            }
+        } else
         remember(
             config.added, state.tasks, state.taskTrees, state.categories, state.periodKinds, state.panels, state.alarms,
             state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations, state.shortcutBindings,
@@ -1373,12 +1383,14 @@ fun SearchWindow(
                                             selected = rowSelected(index),
                                             inSelection = rowInSelection(index),
                                             onSelect = { select(index) },
-                                            onSecondarySelect = { select(index) },
+                                            onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
                                             onOpen = {},
                                             onDoubleClick = { actionRows.onToggle(actionRow.id) },
-                                            onAdd = {},
-                                            onAddReplacing = {},
-                                            hasMenu = false,
+                                            // User rule 2026-11-13: a row of the section is added to the section's own
+                                            // list, whose actions are about it ([SearchDomain.AddedAction.ActionContexts]).
+                                            onAdd = { addSelected() },
+                                            onAddReplacing = { addSelected(replacing = true) },
+                                            hasMenu = true,
                                             depth = actionRow.depth,
                                         )
                                         if (actionRow.open && actionRow.action != null) {
@@ -1588,7 +1600,7 @@ fun SearchWindow(
                 configurationArrow = {
                     // User rule 2026-11-13: the section is a Search window with an id of its own — this window's and
                     // "/actions" — so its ▾ window is its own, not this window's bar's.
-                    val sectionId = embeddedSearchId("actions")
+                    val sectionId = embeddedSearchId(ACTIONS_SECTION_PART)
                     RegisterEmbeddedSearch(sectionId, "actions", config, open = true, saved = true, set = onConfigChange)
                     androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides sectionId) {
                         ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar)
@@ -2132,6 +2144,9 @@ private const val REMOVE_OTHERS_LABEL: String = "remove the others"
  * element, the section starting at the first of them ([SearchDomain.withOnlyGroupsOf]).
  */
 private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
+
+/** The part of its window's id the actions section's own ends with ([embeddedSearchId]). */
+internal const val ACTIONS_SECTION_PART: String = "actions"
 
 /**
  * User rule 2026-11-13: **what the added elements list gives the Search window that is it** ([SearchWindow]'s
