@@ -528,6 +528,7 @@ object SchedulerStateCodec {
                         categoryIds = it.categoryIds.map(CategoryId::value),
                         pendingDefaultSubtree = it.pendingDefaultSubtree.map(CellListId::value),
                         lastTreePath = it.lastTreePath,
+                        treeName = it.treeName,
                         fulfilment = it.fulfilment.entries.sortedBy { e -> e.key.value }.associate { e -> e.key.value to e.value },
                     )
                 },
@@ -1146,6 +1147,7 @@ object SchedulerStateCodec {
                         categoryIds = it.categoryIds.map(CategoryId::value),
                         pendingDefaultSubtree = it.pendingDefaultSubtree.map(CellListId::value),
                         lastTreePath = it.lastTreePath,
+                        treeName = it.treeName,
                         fulfilment = it.fulfilment.entries.sortedBy { e -> e.key.value }.associate { e -> e.key.value to e.value },
                     )
                 },
@@ -1188,6 +1190,7 @@ object SchedulerStateCodec {
                         categoryIds = p.categoryIds.map(::CategoryId).distinct(),
                         pendingDefaultSubtree = p.pendingDefaultSubtree.map(::CellListId),
                         lastTreePath = p.lastTreePath,
+                        treeName = p.treeName,
                         fulfilment = decodeFulfilment(p),
                     )
             }
@@ -1708,6 +1711,7 @@ object SchedulerStateCodec {
                         categoryIds = p.categoryIds.map(::CategoryId).distinct(),
                         pendingDefaultSubtree = p.pendingDefaultSubtree.map(::CellListId),
                         lastTreePath = p.lastTreePath,
+                        treeName = p.treeName,
                         fulfilment = decodeFulfilment(p),
                     )
             }
@@ -3378,6 +3382,9 @@ private data class PersistedTask(
     // existed, and every task a tree still holds) ⇒ none — a task cut from the tree by an older build has no
     // path to recover, and the search window draws its path box empty.
     val lastTreePath: List<String> = emptyList(),
+    // User rule 2026-11-13: the name of the tree a task under the global root is the root of. Absent (every payload
+    // written before the field existed) ⇒ none.
+    val treeName: String = "",
 )
 
 @Serializable

@@ -420,6 +420,12 @@ sealed interface SchedulerIntent {
     data class SetTasksText(val taskIds: List<TaskId>, val text: String) : SchedulerIntent
 
     /**
+     * User rule 2026-11-13: the name of the tree each task of [taskIds] is the root of ([org.example.project.scheduler.model.Task.treeName])
+     * — ONE Undo/Redo unit; a call that changes nothing records nothing.
+     */
+    data class SetTreeName(val taskIds: List<TaskId>, val name: String) : SchedulerIntent
+
+    /**
      * [SetScheduleUnit] for every task of [taskIds]. A task whose minimum time the [entries] exceed keeps its own
      * unit (the reducer's guard, as for one task); so does one that is not a schedulable leaf.
      */

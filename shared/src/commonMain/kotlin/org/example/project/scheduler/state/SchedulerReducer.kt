@@ -589,6 +589,15 @@ object SchedulerReducer {
                 }
             is SchedulerIntent.DuplicateCategory -> settingsUnit(state, "Duplicate category") { reduceDuplicateCategory(it, intent.categoryId) }
             is SchedulerIntent.DuplicatePeriodKind -> settingsUnit(state, "Duplicate period") { reduceDuplicatePeriodKind(it, intent.kind) }
+            is SchedulerIntent.SetTreeName -> {
+                val apply = { working: SchedulerState ->
+                    intent.taskIds.distinct().fold(working) { acc, id ->
+                        val task = acc.tasks[id]
+                        if (task == null || task.treeName == intent.name) acc else acc.copy(tasks = acc.tasks + (id to task.copy(treeName = intent.name)))
+                    }
+                }
+                if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Tree name", apply))
+            }
             is SchedulerIntent.SetTasksText -> {
                 val apply = { working: SchedulerState ->
                     intent.taskIds.distinct().fold(working) { acc, id -> applySetTaskText(acc, id, intent.text) }

@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A tree root's "Tree name" — 2026-11-13
+
+User rule: *"Giving the global root as a parent of a task gives this task actions relative to the tree (renaming it for
+example)"* — renaming names the TREE (the user's answer), not the task. New `Task.treeName` (authoritative, persisted and
+synced; persisted `treeName`, absent = none, an empty one not written), set by `SchedulerIntent.SetTreeName` (one undo
+unit). New action "Tree name" (`AddedAction.TaskTreeName`, `AddedCommand.TreeName`), offered for a task standing directly
+under the global root alone (`TaskResult.treeRoot`, `SearchDomain.isTreeRoot`). The name is stored and edited; nothing
+else reads it yet (the paths still begin with the live tree's name). No migration.
+
 ### A task in no tree can be a parent and stays in none; the global root is a parent like another — 2026-11-13
 
 User rules: *"If A becomes the parent of B, but A is not a descendant of a root, there is no reason for A to automatically

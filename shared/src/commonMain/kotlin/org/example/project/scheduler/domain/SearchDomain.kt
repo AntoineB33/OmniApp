@@ -2485,6 +2485,8 @@ object SearchDomain {
         val title: String,
         val paths: List<List<String>>,
         val inTaskTree: Boolean,
+        /** User rule 2026-11-13: it stands directly under the global root — the root of a tree, with its tree's actions. */
+        val treeRoot: Boolean = false,
     ) : Result {
         override val kind: Kind get() = Kind.Task
         override val name: String get() = title
@@ -2508,6 +2510,8 @@ object SearchDomain {
     ): List<TaskResult> {
         val inTree = shortestPathsInAnyTree(state)
         val lastPaths = lastPaths(state)
+        // The tasks standing directly under the global root: each the root of a tree (user rule 2026-11-13).
+        val treeRoots = state.lists[state.rootListId]?.cellIds.orEmpty().mapNotNullTo(HashSet()) { state.cells[it]?.taskId }
         val candidates = LinkedHashMap<TaskId, Task>()
         for (entry in state.taskTrees) {
             if (entry.id == state.activeTaskTreeId) continue
@@ -2528,7 +2532,7 @@ object SearchDomain {
                     } else {
                         listOfNotNull(lastPaths[task.id])
                     }
-                rank to TaskResult(task.id, task.title, paths, held)
+                rank to TaskResult(task.id, task.title, paths, held, treeRoot = task.id in treeRoots)
             }
             .sortedWith(
                 compareBy<Pair<Int, TaskResult>>(
@@ -3736,6 +3740,12 @@ object SearchDomain {
         TaskResilience(Kind.Task, "Resilience"),
         TaskScheduleUnit(Kind.Task, "Schedule unit"),
         TaskText(Kind.Task, "Text"),
+        /**
+         * User rule 2026-11-13: **the name of the tree a task standing directly under the global root is the root of**
+         * ([org.example.project.scheduler.model.Task.treeName]) — its own, not the task's title. Listed for such a task
+         * alone ([TaskResult.treeRoot]).
+         */
+        TaskTreeName(Kind.Task, "Tree name"),
         TaskPaths(Kind.Task, "Paths"),
         /**
          * PRD §9 (user rule 2026-10-03): each added schedulable task's **set of tasks** — what it fulfils while it is on
@@ -4044,11 +4054,14 @@ object SearchDomain {
                 val severalChronos = added.count { it.kind == Kind.Chrono } > 1
                 // The Sleep schedule is the Sleep period's: listed where that period is added.
                 val sleepAdded = added.any(::isSleepPeriod)
+                // A tree's actions are a tree root's: listed where one is added (user rule 2026-11-13).
+                val treeRootAdded = added.any(::isTreeRoot)
                 (
                     kind to actions.filter {
                         (severalTimers || it != AddedAction.TimerLowestCountdown) &&
                             (severalChronos || it != AddedAction.ChronoHighestCount) &&
                             (sleepAdded || it != AddedAction.PeriodSleepSchedule) &&
+                            (treeRootAdded || it != AddedAction.TaskTreeName) &&
                             // A menu control's action is its setting's alone: listed where that setting is added.
                             APP_SETTING_CONTROL_ACTIONS[it]?.let { setting -> appSettingAdded(added, setting) } != false
                     }
@@ -4153,6 +4166,9 @@ object SearchDomain {
             AddedAction.CategoryName, AddedAction.ShortcutChord, AddedAction.ShortcutWindow,
             AddedAction.PeriodSleepSchedule,
         ) + CLAUDE_ENTRY_ACTIONS
+
+    /** Whether [result] is a task standing directly under the global root — the root of a tree ([TaskResult.treeRoot]). */
+    fun isTreeRoot(result: Result): Boolean = (result as? TaskResult)?.treeRoot == true
 
     /** Whether [result] is the Sleep period — the one element the Sleep schedule's fields are an action of. */
     fun isSleepPeriod(result: Result): Boolean =
@@ -4314,6 +4330,7 @@ object SearchDomain {
             AddedAction.TaskChildren -> "children sub-tree cells edit rename change task id switch"
             AddedAction.TaskResilience -> "period apply"
             AddedAction.TaskScheduleUnit, AddedAction.TaskText -> "apply"
+            AddedAction.TaskTreeName -> "rename tree name apply"
             AddedAction.AlarmOnOff, AddedAction.AlarmRepeat, AddedAction.TimerBelowZero -> "on off"
             AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow -> "now"
             AddedAction.AlarmTime -> "time date day once one-off right-click"
@@ -4579,7 +4596,7 @@ object SearchDomain {
         fun of(element: Result, kind: Kind?, actions: List<AddedAction>) =
             if (element.kind == Kind.Creation && kind != Kind.Creation) actions.filter { it in DEFAULT_CONFIGURATION_ACTIONS }
             // The Sleep schedule is the Sleep period's own, and no other period's.
-            else actions.filter { it != AddedAction.PeriodSleepSchedule || isSleepPeriod(element) }
+            else actions.filter { (it != AddedAction.PeriodSleepSchedule || isSleepPeriod(element)) && (it != AddedAction.TaskTreeName || isTreeRoot(element)) }
         fun own(actions: List<AddedAction>) =
             actions.filterNot(::isSetAction).let { mine -> LEADING_ACTIONS.filter { it in mine } + mine.filterNot { it in LEADING_ACTIONS } }
         fun set(actions: List<AddedAction>) = actions.filter(::isSetAction)
@@ -4920,6 +4937,9 @@ object SearchDomain {
         data class ScheduleUnit(val entries: List<org.example.project.scheduler.model.ScheduleUnitEntry>) : AddedCommand
 
         data class Text(val text: String) : AddedCommand
+
+        /** User rule 2026-11-13: the name of the tree every added tree root is the root of. */
+        data class TreeName(val name: String) : AddedCommand
 
         /** Null = the top level. */
         data class AddUnder(val parentTaskId: TaskId?) : AddedCommand
@@ -6200,6 +6220,10 @@ object SearchDomain {
             }
             is AddedCommand.Text ->
                 if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksText(taskIds.distinct(), command.text))
+            is AddedCommand.TreeName -> {
+                val roots = added.filter(::isTreeRoot).mapNotNull { (it as? TaskResult)?.taskId }.distinct()
+                if (roots.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTreeName(roots, command.name))
+            }
             is AddedCommand.AddUnder ->
                 if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.AddTasksPath(taskIds.distinct(), command.parentTaskId))
             // The cell menu's own intents, per cell: collapsing is view state, and adding the template takes a list.

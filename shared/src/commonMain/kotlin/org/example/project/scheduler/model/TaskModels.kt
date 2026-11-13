@@ -130,6 +130,13 @@ data class Task(
      * persisted and synced with the rest of the task.
      */
     val lastTreePath: List<String> = emptyList(),
+    /**
+     * User rule 2026-11-13: *"Any task that is the direct child of [the global root] is the root of a new tree. Giving the
+     * global root as a parent of a task gives this task actions relative to the tree (renaming it for example)"* — **the
+     * name of the tree this task is the root of**, its own and not its title. Set from the "Tree name" action, which a task
+     * standing directly under the global root has. Empty: no name given. Authoritative — persisted and synced.
+     */
+    val treeName: String = "",
 ) {
     /** This task's multiplier inside a period of [kind]; see [PeriodKinds.resilienceFor]. */
     fun resilienceFor(kind: String): Double = PeriodKinds.resilienceFor(resilience, kind)

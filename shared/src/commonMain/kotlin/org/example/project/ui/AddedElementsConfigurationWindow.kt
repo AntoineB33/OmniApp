@@ -858,6 +858,23 @@ private fun AddedActionBlocks(
                 FrameButton("Apply", enabled = tasks.any { it.text != draft }) { run(SearchDomain.AddedCommand.Text(draft)) }
             }
         }
+        // User rule 2026-11-13: the name of the tree each added tree root is the root of — its own, not the task's title.
+        SearchDomain.AddedAction.TaskTreeName -> {
+            val roots = added.filter(SearchDomain::isTreeRoot).mapNotNull { (it as? SearchDomain.TaskResult)?.taskId }.mapNotNull { state.tasks[it] }
+            val shared = roots.map { it.treeName }.distinct().singleOrNull()
+            var draft by remember(shared) { mutableStateOf(shared.orEmpty()) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    singleLine = true,
+                    label = { Text("Tree name") },
+                    placeholder = { if (shared == null && roots.isNotEmpty()) Text("mixed") },
+                    modifier = Modifier.weight(1f),
+                )
+                FrameButton("Apply", enabled = roots.any { it.treeName != draft }) { run(SearchDomain.AddedCommand.TreeName(draft)) }
+            }
+        }
         SearchDomain.AddedAction.AlarmOnOff -> {
             // Lit when every added alarm (and the default configuration, where it is added) is in that state.
             val shared = SearchDomain.sharedValue(SearchDomain.addedAlarmsOrDefault(state, added)) { it.enabled }
