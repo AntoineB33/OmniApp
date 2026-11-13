@@ -962,6 +962,27 @@ suggestions before it was ever entered.
 
 #### The grouped configurations
 
+- **A SEARCH CONFIGURATION HAS ONE OF FOUR CATEGORIES, BY WHAT IT DOES TO THE RESULT LIST** (user rule 2026-11-13;
+  `SearchDomain.SettingRole`, `roleOf`, `ParentDistanceTest`): it keeps rows out (**filter**), orders them (**sort**),
+  changes how every row is drawn (**display**), or changes the children the rows have in that list (**children**).
+  `roleOf` is the one statement of it; a row of the search over search configurations says it beside its type. "Reset"
+  is a command and no state: it has none. **Not built yet** (open questions put to the user 2026-11-13): the window's
+  parts ("hide the header"…, `SearchSplits`) as search configurations and the background menu as a search over them;
+  an added search configuration's state per window id.
+- **THE CONFIGURATIONS A CONTEXT IS ABOUT COME FIRST IN THE ▾ TREE** (user rule 2026-11-13: *"the user should very
+  easily see the search configuration element about the parent distance"*; `SearchDomain.contextSettings`,
+  `configurationTree(config, opened)`). What the window was opened with says its context: the filters it set, and what
+  goes with them — the "List of parents" gets "Parent distance", "Parents of" and its drop buttons. They are the
+  tree's first node, "For this list"; a window opened on nothing has no such node.
+- **THE PARENT DISTANCE** (user rule 2026-11-13; `Filters.parentDistance`, `ElementTree.parentLevels` /
+  `parentsWithin` / `highestParentDistance`): how far above the elements of "Parents of" a parent may stand to be
+  listed — 1 by default (the direct parents), n for every parent at a distance of n **or less**, an element standing at
+  its shortest distance; `PARENT_DISTANCE_HIGHEST` (0) for any distance. Its field opens a Search window of
+  **integers** (`Kind.Integer`, `SearchDomain.integerResults`, `IntegerRows`): "highest parent distance (5)" then 1, 2,
+  3… **with no end** — rows come by pages as the end nears (`SearchOptions.onNearEnd`), and the scrollbar's thumb is
+  sized as if the list stopped at the highest, shrinking as the user scrolls past it (`ListScrollbar`'s `openEnd`,
+  `openEndRows`). Like an option, an integer is a row the field gives (`isPickedRow`); the account holds none.
+
 - **THE SEARCH CONFIGURATIONS ARE GROUPED BY HOW MANY ROWS OF THE RESULTS THEY APPLY TO** (user rule 2026-10-11:
   *"with the same logic as in the action section of the Search window, the first group gather all the configurations
   that can be applied to every element in a set of n element, where n is as big as possible, followed by other groups

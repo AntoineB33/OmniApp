@@ -38,9 +38,17 @@ import kotlinx.coroutines.launch
  * a calendar of 500 dp among titles of 24 dp made the thumb grow and shrink as the calendar came and went.)
  */
 @Composable
-internal fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) {
+internal fun ListScrollbar(
+    state: LazyListState,
+    modifier: Modifier = Modifier,
+    /**
+     * User rule 2026-11-13, a list with no end (the integers): the rows the thumb counts at least — it is sized *"as if
+     * it stopped at"* there, then shrinks as the user scrolls further ([openEndRows]). Null: every row of the list.
+     */
+    openEnd: Int? = null,
+) {
     val heights = remember(state) { RowHeights() }
-    val metrics by remember(state) {
+    val metrics by remember(state, openEnd) {
         derivedStateOf {
             val info = state.layoutInfo
             val visible = info.visibleItemsInfo
@@ -48,7 +56,8 @@ internal fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) 
             if (visible.isEmpty() || viewport <= 0f) return@derivedStateOf null
             heights.learn(info.totalItemsCount, visible.map { Triple(it.index, it.key, it.size) })
             val spacing = info.mainAxisItemSpacing.toFloat()
-            val content = heights.total(info.totalItemsCount) + spacing * (info.totalItemsCount - 1).coerceAtLeast(0) +
+            val counted = openEndRows(openEnd, visible.last().index, info.totalItemsCount)
+            val content = heights.total(counted) + spacing * (counted - 1).coerceAtLeast(0) +
                 info.beforeContentPadding + info.afterContentPadding
             if (content <= viewport + 0.5f) return@derivedStateOf null
             val first = state.firstVisibleItemIndex
@@ -66,6 +75,13 @@ internal fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) 
         drag = { delta -> state.dispatchRawDelta(delta) },
     )
 }
+
+/**
+ * How many rows the thumb of a list counts ([ListScrollbar]): all [total] of them; or, for a list with no end, the
+ * [openEnd] rows that mean something, and past them only as far as the user has scrolled ([lastShown], an index).
+ */
+internal fun openEndRows(openEnd: Int?, lastShown: Int, total: Int): Int =
+    if (openEnd == null) total else maxOf(openEnd, lastShown + 1).coerceAtMost(total)
 
 /**
  * [ListScrollbar] for a plain scrolling column ([ScrollState]) — the same thumb and track, read off the exact

@@ -247,8 +247,9 @@ private fun ConfigurationTreeColumns(
         val echo = written.indexOf(config)
         if (echo >= 0) repeat(echo + 1) { written.removeFirst() } else { written.clear(); shown = config }
     }
-    val tree = remember(shown.settingsChangedAt, query) {
-        SearchDomain.configurationTree(shown).filterConfigurationNodes(query)
+    val tree = remember(shown.settingsChangedAt, query, openedConfig) {
+        // User rule 2026-11-13: what the window was opened on comes first ([SearchDomain.contextSettings]).
+        SearchDomain.configurationTree(shown, openedConfig).filterConfigurationNodes(query)
     }
     val leaf: @Composable (SearchDomain.Setting) -> Unit = { setting ->
         SettingRow(setting.label) {

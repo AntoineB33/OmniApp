@@ -500,6 +500,8 @@ internal fun SettingEditor(
         // User rule 2026-11-12: only the parents of these elements (what the "List of parents" asks).
         SearchDomain.Setting.ParentsOf ->
             ElementsDropDown(state, f.parentsOf, windows) { filters(f.copy(parentsOf = it)) }
+        // User rule 2026-11-13: how far above them — an integer, picked in a list of integers with no end.
+        SearchDomain.Setting.ParentDistance -> ParentDistanceField(state, f) { filters(f.copy(parentDistance = it)) }
         // User rule 2026-11-12: the kinds no parent of a listed element may be — the app's one check-box drop-down.
         SearchDomain.Setting.NoParentOfKinds ->
             CheckBoxDropDown(
@@ -627,8 +629,48 @@ internal fun SettingEditor(
         SearchDomain.Setting.PromptSort, SearchDomain.Setting.AnswerSort, SearchDomain.Setting.ReasoningSort,
         SearchDomain.Setting.SearchConfigurationSort,
         SearchDomain.Setting.OptionSort,
+        SearchDomain.Setting.IntegerSort,
         SearchDomain.Setting.ActionSort,
         -> SortMethodPicker(setting.section, config.sorts) { onChange(config.copy(sorts = it)) }
+    }
+}
+
+/** How many integers a list of them is given at a time ([ParentDistanceField]); more come as its end nears. */
+private const val INTEGER_PAGE: Int = 50
+
+/**
+ * User rule 2026-11-13: **the parent distance** ([SearchDomain.Filters.parentDistance]) — a field reading it, which opens a
+ * Search window of integers ([SearchDomain.Kind.Integer]): first *"highest parent distance (5)"* — the highest there is
+ * above the elements asked about ([org.example.project.scheduler.domain.ElementTree.highestParentDistance]), every parent
+ * at any distance — then 1, 2, 3… with no end, the one in force marked.
+ */
+@Composable
+private fun ParentDistanceField(state: SchedulerState, f: SearchDomain.Filters, onChange: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val highest = remember(f.parentsOf, state.elementLinks, state.lists, state.cells, state.tasks) {
+        org.example.project.scheduler.domain.ElementTree.highestParentDistance(state, f.parentsOf)
+    }
+    // Opened afresh, the list is as long as what means something, or a page.
+    var count by remember(open, highest) { mutableStateOf(maxOf(highest, INTEGER_PAGE)) }
+    Box {
+        FrameButton(SearchDomain.parentDistanceLabel(f.parentDistance, highest) + " ▾") { open = true }
+        OptionSearchMenu(
+            open = open,
+            onDismiss = { open = false },
+            options = SearchOptions(
+                options = emptyList(),
+                checked = null,
+                onClick = { id ->
+                    SearchDomain.parentDistanceOf(id)?.let {
+                        open = false
+                        onChange(it)
+                    }
+                },
+                leading = { id -> Text(if (SearchDomain.parentDistanceOf(id) == f.parentDistance) "●" else "○") },
+                onNearEnd = { count += INTEGER_PAGE },
+                integers = IntegerRows("highest parent distance", highest, count),
+            ),
+        )
     }
 }
 

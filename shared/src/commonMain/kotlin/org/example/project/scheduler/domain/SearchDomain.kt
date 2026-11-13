@@ -181,6 +181,13 @@ object SearchDomain {
         Option("option"),
 
         /**
+         * User rule 2026-11-13: **an integer** — what a search configuration holding a number lists to pick it from (the
+         * parent distance, [integerResults]): "1", "2", "3"… with no end. Like an option, the field it opens from gives
+         * the rows; the account holds none.
+         */
+        Integer("integer"),
+
+        /**
          * User rule 2026-11-12: *"The action section is a Search window (hiding its header and its own action and added
          * elements list sections)."* **A row of the actions section** — a group of the added elements or one action over
          * them ([actionListRows]); what the section gives its Search window, none in the account.
@@ -257,6 +264,32 @@ object SearchDomain {
     /** What "Select all" leaves checked: every [listed] option, or none of them once they all were. */
     fun selectAllApplied(checked: Set<String>, listed: List<String>): Set<String> =
         if (checked.containsAll(listed)) checked - listed.toSet() else checked + listed
+
+    /** The id of the first row of an integer list: the highest value that means something ([integerResults]). */
+    const val HIGHEST_INTEGER: String = "highest"
+
+    /**
+     * User rule 2026-11-13: **the rows of a list of integers** ([Kind.Integer]) — first [highestLabel] with the highest
+     * value that means something (*"highest parent distance (5)"*, [HIGHEST_INTEGER]), then "1", "2", "3"… The list has
+     * no end: [count] is how many integers are given now, more being asked as the last ones come in view. [query] keeps
+     * the integers whose digits hold it (and the first row while its text does).
+     */
+    fun integerResults(highestLabel: String, highest: Int, count: Int, query: String = ""): List<ItemResult> {
+        val needle = query.trim()
+        val first = ItemResult(Kind.Integer, HIGHEST_INTEGER, "$highestLabel ($highest)", "")
+        val head = listOfNotNull(first.takeIf { needle.isEmpty() || it.name.contains(needle, ignoreCase = true) })
+        if (needle.isNotEmpty() && needle.any { !it.isDigit() }) return head
+        return head + generateSequence(1) { it + 1 }
+            .filter { needle.isEmpty() || needle in it.toString() }
+            .take(count.coerceAtLeast(0))
+            .map { ItemResult(Kind.Integer, it.toString(), it.toString(), "") }
+    }
+
+    /** The integer list's Search window as it opens ([integerResults]). */
+    val INTEGER_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Integer)) }
+
+    /** Whether [kind]'s rows are given by the field the list opens from, a click picking one: an option, an integer. */
+    fun isPickedRow(kind: Kind): Boolean = kind == Kind.Option || kind == Kind.Integer
 
     /** The drop-down's Search window as it opens: its options, its bar empty, the order they were given in. */
     val OPTION_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Option)) }
@@ -902,6 +935,7 @@ object SearchDomain {
                     includedElements = filters.includedElements.sorted(),
                     noParentOfKinds = Kind.entries.filter { it in filters.noParentOfKinds }.map { it.name },
                     parentsOf = filters.parentsOf.sorted(),
+                    parentDistance = filters.parentDistance,
                     placeStartMillis = placement.startMillis,
                     placeEndByDelta = placement.endByDelta,
                     placeStatedLengthMillis = placement.lengthMillis,
@@ -993,6 +1027,7 @@ object SearchDomain {
                         includedElements = stored.includedElements.toSet(),
                         noParentOfKinds = kindsNamed(stored.noParentOfKinds),
                         parentsOf = stored.parentsOf.toSet(),
+                        parentDistance = stored.parentDistance.coerceAtLeast(PARENT_DISTANCE_HIGHEST),
                         claudeProject = stored.claudeProject,
                         claudeFrom = stored.claudeFromMillis,
                         claudeUntil = stored.claudeUntilMillis,
@@ -1343,6 +1378,12 @@ object SearchDomain {
          */
         val parentsOf: Set<String> = emptySet(),
         /**
+         * User rule 2026-11-13, the **parent distance**: how far above the elements of [parentsOf] a parent may stand to be
+         * listed — 1, the direct parents alone (the default); 2, their parents too… ([ElementTree.parentsWithin]);
+         * [PARENT_DISTANCE_HIGHEST], at any distance. Asks nothing while [parentsOf] is empty.
+         */
+        val parentDistance: Int = 1,
+        /**
          * The Claude Code logs' filters (user rule 2026-10-18), one for the three kinds: only the entries of this project
          * (null = any), and only those written in `[claudeFrom, claudeUntil]` (a null bound asks nothing on its side).
          */
@@ -1445,6 +1486,7 @@ object SearchDomain {
                 Setting.IncludedElements -> includedElements.isNotEmpty()
                 Setting.NoParentOfKinds -> noParentOfKinds.isNotEmpty()
                 Setting.ParentsOf -> parentsOf.isNotEmpty()
+                Setting.ParentDistance -> parentsOf.isNotEmpty() && parentDistance != 1
                 Setting.NotificationSourceSetting -> notificationSources.isNotEmpty()
                 Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject -> claudeProject != null
                 Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom -> claudeFrom != null
@@ -1680,6 +1722,8 @@ object SearchDomain {
         NoParentOfKinds(null, "Has no parent of the types"),
         /** User rule 2026-11-12: only the parents of the given elements ([Filters.parentsOf]): the "List of parents". */
         ParentsOf(null, "Parents of"),
+        /** User rule 2026-11-13: how far above those elements a parent may stand ([Filters.parentDistance]): an integer. */
+        ParentDistance(null, "Parent distance"),
         /** User rule 2026-11-12: the results grouped by the added elements they involve ([Config.actionsGrouped]). */
         GroupByAddedElements(null, "Group by the added elements involved"),
         /** User rule 2026-11-12: the top rows of the results open by default, not their children ([Config.actionsExpanded]). */
@@ -1713,6 +1757,8 @@ object SearchDomain {
         SearchConfigurationSort(Kind.SearchConfiguration, "Sort by", sorts = true),
         /** User rule 2026-11-12: a drop-down's options, sorted as any kind's rows are. */
         OptionSort(Kind.Option, "Sort by", sorts = true),
+        /** User rule 2026-11-13: a list of integers, sorted as any kind's rows are. */
+        IntegerSort(Kind.Integer, "Sort by", sorts = true),
         /** User rule 2026-11-12: the actions section's rows, sorted as any kind's rows are. */
         ActionSort(Kind.Action, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
@@ -1763,6 +1809,48 @@ object SearchDomain {
         ReasoningUntil(Kind.ClaudeReasoning, "Written until"),
     }
 
+    /**
+     * User rule 2026-11-13: **the four categories of search configuration, by what one does to the result list** of the
+     * window it is a configuration of: it keeps rows out ([Filter]), orders them ([Sort]), changes how every row is
+     * drawn ([Display]), or changes the children the rows have in that list ([Children]).
+     */
+    enum class SettingRole(val label: String) {
+        Filter("filter"),
+        Sort("sort"),
+        Display("display"),
+        Children("children"),
+    }
+
+    /**
+     * The category of [setting] ([SettingRole]) — the one statement of it. A "Sort by" sorts, and so does the bar that
+     * only sorts; what groups the rows or opens them is about their children; a button on every row, or what the bar
+     * offers, is display; every other one narrows the list. Null for the one that is a command and no state: Reset.
+     */
+    fun roleOf(setting: Setting): SettingRole? =
+        when {
+            setting.sorts || setting == Setting.SearchSortsOnly -> SettingRole.Sort
+            setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults -> SettingRole.Children
+            setting == Setting.DropButtons || setting == Setting.CompletionList -> SettingRole.Display
+            setting == Setting.ResetSearch -> null
+            else -> SettingRole.Filter
+        }
+
+    /**
+     * User rule 2026-11-13: **the search configurations a context is about** — what the window was opened with
+     * ([opened]) says it: the filters it set, and what goes with them (the "List of parents" asks the parents of some
+     * elements, so how far above them comes first; its drop buttons). The configurations tree lists them first
+     * ([configurationTree]), so what matters where the user stands is one hover away. None for a window opened on nothing.
+     */
+    fun contextSettings(opened: Config?): List<Setting> {
+        opened ?: return emptyList()
+        val on = Setting.entries.filter { opened.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES }
+        val first = listOfNotNull(
+            Setting.ParentDistance.takeIf { opened.filters.parentsOf.isNotEmpty() },
+            Setting.DropButtons.takeIf { opened.dropButtons },
+        )
+        return (first.take(1) + on + first.drop(1)).distinct()
+    }
+
     /** The Claude kinds' filters but the prompt's: the same three filters, listed again under another kind. */
     val CLAUDE_SETTING_ECHOES: Set<Setting> by lazy {
         setOf(
@@ -1798,9 +1886,10 @@ object SearchDomain {
      * holds every configuration from the most to the least recently changed ([Config.settingsChangedAt]; the others
      * after, in their order); then the configurations of every row ("General"), then each feature page's types, each
      * type's configurations under it. Every configuration stands in it ([Setting.entries]): one with no section is
-     * General's, and every type is on a page ([FEATURE_PAGES]).
+     * General's, and every type is on a page ([FEATURE_PAGES]). Before them all, where the window was [opened] on
+     * something, the configurations that context is about ("For this list").
      */
-    fun configurationTree(config: Config): List<ConfigurationNode> {
+    fun configurationTree(config: Config, opened: Config? = null): List<ConfigurationNode> {
         fun leaves(settings: List<Setting>) = settings.sortedBy { it.sorts }.map(::ConfigurationLeaf)
         val recent = Setting.entries.sortedByDescending { config.settingsChangedAt[it] ?: Long.MIN_VALUE }.map(::ConfigurationLeaf)
         val general = ConfigurationCategory("general", "General", leaves(Setting.entries.filter { it.section == null }))
@@ -1811,7 +1900,10 @@ object SearchDomain {
             }
             kinds.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("page/" + page.id, page.label, it) }
         }
-        return listOf(ConfigurationCategory("recent", "Recently changed", recent), general) + pages
+        // User rule 2026-11-13: what the window's context is about comes first ([contextSettings]).
+        val context = contextSettings(opened).takeIf { it.isNotEmpty() }
+            ?.let { ConfigurationCategory("context", "For this list", it.map(::ConfigurationLeaf)) }
+        return listOfNotNull(context, ConfigurationCategory("recent", "Recently changed", recent), general) + pages
     }
 
     /**
@@ -2000,6 +2092,16 @@ object SearchDomain {
         results(state, config.searchedKinds, config.query, { emptyMap() }, config.filters, windows = windows, claudeLogs = claudeLogs)
             .mapTo(HashSet()) { checkedKindOf(it, config.searchedKinds) }
 
+    /** [Filters.parentDistance] for "at any distance": the list's first row, the highest parent distance. */
+    const val PARENT_DISTANCE_HIGHEST: Int = 0
+
+    /** What the parent distance's field reads: the number, or the highest one there is ([highest]) for any distance. */
+    fun parentDistanceLabel(distance: Int, highest: Int): String =
+        if (distance == PARENT_DISTANCE_HIGHEST) "highest ($highest)" else distance.toString()
+
+    /** The parent distance a row of its list of integers ([integerResults]) sets; null for no such row. */
+    fun parentDistanceOf(id: String): Int? = if (id == HIGHEST_INTEGER) PARENT_DISTANCE_HIGHEST else id.toIntOrNull()?.takeIf { it >= 1 }
+
     /** The stored form of a [Config] — strings, so an unknown value decodes to its default. */
     @Serializable
     private data class StoredConfig(
@@ -2113,6 +2215,8 @@ object SearchDomain {
         val noParentOfKinds: List<String> = emptyList(),
         /** New 2026-11-12: absent = the parents of nothing asked. */
         val parentsOf: List<String> = emptyList(),
+        /** New 2026-11-13: absent = the direct parents (1); 0 = at any distance. */
+        val parentDistance: Int = 1,
         val placeStartMillis: Long? = null,
         val placeEndByDelta: Boolean = true,
         val placeEndMillis: Long? = null,
@@ -2731,10 +2835,13 @@ object SearchDomain {
                 // Every configuration of a Search window, named by its label, the type it is about beside it.
                 // Only what a drop-down gives: the account holds none ([optionResults]).
                 Kind.Option -> emptyList()
+                // Only what the field of a number gives ([integerResults]).
+                Kind.Integer -> emptyList()
                 // Only what the actions section gives its Search window ([actionListRows]).
                 Kind.Action -> emptyList()
                 Kind.SearchConfiguration -> Setting.entries.map { setting ->
-                    ItemResult(kind, setting.name, setting.label, setting.section?.label ?: "general")
+                    // ...and its category ([SettingRole]).
+                    ItemResult(kind, setting.name, setting.label, listOfNotNull(setting.section?.label ?: "general", roleOf(setting)?.label).joinToString(" · "))
                 }
             }
         return items
@@ -2881,7 +2988,10 @@ object SearchDomain {
                     // ...and only the parents of the given elements.
                     if (filters.noParentOfKinds.isEmpty() && filters.parentsOf.isEmpty()) return@let rows
                     val parents = ElementTree.parentIndex(state)
-                    val wanted = if (filters.parentsOf.isEmpty()) null else filters.parentsOf.flatMapTo(HashSet()) { parents[it].orEmpty() }
+                    // ...as far above them as the parent distance says.
+                    val wanted =
+                        if (filters.parentsOf.isEmpty()) null
+                        else ElementTree.parentsWithin(parents, filters.parentsOf, filters.parentDistance.takeIf { it != PARENT_DISTANCE_HIGHEST })
                     rows.filter { row ->
                         val key = keyOf(row)
                         (wanted == null || key in wanted) && parents[key].orEmpty().none { ElementTree.kindOf(it) in filters.noParentOfKinds }
@@ -3083,7 +3193,7 @@ object SearchDomain {
                         ))
             }
             is ItemResult -> when (result.kind) {
-                Kind.Task, Kind.WorkplaceSetup, Kind.SearchConfiguration, Kind.Option, Kind.Action -> true
+                Kind.Task, Kind.WorkplaceSetup, Kind.SearchConfiguration, Kind.Option, Kind.Integer, Kind.Action -> true
                 Kind.Category ->
                     tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
                 Kind.RestrictivePeriod -> when (filters.periodOrigin) {

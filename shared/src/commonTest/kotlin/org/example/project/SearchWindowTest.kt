@@ -812,6 +812,7 @@ class SearchWindowTest {
                 SearchDomain.Setting.IncludedElements,
                 SearchDomain.Setting.NoParentOfKinds,
                 SearchDomain.Setting.ParentsOf,
+                SearchDomain.Setting.ParentDistance,
                 // User rule 2026-11-12: how the results are laid out (today the actions section's).
                 SearchDomain.Setting.GroupByAddedElements,
                 SearchDomain.Setting.ExpandResults,

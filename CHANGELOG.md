@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Parent distance, the integer type, four categories of search configuration — 2026-11-13
+
+User rules: the "List of parents" has a **parent distance**, 1 by default, picked in a Search window of integers
+("highest parent distance (5)", 1, 2, 3… with no end, the thumb sized as if it stopped at the highest); *"you need to add
+the element type integer"*; the search configurations have four categories (filter, sort, display, children); the
+default per context makes what matters easy to see. New `Kind.Integer` (with its "Sort by"), `SearchDomain.integerResults`,
+`IntegerRows` on `SearchOptions`, `ListScrollbar(openEnd)`. New `Filters.parentDistance` (local view state, stored
+`parentDistance`, absent = 1, 0 = any distance) read by the "Parents of" filter through `ElementTree.parentsWithin`; new
+`Setting.ParentDistance` and its field. New `SearchDomain.SettingRole` / `roleOf`. The ▾ tree's first node is now "For
+this list" where the window was opened on something (`contextSettings`). **Not built**, questions open: the window's
+parts as search configurations (the background menu as a search over them), and an added search configuration showing its
+state per window id. No migration.
+
 ### Every task of a tree has "Tree name"; a path begins with its tree's name — 2026-11-13
 
 User rules: *"the tree action should be in all tasks belonging to a tree"* and the paths' first segment is the tree's name.

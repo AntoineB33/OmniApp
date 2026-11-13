@@ -107,6 +107,33 @@ object ElementTree {
         return out
     }
 
+    /**
+     * User rule 2026-11-13, the **parent distance**: what stands above [keys] by level — the first holds their direct
+     * parents (distance 1), the next the parents of those not met yet (distance 2)… An element is at its SHORTEST
+     * distance, once; the levels end where nothing new stands above. [parents] is [parentIndex].
+     */
+    fun parentLevels(parents: Map<String, Set<String>>, keys: Collection<String>): List<Set<String>> {
+        val seen = HashSet<String>()
+        val levels = ArrayList<Set<String>>()
+        var frontier: Collection<String> = keys
+        while (true) {
+            val next = LinkedHashSet<String>()
+            for (key in frontier) parents[key].orEmpty().forEach { if (seen.add(it)) next.add(it) }
+            if (next.isEmpty()) return levels
+            levels += next
+            frontier = next
+        }
+    }
+
+    /** The parents of [keys] at a distance of [distance] or less ([parentLevels]); null: at any distance. */
+    fun parentsWithin(parents: Map<String, Set<String>>, keys: Collection<String>, distance: Int?): Set<String> {
+        val levels = parentLevels(parents, keys)
+        return (if (distance == null) levels else levels.take(distance.coerceAtLeast(1))).flatMapTo(HashSet()) { it }
+    }
+
+    /** The highest parent distance of [keys]: how many levels stand above them; 0 with no parent. */
+    fun highestParentDistance(state: SchedulerState, keys: Collection<String>): Int = parentLevels(parentIndex(state), keys).size
+
     /** Everything under [key] at any depth, nearest first, each once; [key] itself only where a merge made a loop. */
     fun descendantsOf(state: SchedulerState, key: String): List<String> {
         val seen = LinkedHashSet<String>()

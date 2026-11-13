@@ -388,7 +388,8 @@ data class SearchRowOpeners(
             // A notification is a fact that happened: it has nothing to open. Nor has a log entry — its actions show it.
             // A search configuration is set in the configurations tree, where it stands with its control.
             SearchDomain.Kind.Notification, SearchDomain.Kind.ClaudePrompt, SearchDomain.Kind.ClaudeAnswer,
-            SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.SearchConfiguration, SearchDomain.Kind.Option, SearchDomain.Kind.Action -> Unit
+            SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.SearchConfiguration, SearchDomain.Kind.Option, SearchDomain.Kind.Integer,
+            SearchDomain.Kind.Action -> Unit
             SearchDomain.Kind.WorkplaceSetup -> onApplyWorkplaceSetup(item.id)
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }
@@ -589,7 +590,11 @@ fun SearchWindow(
             if (searchesTasks) SearchDomain.allPathsInAnyTree(state) else emptyMap()
         }
     val results: List<SearchDomain.Result> =
-        if (options != null) {
+        if (options?.integers != null) {
+            // User rule 2026-11-13: a list of integers, with no end ([SearchDomain.integerResults]).
+            val integers = options.integers
+            remember(integers, query) { SearchDomain.integerResults(integers.highestLabel, integers.highest, integers.count, query) }
+        } else if (options != null) {
             remember(options.options, options.checked, query) {
                 SearchDomain.optionResults(options.options, query, options.checked, creates = options.onCreate != null)
             }
@@ -1359,7 +1364,7 @@ fun SearchWindow(
                                 ) {
                                     val elementKey = RESULT_SURFACE + resultKey(result)
                                     // User rule 2026-11-12: a drop-down's option — ticked or picked at a click.
-                                    val option = options?.takeIf { result.kind == SearchDomain.Kind.Option }
+                                    val option = options?.takeIf { SearchDomain.isPickedRow(result.kind) }
                                     val selectAll = result.id == SearchDomain.SELECT_ALL_OPTION
                                     ItemResultRow(
                                         kindWidth = resultKindWidth,
@@ -1486,7 +1491,8 @@ fun SearchWindow(
                         }
                     }
                 }
-                if (count > 0) ListScrollbar(listState, Modifier.align(Alignment.CenterEnd))
+                // A list of integers has no end: its thumb is sized by the highest one that means something.
+                if (count > 0) ListScrollbar(listState, Modifier.align(Alignment.CenterEnd), openEnd = options?.integers?.let { it.highest + 1 })
             }
         }
 
@@ -1698,7 +1704,16 @@ class SearchOptions(
     val disabled: Set<String> = emptySet(),
     /** A name the bar holds that no option has: the row that makes it, and what it does ([SearchDomain.CREATE_OPTION]). */
     val onCreate: ((String) -> Unit)? = null,
+    /** User rule 2026-11-13: the list is one of integers ([IntegerRows]) and [options] is not read; [onNearEnd] gives more. */
+    val integers: IntegerRows? = null,
 )
+
+/**
+ * User rule 2026-11-13: **a list of integers** a [SearchOptions] gives ([SearchDomain.integerResults]): its first row
+ * names the [highest] value that means something ([highestLabel]), then 1, 2, 3… — [count] of them now, the list having
+ * no end. The scrollbar's thumb is sized as if the list stopped at [highest], and shrinks as the user scrolls past it.
+ */
+data class IntegerRows(val highestLabel: String, val highest: Int, val count: Int)
 
 /**
  * User rule 2026-11-12: **an entry of a right-click menu** — the menu being a Search window ([ActionMenu]): its [label], what
@@ -1829,11 +1844,12 @@ internal fun OptionSearchMenu(
         offset = offset,
         atPointer = atPointer,
     ) {
-        var config by remember { mutableStateOf(SearchDomain.OPTION_SEARCH.copy(dropButtons = options.onDrop != null)) }
+        val opened = if (options.integers != null) SearchDomain.INTEGER_SEARCH else SearchDomain.OPTION_SEARCH
+        var config by remember { mutableStateOf(opened.copy(dropButtons = options.onDrop != null)) }
         var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
         // No account is searched: the options are the rows.
         val nothing = remember { SchedulerState.empty() }
-        val rows = options.options.size + (if (options.checked != null) 1 else 0) + (if (options.onCreate != null) 1 else 0)
+        val rows = (options.integers?.let { it.count + 1 } ?: options.options.size) + (if (options.checked != null) 1 else 0) + (if (options.onCreate != null) 1 else 0)
         val height = (OPTION_MENU_BAR_HEIGHT + RESULT_ROW_HEIGHT * rows.coerceAtLeast(1)).coerceAtMost(OPTION_MENU_MAX_HEIGHT)
         SearchWindow(
             state = nothing,
@@ -3301,10 +3317,10 @@ private fun ItemResultRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             // A drop-down lists options alone, the actions section actions: no column saying so on each row.
-            if (item.kind != SearchDomain.Kind.Option && item.kind != SearchDomain.Kind.Action) KindSection(item.kind, kindWidth)
+            if (!SearchDomain.isPickedRow(item.kind) && item.kind != SearchDomain.Kind.Action) KindSection(item.kind, kindWidth)
             // User rule 2026-11-02: every element has its arrow. A "creation" row is a command, and an option a choice:
             // neither is an element.
-            if (item.kind != SearchDomain.Kind.Creation && item.kind != SearchDomain.Kind.Option) SectionArrow(!expanded, onToggleExpand)
+            if (item.kind != SearchDomain.Kind.Creation && !SearchDomain.isPickedRow(item.kind)) SectionArrow(!expanded, onToggleExpand)
             if (checkBox != null) Checkbox(checked = checkBox, onCheckedChange = null)
             leading?.invoke()
             if (timerRun != null) {
