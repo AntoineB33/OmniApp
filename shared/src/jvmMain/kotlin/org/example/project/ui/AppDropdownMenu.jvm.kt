@@ -244,6 +244,9 @@ private class MenuSession(
     /** What the app makes of a key its windows would have heard ([LocalMenuKeyForward]): the chords that walk every window. */
     var keyForward: ((Key, Boolean, Boolean, Boolean) -> Boolean)? = null
 
+    /** The hover pop-up this menu is, or is opened in ([LocalMenuHover]): what a key typed in it pins. */
+    private var hover: MenuHoverTracker? = null
+
     /**
      * Anomaly 2026-11-11 (*"it still didn't close it"*, measured): a pop-up brought back holds the keyboard with nothing
      * of it focused, and then no key reaches its content, nor the window's own key handler — Ctrl+Alt+← struck there was
@@ -293,6 +296,8 @@ private class MenuSession(
                     dismiss.value()
                     true
                 } else {
+                    // User rule 2026-11-14: typing in a hover pop-up pins it, as a press in it does.
+                    if (event.type == KeyEventType.KeyDown) hover?.pin()
                     false
                 }
             },
@@ -301,12 +306,20 @@ private class MenuSession(
             // The pop-up as a position of the app (user rule 2026-11-11): what its tracker hears of the keyboard coming to
             // it, and how a walk through the positions brings the keyboard back to it ([MenuHoverTracker.focusWindow]).
             val tracker = LocalMenuHover.current
+            hover = tracker
             DisposableEffect(tracker) {
                 if (tracker == null) return@DisposableEffect onDispose { }
                 val focus = object : WindowFocusListener {
                     override fun windowGainedFocus(event: WindowEvent) = tracker.windowFocused()
-                    override fun windowLostFocus(event: WindowEvent) = Unit
+
+                    // User rule 2026-11-14: the keyboard gone to a window that is none of the pop-up's own nor of its
+                    // descendants — a press elsewhere in the app, or in another application.
+                    override fun windowLostFocus(event: WindowEvent) {
+                        val inside = generateSequence(event.oppositeWindow) { it.owner }.any { it in tracker.windows }
+                        if (!inside) tracker.windowLeft()
+                    }
                 }
+                tracker.windows += window
                 tracker.focusWindow = { window.giveKeyboard() }
                 // The app's window at the root of the menus it hangs from.
                 tracker.focusAppWindow = { generateSequence(window.owner) { it.owner }.lastOrNull()?.giveKeyboard() }
@@ -314,6 +327,7 @@ private class MenuSession(
                 if (window.isFocused) tracker.windowFocused()
                 onDispose {
                     window.removeWindowFocusListener(focus)
+                    tracker.windows -= window
                     tracker.focusWindow = null
                     tracker.focusAppWindow = null
                 }

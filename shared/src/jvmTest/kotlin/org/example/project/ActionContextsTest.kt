@@ -65,6 +65,32 @@ class ActionContextsTest {
         assertEquals(3, SearchDomain.actionContexts(account, AddedAction.ChronoRun, all).size)
     }
 
+    /**
+     * Anomaly 2026-11-14: *"'Contexts and states' groups elements only for 'Parents'"*. An element's own configuration is
+     * read off the element: the elements holding the same value are one context.
+     */
+    @Test
+    fun the_elements_holding_the_same_value_of_their_own_configuration_are_one_context() {
+        val alarms = listOf(
+            org.example.project.scheduler.model.AlarmEntry(id = "x", label = "wake", timeOfDayMinutes = 420),
+            org.example.project.scheduler.model.AlarmEntry(id = "y", label = "wake", timeOfDayMinutes = 480),
+            org.example.project.scheduler.model.AlarmEntry(id = "z", label = "pill", timeOfDayMinutes = 420, enabled = false),
+        )
+        val state = account.copy(alarms = alarms)
+        val all = SearchDomain.resolve(state, alarms.map { "Alarm/" + it.id }, { emptyMap() })
+        fun contexts(action: AddedAction) =
+            SearchDomain.actionContexts(state, action, all).map { members -> members.map { (it as SearchDomain.ItemResult).id } }
+        assertEquals(listOf(listOf("x", "y"), listOf("z")), contexts(AddedAction.AlarmTitle))
+        assertEquals(listOf(listOf("x", "z"), listOf("y")), contexts(AddedAction.AlarmTime))
+        assertEquals(listOf(listOf("x", "y"), listOf("z")), contexts(AddedAction.AlarmOnOff))
+        assertEquals(listOf(listOf("x", "y", "z")), contexts(AddedAction.AlarmDays))
+        // The chronos' titles: each its own here, two the same once renamed alike.
+        assertEquals(3, SearchDomain.actionContexts(account, AddedAction.ChronoTitle, rows("a", "d", "e")).size)
+        val renamed = account.copy(chronos = account.chronos.map { if (it.id == "d") it.copy(label = "a") else it })
+        val chronos = SearchDomain.resolve(renamed, listOf("a", "d", "e").map(::key), { emptyMap() })
+        assertEquals(2, SearchDomain.actionContexts(renamed, AddedAction.ChronoTitle, chronos).size)
+    }
+
     @Test
     fun an_added_action_has_its_contexts_and_none_of_an_elements_actions() {
         val added = listOf(SearchDomain.ItemResult(Kind.Action, "some/row", "Parents", ""))

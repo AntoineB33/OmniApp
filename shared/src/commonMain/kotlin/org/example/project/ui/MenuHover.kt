@@ -57,6 +57,52 @@ class MenuHoverTracker(
     /** The pop-up closed: the next opening is a hover pop-up again, until a press pins it. */
     fun unpin() {
         pinned = false
+        if (focused === this) focused = null
+        if (walkingTo === this) walkingTo = null
+    }
+
+    /**
+     * Set as a press outside closed the pop-up while pinned ([windowLeft]), until the pointer next enters a part of it:
+     * the press that closed it, landing on the button that opens it, must not open it again ([takeClosedPinned]).
+     */
+    private var closedPinned = false
+
+    /** Whether the press being answered is the one that just closed the pop-up, pinned; asked once. */
+    fun takeClosedPinned(): Boolean = closedPinned.also { closedPinned = false }
+
+    /**
+     * The windows the pop-up is drawn in, as the platform knows them (the desktop's menu windows: its own, and each menu
+     * opened inside it that reports to this tracker) — what "the keyboard left it" is read against ([windowLeft]).
+     */
+    val windows = HashSet<Any>()
+
+    /**
+     * User rule 2026-11-14: **the keyboard left the pop-up for a window that is none of its own nor of its
+     * descendants** — a click or a right-click *"on anything in the app than the currently focused window and its
+     * descendant ones"*. Pinned, it and every pop-up it is a branch of disappear; not pinned, nothing more than before
+     * (its own menu leaves, its ancestors stay). A walk through the positions that is bringing the keyboard to one of
+     * its ancestors ([takeKeyboard]) closes what stands below that ancestor alone.
+     */
+    fun windowLeft() {
+        if (focused === this) focused = null
+        if (!pinned) return
+        val target = walkingTo
+        var at: MenuHoverTracker? = this
+        while (at != null && at !== target) {
+            val above = at.parent
+            at.pinned = false
+            at.closedPinned = true
+            at.pending?.cancel()
+            at.pending = null
+            at.onLeft()
+            at = above
+        }
+    }
+
+    /** The keyboard brought to the pop-up's window by the app (a walk through the positions), not by a press. */
+    fun takeKeyboard() {
+        walkingTo = this
+        focusWindow?.invoke()
     }
 
     /**
@@ -76,11 +122,14 @@ class MenuHoverTracker(
 
     /** The keyboard came to the pop-up's window — told by the platform's menu. */
     fun windowFocused() {
+        focused = this
+        walkingTo = null
         onFocused?.invoke()
     }
 
     fun enter(part: Any) {
         parent?.enter(part)
+        closedPinned = false
         inside += part
         pending?.cancel()
         pending = null
@@ -105,6 +154,25 @@ class MenuHoverTracker(
          * (anomaly 2026-11-04).
          */
         const val GRACE_MILLIS: Long = 80
+
+        /** The hover pop-up whose window holds the keyboard, null while none does. One app, one keyboard. */
+        var focused: MenuHoverTracker? = null
+            private set
+
+        /** The pop-up a walk through the positions is bringing the keyboard to ([takeKeyboard]), until it has it. */
+        private var walkingTo: MenuHoverTracker? = null
+
+        /**
+         * User rule 2026-11-14: once a press, a right-click or a key pinned the pop-up holding the keyboard, *"any object
+         * that is supposed to make a window appear when hovered over won't, except if it is in the currently focused
+         * window or one of its descendant windows"*. Whether a hover over something standing in [from]'s pop-up (null:
+         * in a window of the app) opens or closes a pop-up: always while nothing is pinned; else only inside the pinned
+         * pop-up nearest the keyboard — the focused one, or the one a fresh hover pop-up holding it hangs from.
+         */
+        fun hoverActs(from: MenuHoverTracker?): Boolean {
+            val pinnedOne = generateSequence(focused) { it.parent }.firstOrNull { it.pinned } ?: return true
+            return generateSequence(from) { it.parent }.any { it === pinnedOne }
+        }
     }
 }
 
@@ -116,7 +184,8 @@ val LocalMenuHover = compositionLocalOf<MenuHoverTracker?> { null }
 
 /**
  * This element as one part of [tracker]'s pop-up: the pointer entering and leaving it, it going while held, and a press
- * on it pinning the pop-up ([MenuHoverTracker.pin]) — whatever is pressed, its background or a control in it.
+ * on it pinning the pop-up ([MenuHoverTracker.pin]) — whatever is pressed, with either button: its background, a control
+ * in it, or the button that opens it (user rule 2026-11-14).
  */
 fun Modifier.reportsHover(tracker: MenuHoverTracker?): Modifier =
     if (tracker == null) this else composed {
@@ -142,7 +211,10 @@ fun Modifier.reportsHover(tracker: MenuHoverTracker?): Modifier =
 fun rememberMenuHoverTracker(parent: MenuHoverTracker? = null, onLeft: () -> Unit): MenuHoverTracker {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val latest by rememberUpdatedState(onLeft)
-    return remember(scope, parent) { MenuHoverTracker(scope, parent) { latest() } }
+    val tracker = remember(scope, parent) { MenuHoverTracker(scope, parent) { latest() } }
+    // Gone from the composition (the pop-up it hangs from closed): it holds no keyboard and pins nothing any more.
+    DisposableEffect(tracker) { onDispose { tracker.unpin() } }
+    return tracker
 }
 
 /**

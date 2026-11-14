@@ -113,6 +113,38 @@ class AddedListSearchTest {
         assertEquals(window, withAddedListElements(window, addedListElements(window)))
     }
 
+    /**
+     * Anomaly 2026-11-14: *"Sorting and filters from the ▾ of the added elements list do nothing."* The list's rows are
+     * given, and answer its configuration as a searched list does ([SearchDomain.results]' `given`).
+     */
+    @Test
+    fun the_given_rows_answer_the_kinds_the_bar_the_filters_and_the_sorting() {
+        val account = QuotaScenario.account()
+        // Not in the order a search lists them: the order added is the list's own.
+        val added = keys.reversed()
+        val rows = SearchDomain.resolve(account, added, { emptyMap() })
+        fun listed(config: SearchDomain.Config) =
+            SearchDomain.results(account, config.searchedKinds, config.query, { emptyMap() }, config.filters, config.sorts, given = rows)
+                .map(SearchDomain::keyOf)
+        assertEquals(added, listed(ADDED_LIST_SEARCH), "as it opens: every element, in the order added")
+        // A kind unchecked leaves the list.
+        val kind = rows.first().kind
+        val ofKind = listed(ADDED_LIST_SEARCH.copy(kinds = setOf(kind)))
+        assertEquals(rows.filter { it.kind == kind }.map(SearchDomain::keyOf), ofKind)
+        assertTrue(ofKind.isNotEmpty())
+        assertEquals(added - ofKind.toSet(), listed(ADDED_LIST_SEARCH.copy(kinds = Kind.entries.toSet() - kind)))
+        // The bar keeps the names answering it, and offers to make nothing.
+        val name = rows.first().name
+        assertTrue(SearchDomain.keyOf(rows.first()) in listed(ADDED_LIST_SEARCH.copy(query = name)))
+        assertEquals(emptyList(), listed(ADDED_LIST_SEARCH.copy(query = "no element is named so")))
+        // A sorting method sorts.
+        val byName = listed(ADDED_LIST_SEARCH.copy(sorts = listOf(SearchDomain.SortMethod(null, SearchDomain.SortKey.Name))))
+        assertEquals(rows.sortedBy { it.name.lowercase() }.map { it.name }, byName.map { key -> rows.first { SearchDomain.keyOf(it) == key }.name })
+        // A filter filters: an excluded element leaves.
+        val without = listed(ADDED_LIST_SEARCH.copy(filters = ADDED_LIST_SEARCH.filters.copy(excludedElements = setOf(added.first()))))
+        assertEquals(added.drop(1), without)
+    }
+
     @Test
     fun the_list_opens_on_every_kind_with_a_drop_button_on_each_row() {
         assertEquals(Kind.entries.toSet(), ADDED_LIST_SEARCH.kinds)

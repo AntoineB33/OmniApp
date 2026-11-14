@@ -1130,7 +1130,11 @@ suggestions before it was ever entered.
     row's enters its rename, as a result row's. The rows open and the scroll stay the window's (`SearchSplits.expandedAdded`,
     its `added/` elements, `scrolls`), given to the list and told back (`addedListElements`, `withAddedListElements`).
     **One sub-tree of the two lists shows a selection of cells at a time**: the list reads the window's selection
-    surface (`AddedSurface`). Its sorting and filters are not applied yet: the list is in the order added.
+    surface (`AddedSurface`). **Its rows are GIVEN to the one search, never listed beside it** (anomaly 2026-11-14,
+    *"Sorting and filters from the ▾ of the added elements list do nothing"*; `SearchDomain.results`' `given`,
+    `AddedListSearchTest`): the kinds checked, the bar, the filters and the sorting of its own ▾ are applied by the code
+    that applies them to a searched list — the first copy filtered by the bar alone. As it opens it holds every kind and
+    no sorting, so it is in the order added; no row offers to make an element.
   - **The actions section has its own added elements and its own actions over them** (user rule 2026-11-13, the use
     case *"right-click on the element with the 'list of parents' field and select 'add' … right-click on the background
     of the action section, select 'show the actions'"*; `AddedActionList`, `ACTIONS_SECTION_OWN`, `ActionSectionHost`,
@@ -1145,8 +1149,13 @@ suggestions before it was ever entered.
     state element will be the exact 'list of parents' element the user would find in the action section of A, B or
     C"*: each context names its elements, and under it stands the action's own editor over them, so a change there is
     made for them all. What tells two elements apart is read per action: "Parents" by the element's parents; an action
-    about a set has one context; **any other is one context per element until its state is read in `actionStateOf`**
-    — never two differing elements shown as one. An action row is no element of the account: no "Parents" of its own.
+    about a set has one context; **an element's own configuration is read off the element** (anomaly 2026-11-14, *"groups
+    elements only for 'Parents'"*; `ownActionState`): a title, an alarm's time, days, state, ring and alert, a timer's
+    duration, a quota's amount, loop, restarts and resilience, a reminder's cadence, a category's name, rules and kind, a
+    task's minimum time, resilience, schedule unit and text, a period's drawing — the elements holding the same value
+    are one context. **What is not read there stays one context per element** (an action that shows the element itself:
+    its run, its progression, its paths, its children, a log entry's text) — never two differing elements shown as
+    one; a new action whose control shows a value is given its line there. An action row is no element of the account: no "Parents" of its own.
     What is drawn in the section is inside it: its fields' windows are `<window>/actions/field:…`, its own actions
     section `<window>/actions/actions`.
   - **The section is a Search window whose results are actions** (user rule 2026-11-12: *"The action section is

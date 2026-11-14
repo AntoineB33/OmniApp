@@ -95,9 +95,15 @@ means.
   companion, a notice) has no ☆: a saved button would have nothing to come back to.
   - **The left-side menu is a Search window, on its own background colour** (user rule 2026-11-13: *"Make the
     left-side menu a Search window as well, with a specific background color."*; `LateralMenu`, `SearchWindow`'s
-    `menuList`, `MenuSearchRows`, `LATERAL_MENU_SEARCH`, `LATERAL_MENU_ID`, `LateralMenuSearchTest`). The page button
-    stays on top — the one thing of the menu that is not the user's, and it no longer scrolls away with the items.
-    Under it stands the very `SearchWindow`, its search section alone, at the menu's width (never a section's least):
+    `menuList`, `MenuSearchRows`, `LATERAL_MENU_SEARCH`, `LATERAL_MENU_ID`, `LateralMenuSearchTest`). **The page
+    selector is an element of the menu** (user rule 2026-11-14: *"The feature page selector must be an element, so it
+    must appear below the search bar"*; `pageSelectorAnswers`): the first of the list, under the bar, kept by the bar
+    while what it holds names a page — still the one item that is not the user's (never removed, renamed or moved).
+    **Its header cannot be shown**: the one Search window whose background menu has no "Show the header"
+    (`SearchPartsMenu`'s `parts`). **Its id is a row of its own** (found 2026-11-14: it was `LateralMenu`, the row the
+    Task Scheduler page's items are kept on, and each wrote over the other). The parts it shows are kept across a
+    restart (`SearchPartsStore`, with the windows' sections), as each actions section's are (`<window>/actions`).
+    The menu is the very `SearchWindow`, its search section alone, at the menu's width (never a section's least):
     its **bar** keeps the items whose name holds what it holds (`CustomMenuButtons.answering`), its **▾** opens its
     configurations, its **background menu** holds "Customize" and "Reset" then the window's parts. **Its list is the
     menu's items, drawn by the menu's own code** (`CustomMenuSection`): their order, their folders, their drag in
@@ -358,6 +364,23 @@ means.
     child pop-up and the arrow in a pop-up's bar each a branch of the pop-up they stand in (`parent`).
   - **A press in a hover pop-up pins it and its ancestors** (user rule 2026-11-11, `MenuHoverTracker.pin`, read by
     `reportsHover`): the pointer leaving no longer closes them; the keyboard going to a window outside the tree does.
+    **User rule 2026-11-14** (*"Clicking, right-clicking or typing pins the currently focused Search windows (clicking or
+    right-clicking the button that makes the window appear also pins it)"*; `MenuHoverTrackerTest`): a key typed in it
+    pins it too (the menu window's key handler), and so does a press of either button on what opens it — the ▾, a
+    category's row — which opens it again, pinned, where that press had just closed it as a hover pop-up (the keyboard
+    gone to the window the button stands in). Pinning changes nothing but these two things:
+    - **No hover opens or closes a pop-up outside the pinned one holding the keyboard**
+      (`MenuHoverTracker.hoverActs`, asked by every `onHoverEnter` of the tree: the ▾, a category's row, an end node
+      closing its neighbour's child) — only what stands in it or in its descendants answers a hover; a fresh hover
+      pop-up opened from it holds the keyboard unpinned, and the pinned one above it still decides.
+    - **A press anywhere else in the app closes it AND every pop-up it hangs from** (`MenuHoverTracker.windowLeft`, told
+      by the menu window losing the keyboard to a window that is none of the tracker's own nor owned by one,
+      `MenuHoverTracker.windows`): a press in one of its ancestors closes that ancestor too — until then the ancestor
+      stayed. Not pinned, as before: its own menu leaves, its ancestors stay. A walk through the positions to an
+      ancestor (`takeKeyboard`) closes what is below that ancestor alone. The button that opens a pinned pop-up is
+      outside it: pressed, the pop-up closes and stays closed (`takeClosedPinned`).
+    The keyboard's place is ONE fact of the app (`MenuHoverTracker.focused`), cleared as a pop-up closes or leaves the
+    composition — a tracker left "focused and pinned" would hold every hover of the app back.
     A menu that holds the keyboard stays only while a window of ITS tree is the active one (`activeListener`, once it
     has held the keyboard): a pinned pop-up whose child held it stood on screen after the user went to another
     application. Closed, it is a hover pop-up again.

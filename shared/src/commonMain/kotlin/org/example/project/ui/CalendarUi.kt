@@ -1731,8 +1731,8 @@ private fun hourLabel(hour: Int): String {
 }
 
 /**
- * PRD §7 Lateral menu: a persistent left rail. Its first element is the page-navigation button (present on every
- * feature page) — the ONE thing of it that is not the user's (user rule 2026-10-08: *"Make the entire left-side menu
+ * PRD §7 Lateral menu: a persistent left rail. Its first element, under its search bar (user rule 2026-11-14), is the
+ * page-navigation button (present on every feature page) — the ONE thing of it that is not the user's (user rule 2026-10-08: *"Make the entire left-side menu
  * of the app customizable, except for the top button that allows the user to switch between pages"*). Everything
  * under it is [items]: the user's list ([CustomMenuSection]) of windows' buttons and controls of the app
  * ([MenuControl], [MenuControlItem]), which starts as what the menu used to hold ([CustomMenuButtons.DEFAULTS]).
@@ -1775,28 +1775,26 @@ fun LateralMenu(
             .border(1.dp, CalColors.grid)
             // A right-click no item answered (they consume theirs): the menu's own, on its empty part.
             .then(contextMenuModifier(enabled = true, key = "menu-background") { backgroundMenu = true })
-            .padding(top = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(top = 6.dp),
     ) {
-        // First element: page navigation (persistent across all feature pages), styled like the buttons below.
         // The collapse toggle is NOT here — it's a bookmark on this menu's right border (in App), so it stays
-        // visible after the whole menu (this button included) slides off-screen.
-        // In a box with the selector, never a child of this column of its own: open, a menu is a node of the layout, and
-        // the column's gap, given to it, moved every button under it (anomaly 2026-11-01, `LateralMenuShiftTest`).
+        // visible after the whole menu slides off-screen.
+        // The menu of the margin round the Search window, in a box of no height: open, a menu is a node of the layout.
         Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-            PageNavButton(page = page, onPageSelected = onPageSelected)
             transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
             // At the pointer (anomaly 2026-11-01): declared here, it hung from the top of the menu, wherever the click was.
             // User rule 2026-11-12: the menu is a Search window of its entries.
             ActionMenu("LateralMenu", open = backgroundMenu, onDismiss = { backgroundMenu = false }, actions = ownActions, atPointer = true)
         }
-        // User rule 2026-11-13: *"Make the left-side menu a Search window as well"*. Under the page button — the one
-        // thing of the menu that is not the user's — the very [SearchWindow], its search section alone: its bar finds
+        // User rule 2026-11-13: *"Make the left-side menu a Search window as well"*. The very [SearchWindow], its
+        // search section alone — the page selector the first element of its list (user rule 2026-11-14): its bar finds
         // among the items, its ▾ opens its configurations, its background menu shows its parts after the menu's own
         // entries. Its list is the menu's items, drawn by the menu's code ([MenuSearchRows]): they keep their order,
         // their folders and their drag.
         var held by remember { mutableStateOf(LATERAL_MENU_SEARCH) }
-        var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
+        // Anomaly 2026-11-14: the parts its background menu shows or hides are kept across a restart ([rememberKeptParts]).
+        // User rule 2026-11-14: its header is never shown, whatever was kept.
+        var splits by rememberKeptParts(LATERAL_MENU_ID, EMBEDDED_SEARCH_SPLITS, fixed = { it.copy(headerRemoved = true) })
         val nothing = remember { org.example.project.scheduler.state.SchedulerState.empty() }
         SearchWindow(
             state = nothing,
@@ -1828,7 +1826,19 @@ fun LateralMenu(
                             // without the bar the last button simply sits that much above the floor.
                             .padding(top = 6.dp, bottom = 12.dp + MINIMIZED_BAR_HEIGHT),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) { items(query) }
+                    ) {
+                        // User rule 2026-11-14: *"The feature page selector must be an element, so it must appear below
+                        // the search bar"* — the first of the menu's list, found by the bar as the items are: by the
+                        // page it shows, or by any page it leads to.
+                        if (pageSelectorAnswers(query, page)) {
+                            // In a box of its own: open, its list is a node of the layout, and the column's gap, given to
+                            // it, moved every item under it (anomaly 2026-11-01, `LateralMenuShiftTest`).
+                            Box(Modifier.fillMaxWidth()) {
+                                PageNavButton(page = page, onPageSelected = onPageSelected)
+                            }
+                        }
+                        items(query)
+                    }
                 },
                 backgroundActions = ownActions,
             ),
@@ -3855,6 +3865,14 @@ internal fun parseTimeOfDay(text: String): Int {
  * the other menu buttons (Calendar, etc.). It never moves relative to the menu; only the menu itself moves
  * (it collapses off-screen via the bookmark toggle in App).
  */
+/**
+ * User rule 2026-11-14: the page selector is an element of the left-side menu — whether the menu's bar, holding [query],
+ * keeps it: empty, it does; else the page shown ([page]) or one it leads to answers it, as an item's name does.
+ */
+internal fun pageSelectorAnswers(query: String, page: OmniPage): Boolean =
+    query.isBlank() || OmniPage.entries.any { org.example.project.scheduler.domain.SearchDomain.matchRank(it.label, query) != null } ||
+        org.example.project.scheduler.domain.SearchDomain.matchRank(page.label, query) != null
+
 @Composable
 private fun PageNavButton(page: OmniPage, onPageSelected: (OmniPage) -> Unit) {
     var expanded by remember { mutableStateOf(false) }

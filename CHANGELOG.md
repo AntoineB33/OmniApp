@@ -11,6 +11,38 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pinning a hover pop-up; the page selector is an element; five anomalies — 2026-11-14
+
+User rules: *"Clicking, right-clicking or typing pins the currently focused Search windows (clicking or right-clicking
+the button that makes the window appear also pins it) … any object that is supposed to make a window appear when
+hovered over won't, except if it is in the currently focused window or one of its descendant windows. Also, the
+currently focused window and any of its ascendant ones will disappear if the user clicks or right-clicks on anything in
+the app than the currently focused window and its descendant ones."*; *"The feature page selector must be an element, so
+it must appear below the search bar of the left-side menu"*; *"the left-side menu must be the only Search window that
+doesn't allow to show the header in the right-click menu."* `MenuHoverTracker` (`focused`, `hoverActs`, `windowLeft`,
+`windows`, `takeKeyboard`, `takeClosedPinned`), read by `ConfigurationTree` and told by the desktop's menu window.
+**Behaviour changes:** a key typed in a hover pop-up pins it; a click on a ▾ no longer closes its open pop-up, it pins
+it (a second click, the pop-up pinned, closes it); once the pop-up holding the keyboard is pinned, no ▾ or category
+row outside it answers a hover; a press in a pinned pop-up's ANCESTOR closes that ancestor too (it stayed until now);
+the page selector stands under the menu's bar, scrolls with the items and is kept by the bar while it names a page; the
+left-side menu's background menu has no "Show the header".
+
+**Anomalies fixed:** (1) *"Parent distance, I don't see the scrollbar cursor"* — a list with no end whose meaningful
+rows fit on screen was counted as long as its viewport: `openEndRows` counts one screen more than what is shown.
+(2) *"Sorting and filters from the ▾ of the added elements list do nothing"* — the list's rows are given to the one
+search (`SearchDomain.results`' `given`). (3) *"'Contexts and states' groups elements only for 'Parents'"* — an
+element's own configuration is read off the element (`ownActionState`); what shows the element itself stays one context
+per element. (4) *"Which parts of the left-side menu and of the actions section are shown is not saved across a
+restart"* — `SearchPartsStore`, on the `WindowSections` row, by `LateralMenuSearch` and `<window>/actions` (new keys of
+that row's map; an older build ignores them). (5) **Found on the way:** the left-side menu's search configuration was
+kept on the row `LateralMenu`, the Task Scheduler page's menu items' — a letter typed in the menu's bar wrote over the
+items (the default menu at the next start), a change of the items over the configuration. Its id is
+`LateralMenuSearch`; what the old row holds is read as the items, as before 2026-11-13. A menu already overwritten is
+not brought back. No migration.
+
+**Not changed:** `Ctrl+Alt+←/→` is no chord of the app since 2026-11-12 (the walk through every window's positions is
+`Shift+Alt+←/→`).
+
 ### The left-side menu is a Search window — 2026-11-13
 
 User rule: *"Make the left-side menu a Search window as well, with a specific background color."* Under the page button,

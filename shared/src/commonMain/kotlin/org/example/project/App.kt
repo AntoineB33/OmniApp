@@ -743,8 +743,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     menuButtonWindows.remove(it.key)
                     menuButtonOpenedLayouts.remove(it.key)
                 }
-                // …and its lines are not the next window's under that id.
+                // …and its lines are not the next window's under that id, nor its actions section's parts.
                 searchSplits.remove(id)
+                searchSplits.keys.filter { it.startsWith("$id/") }.forEach { searchSplits.remove(it) }
                 calendarCopySections.remove(id)
             }
             if (id !in VIEW_ROWS) viewHistory.onLayout(id, previous, next)
@@ -1408,8 +1409,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     if (id == FloatingWindow.Calendar.name) {
                         kept.splits.firstOrNull()?.let { calendarConfigurationWidth = it }
                         if (kept.hidden.isNotEmpty()) calendarSectionsHidden = kept.hidden
-                    } else if (placements[id]?.visible != true) {
-                        // Closed since: nothing of it is the next window's under that id.
+                    } else if (id != org.example.project.ui.LATERAL_MENU_ID && placements[id.substringBefore('/')]?.visible != true) {
+                        // Closed since: nothing of it is the next window's under that id — nor of a Search window drawn
+                        // inside it (its actions section, `<window>/actions`). The left-side menu is no window that closes.
                     } else if (id.startsWith(FloatingWindow.Calendar.name + "#")) {
                         calendarCopySections[id] = kept
                     } else if (kept.splits.size == 2) {
@@ -1444,6 +1446,19 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         ),
                 )
             }
+        // Anomaly 2026-11-14: the parts shown by the Search windows drawn inside the app — the left-side menu, each actions
+        // section — are kept where the windows' own are, by their id.
+        val searchPartsStore = remember {
+            org.example.project.ui.SearchPartsStore(
+                read = { searchSplits[it] },
+                write = { id, parts ->
+                    if (searchSplits[id] != parts) {
+                        searchSplits[id] = parts
+                        saveWindowSections()
+                    }
+                },
+            )
+        }
         // The per-object windows (`popups.md`): each is about ONE object, and each kind is the list of its open
         // windows ([ObjectWindows]) — opening one on another object opens a second window, and the first stays.
         // All are hoisted here so they draw on the top layer, above whichever window stands over the tree. The
@@ -4207,6 +4222,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             org.example.project.ui.LocalHeldCalendarRecords provides heldCalendarRecords,
             LocalTransientMenuHost provides transientMenus,
             org.example.project.ui.LocalPopupPositions provides popupPositions,
+            org.example.project.ui.LocalSearchPartsStore provides searchPartsStore,
             org.example.project.ui.LocalMenuKeyForward provides menuKeyForward,
             org.example.project.ui.LocalCellEditPopupHost provides cellEditPopups,
             org.example.project.ui.LocalFieldSearchPopupHost provides fieldSearchPopups,

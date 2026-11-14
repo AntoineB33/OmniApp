@@ -3031,6 +3031,13 @@ object SearchDomain {
         /** User rule 2026-11-06: the bars added to [query] and their formula ([Config.extraQueries], [SearchBarFormula]). */
         extraQueries: List<String> = emptyList(),
         queryFormula: String = "",
+        /**
+         * Anomaly 2026-11-14 (*"Sorting and filters from the ▾ of the added elements list do nothing"*): **the rows of a
+         * list that is given, not searched** — the added elements — in the order given. They go through everything a
+         * searched list does (the kinds checked, the bar, the filters, the sorting): one funnel, so a list of given rows
+         * cannot answer its configuration differently. Null: the account is searched.
+         */
+        given: List<Result>? = null,
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         // Several bars, or a regular expression: every row of the kinds is read, and the bars decide ([barsMatch]). One
@@ -3039,7 +3046,8 @@ object SearchDomain {
         val severalBars = extraQueries.any { it.isNotBlank() }
         val kindQuery = if (severalBars || match.regex) "" else query
         val base =
-            Kind.entries
+            (given?.filter { it.kind in kinds && (kindQuery.isBlank() || matchRank(it.name, kindQuery) != null) }
+                ?: Kind.entries
                 .filter { it in kinds }
                 .flatMap { kind ->
                     if (kind == Kind.Task) {
@@ -3054,7 +3062,8 @@ object SearchDomain {
                         )
                     }
                 }
-                .let { rows -> rows + withCreatedKindRows(state, kinds, query, filters) }
+                // A given list holds what it was given: no row offering to make an element.
+                .let { rows -> rows + withCreatedKindRows(state, kinds, query, filters) })
                 .let { rows ->
                     when {
                         severalBars -> rows.filter { row -> SearchBarFormula.evaluate(queryFormula, bars.size) { i -> barMatches(row, bars[i], match, claudeLogs) } }
@@ -4162,15 +4171,73 @@ object SearchDomain {
     /**
      * What [action] holds for [row], as far as telling two elements apart goes — equal for the elements a context gathers
      * ([actionContexts]). "Parents": the element's parents. An action about a set as such ([isSetAction]) has one state
-     * for them all. Any other is taken to differ from one element to the next — each its own context — until its state is
-     * read here: gathering two elements that differ would show one's state as the other's.
+     * for them all. An element's own configuration is read off the element ([ownActionState]); what is not read there is
+     * taken to differ from one element to the next — each its own context.
      */
     fun actionStateOf(state: SchedulerState, action: AddedAction, row: Result): Any =
         when {
             action == AddedAction.ElementParents -> ElementTree.parentsOf(state, keyOf(row)).toSet()
             isSetAction(action) -> Unit
-            else -> keyOf(row)
+            else -> ownActionState(state, action, row) ?: keyOf(row)
         }
+
+    /**
+     * Anomaly 2026-11-14 (*"'Contexts and states' groups elements only for 'Parents'; other actions show one context per
+     * element"*): **what [action] holds for [row], read off the element** — the very value its control shows, so two
+     * elements holding the same one are one context. Null where it is not read here: an action that SHOWS the element (its
+     * run, its progression, its paths, its children, a log entry's text) differs from one element to the next by what it
+     * is, and an action whose state is not listed below stays one context per element — gathering two elements that
+     * differ would show one's state as the other's.
+     */
+    private fun ownActionState(state: SchedulerState, action: AddedAction, row: Result): Any? {
+        val id = (row as? ItemResult)?.id
+        val task = (row as? TaskResult)?.let { state.tasks[it.taskId] }
+        fun alarm() = state.alarms.firstOrNull { it.id == id }
+        fun timer() = state.timers.firstOrNull { it.id == id }
+        fun quota() = state.quotas.firstOrNull { it.id == id }
+        fun chore() = state.chores.firstOrNull { it.id.ifEmpty { it.title } == id }
+        fun category() = id?.let { state.categoryById(CategoryId(it)) }
+        return when (action) {
+            // A command with nothing to read: the same for every element it is offered for.
+            AddedAction.TaskEdit, AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar, AddedAction.PeriodTaskSearch,
+            AddedAction.WorkplaceApply -> Unit
+            AddedAction.TaskStartNow -> (row as? TaskResult)?.let { SchedulerDomain.isPlaceableTask(state, it.taskId) }
+            AddedAction.TaskMinimumTime -> task?.minimumMinutes
+            AddedAction.TaskResilience -> task?.resilience
+            AddedAction.TaskScheduleUnit -> task?.scheduleUnit
+            AddedAction.TaskText -> task?.text
+            AddedAction.TaskTreeName -> task?.treeName
+            AddedAction.AlarmTitle -> alarm()?.label
+            AddedAction.AlarmOnOff -> alarm()?.enabled
+            AddedAction.AlarmTime -> alarm()?.let { it.timeOfDayMinutes to it.onlyOnEpochDay }
+            AddedAction.AlarmDays -> alarm()?.days
+            AddedAction.AlarmRingsFor -> alarm()?.soundSeconds
+            AddedAction.AlarmRepeat -> alarm()?.repeats
+            AddedAction.AlarmAlert -> alarm()?.alert
+            AddedAction.TimerTitle -> timer()?.label
+            AddedAction.TimerDuration -> timer()?.durationSeconds
+            AddedAction.TimerRingsFor -> timer()?.soundSeconds
+            AddedAction.TimerBelowZero -> timer()?.goesNegative
+            AddedAction.TimerAlert -> timer()?.alert
+            AddedAction.ChronoTitle -> state.chronos.firstOrNull { it.id == id }?.label
+            AddedAction.QuotaTitle -> quota()?.title
+            AddedAction.QuotaAmount -> quota()?.let { it.amount to it.unit }
+            AddedAction.QuotaLoop -> quota()?.let { listOf(it.startMillis, it.endMillis, it.repeats, it.endByDelta, it.repeatCount) }
+            AddedAction.QuotaRestarts -> quota()?.renewals
+            AddedAction.QuotaResilience -> quota()?.resilience
+            AddedAction.QuotaLoops -> quota()?.loops
+            AddedAction.ReminderTitle -> chore()?.title
+            AddedAction.ReminderEvery -> chore()?.let { listOf(it.spanDays, it.recurrenceUnit, it.daysFormula) }
+            AddedAction.ReminderTime -> chore()?.timeOfDayMinutes
+            AddedAction.ReminderConstraint -> chore()?.constrainedToReminderId
+            AddedAction.ReminderAlert -> chore()?.alert
+            AddedAction.CategoryName -> category()?.title
+            AddedAction.CategoryRules -> category()?.rules
+            AddedAction.CategoryKind -> category()?.kind
+            AddedAction.PeriodDrawing -> id?.takeIf { row.kind == Kind.RestrictivePeriod }?.let { state.periodKindConfig.drawing(it) }
+            else -> null
+        }
+    }
 
     /** The actions that show a Claude Code log entry, each one block per added entry. */
     val CLAUDE_ENTRY_ACTIONS: Set<AddedAction> by lazy {

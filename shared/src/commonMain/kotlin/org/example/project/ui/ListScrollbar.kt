@@ -56,7 +56,7 @@ internal fun ListScrollbar(
             if (visible.isEmpty() || viewport <= 0f) return@derivedStateOf null
             heights.learn(info.totalItemsCount, visible.map { Triple(it.index, it.key, it.size) })
             val spacing = info.mainAxisItemSpacing.toFloat()
-            val counted = openEndRows(openEnd, visible.last().index, info.totalItemsCount)
+            val counted = openEndRows(openEnd, visible.first().index, visible.last().index, info.totalItemsCount)
             val content = heights.total(counted) + spacing * (counted - 1).coerceAtLeast(0) +
                 info.beforeContentPadding + info.afterContentPadding
             if (content <= viewport + 0.5f) return@derivedStateOf null
@@ -78,10 +78,14 @@ internal fun ListScrollbar(
 
 /**
  * How many rows the thumb of a list counts ([ListScrollbar]): all [total] of them; or, for a list with no end, the
- * [openEnd] rows that mean something, and past them only as far as the user has scrolled ([lastShown], an index).
+ * [openEnd] rows that mean something, and past them as far as the user has scrolled ([lastShown], an index) **and one
+ * screen of rows more** ([firstShown]..[lastShown]). Anomaly 2026-11-14 (*"Parent distance, I don't see the scrollbar
+ * cursor"*): counted up to the last row shown alone, a list whose meaningful rows fit on screen — a highest parent
+ * distance of 2 in a list eight rows tall — was as long as its viewport, so it had no thumb, though it scrolls without
+ * end. There is always a screen more below, and the thumb says so: half the track at most, shrinking as the list goes on.
  */
-internal fun openEndRows(openEnd: Int?, lastShown: Int, total: Int): Int =
-    if (openEnd == null) total else maxOf(openEnd, lastShown + 1).coerceAtMost(total)
+internal fun openEndRows(openEnd: Int?, firstShown: Int, lastShown: Int, total: Int): Int =
+    if (openEnd == null) total else maxOf(openEnd, lastShown + 1 + (lastShown - firstShown + 1)).coerceAtMost(total)
 
 /**
  * [ListScrollbar] for a plain scrolling column ([ScrollState]) — the same thumb and track, read off the exact

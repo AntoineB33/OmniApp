@@ -112,11 +112,14 @@ class ParentDistanceTest {
     @Test
     fun theThumbCountsTheHighestThenWhatWasScrolledTo() {
         // Every row of an ordinary list.
-        assertEquals(51, openEndRows(null, lastShown = 3, total = 51))
-        // "highest (5)" and 1..5: six rows, while the user has not gone further.
-        assertEquals(6, openEndRows(6, lastShown = 4, total = 51))
-        assertEquals(21, openEndRows(6, lastShown = 20, total = 51))
-        assertEquals(51, openEndRows(6, lastShown = 80, total = 51))
+        assertEquals(51, openEndRows(null, firstShown = 0, lastShown = 3, total = 51))
+        // "highest (40)" and 1..40: forty-one rows, while the user has not gone near them.
+        assertEquals(41, openEndRows(41, firstShown = 0, lastShown = 7, total = 51))
+        // Anomaly 2026-11-14: the rows that mean something fit on screen — a screen more is counted, so there is a thumb.
+        assertEquals(16, openEndRows(3, firstShown = 0, lastShown = 7, total = 51))
+        // Scrolled past them: as far as the user went, and a screen more.
+        assertEquals(29, openEndRows(6, firstShown = 13, lastShown = 20, total = 51))
+        assertEquals(51, openEndRows(6, firstShown = 73, lastShown = 80, total = 51))
     }
 
     @Test

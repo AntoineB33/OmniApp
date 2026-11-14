@@ -610,16 +610,12 @@ fun SearchWindow(
         }
     val searchesTasks = SearchDomain.Kind.Task in kinds || filters.includedElements.any { it.startsWith(SearchDomain.Kind.Task.name + "/") }
     val allPaths =
-        remember(searchesTasks, state.cells, state.lists, state.tasks, state.taskTrees, state.activeTaskTreeId) {
-            if (searchesTasks) SearchDomain.allPathsInAnyTree(state) else emptyMap()
+        // The added elements list searches no task: its rows are given, each with the path it was resolved at.
+        remember(searchesTasks && addedList == null, state.cells, state.lists, state.tasks, state.taskTrees, state.activeTaskTreeId) {
+            if (searchesTasks && addedList == null) SearchDomain.allPathsInAnyTree(state) else emptyMap()
         }
     val results: List<SearchDomain.Result> =
-        if (addedList != null) {
-            // The added elements, in the order they were added; the bar keeps those whose name answers it.
-            remember(addedList.rows, query) {
-                if (query.isBlank()) addedList.rows else addedList.rows.filter { SearchDomain.matchRank(it.name, query) != null }
-            }
-        } else if (options?.integers != null) {
+        if (options?.integers != null) {
             // User rule 2026-11-13: a list of integers, with no end ([SearchDomain.integerResults]).
             val integers = options.integers
             remember(integers, query) { SearchDomain.integerResults(integers.highestLabel, integers.highest, integers.count, query) }
@@ -645,6 +641,9 @@ fun SearchWindow(
             config.filters.queryOptions,
             config.extraQueries,
             config.queryFormula,
+            // The added elements list: its rows are given, in the order added, and answer its configuration as a
+            // searched list does — the bar, the kinds, the filters and the sorting of its own ▾ (anomaly 2026-11-14).
+            addedList?.rows,
         ) {
             val found =
                 SearchDomain.results(
@@ -657,8 +656,11 @@ fun SearchWindow(
                     match = config.filters.queryOptions,
                     extraQueries = config.extraQueries,
                     queryFormula = config.queryFormula,
+                    given = addedList?.rows,
                 )
-            if (picker != null) {
+            if (addedList != null) {
+                found
+            } else if (picker != null) {
                 SearchDomain.pickerRows(state, found, picker.eligible, creation = picker.onNewTask != null)
             } else {
                 // One kind checked and nothing of it found: its "creation" row stands in the list.
@@ -1093,6 +1095,8 @@ fun SearchWindow(
           onDismiss = { backgroundMenu = false },
           removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved, barRemoved = barRemoved),
           more = menuList?.backgroundActions.orEmpty(),
+          // User rule 2026-11-14: the left-side menu is the one Search window whose header cannot be shown.
+          parts = if (menuList != null) SearchPart.entries - SearchPart.Header else SearchPart.entries,
       ) { part ->
           val next = part.toggled(splitsNow())
           headerRemoved = next.headerRemoved
@@ -2064,13 +2068,15 @@ internal fun SearchPartsMenu(
     removed: SearchSplits,
     /** What the window adds of its own, before the parts: the left-side menu's "Customize" and "Reset". */
     more: List<MenuAction> = emptyList(),
+    /** The parts the menu offers: all of them, but the header for the left-side menu (user rule 2026-11-14). */
+    parts: List<SearchPart> = SearchPart.entries,
     onToggle: (SearchPart) -> Unit,
 ) {
     // User rule 2026-11-12: the menu is a Search window of its entries.
     ActionMenu("SearchPartsMenu",
         open = open,
         onDismiss = onDismiss,
-        actions = more + SearchPart.entries.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed))) { onToggle(part) } },
+        actions = more + parts.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed))) { onToggle(part) } },
         atPointer = true,
     )
 }
@@ -2173,8 +2179,52 @@ class MenuSearchRows(
 /** The left-side menu's Search window as it opens: its items are given, not searched; nothing typed. */
 val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Option), pageTypesOnly = false) }
 
-/** The left-side menu's id as a Search window: what its ▾ windows and its kept configuration are named after. */
-const val LATERAL_MENU_ID: String = "LateralMenu"
+/**
+ * The left-side menu's id as a Search window: what its ▾ windows, its kept configuration and its kept parts are named
+ * after. **Never a row something else is kept on** (found 2026-11-14): it was "LateralMenu", the very row the Task
+ * Scheduler page's menu items are written to (`CustomMenuButtons.PLACEMENT_ID`) — a letter typed in the menu's bar wrote
+ * the search configuration over the items, which then read as never written (the page's default menu after a restart),
+ * and a change of the items wrote them over the configuration. `LateralMenuSearchTest` holds the two apart.
+ */
+const val LATERAL_MENU_ID: String = "LateralMenuSearch"
+
+/**
+ * Anomaly 2026-11-14 (*"Which parts of the left-side menu and of the actions section are shown is not saved across a
+ * restart"*): **where a Search window drawn inside the app keeps the parts it shows** ([SearchSplits]) — the left-side
+ * menu, by [LATERAL_MENU_ID], and each actions section, by its id (`<window>/actions`). `App` keeps them where the
+ * windows' own are kept (`WindowSections`); null where nothing provides it (a test): kept while drawn.
+ */
+class SearchPartsStore(val read: (id: String) -> SearchSplits?, val write: (id: String, SearchSplits) -> Unit)
+
+val LocalSearchPartsStore = androidx.compose.runtime.staticCompositionLocalOf<SearchPartsStore?> { null }
+
+/**
+ * The parts of the Search window [id] drawn inside the app, kept by [LocalSearchPartsStore] where there is one and an id;
+ * [opened] until something was kept. [fixed] is applied to whatever is read (a part the caller never shows).
+ */
+@Composable
+internal fun rememberKeptParts(
+    id: String?,
+    opened: SearchSplits,
+    fixed: (SearchSplits) -> SearchSplits = { it },
+): androidx.compose.runtime.MutableState<SearchSplits> {
+    val store = LocalSearchPartsStore.current
+    val held = remember(id) { mutableStateOf(fixed(id?.let { store?.read(it) } ?: opened)) }
+    if (store == null || id == null) return held
+    return remember(held, store, id) {
+        object : androidx.compose.runtime.MutableState<SearchSplits> {
+            override var value: SearchSplits
+                get() = held.value
+                set(next) {
+                    if (next == held.value) return
+                    held.value = next
+                    store.write(id, next)
+                }
+            override fun component1() = value
+            override fun component2(): (SearchSplits) -> Unit = { value = it }
+        }
+    }
+}
 
 /** The part of its window's id the actions section's own ends with ([embeddedSearchId]). */
 internal const val ACTIONS_SECTION_PART: String = "actions"

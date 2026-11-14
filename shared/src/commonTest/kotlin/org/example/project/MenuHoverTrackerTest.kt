@@ -128,6 +128,73 @@ class MenuHoverTrackerTest {
     }
 
     /**
+     * User rule 2026-11-14: while the pop-up holding the keyboard is pinned, a hover opens a pop-up only from inside it
+     * (or from a fresh hover pop-up hanging from it); nothing is held back while nothing is pinned.
+     */
+    @Test
+    fun a_hover_acts_only_inside_the_pinned_pop_up_holding_the_keyboard() = runTest {
+        val tree = MenuHoverTracker(this) { }
+        val branch = MenuHoverTracker(this, parent = tree) { }
+        val leaf = MenuHoverTracker(this, parent = branch) { }
+        val other = MenuHoverTracker(this) { }
+        branch.windowFocused()
+        assertTrue(MenuHoverTracker.hoverActs(null) && MenuHoverTracker.hoverActs(tree) && MenuHoverTracker.hoverActs(other), "not pinned")
+        branch.pin()
+        assertFalse(MenuHoverTracker.hoverActs(null), "an arrow in a window of the app")
+        assertFalse(MenuHoverTracker.hoverActs(tree), "a row of the pop-up it hangs from")
+        assertFalse(MenuHoverTracker.hoverActs(other))
+        assertTrue(MenuHoverTracker.hoverActs(branch) && MenuHoverTracker.hoverActs(leaf), "in it, and in its descendants")
+        // A hover pop-up opened from it takes the keyboard, not pinned: the pinned one above it still decides.
+        leaf.windowFocused()
+        assertFalse(MenuHoverTracker.hoverActs(tree))
+        assertTrue(MenuHoverTracker.hoverActs(branch))
+        // Closed: every hover acts again.
+        leaf.unpin()
+        branch.unpin()
+        tree.unpin()
+        assertTrue(MenuHoverTracker.hoverActs(null))
+    }
+
+    /**
+     * User rule 2026-11-14: a press outside the pinned pop-up holding the keyboard — the keyboard gone to a window that is
+     * none of its own nor of its descendants — closes it and every pop-up it hangs from; not pinned, its ancestors stay.
+     * A walk through the positions to one of its ancestors closes what is below that ancestor alone.
+     */
+    @Test
+    fun the_keyboard_leaving_a_pinned_pop_up_closes_it_and_its_ancestors() = runTest {
+        var treeLeft = 0
+        var branchLeft = 0
+        val tree = MenuHoverTracker(this) { treeLeft++ }
+        val branch = MenuHoverTracker(this, parent = tree) { branchLeft++ }
+        branch.windowFocused()
+        branch.windowLeft()
+        assertEquals(0 to 0, treeLeft to branchLeft, "not pinned: the menu's own dismissal is all there is")
+        branch.windowFocused()
+        branch.pin()
+        branch.windowLeft()
+        assertEquals(1 to 1, treeLeft to branchLeft)
+        assertFalse(branch.pinned || tree.pinned)
+        // The press that closed it, on the button that opens it, does not open it again; any other press there does.
+        assertTrue(tree.takeClosedPinned())
+        assertFalse(tree.takeClosedPinned(), "asked once")
+        branch.windowFocused()
+        branch.pin()
+        branch.windowLeft()
+        tree.enter(Any())
+        assertFalse(tree.takeClosedPinned(), "the pointer came back since")
+        // Walked to its parent: the parent stays.
+        treeLeft = 0
+        branchLeft = 0
+        branch.windowFocused()
+        branch.pin()
+        tree.takeKeyboard()
+        branch.windowLeft()
+        assertEquals(0 to 1, treeLeft to branchLeft)
+        assertTrue(tree.pinned)
+        tree.unpin()
+    }
+
+    /**
      * User rule 2026-11-11: the pop-ups the keyboard went to, and the app's window it went back to, are positions walked
      * before the app's own. Anomaly 2026-11-11: hovered in and out several times, the walk showed the pop-up once, hid
      * it, and never showed it again — two openings of one pop-up were one position, the window between them none.

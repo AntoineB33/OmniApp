@@ -137,16 +137,19 @@ internal fun ConfigurationTreeArrow(
         if (w.size == depth + 1 && w[depth].isEmpty()) {
             repeat(2) { androidx.compose.runtime.withFrameNanos { } }
             hover.pin()
-            hover.focusWindow?.invoke()
+            hover.takeKeyboard()
             keeper.wanted = null
         }
     }
-    // Opened by the hand: a fresh pop-up.
+    // Opened by the hand: a fresh pop-up, a hover pop-up until a press pins it.
     fun openFresh() {
         keeper.stopWalk()
+        hover.unpin()
         path = emptyList()
         open = true
     }
+    // The pop-up this arrow stands in (null: a window of the app): where a hover over it is read from.
+    val around = LocalMenuHover.current
     Box {
         Text(
             "▾",
@@ -155,8 +158,19 @@ internal fun ConfigurationTreeArrow(
             modifier = Modifier
                 .clip(RoundedCornerShape(6.dp))
                 .reportsHover(hover)
-                .onHoverEnter { if (!open) openFresh() }
-                .clickable { if (open) close() else openFresh() }
+                // User rule 2026-11-14: no hover opens it while a pinned pop-up it is not in holds the keyboard.
+                .onHoverEnter { if (!open && MenuHoverTracker.hoverActs(around)) openFresh() }
+                // User rule 2026-11-14: a click on the arrow pins its pop-up (the press did, [reportsHover]), opening it
+                // first where the press itself just closed it as a hover pop-up (the keyboard gone to this window). A
+                // pinned one left on that press: the arrow is outside it, and it stays closed.
+                .clickable {
+                    if (open) hover.pin()
+                    else if (hover.takeClosedPinned()) hover.unpin()
+                    else {
+                        openFresh()
+                        hover.pin()
+                    }
+                }
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
         androidx.compose.runtime.CompositionLocalProvider(
@@ -373,11 +387,13 @@ private fun TreeColumn(
                         branch.pin()
                         if (w.size == level + 1 && w[level] == branchPath) {
                             repeat(2) { androidx.compose.runtime.withFrameNanos { } }
-                            branch.focusWindow?.invoke()
+                            branch.takeKeyboard()
                             keeper.wanted = null
                         }
                     }
                     val reveal = { if (!revealing) onPathChange(path.take(depth) + node.id) }
+                    // The pop-up this row stands in: where a hover over it is read from ([MenuHoverTracker.hoverActs]).
+                    val around = LocalMenuHover.current
                     // A category's pop-up is a ▾ window too: its owner's id and the category.
                     val owner = LocalArrowOwner.current
                     val branchId = owner?.let { it + "/" + node.id }
@@ -389,8 +405,12 @@ private fun TreeColumn(
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(if (revealing) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
                                 .reportsHover(branch)
-                                .onHoverEnter(reveal)
-                                .clickable(onClick = reveal)
+                                .onHoverEnter { if (MenuHoverTracker.hoverActs(around)) reveal() }
+                                // User rule 2026-11-14: a click on the row pins the pop-up it opens.
+                                .clickable {
+                                    reveal()
+                                    branch.pin()
+                                }
                                 .padding(horizontal = 8.dp, vertical = 6.dp),
                         ) {
                             Text(node.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
@@ -437,9 +457,11 @@ private fun TreeColumn(
                         }
                     }
                 }
-                is SearchDomain.ConfigurationLeaf ->
-                    // An end node closes what a category hovered in this column opened.
-                    Box(Modifier.onHoverEnter { if (path.size > depth) onPathChange(path.take(depth)) }) { leaf(node.setting) }
+                is SearchDomain.ConfigurationLeaf -> {
+                    // An end node closes what a category hovered in this column opened — a hover like the rows'.
+                    val around = LocalMenuHover.current
+                    Box(Modifier.onHoverEnter { if (path.size > depth && MenuHoverTracker.hoverActs(around)) onPathChange(path.take(depth)) }) { leaf(node.setting) }
+                }
             }
         }
     }

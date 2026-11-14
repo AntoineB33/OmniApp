@@ -453,10 +453,12 @@ private fun AddedActionList(
     RegisterEmbeddedSearch(sectionId, "actions", config, open = true, saved = true, set = onConfigChange)
     // Its search section alone as it opens — with its own actions and added elements where it holds some (user rule
     // 2026-11-13: what was added to it comes back shown, a restart later).
-    var splits by remember {
-        val parts = if (own.added.isEmpty()) EMBEDDED_SEARCH_SPLITS else EMBEDDED_SEARCH_SPLITS.copy(actionsRemoved = false, addedRemoved = false)
-        mutableStateOf(if (ownBar) parts else parts.copy(barRemoved = true))
-    }
+    // Anomaly 2026-11-14: what its background menu shows or hides since is kept with the window ([rememberKeptParts]).
+    var splits by rememberKeptParts(
+        sectionId,
+        opened = if (own.added.isEmpty()) EMBEDDED_SEARCH_SPLITS else EMBEDDED_SEARCH_SPLITS.copy(actionsRemoved = false, addedRemoved = false),
+        fixed = { if (ownBar) it else it.copy(barRemoved = true) },
+    )
     HighlightsSearch(highlighted) {
       // What is drawn in the section is inside IT: its id names its fields' windows and its own actions section's.
       androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides sectionId, LocalActionSectionHost provides host) {

@@ -78,6 +78,27 @@ class LateralMenuSearchTest {
         assertEquals(emptyList(), CustomMenuButtons.answering(rows, "zzz"))
     }
 
+    /**
+     * Found 2026-11-14: the menu's Search configuration was kept on the row the Task Scheduler page's menu items are kept
+     * on — one wrote over the other. Its id is no row of anything else.
+     */
+    @Test
+    fun the_menu_s_search_configuration_is_kept_on_a_row_of_its_own() {
+        val rows = CustomMenuButtons.PAGES.map(CustomMenuButtons::placementIdOf) +
+            listOf(CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID)
+        assertTrue(org.example.project.ui.LATERAL_MENU_ID !in rows, rows.toString())
+    }
+
+    /** User rule 2026-11-14: the page selector is an element of the menu, under its bar, found as the items are. */
+    @Test
+    fun the_page_selector_is_an_element_the_bar_finds() {
+        assertTrue(org.example.project.ui.pageSelectorAnswers("", OmniPage.TaskScheduler))
+        assertTrue(org.example.project.ui.pageSelectorAnswers(OmniPage.TaskScheduler.label.take(4), OmniPage.TaskScheduler))
+        assertTrue(!org.example.project.ui.pageSelectorAnswers("zzz", OmniPage.TaskScheduler))
+        // Drawn with the items: the bar holding nothing of it or of them leaves an empty list.
+        assertTrue(!draw("").contentEquals(draw("zzz")))
+    }
+
     @Test
     fun the_menu_opens_with_nothing_typed_and_its_items_given() {
         assertEquals("", LATERAL_MENU_SEARCH.query)
