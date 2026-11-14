@@ -1037,7 +1037,9 @@ object SchedulerReducer {
             (unit.delta as? ExternalDelta)?.key?.let { key ->
                 // The window bar is no window either (anomaly 2026-11-04): what it changed was stamped with the window
                 // that had the focus, which its own action then moved — and Ctrl+Z took back something else.
-                key.startsWith(ExternalKeys.MENU) || key in ExternalKeys.WINDOW_BAR
+                key.startsWith(ExternalKeys.MENU) ||
+                    key.startsWith(ExternalKeys.WINDOW) ||
+                    key in ExternalKeys.WINDOW_BAR
             } == true
 
     /**

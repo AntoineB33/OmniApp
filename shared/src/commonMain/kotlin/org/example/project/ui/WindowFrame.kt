@@ -1942,7 +1942,7 @@ internal fun windowColor(rgb: Int): Color = Color(0xFF000000.toInt() or rgb)
  * of them and only the glyph fits.
  */
 @Composable
-private fun WindowHeadButton(glyph: String, label: String, onClick: () -> Unit) {
+internal fun WindowHeadButton(glyph: String, label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(HEAD_BUTTON_SIZE)

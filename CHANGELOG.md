@@ -11,6 +11,69 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every configuration of the ▾ tree is rows of one height — 2026-11-14
+
+User rule: *"the 'search bars' element has a big height because the text on the right is squished by the width of the
+window … change the width of the search window, the size of some texts in some elements, or maybe put some text in
+info bubble when hovered over it. I want every element has rows with the same height."* Cause: a ▾ pop-up was 200 or
+320 dp wide whatever its column asked, leaving some 55 dp per control. **Behaviour changes:** a ▾ pop-up holding
+configurations is 548 dp wide (the root's always; 728 dp at first, *"The width is too big"*), its labels on one line
+in a 208 dp column — the types named by a short word there ("periods:", "history:", `treeNameOf`), three labels
+shortened ("Group by added elements", "Can go on the calendar at", "A drop button per element"), "Pick on the calendar"
+now "Pick" with its meaning in its hover, the day-and-time fields 150 dp, the resilience levels by their word; "Search bars" is a row
+for its button, one per added bar and one for the formula (one line now), its three notes in the hover of an ⓘ; a
+bound's format ("YYYY-MM-DD HH:MM") is in the field's hover, the empty field reading "any"; the switches of the
+configurations are drawn at 0.8 (`CompactSwitch`), in the configuration windows too; "Search text" is the search bar
+(`SearchBar`). **Every compact field of one line, app-wide, is exactly one task cell tall** — an empty one was 30 dp
+and one with a cross 32 dp (the Search window's own bar among them), a filled one 28. `SettingRowHeightTest` renders
+every configuration off screen and fails on a row of another height. Not looked at on a phone, where a pop-up cannot
+be 548 dp wide; a bound's row overflows where "Right-click time" stands beside it (a window opened from the calendar). No migration.
+
+### One ✕, one drop-down — 2026-11-14
+
+User rule: *"unify them"* (the hand-drawn ✕ buttons and ▾ faces found beside the search bars). New `CrossButton`
+(`CompactSection.kt`), the search bar's cross: every ✕ that takes something away is it — the nine `FrameButton("✕")`
+(the action editors', the quota editors', a result row's drop button) and the seven drawn by hand (a sorting method, a
+filter's clear mark, a box bound, an added search bar, a child's parent, the sleep goal's date, a reminder's
+constraint, a task's path). `SearchPopupHead` closes with `WindowHeadButton`, the window head's. The alert's sound and
+the recurrence unit are `ChoiceDropDown`. **Behaviour changes:** those crosses are all the round grey one (the framed
+ones lose their frame); the two drop-downs get the fields' outline, a fixed width (130 and 150 dp) and "name  ▾" as
+their face. Left as they are, each with its reason in `task-tree.md`: the edit menu's mode selector, the sleep time's
+choice, the life plan's tab field. `OneTextFieldTest` reads the sources for a ✕ drawn by hand. No migration.
+
+### One code for the search bar — 2026-11-14
+
+Anomaly: *"in the search bar of the pop-up from the down arrow of the default search window, the search bar looks
+different than the search bar of the default search window... There must be only one code for the search bar."*
+`ConfigurationTree.kt` imported Material's `OutlinedTextField` by name and drew its own bar: taller, labelled "Search
+configuration", no cross, no Escape rule. New `SearchBar` (`CompactSection.kt`), which every search bar now is.
+**Behaviour changes:** the ▾ pop-ups' bar is the Search window's (labelled "Search", with the cross and Escape); the
+notification filter's, the task picker's and the task link window's bars are one task cell tall like the others; the
+added search bars ("Search bar 2"…) and the task link window's bar get the cross and Escape; the cross and Escape of
+the Search window's bar count as a change of "Search text" for "Recently changed". **Other duplicates removed:** the
+notification filter's Reset is `ResetButton` (greyed with nothing to reset); the Claude logs' folder field and the task
+link window's no longer name Material's field (the app's takes `keyboardActions`). `OneTextFieldTest` reads the
+sources for both. No migration.
+
+### The ▾ tree rethought: the page's types at its root, "General" in six groups; "Root of a tree" — 2026-11-14
+
+User rule: *"Rethink the default states of the search configurations … it must be easy with a very intuitive navigation
+in the tree of search configurations … directly have the children of 'task scheduler', and then an element called
+something like 'other feature pages'"*, use case *"display all the root cells of every tree"*.
+`SearchDomain.configurationTree`: the root is "On for this list" (what the window was opened on AND what is on now),
+"Recently changed", six groups replacing "General" (`TreeGroup`, `treeGroupOf`: Search text, Types, Sorting, Parents and
+children, Filters on every type, Display), the types of the window's own page, "Other feature pages", then every
+configuration itself (so its name typed in the first pop-up finds it there).
+**Behaviour changes:** no "Task Scheduler" node on a Task Scheduler window (its types are at the root; on the logs page
+the logs' are); no "General" node; a type with only a "Sort by" has no node, every "Sort by" being in "Sorting"; a
+configuration among other types' reads with its type ("tasks: Sort by" — the rows of "Recently changed" were twenty-eight
+"Sort by"); "On for this list" shows on any window with a filter on. New task filter **"Root of a tree"**
+(`Filters.taskTreeRoot`, local view state, stored `taskTreeRoot`, absent = any): the use case had no answer — "Has no
+parent of the types: task" finds the global root alone. `Setting.MenuCustomizing` and the nodes-first order of the
+search over search configurations, uncommitted until now, ship with it, and so does the list of every configuration at the root
+after the rows that open a pop-up. What a window kept for the pop-up of "General" (`▾/general`) is dropped on load. No
+migration.
+
 ### Pinning a hover pop-up; the page selector is an element; five anomalies — 2026-11-14
 
 User rules: *"Clicking, right-clicking or typing pins the currently focused Search windows (clicking or right-clicking

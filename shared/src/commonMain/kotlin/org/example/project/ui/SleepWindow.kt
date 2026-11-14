@@ -115,14 +115,7 @@ internal fun SleepScheduleFields(sleep: SleepSchedule, onSave: (SleepSchedule) -
                 modifier = Modifier.weight(1f),
             )
             if (goalDay != null) {
-                Text(
-                    text = "✕",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .clickable { onSave(SchedulerDomain.withGoalNightDay(sleep, which, null)) }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
+                CrossButton { onSave(SchedulerDomain.withGoalNightDay(sleep, which, null)) }
             }
             DayField(goalDay?.let { kotlinx.datetime.LocalDate.fromEpochDays(it.toInt()) }, "no date", today, enabled = true) { picked ->
                 onSave(SchedulerDomain.withGoalNightDay(sleep, which, picked.toEpochDays().toLong()))

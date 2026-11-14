@@ -150,14 +150,9 @@ fun ConfigurationSearchWindow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedTextField(
-                    value = own.query,
-                    onValueChange = { onOwnChange(own.copy(query = it)) },
-                    singleLine = true,
-                    label = { Text("Search a configuration") },
-                    trailingIcon = { SearchBarCross(own.query) { onOwnChange(own.copy(query = "")) } },
-                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
-                        .revertsOnEscape(own.query) { onOwnChange(own.copy(query = it)) },
+                SearchBar(
+                    own.query, { onOwnChange(own.copy(query = it)) }, "Search a configuration",
+                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                 )
                 // This window's OWN search field, pages and types; the Search window's configuration it lists is
                 // untouched (that window has its own Reset).
@@ -349,7 +344,7 @@ internal fun SectionTitle(text: String) {
 
 /** One setting: its name, on ONE line, then its control — a row one task cell tall unless the control is taller. */
 @Composable
-internal fun SettingRow(label: String, editor: @Composable () -> Unit) {
+internal fun SettingRow(label: String, labelWidth: androidx.compose.ui.unit.Dp = 130.dp, editor: @Composable () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().heightIn(min = TASK_ROW_MIN_HEIGHT),
@@ -358,11 +353,17 @@ internal fun SettingRow(label: String, editor: @Composable () -> Unit) {
             text = searchHighlighted(label),
             style = MaterialTheme.typography.bodyMedium,
             // User rule 2026-11-04: wrapped in its column, never cut by "…" ("Only this page's types").
-            modifier = Modifier.width(130.dp).padding(end = 6.dp),
+            modifier = Modifier.width(labelWidth).padding(end = 6.dp),
         )
         Box(Modifier.weight(1f)) { editor() }
     }
 }
+
+/** How wide a configuration's naming cell is (a category, a task, a changed element). */
+private val SETTING_CELL_WIDTH = 280.dp
+
+/** How wide a day-and-time field of a configuration is: `YYYY-MM-DD HH:MM`, and no more. */
+private val SETTING_INSTANT_WIDTH = 150.dp
 
 /** The control of one configuration — every one of them writes the Search window's [config]. */
 @Composable
@@ -386,39 +387,37 @@ internal fun SettingEditor(
         SearchDomain.Setting.AnswerProject, SearchDomain.Setting.AnswerFrom, SearchDomain.Setting.AnswerUntil,
         SearchDomain.Setting.ReasoningProject, SearchDomain.Setting.ReasoningFrom, SearchDomain.Setting.ReasoningUntil,
         -> ClaudeFilterEditor(setting, f, claudeLogs, ::filters)
+        // The window's own bar, here too: the one search bar of the app ([SearchBar]).
         SearchDomain.Setting.SearchText ->
-            OutlinedTextField(
-                value = config.query,
-                onValueChange = { onChange(config.copy(query = it)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
-            )
+            SearchBar(config.query, { onChange(config.copy(query = it)) }, "Search", modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress())
         // The Search window's own type selector — a field with a drop-down — not a second drawing of it.
         SearchDomain.Setting.Types ->
             KindsDropDown(setting.name, kinds = config.kinds, onKindsChange = { onChange(config.copy(kinds = it)) }, options = config.offeredKinds)
         // User rule 2026-11-04: the search bar's two filters, also in its right-click menu.
         SearchDomain.Setting.MatchCase ->
-            androidx.compose.material3.Switch(checked = f.matchCase, onCheckedChange = { filters(f.copy(matchCase = it)) })
+            CompactSwitch(checked = f.matchCase, onCheckedChange = { filters(f.copy(matchCase = it)) })
         SearchDomain.Setting.WholeWord ->
-            androidx.compose.material3.Switch(checked = f.wholeWord, onCheckedChange = { filters(f.copy(wholeWord = it)) })
+            CompactSwitch(checked = f.wholeWord, onCheckedChange = { filters(f.copy(wholeWord = it)) })
         // User rule 2026-11-06: the bars hold regular expressions.
         SearchDomain.Setting.Regex ->
-            androidx.compose.material3.Switch(checked = f.regex, onCheckedChange = { filters(f.copy(regex = it)) })
+            CompactSwitch(checked = f.regex, onCheckedChange = { filters(f.copy(regex = it)) })
         // User rule 2026-11-06: the search bars added to the window's own, and the formula putting them together.
         SearchDomain.Setting.SearchBars -> SearchBarsEditor(config, onChange)
         // User rule 2026-11-04: on, the type selector offers the window's page's types alone ([SearchDomain.Config.pageTypesOnly]).
         SearchDomain.Setting.PageTypes ->
-            androidx.compose.material3.Switch(checked = config.pageTypesOnly, onCheckedChange = { onChange(config.copy(pageTypesOnly = it)) })
+            CompactSwitch(checked = config.pageTypesOnly, onCheckedChange = { onChange(config.copy(pageTypesOnly = it)) })
         // User rule 2026-11-12: how the results are laid out — today the actions section's ([SearchDomain.Config.actionsGrouped]…).
         SearchDomain.Setting.GroupByAddedElements ->
-            androidx.compose.material3.Switch(checked = config.actionsGrouped, onCheckedChange = { onChange(config.copy(actionsGrouped = it)) })
+            CompactSwitch(checked = config.actionsGrouped, onCheckedChange = { onChange(config.copy(actionsGrouped = it)) })
         SearchDomain.Setting.ExpandResults ->
-            androidx.compose.material3.Switch(checked = config.actionsExpanded, onCheckedChange = { onChange(config.copy(actionsExpanded = it)) })
+            CompactSwitch(checked = config.actionsExpanded, onCheckedChange = { onChange(config.copy(actionsExpanded = it)) })
         // User rule 2026-11-12: a button on every element of the list to drop it.
         SearchDomain.Setting.DropButtons ->
-            androidx.compose.material3.Switch(checked = config.dropButtons, onCheckedChange = { onChange(config.copy(dropButtons = it)) })
+            CompactSwitch(checked = config.dropButtons, onCheckedChange = { onChange(config.copy(dropButtons = it)) })
         SearchDomain.Setting.SearchSortsOnly ->
-            androidx.compose.material3.Switch(checked = config.actionSearchSortsOnly, onCheckedChange = { onChange(config.copy(actionSearchSortsOnly = it)) })
+            CompactSwitch(checked = config.actionSearchSortsOnly, onCheckedChange = { onChange(config.copy(actionSearchSortsOnly = it)) })
+        SearchDomain.Setting.MenuCustomizing ->
+            CompactSwitch(checked = config.menuCustomizing, onCheckedChange = { onChange(config.copy(menuCustomizing = it)) })
         // The Search window's Reset, the same button with the same rule; this window's own Reset (top section)
         // clears this window's search instead.
         SearchDomain.Setting.ResetSearch -> {
@@ -452,7 +451,7 @@ internal fun SettingEditor(
         // The calendar's "edit…": the same three controls, about what IS there.
         SearchDomain.Setting.CalendarAt ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.Switch(
+                CompactSwitch(
                     checked = f.calendarAtOn,
                     onCheckedChange = { filters(f.copy(calendarAtOn = it)) },
                 )
@@ -461,6 +460,8 @@ internal fun SettingEditor(
             }
         SearchDomain.Setting.TaskInTree ->
             Choices(SearchDomain.Tri.entries, f.taskInTree, { it.label }) { filters(f.copy(taskInTree = it)) }
+        SearchDomain.Setting.TaskTreeRoot ->
+            Choices(SearchDomain.Tri.entries, f.taskTreeRoot, { it.label }) { filters(f.copy(taskTreeRoot = it)) }
         SearchDomain.Setting.QuotaRepeatsSetting ->
             Choices(SearchDomain.Tri.entries, f.quotaRepeats, { it.label }) { filters(f.copy(quotaRepeats = it)) }
         SearchDomain.Setting.TaskSchedulable ->
@@ -491,7 +492,7 @@ internal fun SettingEditor(
                     // User rule 2026-11-04: wrapped, never cut by "…".
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                if (f.blocksOf.isNotEmpty()) FrameButton("✕") { filters(f.copy(blocksOf = emptySet())) }
+                if (f.blocksOf.isNotEmpty()) CrossButton { filters(f.copy(blocksOf = emptySet())) }
             }
         SearchDomain.Setting.ExcludedElements ->
             ElementsDropDown(setting.name, state, f.excludedElements, windows) { filters(f.copy(excludedElements = it)) }
@@ -530,8 +531,13 @@ internal fun SettingEditor(
         // User rule 2026-10-11: only the periods a task has so much resilience to — how much, then the task.
         SearchDomain.Setting.PeriodResilienceSetting ->
             Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP)) {
-                Choices(SearchDomain.ResilienceLevel.entries, f.periodResilience, { it.label }) { filters(f.copy(periodResilience = it)) }
-                NamingCell(
+                // The levels by their word; what each one means, in the hover bubble.
+                InfoHint(SearchDomain.ResilienceLevel.entries.drop(1).joinToString(", ") { it.label }) {
+                    Choices(SearchDomain.ResilienceLevel.entries, f.periodResilience, { it.label.substringBefore(" (") }) { filters(f.copy(periodResilience = it)) }
+                }
+                // User rule 2026-11-14: one row as it opens — the task's row comes with a level to ask of it ("any"
+                // asks nothing of any task), a row of the same height; a task already named stays in view.
+                if (f.periodResilience != SearchDomain.ResilienceLevel.Any || f.periodResilienceTask != null) NamingCell(
                     cellId = PERIOD_RESILIENCE_TASK_CELL,
                     shown = f.periodResilienceTask?.let { state.tasks[it]?.title ?: "(deleted)" }.orEmpty(),
                     identityLabel = "Tasks",
@@ -547,6 +553,7 @@ internal fun SettingEditor(
                     onPick = { key -> filters(f.copy(periodResilienceTask = org.example.project.scheduler.model.TaskId(key))) },
                     selectedKey = f.periodResilienceTask?.value,
                     onCleared = { filters(f.copy(periodResilienceTask = null)) },
+                    width = SETTING_CELL_WIDTH,
                 )
             }
         SearchDomain.Setting.AlarmStateSetting ->
@@ -809,14 +816,7 @@ private fun SortMethodList(
                             onChange(sorts.map { if (it.sameMethod(method)) it.copy(descending = down) else it })
                         },
                     )
-                    Text(
-                        text = "✕",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { onChange(SearchDomain.withSortMethod(sorts, method, on = false)) }
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
+                    CrossButton { onChange(SearchDomain.withSortMethod(sorts, method, on = false)) }
                 }
             }
         }
@@ -906,21 +906,16 @@ private fun CategoryPicker(
         onPick = { key -> onSelect(org.example.project.scheduler.model.CategoryId(key)) },
         selectedKey = selected?.value,
         onCleared = { onSelect(null) },
+        width = SETTING_CELL_WIDTH,
     )
 }
 
 /** The resilience filter's task cell id: a cell of no tree. */
 private val PERIOD_RESILIENCE_TASK_CELL = org.example.project.scheduler.model.CellId("search/period-resilience-task-filter")
 
-/** The ✕ beside a filter that is set: back to "any". */
+/** The ✕ beside a filter that is set: back to "any" — the app's one cross ([CrossButton]). */
 @Composable
-private fun ClearMark(onClear: () -> Unit) {
-    Text(
-        text = "✕",
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.clip(CircleShape).clickable(onClick = onClear).padding(horizontal = 6.dp, vertical = 2.dp),
-    )
-}
+private fun ClearMark(onClear: () -> Unit) = CrossButton(onClick = onClear)
 
 /** The category filter's cell id: a cell of no tree. */
 private val CATEGORY_FILTER_CELL = org.example.project.scheduler.model.CellId("search/task-category-filter")
@@ -1007,6 +1002,7 @@ private fun ChangedElementField(
         onPick = { onChange(it) },
         selectedKey = elementKey,
         onCleared = { onChange(null) },
+        width = SETTING_CELL_WIDTH,
         taskColor = taskId?.let { taskColors[it] },
         trailing = elementKey?.let { key -> { NamingKey(key) } },
     )
@@ -1035,32 +1031,33 @@ private fun BoxBoundField(millis: Long?, onChange: (Long?) -> Unit, onPick: (() 
     var draft by remember(millis) { mutableStateOf(millis?.let(::format).orEmpty()) }
     val picking = LocalCalendarElementDrag.current.instantPick != null
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        OutlinedTextField(
-            value = draft,
-            onValueChange = { typed ->
-                draft = typed
-                if (typed.isBlank()) onChange(null) else parse(typed)?.let(onChange)
-            },
-            singleLine = true,
-            isError = draft.isNotBlank() && parse(draft) == null,
-            placeholder = { Text("any — YYYY-MM-DD HH:MM") },
-            modifier = Modifier.width(190.dp),
-        )
+        // User rule 2026-11-14: the format is in the field's hover bubble — written in grey in the empty field, it
+        // wrapped under itself and made the row taller than its neighbours.
+        InfoHint("A day and a time, YYYY-MM-DD HH:MM, on this device's clock. Empty: no bound.") {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { typed ->
+                    draft = typed
+                    if (typed.isBlank()) onChange(null) else parse(typed)?.let(onChange)
+                },
+                singleLine = true,
+                isError = draft.isNotBlank() && parse(draft) == null,
+                placeholder = { Text("any") },
+                modifier = Modifier.width(SETTING_INSTANT_WIDTH),
+            )
+        }
         // A bound with nothing to pick on the calendar (when a log entry was written) has the field alone.
         if (onPick != null) {
-            FrameButton(if (picking) "Click on the calendar…" else "Pick on the calendar", enabled = !picking, onClick = onPick)
+            // User rule 2026-11-14: a short word, what it does in its hover bubble — "Pick on the calendar" was a
+            // third of the row.
+            InfoHint(if (picking) "Click on the calendar: that instant is the bound." else "Pick the instant by a click on the calendar.") {
+                FrameButton(if (picking) "Click…" else "Pick", enabled = !picking, onClick = onPick)
+            }
             // User rule 2026-10-18: where the calendar was right-clicked, for a window that came from there.
             InstantButtons(rightClickEnabled = millis != LocalCalendarClickMillis.current) { onChange(it) }
         }
         if (millis != null) {
-            Text(
-                text = "✕",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable { onChange(null) }
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            )
+            CrossButton { onChange(null) }
         }
     }
 }
@@ -1081,17 +1078,20 @@ private fun CalendarInstantField(millis: Long?, onChange: (Long) -> Unit) {
             kotlinx.datetime.LocalDateTime.parse(text.trim().replace(' ', 'T')).toInstant(tz).toEpochMilliseconds()
         }.getOrNull()
     var draft by remember(millis) { mutableStateOf(millis?.let(::format).orEmpty()) }
-    OutlinedTextField(
-        value = draft,
-        onValueChange = { typed ->
-            draft = typed
-            parse(typed)?.let(onChange)
-        },
-        singleLine = true,
-        isError = draft.isNotBlank() && parse(draft) == null,
-        placeholder = { Text("YYYY-MM-DD HH:MM") },
-        modifier = Modifier.width(190.dp),
-    )
+    // The format in the hover bubble, as a bound's is ([BoxBoundField]): in grey in the field it wrapped under itself.
+    InfoHint("A day and a time, YYYY-MM-DD HH:MM, on this device's clock.") {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { typed ->
+                draft = typed
+                parse(typed)?.let(onChange)
+            },
+            singleLine = true,
+            isError = draft.isNotBlank() && parse(draft) == null,
+            placeholder = { Text("day and time") },
+            modifier = Modifier.width(SETTING_INSTANT_WIDTH),
+        )
+    }
 }
 
 /** The alarm's "Rings on" filter: no day ticked = any day; else it rings on at least one ticked day. */
@@ -1135,42 +1135,45 @@ internal fun DayChips(days: Set<DayOfWeek>, emptyLabel: String = "any day", onCh
 @Composable
 private fun SearchBarsEditor(config: SearchDomain.Config, onChange: (SearchDomain.Config) -> Unit) {
     val bars = config.extraQueries
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
-        NoteText("Search bar 1 is the window's own bar.")
+    // User rule 2026-11-14: rows of ONE height — the button, a row per added bar, the formula — and what was written
+    // under them (which bar is bar 1, how a formula reads, what is wrong with this one) in hover bubbles ([InfoMark]).
+    Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP), modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FrameButton("Add a search bar") { onChange(config.copy(extraQueries = bars + "")) }
+            InfoMark("Search bar 1 is the window's own bar. Each bar added here is numbered after it.")
+        }
         bars.forEachIndexed { i, text ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { next -> onChange(config.copy(extraQueries = bars.toMutableList().also { it[i] = next })) },
-                    singleLine = true,
-                    label = { Text("Search bar ${i + 2}") },
+                // A search bar like the window's own ([SearchBar]): its cross empties it, the ✕ beside it takes it away.
+                SearchBar(
+                    text, { next -> onChange(config.copy(extraQueries = bars.toMutableList().also { it[i] = next })) }, "Search bar ${i + 2}",
                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                 )
-                Text(
-                    "✕",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.clickable { onChange(config.copy(extraQueries = bars.filterIndexed { j, _ -> j != i })) }.padding(6.dp),
-                )
+                CrossButton { onChange(config.copy(extraQueries = bars.filterIndexed { j, _ -> j != i })) }
             }
         }
-        FrameButton("Add a search bar") { onChange(config.copy(extraQueries = bars + "")) }
         if (bars.isNotEmpty()) {
-            OutlinedTextField(
-                value = config.queryFormula,
-                onValueChange = { onChange(config.copy(queryFormula = it)) },
-                singleLine = false,
-                label = { Text("Formula") },
-                placeholder = { Text("\u201Cmain search bar\u201D AND (\u201Csearch bar 2\u201D OR \u201Csearch bar 3\u201D)") },
-                modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),
-            )
             val problem = org.example.project.scheduler.domain.SearchBarFormula.problem(config.queryFormula, bars.size + 1)
-            NoteText(
-                when {
-                    config.queryFormula.isBlank() -> "Blank: every bar at once."
-                    problem != null -> "Not understood ($problem): every bar at once."
-                    else -> "Bars by number or name, with AND, OR, NOT and parentheses."
-                },
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    value = config.queryFormula,
+                    onValueChange = { onChange(config.copy(queryFormula = it)) },
+                    singleLine = true,
+                    // Not understood: the field says so by its colour, the bubble beside it says why.
+                    isError = config.queryFormula.isNotBlank() && problem != null,
+                    label = { Text("Formula") },
+                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
+                )
+                InfoMark(
+                    when {
+                        config.queryFormula.isBlank() ->
+                            "Blank: every bar at once. Bars by number or name, with AND, OR, NOT and parentheses: " +
+                                "\u201Cmain search bar\u201D AND (\u201Csearch bar 2\u201D OR \u201Csearch bar 3\u201D)."
+                        problem != null -> "Not understood ($problem): every bar at once."
+                        else -> "Bars by number or name, with AND, OR, NOT and parentheses."
+                    },
+                )
+            }
         }
     }
 }

@@ -4367,6 +4367,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     searchConfigs[org.example.project.ui.LATERAL_MENU_ID]
                         ?: (SearchDomain.Config.decode(placements[org.example.project.ui.LATERAL_MENU_ID]?.config) ?: org.example.project.ui.LATERAL_MENU_SEARCH)
                             .also { searchConfigs[org.example.project.ui.LATERAL_MENU_ID] = it }
+                LaunchedEffect(menuSearchConfig.menuCustomizing) {
+                    menuCustomizer.active = menuSearchConfig.menuCustomizing
+                }
                 if (!menuCollapsed) CompositionLocalProvider(
                     org.example.project.ui.LocalArrowSearches provides arrowSearches,
                     org.example.project.ui.LocalArrowOwner provides org.example.project.ui.LATERAL_MENU_ID,
@@ -4384,8 +4387,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                     },
                     scrollState = menuScroll,
-                    customizing = menuCustomizer.active,
-                    onCustomize = { menuCustomizer.active = it },
+                    customizing = menuSearchConfig.menuCustomizing,
                     onReset = { resetMenuButtons() },
                     items = { menuQuery ->
                         CustomMenuSection(
@@ -4429,8 +4431,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     setMenuButtons(CustomMenuButtons.updated(menuButtons, button.id, config, layout))
                                 }
                             },
-                            customizing = menuCustomizer.active,
-                            onCustomize = { menuCustomizer.active = it },
+                            customizing = menuSearchConfig.menuCustomizing,
                             onReset = { resetMenuButtons() },
                             controlContent = { control, title -> org.example.project.ui.MenuControlItem(control, title, menuControlHost) },
                             onMove = { id, beforeId, parent -> setMenuButtons(CustomMenuButtons.placed(menuButtons, id, beforeId, parent)) },

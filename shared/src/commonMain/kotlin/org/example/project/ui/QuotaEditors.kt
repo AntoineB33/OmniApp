@@ -274,7 +274,7 @@ private fun LookTimeRow(
                 val clicked = localOf(at, tz)
                 onChange(look.copy(dateEpochDay = clicked.date.toEpochDays(), minuteOfDay = clicked.hour * 60 + clicked.minute))
             }
-            FrameButton("✕", onClick = onRemove)
+            CrossButton(onClick = onRemove)
         }
         val unit = if (quota.unit.isBlank()) "" else " " + quota.unit
         Text(
@@ -942,7 +942,7 @@ private fun ParticularLoopRow(
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f),
             )
-            FrameButton("✕", onClick = onRemove)
+            CrossButton(onClick = onRemove)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("restarts", style = MaterialTheme.typography.bodySmall)

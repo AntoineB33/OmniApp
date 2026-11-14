@@ -17,6 +17,9 @@ import org.example.project.ui.filterConfigurationNodes
  * tree, where an end node is a search configuration, and a not-end node is a search configuration category revealing
  * its children when the user hovers over it. The first element of the root gives all the search configurations sorted
  * from more to less recently changed. All the search configurations must be found in this tree."*
+ *
+ * User rule 2026-11-14: *"it must be easy with a very intuitive navigation in the tree of search configurations …
+ * directly have the children of 'task scheduler', and then an element called something like 'other feature pages'"*.
  */
 class ConfigurationTreeTest {
     private fun leavesOf(nodes: List<ConfigurationNode>): List<Setting> =
@@ -27,27 +30,119 @@ class ConfigurationTreeTest {
             }
         }
 
+    private fun categoriesOf(nodes: List<ConfigurationNode>): List<ConfigurationCategory> =
+        nodes.filterIsInstance<ConfigurationCategory>().flatMap { listOf(it) + categoriesOf(it.children) }
+
+    /** How many categories are hovered from the root to reach [setting], "Recently changed" and "On for this list" left out. */
+    private fun hoversTo(tree: List<ConfigurationNode>, setting: Setting): Int? {
+        fun depth(nodes: List<ConfigurationNode>, at: Int): Int? =
+            nodes.mapNotNull { node ->
+                when (node) {
+                    is ConfigurationLeaf -> at.takeIf { node.setting == setting }
+                    is ConfigurationCategory -> depth(node.children, at + 1)
+                }
+            }.minOrNull()
+        return depth(tree.filter { it is ConfigurationCategory && it.id != "recent" && it.id != "context" }, 0)
+    }
+
     @Test
     fun every_configuration_is_in_the_tree_under_a_category_of_its_own() {
-        val tree = SearchDomain.configurationTree(SearchDomain.Config())
-        assertTrue(tree.all { it is ConfigurationCategory }, "the root holds categories")
-        // Past the first node, each configuration stands once.
-        val rest = leavesOf(tree.drop(1))
-        assertEquals(Setting.entries.toSet(), rest.toSet())
-        assertEquals(rest.size, rest.toSet().size)
-        // A category holds categories or configurations, never both, and none is empty.
-        fun check(nodes: List<ConfigurationNode>) {
-            for (node in nodes.filterIsInstance<ConfigurationCategory>()) {
+        for (page in SearchDomain.FEATURE_PAGES) {
+            val tree = SearchDomain.configurationTree(SearchDomain.Config(page = page.id))
+            // User rule 2026-11-14: the rows that open a pop-up first, then every configuration itself, each once —
+            // so a name typed in the first pop-up's field leaves the configuration right there.
+            val firstLeaf = tree.indexOfFirst { it is ConfigurationLeaf }
+            assertTrue(firstLeaf > 0 && tree.take(firstLeaf).all { it is ConfigurationCategory }, "the rows that open a pop-up first")
+            val flat = tree.drop(firstLeaf).map { (it as ConfigurationLeaf).setting }
+            assertEquals(Setting.entries.toSet(), flat.toSet(), page.label)
+            assertEquals(Setting.entries.size, flat.size)
+            assertEquals(flat.size, tree.drop(firstLeaf).map { it.label }.toSet().size, "no two read the same")
+            assertEquals(
+                listOf(Setting.MatchCase),
+                tree.filterConfigurationNodes(Setting.MatchCase.label).filterIsInstance<ConfigurationLeaf>().map { it.setting },
+            )
+            // ...and every one of them but Reset, a command, is under a category too, the two first left out.
+            assertEquals(Setting.entries.toSet() - Setting.ResetSearch, leavesOf(tree.take(firstLeaf).filterIsInstance<ConfigurationCategory>().filterNot { it.id == "recent" || it.id == "context" }).toSet(), page.label)
+            // A category holds categories or configurations, never both, and none is empty.
+            for (node in categoriesOf(tree)) {
                 assertTrue(node.children.isNotEmpty(), node.label)
                 assertTrue(node.children.all { it is ConfigurationLeaf } || node.children.all { it is ConfigurationCategory }, node.label)
-                check(node.children)
+                // No two rows of one pop-up read the same: a "Sort by" among other types' says its type.
+                assertEquals(node.children.size, node.children.map { it.label }.toSet().size, node.label)
             }
+            val ids = categoriesOf(tree).map { it.id }
+            assertEquals(ids.size, ids.toSet().size, "ids unique")
         }
-        check(tree)
-        val ids = mutableListOf<String>()
-        fun collect(nodes: List<ConfigurationNode>): Unit = nodes.filterIsInstance<ConfigurationCategory>().forEach { ids += it.id; collect(it.children) }
-        collect(tree)
-        assertEquals(ids.size, ids.toSet().size, "ids unique")
+    }
+
+    /** User rule 2026-11-14: the page's own types stand at the root; the other pages under one node. */
+    @Test
+    fun the_types_of_the_windows_page_stand_at_the_root_and_the_other_pages_under_one_node() {
+        val scheduler = SearchDomain.configurationTree(SearchDomain.pageDefaultConfig("")).filterIsInstance<ConfigurationCategory>()
+        assertTrue(scheduler.none { it.id.startsWith("page/") }, "no page node at the root")
+        assertTrue(scheduler.any { it.id == "kind/" + SearchDomain.Kind.Task.name })
+        assertTrue(scheduler.none { it.id == "kind/" + SearchDomain.Kind.ClaudePrompt.name })
+        val others = scheduler.single { it.id == SearchDomain.OTHER_PAGES_NODE }
+        assertEquals("Other feature pages", others.label)
+        assertEquals(listOf("Claude Code logs"), others.children.map { it.label })
+        // The logs page: its three types at the root, the Task Scheduler among the others.
+        val logs = SearchDomain.configurationTree(SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE)).filterIsInstance<ConfigurationCategory>()
+        assertEquals(SearchDomain.CLAUDE_KINDS.map { "kind/" + it.name }, logs.map { it.id }.filter { it.startsWith("kind/") })
+        assertEquals(listOf("Task Scheduler"), logs.single { it.id == SearchDomain.OTHER_PAGES_NODE }.children.map { it.label })
+        // A type that has an order and no filter has no node of its own: its order is in "Sorting", under its name.
+        val sorting = scheduler.single { it.id == SearchDomain.TreeGroup.Sorting.id }
+        assertTrue(categoriesOf(scheduler).none { it.id == "kind/" + SearchDomain.Kind.Option.name })
+        assertTrue("options: Sort by" in sorting.children.map { it.label })
+        assertEquals("Sort by", sorting.children.first().label, "the order of every row first")
+        // ...this page's types before the others'.
+        val labels = sorting.children.map { it.label }
+        assertTrue(labels.indexOf("tasks: Sort by") < labels.indexOf("prompts: Sort by"))
+    }
+
+    /**
+     * User rule 2026-11-14, the use cases walked: what the user is after is one category away from the root where it is
+     * about every row or about a type of the window's page, three where it is a filter of another page's type.
+     */
+    @Test
+    fun what_the_user_is_after_is_one_category_from_the_root() {
+        val tree = SearchDomain.configurationTree(SearchDomain.pageDefaultConfig(""))
+        fun under(setting: Setting) = categoriesOf(tree).first { c -> c.id != "recent" && c.children.any { (it as? ConfigurationLeaf)?.setting == setting } }.label
+        // "Display all the root cells of every tree": the task's own filter.
+        assertEquals("task", under(Setting.TaskTreeRoot))
+        // "Every element with no parent at all"; "the parents of these elements".
+        assertEquals("Parents and children", under(Setting.NoParentOfKinds))
+        assertEquals("Parents and children", under(Setting.ParentDistance))
+        // "Only the running timers"; "what is on the calendar on Monday"; "match the case"; "only tasks and alarms".
+        assertEquals("timer", under(Setting.TimerStateSetting))
+        assertEquals("Filters on every type", under(Setting.CalendarAt))
+        assertEquals("Search text", under(Setting.MatchCase))
+        assertEquals("Types", under(Setting.Types))
+        for (setting in Setting.entries - Setting.ResetSearch) {
+            val otherPage = setting.section != null && setting.section !in SearchDomain.FEATURE_PAGES.first().kinds
+            assertEquals(if (otherPage && !setting.sorts) 3 else 1, hoversTo(tree, setting), setting.name)
+        }
+        // Every configuration about every row has a group, and a group is short enough to be read at a glance.
+        for (setting in Setting.entries.filter { it.section == null && it != Setting.ResetSearch }) assertTrue(SearchDomain.treeGroupOf(setting) != null, setting.name)
+        for (group in SearchDomain.TreeGroup.entries.filter { it != SearchDomain.TreeGroup.Sorting }) {
+            assertTrue(Setting.entries.count { SearchDomain.treeGroupOf(it) == group } <= 8, group.label)
+        }
+    }
+
+    /** What is on now is the first node, whatever the window was opened on. */
+    @Test
+    fun what_is_on_now_is_the_first_node() {
+        val config = SearchDomain.Config(filters = SearchDomain.Filters(taskTreeRoot = SearchDomain.Tri.Yes))
+        val first = SearchDomain.configurationTree(config).first() as ConfigurationCategory
+        assertEquals("context", first.id)
+        assertEquals(listOf("tasks: Root of a tree"), first.children.map { it.label })
+    }
+
+    /** The pop-up of "General" is gone with its node (2026-11-14): what a window kept under it is dropped on load. */
+    @Test
+    fun what_was_kept_for_the_pop_up_of_general_is_dropped_on_load() {
+        val kept = SearchDomain.CONFIGURATION_SEARCH.copy(query = "sort").encode()
+        val older = SearchDomain.Config(inside = mapOf("▾/general" to kept, "/actions▾/general▾" to kept, "▾" to kept, "▾/kind/Task" to kept)).encode()
+        assertEquals(setOf("▾", "▾/kind/Task"), SearchDomain.Config.decode(older)!!.inside.keys)
     }
 
     @Test
@@ -55,14 +150,30 @@ class ConfigurationTreeTest {
         var config = SearchDomain.Config()
         config = SearchDomain.withChanged(config, config.copy(query = "a"), listOf(Setting.SearchText), 100)
         config = SearchDomain.withChanged(config, config.copy(filters = config.filters.copy(matchCase = true)), listOf(Setting.MatchCase), 200)
-        val first = SearchDomain.configurationTree(config).first() as ConfigurationCategory
+        // "Match case" is on: what is on now stands before it ("On for this list").
+        val first = SearchDomain.configurationTree(config)[1] as ConfigurationCategory
         assertEquals("Recently changed", first.label)
+        assertEquals("recent", (SearchDomain.configurationTree(SearchDomain.Config()).first() as ConfigurationCategory).id)
         val order = first.children.map { (it as ConfigurationLeaf).setting }
         assertEquals(listOf(Setting.MatchCase, Setting.SearchText), order.take(2))
         assertEquals(Setting.entries.toSet(), order.toSet(), "all of them")
         assertEquals(Setting.entries.filter { it != Setting.MatchCase && it != Setting.SearchText }, order.drop(2), "the others in their order")
         // A change that changes nothing stamps nothing.
         assertEquals(config, SearchDomain.withChanged(config, config, listOf(Setting.Types), 300))
+    }
+
+    @Test
+    fun an_opened_context_starts_with_its_enabled_result_list_settings() {
+        val opened = SearchDomain.Config(
+            filters = SearchDomain.Filters(matchCase = true),
+            menuCustomizing = true,
+        )
+        val first = SearchDomain.configurationTree(opened, opened).first() as ConfigurationCategory
+        assertEquals("On for this list", first.label)
+        assertEquals(
+            listOf(Setting.MatchCase, Setting.MenuCustomizing),
+            first.children.map { (it as ConfigurationLeaf).setting },
+        )
     }
 
     @Test

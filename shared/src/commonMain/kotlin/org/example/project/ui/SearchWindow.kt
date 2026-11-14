@@ -688,6 +688,10 @@ fun SearchWindow(
      */
     fun select(index: Int, record: Boolean = true) {
         val key = results.getOrNull(index)?.let(::resultKey)
+        // Adjacent rows are ordinary browsing, not a useful history position. Keep the
+        // previous farther position so Alt+arrows can return to it directly.
+        val closeToCurrent = selected in results.indices && kotlin.math.abs(index - selected) <= 1
+        val shouldRecord = record && !closeToCurrent
         multiSelection = null
         deselected = false
         childSelection.clear()
@@ -698,12 +702,18 @@ fun SearchWindow(
         }
         // No "already selected?" test here: this runs from row gestures started long before, whose `selectedKey`
         // would be that old composition's — the reducer answers it against the live state instead.
-        onIntent(SchedulerIntent.SelectInWindow(HistoryWindow.Search, instance, key, record))
+        onIntent(SchedulerIntent.SelectInWindow(HistoryWindow.Search, instance, key, shouldRecord))
     }
     // A new question starts at its best answer.
     LaunchedEffect(kinds, query, filters, sorts) {
         select(0, record = false)
         selectionSurface = null
+    }
+    // History navigation changes the authoritative row without passing through clickRow.
+    LaunchedEffect(selectedKey) {
+        multiSelection = null
+        deselected = false
+        selectionAnchor = selectedKey
     }
     // A list read at its top stays at its top when rows arrive above it. The rows are keyed, and a keyed lazy
     // list anchors its scroll on the first VISIBLE row: a new history unit sorted first (a move of the focus,
@@ -1166,18 +1176,16 @@ fun SearchWindow(
                 // held from 2026-11-04, are in the configurations tree alone).
                 Box(Modifier.weight(1f)) {
                 run {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { onConfigChange(SearchDomain.withChanged(config, config.copy(query = it), listOf(SearchDomain.Setting.SearchText), nowMillis())) },
-                    singleLine = true,
-                    label = { Text("Search") },
-                    trailingIcon = { SearchBarCross(query) { onConfigChange(config.copy(query = "")) } },
+                // The one search bar of the app ([SearchBar]).
+                SearchBar(
+                    query,
+                    { onConfigChange(SearchDomain.withChanged(config, config.copy(query = it), listOf(SearchDomain.Setting.SearchText), nowMillis())) },
+                    "Search",
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(fieldFocus)
                         .onFocusChanged { fieldFocused = it.isFocused }
                         .outsidePressPart(barEditor)
-                        .revertsOnEscape(query) { onConfigChange(config.copy(query = it)) }
                         // ↓ or Enter leave the bar for the list, onto its first row; every other key types.
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -1194,7 +1202,9 @@ fun SearchWindow(
                 // every configuration (the types, Reset, the filters, the sorting — what the header's buttons were).
                 // A window drawn inside another has no id of its own: its ▾ window keeps its own state ([ArrowSearches]).
                 androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides LocalArrowOwner.current.takeIf { !embedded }) {
-                    ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar)
+                    ConfigurationTreeArrow(
+                        state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
+                    )
                 }
             }
             val completionOptions =
@@ -1615,7 +1625,9 @@ fun SearchWindow(
                     val sectionId = embeddedSearchId(ACTIONS_SECTION_PART)
                     RegisterEmbeddedSearch(sectionId, "actions", config, open = true, saved = true, set = onConfigChange)
                     androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides sectionId) {
-                        ConfigurationTreeArrow(state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar)
+                        ConfigurationTreeArrow(
+                            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
+                        )
                     }
                 },
                 handlers = actionHandlers,
@@ -2031,7 +2043,7 @@ val EMBEDDED_SEARCH_SPLITS: SearchSplits = SearchSplits(headerRemoved = true, ac
 
 /**
  * User rule 2026-11-12: **a row of a Search window's list with its drop button** at its right ([drop]; none drawn while it
- * is null), the app's framed "✕" — the row keeps the rest of the width.
+ * is null), the app's cross ([CrossButton]) — the row keeps the rest of the width.
  */
 @Composable
 internal fun DropButtonRow(drop: (() -> Unit)?, content: @Composable () -> Unit) {
@@ -2041,7 +2053,7 @@ internal fun DropButtonRow(drop: (() -> Unit)?, content: @Composable () -> Unit)
     }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.weight(1f)) { content() }
-        FrameButton("✕", onClick = drop)
+        CrossButton(onClick = drop)
     }
 }
 
@@ -2096,11 +2108,8 @@ internal fun SearchPopupHead(title: String, onClose: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-        Text(
-            "✕",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onClose).padding(horizontal = 6.dp, vertical = 2.dp),
-        )
+        // The ✕ of a window's head, the one drawing of it ([WindowHeadButton]).
+        WindowHeadButton("✕", "Close", onClose)
     }
 }
 
@@ -3394,14 +3403,7 @@ private fun ElementChildren(
                 SectionArrow(rowKey !in expanded) { onToggle(rowKey) }
                 Text(row.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 if (ElementTree.canUnlink(state, parent, key, claudeLogs)) {
-                    Text(
-                        text = "✕",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { ElementTree.parentIntents(state, listOf(key), parent, on = false).forEach(onIntent) }
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
+                    CrossButton { ElementTree.parentIntents(state, listOf(key), parent, on = false).forEach(onIntent) }
                 }
             }
             // The menu, on the selected children: added to the window's elements, as a result row's "add" adds.

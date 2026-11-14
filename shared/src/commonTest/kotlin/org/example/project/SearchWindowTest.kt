@@ -817,6 +817,7 @@ class SearchWindowTest {
                 SearchDomain.Setting.GroupByAddedElements,
                 SearchDomain.Setting.ExpandResults,
                 SearchDomain.Setting.SearchSortsOnly,
+                SearchDomain.Setting.MenuCustomizing,
                 SearchDomain.Setting.DropButtons,
                 SearchDomain.Setting.SortResults,
             ),

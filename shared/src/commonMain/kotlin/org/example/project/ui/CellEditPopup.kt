@@ -371,17 +371,19 @@ internal fun PopupSearchField(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        OutlinedTextField(
-            value = config.query,
-            onValueChange = {
+        SearchBar(
+            config.query,
+            {
                 onConfigChange(config.copy(query = it))
-                open = true
+                // Typing opens the window; the cross empties the bar of one that is open already.
+                if (it.isNotEmpty()) open = true
             },
-            singleLine = true,
-            label = { Text(placeholder) },
+            placeholder,
             // User rule 2026-11-13: the cross and the arrow show once the field is clicked, as a task cell's show in
             // its Edit Mode alone.
-            trailingIcon = if (open) { { SearchBarCross(config.query) { onConfigChange(config.copy(query = "")) } } } else null,
+            cross = open,
+            // Escape closes the window (below).
+            escapeReverts = false,
             modifier = Modifier
                 .weight(1f)
                 // A click on it gives it the caret: that is what opens the window.

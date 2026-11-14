@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -132,6 +134,7 @@ internal fun CompactTextField(
     singleLine: Boolean,
     maxLines: Int,
     minLines: Int,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -143,6 +146,7 @@ internal fun CompactTextField(
         readOnly = readOnly,
         textStyle = compactFieldTextStyle(textStyle, enabled),
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         singleLine = singleLine,
         maxLines = maxLines,
         minLines = minLines,
@@ -181,6 +185,7 @@ internal fun CompactTextField(
     singleLine: Boolean,
     maxLines: Int,
     minLines: Int,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -192,6 +197,7 @@ internal fun CompactTextField(
         readOnly = readOnly,
         textStyle = compactFieldTextStyle(textStyle, enabled),
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         singleLine = singleLine,
         maxLines = maxLines,
         minLines = minLines,
@@ -257,7 +263,13 @@ private fun CompactFieldDecoration(
                 modifier = Modifier
                     .defaultMinSize(minHeight = TASK_ROW_MIN_HEIGHT)
                     .border(1.dp, line, shape)
-                    .padding(horizontal = 6.dp, vertical = COMPACT_FACE_PADDING),
+                    // User rule 2026-11-14 (*"every element has rows with the same height"*): a field of one line is
+                    // EXACTLY one task cell tall, what it holds centred in it — with a padding instead, an empty field
+                    // (its grey text) was 2 dp taller than a filled one, and one with a cross 4 dp taller.
+                    .then(
+                        if (singleLine) Modifier.height(TASK_ROW_MIN_HEIGHT).padding(horizontal = 6.dp)
+                        else Modifier.padding(horizontal = 6.dp, vertical = COMPACT_FACE_PADDING),
+                    ),
                 verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -372,23 +384,110 @@ private fun <P> ScrollsToTopWhenTyped(
 }
 
 /**
+ * User rule 2026-11-14 (*"I want every element has rows with the same height"*): **a switch in a row one task cell
+ * tall** — Material's is 32 dp tall and made every row holding one taller than its neighbours. Drawn a little smaller,
+ * and laid out as tall as a task cell.
+ */
+@Composable
+internal fun CompactSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    androidx.compose.material3.Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = with(androidx.compose.ui.Modifier) {
+            compactSwitchSize()
+        },
+    )
+}
+
+private const val COMPACT_SWITCH_SCALE: Float = 0.8f
+
+/** Laid out one task cell tall — the switch's own 32 dp centred on it — and drawn at [COMPACT_SWITCH_SCALE]. */
+private fun androidx.compose.ui.Modifier.compactSwitchSize(): androidx.compose.ui.Modifier =
+    layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints.copy(minHeight = 0))
+        val height = org.example.project.scheduler.ui.TASK_ROW_MIN_HEIGHT.roundToPx()
+        layout(placeable.width, height) { placeable.placeWithLayer(0, (height - placeable.height) / 2) { scaleX = COMPACT_SWITCH_SCALE; scaleY = COMPACT_SWITCH_SCALE } }
+    }
+
+/**
+ * User rule 2026-11-14 (*"maybe put some text in info bubble when hovered over it"*): **an ⓘ whose hover says [text]**
+ * ([InfoHint], the app's one bubble) — what a line of explanation under a control becomes where every row is one
+ * task cell tall: the explanation costs no row, and is a hover away.
+ */
+@Composable
+internal fun InfoMark(text: String) {
+    InfoHint(text) {
+        androidx.compose.material3.Text(
+            text = "ⓘ",
+            style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = androidx.compose.ui.Modifier.padding(horizontal = 4.dp),
+        )
+    }
+}
+
+/**
+ * User rule 2026-11-14: *"There must be only one code for the search bar."* **THE search bar of the app** — every field
+ * the user types in to find something in a list under it is drawn by this, so no two can differ (anomaly 2026-11-14:
+ * the bar of the ▾ pop-up was Material's own field, taller, with no cross): one task cell tall wherever it stands
+ * ([CompactFields]), named by its [label] in grey while it is empty, its cross at its right end ([SearchBarCross],
+ * which empties it), and Escape handing back what it held when it took the keyboard ([revertsOnEscape]).
+ *
+ * [cross] false: a bar that shows its cross only once it is opened (a field that opens a Search window).
+ * [escapeReverts] false: a bar whose Escape already closes what it stands in (a task picker, such a field).
+ * What differs from one bar to the next is in [modifier] alone: its width, its focus, the keys it gives a meaning.
+ */
+@Composable
+internal fun SearchBar(
+    text: String,
+    onTextChange: (String) -> Unit,
+    label: String,
+    modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier,
+    placeholder: String? = null,
+    cross: Boolean = true,
+    escapeReverts: Boolean = true,
+) {
+    CompactFields {
+        OutlinedTextField(
+            value = text,
+            onValueChange = onTextChange,
+            singleLine = true,
+            label = { androidx.compose.material3.Text(label) },
+            placeholder = placeholder?.let { hint -> { androidx.compose.material3.Text(hint) } },
+            trailingIcon = if (cross) ({ SearchBarCross(text) { onTextChange("") } }) else null,
+            modifier = if (escapeReverts) modifier.revertsOnEscape(text, onTextChange) else modifier,
+        )
+    }
+}
+
+/**
  * User rule 2026-10-11: *"To every search bar, add a cross at the right side."* — the ✕ at the right end of a search
  * bar: a press empties the bar ([onClear]). Always drawn, so the bar keeps its shape as it is typed in; set back and
  * deaf while the bar is empty and there is nothing to take away. Given as the field's `trailingIcon`.
  *
- * One drawing for every search bar of the app (the Search window's, the two configuration windows', the actions
- * section's, the notification filter's, the task picker's). The find bar's ✕ is another thing: it closes the bar.
+ * One drawing for every search bar of the app: [SearchBar] gives it, and a task cell that is its rectangle's bar. The
+ * find bar's ✕ is another thing: it closes the bar.
  */
 @Composable
-internal fun SearchBarCross(text: String, onClear: () -> Unit) {
-    val empty = text.isEmpty()
+internal fun SearchBarCross(text: String, onClear: () -> Unit) = CrossButton(enabled = text.isNotEmpty(), onClick = onClear)
+
+/**
+ * User rule 2026-11-14 (*"unify them"*): **THE ✕ of the app** — the one drawing of every cross that takes something
+ * away: a search bar's text ([SearchBarCross]), a filter back to "any", a row off its list, a date, a sorting method,
+ * a parent. Set back and deaf while not [enabled], so what it stands in keeps its shape. Nine places drew a framed
+ * one and seven a round one by hand; `OneTextFieldTest` keeps them from coming back.
+ *
+ * NOT the ✕ that closes a window (the head's, a tab's, the find bar's): another control, with the window's colours.
+ */
+@Composable
+internal fun CrossButton(enabled: Boolean = true, onClick: () -> Unit) {
     androidx.compose.material3.Text(
         text = "✕",
         style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
-        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (empty) 0.35f else 1f),
+        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 1f else 0.35f),
         modifier = androidx.compose.ui.Modifier
             .clip(androidx.compose.foundation.shape.CircleShape)
-            .clickable(enabled = !empty, onClick = onClear)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
@@ -399,9 +498,8 @@ internal fun SearchBarCross(text: String, onClear: () -> Unit) {
  * and Escape hands it back ([onRevert]) while the bar still has the keyboard. Escape with nothing changed is left to
  * whoever is under the bar; the focus leaving ends the session, so the next one starts from what the bar holds then.
  *
- * One answer for every search bar that keeps its text (the Search window's, the two configuration windows', the
- * actions section's, the notification filter's). NOT the two whose Escape closes them — the task picker's and the
- * tree's find bar: there the key already has its meaning.
+ * One answer for every search bar that keeps its text ([SearchBar]). NOT those whose Escape closes them — the task
+ * picker's, a field that opens a Search window, the tree's find bar: there the key already has its meaning.
  */
 @Composable
 internal fun androidx.compose.ui.Modifier.revertsOnEscape(text: String, onRevert: (String) -> Unit): androidx.compose.ui.Modifier {

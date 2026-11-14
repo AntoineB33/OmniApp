@@ -3734,7 +3734,7 @@ private fun TaskPathsSection(
     for (place in paths) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(place.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            if (paths.size > 1) TextButton(onClick = { onRemovePath(place.cellId) }) { Text("✕") }
+            if (paths.size > 1) org.example.project.ui.CrossButton { onRemovePath(place.cellId) }
         }
     }
     org.example.project.ui.AddUnderField(CellId("task-edit/add-under"), candidates, titleSuggestions, onAddPath)

@@ -759,6 +759,8 @@ object SearchDomain {
          * only if it answers, a group only while one of its actions does.
          */
         val actionSearchSortsOnly: Boolean = true,
+        /** User rule 2026-11-14: the lateral menu's items are inert while this is on, so they can be dragged. */
+        val menuCustomizing: Boolean = false,
         /**
          * User rule 2026-11-12, a search configuration ([Setting.DropButtons]): **every element of the list with a button to
          * drop it** — the "List of parents" takes the parent off ([ElementTree.parentIntents]); any other Search window takes
@@ -834,7 +836,7 @@ object SearchDomain {
         /**
          * User rule 2026-11-13: **the configurations of the Search windows drawn inside this one**, kept WITH it — so they
          * come back with the window after a restart, and a menu button's "Update" keeps them. Its ▾ windows at any depth
-         * (`▾`, `▾▾`, `▾/general`, `/actions▾`), a field's list (`/field:…`: "List of parents" and its parent distance)
+         * (`▾`, `▾▾`, `▾/sort`, `/actions▾`), a field's list (`/field:…`: "List of parents" and its parent distance)
          * and a drop-down's or a menu's list (`/list:<its name>`), each by its id without this window's and as stored
          * ([encode]); one that holds what it opens with is not kept. Local view state like the rest; not the search
          * ([searchConfigurations]).
@@ -881,6 +883,7 @@ object SearchDomain {
                     query = query,
                     kinds = Kind.entries.filter { it in kinds }.map { it.name },
                     taskInTree = filters.taskInTree.name,
+                    taskTreeRoot = filters.taskTreeRoot.name,
                     taskSchedulable = filters.taskSchedulable.name,
                     taskCategory = filters.taskCategory?.value,
                     categoryHasRules = filters.categoryHasRules.name,
@@ -920,6 +923,7 @@ object SearchDomain {
                     actionsGrouped = actionsGrouped,
                     actionsExpanded = actionsExpanded,
                     actionSearchSortsOnly = actionSearchSortsOnly,
+                    menuCustomizing = menuCustomizing,
                     dropButtons = dropButtons,
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
@@ -987,6 +991,7 @@ object SearchDomain {
                     kinds = kindsNamed(stored.kinds),
                     filters = Filters(
                         taskInTree = enumNamed(stored.taskInTree, Tri.Any),
+                        taskTreeRoot = enumNamed(stored.taskTreeRoot, Tri.Any),
                         taskSchedulable = enumNamed(stored.taskSchedulable, Tri.Any),
                         taskCategory = stored.taskCategory?.let { CategoryId(it) },
                         categoryHasRules = enumNamed(stored.categoryHasRules, Tri.Any),
@@ -1054,6 +1059,7 @@ object SearchDomain {
                     actionsGrouped = stored.actionsGrouped,
                     actionsExpanded = stored.actionsExpanded,
                     actionSearchSortsOnly = stored.actionSearchSortsOnly,
+                    menuCustomizing = stored.menuCustomizing,
                     dropButtons = stored.dropButtons,
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
@@ -1078,7 +1084,8 @@ object SearchDomain {
                     page = stored.page,
                     openedFrom = stored.openedFrom,
                     elementSource = stored.elementSource,
-                    inside = stored.inside,
+                    // The ▾ tree has no "General" node since 2026-11-14: what its pop-up kept names no window any more.
+                    inside = stored.inside.filterKeys { RETIRED_GENERAL_POPUP !in it },
                     completion = Completion.entries.firstOrNull { it.name == stored.completion },
                     pageTypesOnly = stored.pageTypesOnly,
                     extraQueries = stored.extraQueries,
@@ -1241,6 +1248,11 @@ object SearchDomain {
      */
     data class Filters(
         val taskInTree: Tri = Tri.Any,
+        /**
+         * User rule 2026-11-14 (use case: *"display all the root cells of every tree"*): only the tasks that are the root of
+         * a tree — one standing directly under the global root ([treeRootsByTask], [TaskResult.treeRoots]) — or none of them.
+         */
+        val taskTreeRoot: Tri = Tri.Any,
         /**
          * PRD §9's *schedulable*: a task the scheduler may place — a leaf (no sub-task) that still lives in the tree
          * ([SchedulerDomain.isPlaceableTask], the predicate "start this task now" asks too).
@@ -1463,6 +1475,7 @@ object SearchDomain {
                 Setting.CalendarAdd -> calendarAddAt != null
                 Setting.CalendarAt -> calendarAt != null
                 Setting.TaskInTree -> taskInTree != Tri.Any
+                Setting.TaskTreeRoot -> taskTreeRoot != Tri.Any
                 Setting.TaskSchedulable -> taskSchedulable != Tri.Any
                 Setting.TaskCategory -> taskCategory != null
                 Setting.CategoryHasRules -> categoryHasRules != Tri.Any
@@ -1740,7 +1753,7 @@ object SearchDomain {
         CompletionList(null, "Completion list"),
         SortResults(null, "Sort by", sorts = true),
         /** The calendar filter ([Filters.calendarAddOn]): about every row, so in the General section. */
-        CalendarAdd(null, "Can be added to the calendar at"),
+        CalendarAdd(null, "Can go on the calendar at"),
         /** The "is on the calendar at" filter ([Filters.calendarAtOn]): the calendar's "edit…". */
         CalendarAt(null, "Is on the calendar at"),
         /** The elements kept out of the list ([Filters.excludedElements]) and those always in it ([Filters.includedElements]). */
@@ -1753,13 +1766,15 @@ object SearchDomain {
         /** User rule 2026-11-13: how far above those elements a parent may stand ([Filters.parentDistance]): an integer. */
         ParentDistance(null, "Parent distance"),
         /** User rule 2026-11-12: the results grouped by the added elements they involve ([Config.actionsGrouped]). */
-        GroupByAddedElements(null, "Group by the added elements involved"),
+        GroupByAddedElements(null, "Group by added elements"),
         /** User rule 2026-11-12: the top rows of the results open by default, not their children ([Config.actionsExpanded]). */
         ExpandResults(null, "Expand the results"),
         /** User rule 2026-11-12: the search bar sorts and hides nothing ([Config.actionSearchSortsOnly]). */
         SearchSortsOnly(null, "Search sorts, hides nothing"),
+        /** The lateral menu's rows can be dragged instead of activated. */
+        MenuCustomizing(null, "Customize the left-side menu"),
         /** User rule 2026-11-12: a button on every element to drop it ([Config.dropButtons]). */
-        DropButtons(null, "A button to drop each element"),
+        DropButtons(null, "A drop button per element"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -1790,6 +1805,8 @@ object SearchDomain {
         /** User rule 2026-11-12: the actions section's rows, sorted as any kind's rows are. */
         ActionSort(Kind.Action, "Sort by", sorts = true),
         TaskInTree(Kind.Task, "In a task tree"),
+        /** User rule 2026-11-14: only the roots of the trees ([Filters.taskTreeRoot]). */
+        TaskTreeRoot(Kind.Task, "Root of a tree"),
         TaskSchedulable(Kind.Task, "Schedulable"),
         TaskCategory(Kind.Task, "Category"),
         TaskOnCalendar(Kind.Task, "On the calendar"),
@@ -1850,7 +1867,7 @@ object SearchDomain {
 
         /**
          * User rule 2026-11-13, the fifth: a search configuration that **has search configuration children and changes
-         * nothing itself** — a node of the configurations tree ("Recently changed", "General", a page, a type).
+         * nothing itself** — a node of the configurations tree ("Recently changed", "Sorting", a page, a type).
          */
         Group("group"),
     }
@@ -1864,16 +1881,35 @@ object SearchDomain {
         when {
             setting.sorts || setting == Setting.SearchSortsOnly -> SettingRole.Sort
             setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults -> SettingRole.Children
-            setting == Setting.DropButtons || setting == Setting.CompletionList -> SettingRole.Display
+            setting == Setting.DropButtons || setting == Setting.CompletionList || setting == Setting.MenuCustomizing -> SettingRole.Display
             setting == Setting.ResetSearch -> null
             else -> SettingRole.Filter
         }
 
     /**
+     * The search configurations currently enabled by [config]. This deliberately includes filters, sorting and
+     * presentation/children switches, but not the search text or the selected types: those describe the input and
+     * scope of the window rather than an enabled result-list behavior.
+     */
+    fun activeSettings(config: Config?): List<Setting> {
+        config ?: return emptyList()
+        val filters = Setting.entries.filter { config.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES }
+        val own = listOfNotNull(
+            Setting.SortResults.takeIf { !config.sortFollowsDefault && config.sorts.isNotEmpty() },
+            Setting.CompletionList.takeIf { config.completion != null },
+            Setting.ExpandResults.takeIf { config.actionsExpanded },
+            Setting.SearchSortsOnly.takeIf { !config.actionSearchSortsOnly },
+            Setting.MenuCustomizing.takeIf { config.menuCustomizing },
+            Setting.DropButtons.takeIf { config.dropButtons },
+        )
+        return (filters + own).distinct()
+    }
+
+    /**
      * User rule 2026-11-13: **the search configurations a context is about** — what the window was opened with
      * ([opened]) says it: the filters it set, and what goes with them (the "List of parents" asks the parents of some
-     * elements, so how far above them comes first; its drop buttons). The configurations tree lists them first
-     * ([configurationTree]), so what matters where the user stands is one hover away. None for a window opened on nothing.
+     * elements, so how far above them comes first; its drop buttons). They come first in the tree's "On for this list"
+     * ([configurationTree]), before what is on now ([activeSettings]). None for a window opened on nothing.
      */
     fun contextSettings(opened: Config?): List<Setting> {
         opened ?: return emptyList()
@@ -1907,49 +1943,145 @@ object SearchDomain {
         val label: String
     }
 
-    /** An end node: one configuration of the window, drawn as its control. */
-    data class ConfigurationLeaf(val setting: Setting) : ConfigurationNode {
-        override val label: String get() = setting.label
+    /**
+     * An end node: one configuration of the window, drawn as its control. [qualified] where it stands among the
+     * configurations of other types ("Recently changed", "Sorting"): its label then begins with its type's name, or
+     * twenty-eight rows would all read "Sort by".
+     */
+    data class ConfigurationLeaf(val setting: Setting, val qualified: Boolean = false) : ConfigurationNode {
+        override val label: String
+            get() = setting.section?.takeIf { qualified }?.let { treeNameOf(it) + ": " + setting.label } ?: setting.label
     }
+
+    /**
+     * User rule 2026-11-14 (*"The width is too big"*): what a type is called before a configuration's name in the tree
+     * — its plural, or a shorter word where that one is long ("restrictive periods: Resilience of a task" set the width
+     * of the whole label column).
+     */
+    fun treeNameOf(kind: Kind): String =
+        when (kind) {
+            Kind.Category -> "categories"
+            Kind.RestrictivePeriod -> "periods"
+            Kind.CalendarBlock -> "blocks"
+            Kind.HistoryUnit -> "history"
+            Kind.Shortcut -> "shortcuts"
+            Kind.WorkplaceSetup -> "setups"
+            Kind.ClaudeReasoning -> "reasoning"
+            Kind.SearchConfiguration -> "configurations"
+            else -> kind.plural
+        }
 
     /** A category of configurations, which reveals [children] on hover. [id] is unique in the tree. */
     data class ConfigurationCategory(val id: String, override val label: String, val children: List<ConfigurationNode>) : ConfigurationNode
 
     /**
-     * User rule 2026-11-04: **the configurations tree** the arrow beside the Search window's bar opens. Its first node
-     * holds every configuration from the most to the least recently changed ([Config.settingsChangedAt]; the others
-     * after, in their order); then the configurations of every row ("General"), then each feature page's types, each
-     * type's configurations under it. Every configuration stands in it ([Setting.entries]): one with no section is
-     * General's, and every type is on a page ([FEATURE_PAGES]). Before them all, where the window was [opened] on
-     * something, the configurations that context is about ("For this list").
+     * User rule 2026-11-14: **the groups of the configurations about every row** — what "General" held in one list of
+     * twenty-five, by what the user is after: what the bar holds, which types, the order, who stands above or under
+     * whom, the other filters, how a row is drawn. [treeGroupOf] is the one statement of where a configuration stands.
+     */
+    enum class TreeGroup(val id: String, val label: String) {
+        Bar("bar", "Search text"),
+        Types("types", "Types"),
+        Sorting("sort", "Sorting"),
+        Parents("parents", "Parents and children"),
+        Filters("filters", "Filters on every type"),
+        Display("display", "Display"),
+    }
+
+    /**
+     * The group of [setting] ([TreeGroup]); null for one that stands elsewhere — a type's own filter, under its
+     * type, and Reset, a command: a row of the root alone. One named here is where the user looks for it; any other, and
+     * so any added later, goes by what it does ([roleOf]).
+     */
+    fun treeGroupOf(setting: Setting): TreeGroup? =
+        when (setting) {
+            Setting.SearchText, Setting.MatchCase, Setting.WholeWord, Setting.Regex, Setting.SearchBars,
+            Setting.CompletionList, Setting.SearchSortsOnly,
+            -> TreeGroup.Bar
+            Setting.Types, Setting.PageTypes -> TreeGroup.Types
+            Setting.NoParentOfKinds, Setting.ParentsOf, Setting.ParentDistance -> TreeGroup.Parents
+            else -> {
+                val role = roleOf(setting)
+                when {
+                    // Every type's order stands with the order of every row.
+                    role == SettingRole.Sort -> TreeGroup.Sorting
+                    role == null || setting.section != null -> null
+                    role == SettingRole.Children -> TreeGroup.Parents
+                    role == SettingRole.Filter -> TreeGroup.Filters
+                    else -> TreeGroup.Display
+                }
+            }
+        }
+
+    /**
+     * User rule 2026-11-04: **the configurations tree** the arrow beside the Search window's bar opens; rethought
+     * 2026-11-14 (*"it must be easy with a very intuitive navigation"*, *"directly have the children of 'task
+     * scheduler', and then an element called something like 'other feature pages'"*). From the root:
+     *
+     * 1. **"On for this list"** — what the window was opened on ([contextSettings]) and every configuration that is on
+     *    now ([activeSettings]); none where nothing is.
+     * 2. **"Recently changed"** — every configuration, the last changed first ([Config.settingsChangedAt]).
+     * 3. The groups of what is about every row ([TreeGroup]); "Sorting" holds every type's order too.
+     * 4. **The types of the window's own page** ([Config.page]), each holding its filters and its order — one hover
+     *    from the root, no page node above them. A type with an order and no filter has no node: its order is in "Sorting".
+     * 5. **"Other feature pages"** — each other page, its types under it.
+     * 6. **Every configuration itself, after all the rows that open a pop-up** (user rule 2026-11-14: *"It allowed me
+     *    to directly get the search configuration I want by typing its name in the first pop-up"*) — each saying its
+     *    type, what is kept before how it is laid out. Typed in the root's field, a name leaves its configuration there.
+     *
+     * Every configuration stands in it ([Setting.entries]), and a category is never empty. Nothing but a search field
+     * narrows it — never the types the window searches (anomaly 2026-11-11).
      */
     fun configurationTree(config: Config, opened: Config? = null): List<ConfigurationNode> {
-        fun leaves(settings: List<Setting>) = settings.sortedBy { it.sorts }.map(::ConfigurationLeaf)
-        val recent = Setting.entries.sortedByDescending { config.settingsChangedAt[it] ?: Long.MIN_VALUE }.map(::ConfigurationLeaf)
-        val general = ConfigurationCategory("general", "General", leaves(Setting.entries.filter { it.section == null }))
-        val pages = FEATURE_PAGES.mapNotNull { page ->
-            val kinds = Kind.entries.filter { it in page.kinds }.mapNotNull { kind ->
-                leaves(Setting.entries.filter { it.section == kind }).takeIf { it.isNotEmpty() }
-                    ?.let { ConfigurationCategory("kind/" + kind.name, kind.label, it) }
+        fun qualified(settings: List<Setting>) = settings.map { ConfigurationLeaf(it, qualified = true) }
+        fun typesOf(page: FeaturePage) =
+            Kind.entries.filter { it in page.kinds }.mapNotNull { kind ->
+                // What is kept first, then how it is laid out.
+                Setting.entries.filter { it.section == kind }.sortedBy { it.sorts }
+                    .takeIf { settings -> settings.any { !it.sorts } }
+                    ?.let { settings -> ConfigurationCategory("kind/" + kind.name, kind.label, settings.map { ConfigurationLeaf(it) }) }
             }
-            kinds.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("page/" + page.id, page.label, it) }
+        val own = FEATURE_PAGES.firstOrNull { it.id == config.page }
+        val ownKinds = own?.kinds.orEmpty().toSet()
+        val active = (contextSettings(opened) + activeSettings(config)).distinct().takeIf { it.isNotEmpty() }
+            ?.let { ConfigurationCategory("context", "On for this list", qualified(it)) }
+        val recent = ConfigurationCategory(
+            "recent", "Recently changed",
+            qualified(Setting.entries.sortedByDescending { config.settingsChangedAt[it] ?: Long.MIN_VALUE }),
+        )
+        val groups = TreeGroup.entries.mapNotNull { group ->
+            val settings = Setting.entries.filter { treeGroupOf(it) == group }
+                // The order of every row, then of this page's types, then of the others'.
+                .sortedBy { if (it.section == null) 0 else if (it.section in ownKinds) 1 else 2 }
+            settings.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory(group.id, group.label, qualified(it)) }
         }
-        // User rule 2026-11-13: what the window's context is about comes first ([contextSettings]).
-        val context = contextSettings(opened).takeIf { it.isNotEmpty() }
-            ?.let { ConfigurationCategory("context", "For this list", it.map(::ConfigurationLeaf)) }
-        return listOfNotNull(context, ConfigurationCategory("recent", "Recently changed", recent), general) + pages
+        val others = FEATURE_PAGES.filter { it != own }
+            .mapNotNull { page -> typesOf(page).takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("page/" + page.id, page.label, it) } }
+            .takeIf { it.isNotEmpty() }
+            ?.let { ConfigurationCategory(OTHER_PAGES_NODE, "Other feature pages", it) }
+        return listOfNotNull(active, recent) + groups + own?.let(::typesOf).orEmpty() + listOfNotNull(others) +
+            qualified(Setting.entries.sortedBy { it.sorts })
     }
+
+    /** The id of the node holding the pages the window is not on ([configurationTree]). */
+    const val OTHER_PAGES_NODE: String = "other-pages"
+
+    /** What the id of the pop-up of "General" held in a window's [Config.inside]: a node the tree no longer has (2026-11-14). */
+    private const val RETIRED_GENERAL_POPUP: String = "▾/general"
 
     /** What the id of a node of the configurations tree wears as a [Kind.SearchConfiguration] row; a leaf's is its [Setting]'s name. */
     const val CONFIGURATION_NODE_PREFIX: String = "node:"
 
-    /** Every node of the configurations tree that has children ([SettingRole.Group]), top down, as a window opened on nothing has them. */
+    /**
+     * Every node of the configurations tree that has children ([SettingRole.Group]), top down: those of a window opened
+     * on nothing, on each page in turn — a page's own node stands in the tree of the windows of the other pages.
+     */
     fun configurationCategories(): List<ConfigurationCategory> = CONFIGURATION_CATEGORIES
 
     private val CONFIGURATION_CATEGORIES: List<ConfigurationCategory> by lazy {
         fun walk(nodes: List<ConfigurationNode>): List<ConfigurationCategory> =
             nodes.filterIsInstance<ConfigurationCategory>().flatMap { listOf(it) + walk(it.children) }
-        walk(configurationTree(Config()))
+        FEATURE_PAGES.flatMap { walk(configurationTree(Config(page = it.id))) }.distinctBy { it.id }
     }
 
     /** The search configuration children of the [Kind.SearchConfiguration] row [id], by id: a node's, in the tree's order; a leaf has none. */
@@ -2183,6 +2315,8 @@ object SearchDomain {
         val query: String = "",
         val kinds: List<String> = listOf(Kind.Task.name),
         val taskInTree: String? = null,
+        /** New 2026-11-14: absent = any. */
+        val taskTreeRoot: String? = null,
         /** New 2026-10-01: absent from an older build's = any. */
         val taskSchedulable: String? = null,
         val taskCategory: String? = null,
@@ -2249,6 +2383,7 @@ object SearchDomain {
         val actionsGrouped: Boolean = true,
         val actionsExpanded: Boolean = false,
         val actionSearchSortsOnly: Boolean = true,
+        val menuCustomizing: Boolean = false,
         /** New 2026-11-12: absent = no drop button ([Config.dropButtons]). */
         val dropButtons: Boolean = false,
         /** New 2026-10-11: absent from an older build's = the actions in their own order. */
@@ -2916,17 +3051,17 @@ object SearchDomain {
                 Kind.Integer -> emptyList()
                 // Only what the actions section gives its Search window ([actionListRows]).
                 Kind.Action -> emptyList()
-                Kind.SearchConfiguration -> Setting.entries.map { setting ->
+                Kind.SearchConfiguration -> configurationCategories().map { node ->
+                    // Navigable configuration entries come first: hovering one opens its derived children.
+                    ItemResult(kind, CONFIGURATION_NODE_PREFIX + node.id, node.label, SettingRole.Group.label)
+                } + Setting.entries.map { setting ->
                     // ...and its category ([SettingRole]).
                     ItemResult(kind, setting.name, setting.label, listOfNotNull(setting.section?.label ?: "general", roleOf(setting)?.label).joinToString(" · "))
-                } + configurationCategories().map { node ->
-                    // The nodes of the tree are search configurations too: the fifth category ([SettingRole.Group]).
-                    ItemResult(kind, CONFIGURATION_NODE_PREFIX + node.id, node.label, SettingRole.Group.label)
                 }
             }
         return items
             .mapNotNull { item -> matchRank(item.name, query)?.let { it to item } }
-            .sortedWith(compareBy({ it.first }, { it.second.name.lowercase() }, { it.second.detail }))
+            .sortedWith(compareBy({ it.second.kind != Kind.SearchConfiguration || !it.second.id.startsWith(CONFIGURATION_NODE_PREFIX) }, { it.first }, { it.second.name.lowercase() }, { it.second.detail }))
             .map { it.second }
     }
 
@@ -3272,6 +3407,7 @@ object SearchDomain {
                 val task = state.tasks[result.taskId]
                     ?: state.taskTrees.firstNotNullOfOrNull { it.tree.tasks[result.taskId] }
                 tri(filters.taskInTree, result.inTaskTree) &&
+                    tri(filters.taskTreeRoot, result.taskId in result.treeRoots) &&
                     (filters.taskSchedulable == Tri.Any ||
                         tri(filters.taskSchedulable, SchedulerDomain.isPlaceableTask(state, result.taskId))) &&
                     (filters.taskCategory == null || task?.categoryIds?.contains(filters.taskCategory) == true) &&

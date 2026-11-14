@@ -730,6 +730,11 @@ suggestions before it was ever entered.
   tree's own membership predicate (a title-bearing cell reachable from the root, `shortestTaskTreePaths`'s
   walk). The **active** entry's snapshot is never read: it is stale by design and the live fields are that
   tree. A task only a stored tree holds is a result, named from that tree.
+- **"Root of a tree"** (user rule 2026-11-14, use case *"display all the root cells of every tree"*;
+  `Filters.taskTreeRoot`, `Setting.TaskTreeRoot`, `ElementTreeTest`): the task filter that keeps the tasks standing
+  directly under the global root of the live tree (`treeRootsByTask`: a task is in its own `TaskResult.treeRoots`), or
+  none of them. Not "Has no parent of the types: task", which finds the global root alone — a tree's root has it as its
+  task parent (user rule 2026-11-13). Local view state: stored `taskTreeRoot`, absent = any.
 - **A path is the titles from the root down to the PARENT**, and its first segment is the **tree's name** (the
   active tree's, else the root task's title). The task's own title is the row's first section; repeating it
   would spend the width the two sections fight over.
@@ -970,7 +975,7 @@ suggestions before it was ever entered.
   keeps rows out (**filter**), orders them (**sort**), changes how every row is drawn (**display**), or changes the
   children the rows have in that list (**children**) — and the fifth, **group**, for one that *"has search
   configuration children but doesn't change the search configuration itself"*: a node of the ▾ tree ("Recently
-  changed", "General", a page, a type). `roleOf` is the one statement of the four; a row of the search over search
+  changed", "Sorting", a page, a type). `roleOf` is the one statement of the four; a row of the search over search
   configurations says its category. The nodes are rows of that search too (`CONFIGURATION_NODE_PREFIX`,
   `configurationCategories`), their children derived from the tree (`ElementTree.childrenOf`, never links, never
   taken out). "Reset" is a command and no state: it has none. The window's parts ("hide the header"…) are NOT search
@@ -986,7 +991,7 @@ suggestions before it was ever entered.
   the app opens again A appears the same as before, with the right changes in the search configurations"*;
   `ArrowSearches`, `listedArrowIds`, `LocalArrowOwner`, `LocalArrowRoot`, `SearchDomain.Config.inside`,
   `App.setSearchInside`, `SearchConfigurationStatesTest`). Its id is its owner's and "▾" (`Search#2▾`, `Search#2▾▾`),
-  a category's pop-up its owner's and the category (`Search#2▾/general`). The configuration of every ▾ window of a
+  a category's pop-up its owner's and the category (`Search#2▾/sort`). The configuration of every ▾ window of a
   Search window, at any depth, is a field of THAT window's configuration (`Config.inside`: the id without the window's
   → the stored configuration; one that holds what a ▾ window opens with is not kept). So it is on the window's
   placement row and comes back with it after a restart, and a menu button's "Update" keeps it — it is part of the
@@ -1012,8 +1017,9 @@ suggestions before it was ever entered.
 - **THE CONFIGURATIONS A CONTEXT IS ABOUT COME FIRST IN THE ▾ TREE** (user rule 2026-11-13: *"the user should very
   easily see the search configuration element about the parent distance"*; `SearchDomain.contextSettings`,
   `configurationTree(config, opened)`). What the window was opened with says its context: the filters it set, and what
-  goes with them — the "List of parents" gets "Parent distance", "Parents of" and its drop buttons. They are the
-  tree's first node, "For this list"; a window opened on nothing has no such node.
+  goes with them — the "List of parents" gets "Parent distance", "Parents of" and its drop buttons. They are the first rows of the
+  tree's first node, "On for this list", before the configurations that are on now (2026-11-14); a window opened on
+  nothing with nothing on has no such node.
 - **THE PARENT DISTANCE** (user rule 2026-11-13; `Filters.parentDistance`, `ElementTree.parentLevels` /
   `parentsWithin` / `highestParentDistance`): how far above the elements of "Parents of" a parent may stand to be
   listed — 1 by default (the direct parents), n for every parent at a distance of n **or less**, an element standing at
@@ -1167,7 +1173,7 @@ suggestions before it was ever entered.
     default (`Config.toggledActionRows`, `SearchDomain.isActionRowOpen`) — it replaced the retracted groups of
     2026-10-10 (`collapsedActionGroups`, read no more), which were open by default. "Show only its actions" opens the
     groups holding the element and closes the others, written as toggles. Three **search configurations** of the ▾ tree
-    (General) lay it out, kept with the window: **Group by the added elements involved** (`actionsGrouped`, on: the
+    (General) lay it out, kept with the window: **Group by added elements** (`actionsGrouped`, on: the
     groups from the largest set of added elements to the smallest; off: one flat list of action rows, each naming its
     elements beside its title), **Expand the results** (`actionsExpanded`, off: on, the top rows open, never their
     children) and **Search sorts, hides nothing** (`actionSearchSortsOnly`, on: the behaviour below; off, the bar
@@ -1442,12 +1448,66 @@ suggestions before it was ever entered.
   a menu opened from inside one included (the desktop's menu surface reports to `LocalMenuHover`, so a drop-down of a
   configuration's control holds it), and a part gone with the pointer over it counts as left. A grace of
   `GRACE_MILLIS` covers the crossing from one part to the next; it is one wait per leaving, never a poll. Opened by a
-  press, where there is no hover, it closes as a menu does. Its root: **"Recently changed"**,
-  every configuration from the most to the least recently changed (`Config.settingsChangedAt`, local-only, no part of
-  the search; the never-changed after, in their order), then **General** (the configurations with no type), then each
-  feature page with its types under it, each type's configurations under that. **Every configuration is in it**: a
-  change made anywhere a configuration is set — the tree, the configurations window, the bar — is
-  stamped with its time (`SearchDomain.withChanged`).
+  press, where there is no hover, it closes as a menu does. **Every configuration is in it**: a change made anywhere
+  a configuration is set — the tree, the configurations window, the bar — is stamped with its time
+  (`SearchDomain.withChanged`).
+- **ONE CODE FOR THE SEARCH BAR** (user rule 2026-11-14: *"There must be only one code for the search bar"*;
+  `SearchBar` in `CompactSection.kt`, `OneTextFieldTest`). Every field the user types in to find something in a list
+  under it is `SearchBar`: one task cell tall wherever it stands, named by its label in grey while empty, its cross at
+  its right end (`SearchBarCross`), Escape handing back what it held (`revertsOnEscape`) — the Search window's, every
+  ▾ pop-up's, the two configuration windows', the added search bars, the notification filter's, the task picker's, a
+  field that opens a Search window (`PopupSearchField`), the task link window's. What differs from one to the next is
+  its modifier alone (width, focus, the keys it gives a meaning), `cross = false` until a field's window is open, and
+  `escapeReverts = false` where Escape closes what the bar stands in. A task cell that is its rectangle's bar draws the
+  cross itself; the tree's find bar is another control. **No file names Material's `OutlinedTextField`** but
+  `EnterLeavesField.kt`, the app's own field (anomaly 2026-11-14: the ▾ pop-up's bar did, and was a taller field with
+  no cross); it takes `keyboardActions`, so none needs to.
+- **EVERY CONFIGURATION OF THE ▾ TREE IS ROWS OF ONE HEIGHT** (user rule 2026-11-14: *"I want every element has rows
+  with the same height"*; `ConfigurationLeafRow`, `treeColumnWidth` / `treePopupWidth`, `SettingRowHeightTest`). A
+  configuration is ONE row, a task cell tall, as it opens; what the user adds to it (a search bar, the formula) adds
+  rows of that same height. Three things hold it, and the test renders every configuration off screen and measures:
+  **(1) a pop-up is as wide as its column** — a column holding a configuration is `TREE_LEAF_CONTENT_WIDTH` (520 dp:
+  the longest label on one line, `TREE_LABEL_WIDTH`, and the widest control), one of categories alone 200 dp; the
+  root's is always the wide one, so it never changes width as one types (anomaly 2026-11-14: a column asked for 600 dp
+  inside a pop-up 200 or 320 dp wide, got some 55 dp per control, and every text wrapped a word a line).
+  **(2) No line of explanation under a control** — it is the hover bubble of an ⓘ (`InfoMark`) or of the field itself
+  (`InfoHint`): which bar is bar 1, how a formula reads and what is wrong with it, a bound's format.
+  **(3) A control is one task cell tall**: a compact field of one line is EXACTLY that (`CompactFieldDecoration`: an
+  empty one was 2 dp taller than a filled one, one with a cross 4 dp), and a switch is `CompactSwitch`. A new
+  configuration whose control is taller fails the test: make it rows. **And it is no wider than it must be** (user
+  rule 2026-11-14: *"The width is too big"*, at 728 dp): a type is named by a short word before a configuration's name
+  (`SearchDomain.treeNameOf`: "periods", "history"), a label is a few words, a button a word with its meaning in its
+  hover ("Pick"), a day-and-time field as wide as `YYYY-MM-DD HH:MM`, a level by its word. A longer label or a wider
+  control widens every pop-up of the tree: shorten it first.
+- **ONE ✕, ONE DROP-DOWN** (user rule 2026-11-14: *"unify them"*; `CrossButton` in `CompactSection.kt`,
+  `ChoiceDropDown` / `CheckBoxDropDown`, `OneTextFieldTest`). Every cross that TAKES SOMETHING AWAY — a bar's text, a
+  filter back to "any", a row off a list, a sorting method, a date, a parent, a quota's row — is `CrossButton`: round,
+  grey, set back and deaf while disabled; never `FrameButton("✕")`, never a `Text("✕")` with its own click. The cross
+  that CLOSES A WINDOW is another control, `WindowHeadButton` (a window's head and a pop-up's, `SearchPopupHead`); a
+  tab's and the find bar's stay their own. A list of choices to pick ONE from is `ChoiceDropDown` (the alert's sound
+  and the recurrence unit were drawn by hand). Three faces stay hand-drawn, each for a reason the shared one cannot
+  give yet: the edit menu's mode selector (its list must not take the focus), the sleep time's (no frame, never the
+  keyboard) and the life plan's tab field (a field one types in, with an arrow).
+- **THE ROOT OF THE ▾ TREE: WHAT THE USER IS AFTER IS ONE CATEGORY AWAY** (user rule 2026-11-14: *"it must be easy with
+  a very intuitive navigation … directly have the children of 'task scheduler', and then an element called something
+  like 'other feature pages'"*; `SearchDomain.configurationTree`, `TreeGroup`, `treeGroupOf`, `ConfigurationTreeTest`).
+  In order: **"On for this list"** (what the window was opened on, then every configuration that is on now —
+  `contextSettings`, `activeSettings`; no node where nothing is); **"Recently changed"** (every configuration, the last
+  changed first, `Config.settingsChangedAt`, local-only, no part of the search); **the groups of what is about every
+  row** — "Search text", "Types", "Sorting", "Parents and children", "Filters on every type", "Display" (there is no
+  "General": it was one list of twenty-five); **the types of the window's own page**, each holding its filters then
+  its order, with no page node above them; **"Other feature pages"**, each other page with its types under it; and
+  then **every configuration itself, after all the rows that open a pop-up** (user rule 2026-11-14: *"It allowed me
+  to directly get the search configuration I want by typing its name in the first pop-up"* — never take them out of
+  the root), each saying its type. Reset is one of those rows alone. `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
+  added later — goes by its category (`roleOf`). **Every type's "Sort by" is in "Sorting"** too, the order of every
+  row first, then this page's types, then the others'; so a type with an order and no filter (option, integer,
+  action…) has no node of its own. **A configuration standing among other types' says its type** ("tasks: Sort by",
+  `ConfigurationLeaf.qualified`): no two rows of one pop-up read the same. Below the root, a
+  category holds categories or configurations, never both. The tree depends on the window's page and on nothing else
+  of what it searches — never cut to the types it searches (anomaly 2026-11-11). The rows of the search over search
+  configurations are the nodes of every page's tree (`configurationCategories`). A ▾ pop-up kept under the retired
+  "General" node (`▾/general` in `Config.inside`) is dropped when the configuration is read.
 - **Every row of the actions section is laid out, so its scrollbar is exact** (user rule 2026-11-12: *"it already knows
   exactly what are all the elements"*, `AddedActionList`): the section is a plain column, its height the sum of its rows',
   changing when a row opens, closes or is resized or the list changes — never by scrolling, and right from the start.

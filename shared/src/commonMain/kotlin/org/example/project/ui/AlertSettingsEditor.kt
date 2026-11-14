@@ -130,39 +130,6 @@ private fun AlertChannelChip(
 
 /** The small set of sounds ([AlertSound]), as a dropdown naming the one this row rings with. */
 @Composable
-private fun AlertSoundDropdown(tone: AlertSound, enabled: Boolean, onSelect: (AlertSound) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    val outline =
-        if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    Box {
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .border(1.dp, outline, RoundedCornerShape(10.dp))
-                .then(if (enabled) Modifier.clickable { expanded = true } else Modifier)
-                .padding(horizontal = 8.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                text = tone.label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = "▾",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-        OptionSearchMenu("AlertSoundDropdown",
-            open = expanded,
-            onDismiss = { expanded = false },
-            options = choiceOptions(AlertSound.entries, { it.label }) { entry ->
-                onSelect(entry)
-                expanded = false
-            },
-        )
-    }
-}
+private fun AlertSoundDropdown(tone: AlertSound, enabled: Boolean, onSelect: (AlertSound) -> Unit) =
+    // The app's one-choice drop-down ([ChoiceDropDown]).
+    ChoiceDropDown("AlertSoundDropdown", AlertSound.entries, tone, { it.label }, onSelect, modifier = Modifier.width(130.dp), enabled = enabled)

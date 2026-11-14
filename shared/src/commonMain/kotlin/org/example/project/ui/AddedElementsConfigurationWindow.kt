@@ -150,14 +150,9 @@ fun AddedElementsConfigurationWindow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedTextField(
-                    value = config.actionQuery,
-                    onValueChange = { onConfigChange(config.copy(actionQuery = it)) },
-                    singleLine = true,
-                    label = { Text("Search a configuration") },
-                    trailingIcon = { SearchBarCross(config.actionQuery) { onConfigChange(config.copy(actionQuery = "")) } },
-                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
-                        .revertsOnEscape(config.actionQuery) { onConfigChange(config.copy(actionQuery = it)) },
+                SearchBar(
+                    config.actionQuery, { onConfigChange(config.copy(actionQuery = it)) }, "Search a configuration",
+                    modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                 )
                 KindsDropDown("AddedElementsConfigurationWindow", kinds = own.kinds, onKindsChange = { onOwnChange(own.copy(kinds = it)) })
                 ResetButton(enabled = config.actionQuery.isNotEmpty() || own.kinds.isNotEmpty()) {
@@ -1185,7 +1180,7 @@ private fun AddedActionBlocks(
                         Text(place.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                         // Not for its last place: deleting a task is the tree's blank title.
                         if (places.size > 1) {
-                            FrameButton("✕") { run(SearchDomain.AddedCommand.RemovePath(place.cellId)) }
+                            CrossButton { run(SearchDomain.AddedCommand.RemovePath(place.cellId)) }
                         }
                     }
                 }
@@ -1274,7 +1269,7 @@ private fun AddedActionBlocks(
                     enabled = alarms.isNotEmpty(),
                 ) { date -> run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(onlyOnEpochDay = date.toEpochDays().toLong()) }) }
                 if (alarms.any { it.onlyOnEpochDay != null }) {
-                    FrameButton("✕") { run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(onlyOnEpochDay = null) }) }
+                    CrossButton { run(SearchDomain.AddedCommand.AlarmsEdit { it.copy(onlyOnEpochDay = null) }) }
                 }
                 NoteText("at", color = MaterialTheme.colorScheme.onSurface)
                 SharedTextField(
@@ -1449,7 +1444,7 @@ private fun AddedActionBlocks(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 if (reminders.any { it.constrainedToReminderId.isNotBlank() }) {
-                    FrameButton("✕") { run(SearchDomain.AddedCommand.RemindersEdit { it.copy(constrainedToReminderId = "") }) }
+                    CrossButton { run(SearchDomain.AddedCommand.RemindersEdit { it.copy(constrainedToReminderId = "") }) }
                 }
             }
         }
@@ -1615,7 +1610,7 @@ private fun PeriodNoticesEditor(leads: List<Long>, onChange: (List<Long>) -> Uni
                     onNudge = { delta -> (lead + delta).takeIf { it >= 1_000L }?.let { onChange(leads.replaced(index, it)) } },
                 ) { onChange(leads.replaced(index, it)) }
                 Text("before", style = MaterialTheme.typography.bodyMedium)
-                FrameButton("✕") { onChange(leads.filterIndexed { i, _ -> i != index }) }
+                CrossButton { onChange(leads.filterIndexed { i, _ -> i != index }) }
             }
         }
         FrameButton("+ Notification") {
@@ -2171,7 +2166,7 @@ private fun TaskCellCategoriesEditor(state: SchedulerState, taskIds: List<TaskId
                 for (category in carried) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(category.title, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 12.dp).weight(1f))
-                        FrameButton("✕") {
+                        CrossButton {
                             run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetCellCategory(place.cellId, category.id, carried = false)))
                         }
                     }
@@ -2321,7 +2316,7 @@ private fun FulfilmentLine(
             modifier = Modifier.width(96.dp),
         )
         FrameButton("Apply", enabled = value != null && value != fraction) { value?.let(onApply) }
-        FrameButton("✕", onClick = onRemove)
+        CrossButton(onClick = onRemove)
     }
 }
 
@@ -2711,7 +2706,7 @@ private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDoma
                                     modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
                                 )
                             }
-                            if (window.app.tabbed) FrameButton("✕", enabled = window.tabs.size > 1) { write(setup.id, replaced(window.tabs.filterIndexed { i, _ -> i != tabAt })) }
+                            if (window.app.tabbed) CrossButton(enabled = window.tabs.size > 1) { write(setup.id, replaced(window.tabs.filterIndexed { i, _ -> i != tabAt })) }
                         }
                     }
                     if (window.app.tabbed) {

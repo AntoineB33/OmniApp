@@ -14,7 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -182,7 +181,7 @@ internal fun ConfigurationTreeArrow(
             LocalArrowOwner provides arrowId,
         ) {
         AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
-        SearchPopupParts(SearchDomain.windowTitle(own), 320.dp, parts, { parts = it }, onClose = { close() }) {
+        SearchPopupParts(SearchDomain.windowTitle(own), TREE_ROOT_POPUP_WIDTH, parts, { parts = it }, onClose = { close() }) {
             if (!parts.barRemoved) TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
             ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth) { which ->
             close()
@@ -215,13 +214,9 @@ private fun TreePopupBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
     ) {
-        OutlinedTextField(
-            value = own.query,
-            onValueChange = { onOwnChange(own.copy(query = it)) },
-            singleLine = true,
-            label = { Text("Search configuration") },
-            modifier = Modifier.weight(1f),
-        )
+        // Anomaly 2026-11-14 (*"the search bar looks different than the search bar of the default search window"*):
+        // it was Material's own field, imported here by name. The one bar of the app, named as the window's is.
+        SearchBar(own.query, { onOwnChange(own.copy(query = it)) }, "Search", modifier = Modifier.weight(1f))
         if (depth < MAX_TREE_DEPTH) {
             ConfigurationTreeArrow(
                 state, own, SearchDomain.CONFIGURATION_SEARCH, onOwnChange, nowMillis, windows, claudeLogs,
@@ -266,29 +261,52 @@ private fun ConfigurationTreeColumns(
         val echo = written.indexOf(config)
         if (echo >= 0) repeat(echo + 1) { written.removeFirst() } else { written.clear(); shown = config }
     }
-    val tree = remember(shown.settingsChangedAt, query, openedConfig) {
+    // The whole configuration: the tree's first node is what is on now ([SearchDomain.activeSettings]).
+    val tree = remember(shown, query, openedConfig) {
         // User rule 2026-11-13: what the window was opened on comes first ([SearchDomain.contextSettings]).
         SearchDomain.configurationTree(shown, openedConfig).filterConfigurationNodes(query)
     }
-    val leaf: @Composable (SearchDomain.Setting) -> Unit = { setting ->
-        SettingRow(setting.label) {
-            SettingEditor(
-                state, setting, shown, openedConfig,
-                { next ->
-                    val stamped = SearchDomain.withChanged(shown, next, listOf(setting), nowMillis())
-                    written.addLast(stamped)
-                    shown = stamped
-                    onConfigChange(stamped)
-                },
-                windows, onPickOnCalendar, claudeLogs,
-            )
-        }
+    val leaf: @Composable (SearchDomain.ConfigurationLeaf) -> Unit = { node ->
+        ConfigurationLeafRow(
+            node, state, shown, openedConfig,
+            { next ->
+                val stamped = SearchDomain.withChanged(shown, next, listOf(node.setting), nowMillis())
+                written.addLast(stamped)
+                shown = stamped
+                onConfigChange(stamped)
+            },
+            windows, onPickOnCalendar, claudeLogs,
+        )
     }
     HighlightsSearch("") {
         TreeColumn(
             tree, 0, path, onPathChange, leaf,
             state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar, level,
         )
+    }
+}
+
+/**
+ * User rule 2026-11-14: **one configuration as the ▾ tree draws it** — *"I want every element has rows with the same
+ * height"*: its label on ONE line in a column wide enough for the longest ([TREE_LABEL_WIDTH]; it says its type where
+ * it stands among other types', [SearchDomain.ConfigurationLeaf.qualified]), then its control, compact — a task cell
+ * tall ([CompactFields]). The one drawing of a leaf, which `SettingRowHeightTest` renders at the tree's own width.
+ */
+@Composable
+internal fun ConfigurationLeafRow(
+    node: SearchDomain.ConfigurationLeaf,
+    state: SchedulerState,
+    config: SearchDomain.Config,
+    openedConfig: SearchDomain.Config?,
+    onChange: (SearchDomain.Config) -> Unit,
+    windows: List<SearchDomain.WindowEntry> = emptyList(),
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
+) {
+    CompactFields {
+        SettingRow(node.label, TREE_LABEL_WIDTH) {
+            SettingEditor(state, node.setting, config, openedConfig, onChange, windows, onPickOnCalendar, claudeLogs)
+        }
     }
 }
 
@@ -321,7 +339,7 @@ private fun TreeColumn(
     depth: Int,
     path: List<String>,
     onPathChange: (List<String>) -> Unit,
-    leaf: @Composable (SearchDomain.Setting) -> Unit,
+    leaf: @Composable (SearchDomain.ConfigurationLeaf) -> Unit,
     state: SchedulerState,
     config: SearchDomain.Config,
     openedConfig: SearchDomain.Config?,
@@ -333,14 +351,13 @@ private fun TreeColumn(
     /** The arrow level of the tree this column is of ([TreePopupBar]). */
     level: Int,
 ) {
-    val leaves = nodes.all { it is SearchDomain.ConfigurationLeaf }
     Column(
         Modifier
             .reportsHover(LocalMenuHover.current)
-            .width(if (leaves) TREE_LEAF_COLUMN_WIDTH else TREE_CATEGORY_COLUMN_WIDTH)
+            .width(treeColumnWidth(nodes))
             .heightIn(max = TREE_COLUMN_MAX_HEIGHT)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 6.dp),
+            .padding(horizontal = TREE_COLUMN_PADDING),
     ) {
         for (node in nodes) {
             when (node) {
@@ -443,7 +460,7 @@ private fun TreeColumn(
                                         node.children.filterConfigurationNodes(own.query)
                                     }
                                     SearchPopupParts(
-                                        SearchDomain.windowTitle(own), TREE_CATEGORY_COLUMN_WIDTH, parts, { parts = it },
+                                        SearchDomain.windowTitle(own), treePopupWidth(node.children), parts, { parts = it },
                                         onClose = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) },
                                     ) {
                                         if (!parts.barRemoved) TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, level)
@@ -460,7 +477,7 @@ private fun TreeColumn(
                 is SearchDomain.ConfigurationLeaf -> {
                     // An end node closes what a category hovered in this column opened — a hover like the rows'.
                     val around = LocalMenuHover.current
-                    Box(Modifier.onHoverEnter { if (path.size > depth && MenuHoverTracker.hoverActs(around)) onPathChange(path.take(depth)) }) { leaf(node.setting) }
+                    Box(Modifier.onHoverEnter { if (path.size > depth && MenuHoverTracker.hoverActs(around)) onPathChange(path.take(depth)) }) { leaf(node) }
                 }
             }
         }
@@ -468,8 +485,33 @@ private fun TreeColumn(
 }
 
 private val TREE_CATEGORY_COLUMN_WIDTH = 200.dp
-/** Wide enough for the widest control a configuration has (a box bound and its "Pick on the calendar"): none is cut. */
-private val TREE_LEAF_COLUMN_WIDTH = 600.dp
+
+/** A configuration's label column in the tree: the longest label on one line ("history: Changed element types"). */
+internal val TREE_LABEL_WIDTH = 208.dp
+
+/** The room a configuration's row has in the tree: its label, and the widest control one has, on one line. */
+internal val TREE_LEAF_CONTENT_WIDTH = 520.dp
+
+/** A column's own side padding. */
+private val TREE_COLUMN_PADDING = 6.dp
+
+/** What a pop-up of the tree puts around its column ([SearchPopupParts]). */
+private val TREE_POPUP_PADDING = 8.dp
+
+/**
+ * Anomaly 2026-11-14 (*"the 'search bars' element has a big height because the text on the right is squished by the
+ * width of the window"*): a column of configurations asked for 600 dp inside a pop-up 200 or 320 dp wide, and got that —
+ * some 55 dp for each control, whose texts wrapped a word a line. **A column holding a configuration is as wide as a
+ * configuration needs, and its pop-up is as wide as its column** ([treePopupWidth]); one of categories alone stays narrow.
+ */
+private fun treeColumnWidth(nodes: List<SearchDomain.ConfigurationNode>) =
+    if (nodes.any { it is SearchDomain.ConfigurationLeaf }) TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 else TREE_CATEGORY_COLUMN_WIDTH
+
+/** The width of the pop-up holding a column of [nodes]: the column's, and what stands around it. */
+private fun treePopupWidth(nodes: List<SearchDomain.ConfigurationNode>) = treeColumnWidth(nodes) + TREE_POPUP_PADDING * 2
+
+/** The root's pop-up: it holds every configuration, whatever its field has narrowed it to — it never changes width as one types. */
+private val TREE_ROOT_POPUP_WIDTH = TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 + TREE_POPUP_PADDING * 2
 private val TREE_COLUMN_MAX_HEIGHT = 480.dp
 
 /**
@@ -499,7 +541,7 @@ private fun SearchPopupParts(
         SearchPartsMenu(menu, { menu = false }, parts) { part -> onPartsChange(part.toggled(parts)) }
         if (!parts.headerRemoved) SearchPopupHead(title, onClose)
         Column(
-            modifier = Modifier.padding(8.dp),
+            modifier = Modifier.padding(TREE_POPUP_PADDING),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
         ) {
             if (!parts.searchRemoved) search()
@@ -592,7 +634,7 @@ internal class TreeKeeper {
 /**
  * User rule 2026-11-13: **the ▾ windows have ids while they are open or saved** — *"saved in the sense that this window
  * has also its own ▾ window or search configuration"*. An id is its owner's and [ARROW] (`Search#2▾`, `Search#2▾▾`),
- * or its owner's and a category of the tree (`Search#2▾/general`).
+ * or its owner's and a category of the tree (`Search#2▾/sort`).
  *
  * **A ▾ window's configuration is kept with the Search window it hangs from** ([SearchDomain.Config.inside], through
  * [read] and [write], `App`'s): it comes back with that window after a restart, and a menu button keeps it with the

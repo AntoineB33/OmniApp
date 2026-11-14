@@ -40,23 +40,23 @@ class SearchConfigurationStatesTest {
         assertEquals(SearchDomain.CONFIGURATION_NODE_PREFIX + "recent", recent.id)
         assertEquals("group", recent.detail)
         val groups = rows().filter { it.detail == "group" }.map { it.name }
-        assertTrue(groups.containsAll(listOf("Recently changed", "General", "Task Scheduler", "task")), groups.toString())
+        assertTrue(groups.containsAll(listOf("Recently changed", "Sorting", "Other feature pages", "Task Scheduler", "Claude Code logs", "task", "prompt")), groups.toString())
         // Every configuration that changes something is still a row, with one of the four.
         assertEquals(Setting.entries.size, rows().count { it.detail != "group" })
     }
 
     @Test
     fun aNodeHasItsSearchConfigurationsAsChildren() {
-        val general = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "general"))
+        val general = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "parents"))
         assertTrue(key(Setting.ParentDistance.name) in general)
-        assertEquals(Setting.entries.count { it.section == null }, general.size)
+        assertEquals(Setting.entries.count { SearchDomain.treeGroupOf(it) == SearchDomain.TreeGroup.Parents }, general.size)
         // A page holds its types' nodes, which hold their configurations.
         val page = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "page/"))
         assertTrue(key(SearchDomain.CONFIGURATION_NODE_PREFIX + "kind/Task") in page)
         assertTrue(key(Setting.TaskSchedulable.name) in ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "kind/Task")))
         // One that changes something has none; and what the tree makes a child is not taken out.
         assertEquals(emptyList(), ElementTree.childrenOf(empty, key(Setting.ParentDistance.name)))
-        assertFalse(ElementTree.canUnlink(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "general"), key(Setting.ParentDistance.name)))
+        assertFalse(ElementTree.canUnlink(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "parents"), key(Setting.ParentDistance.name)))
         // Every child is a row the list can show.
         assertEquals(general.size, SearchDomain.resolve(empty, general, { emptyMap() }).size)
     }

@@ -1000,8 +1000,8 @@ object CustomMenuButtons {
 /**
  * User rule 2026-10-08: **the lateral menu, all of it but the page button** — every item the user's
  * ([CustomMenuButton]): a window's button, or a control of the app ([MenuControl], drawn by [controlContent]). They
- * all have the SAME right-click menu: Update (a window's button whose window changed), Rename, Remove, Customize
- * ([customizing], [onCustomize]) and Reset ([onReset]) — the last two also what a right-click beside them offers, so a
+ * all have the SAME right-click menu: Update (a window's button whose window changed), Rename, Remove and Reset
+ * ([onReset]) — Reset also works from the empty menu background, so a
  * menu emptied of everything can still be filled again. Customizing is ended there alone (user rule 2026-11-01).
  *
  * User rule 2026-11-01: **an item dropped on another makes a folder of the two** ([onGroup], [CustomMenuButton.folder]),
@@ -1026,9 +1026,8 @@ internal fun CustomMenuSection(
     onRemove: (id: String) -> Unit,
     canUpdate: (CustomMenuButton) -> Boolean = { false },
     onUpdate: (CustomMenuButton) -> Unit = {},
-    /** Whether the menu is being customized ([MenuCustomizer.active]), and the menu entry that starts or ends it. */
+    /** Whether the menu is being customized ([MenuCustomizer.active]). */
     customizing: Boolean = false,
-    onCustomize: (Boolean) -> Unit = {},
     /** Draws the control an item is, under the name the user gave it (null: the control's own). */
     controlContent: @Composable (control: MenuControl, title: String?) -> Unit = { _, _ -> },
     /** The customization mode's drag: the item [id] dropped just before [beforeId] (null: at the end), in the folder [parent]. */
@@ -1195,7 +1194,6 @@ internal fun CustomMenuSection(
                                         add(MenuAction((if (on) "✓ " else "") + "match the whole state") { onSetWholeState(button.id, !on) })
                                     }
                                     add(MenuAction("Remove") { onRemove(button.id) })
-                                    add(MenuAction(if (customizing) "Stop customizing" else "Customize") { onCustomize(!customizing) })
                                     add(MenuAction("Reset") { onReset() })
                                 },
                             )

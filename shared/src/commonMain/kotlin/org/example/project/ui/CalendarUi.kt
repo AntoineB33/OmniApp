@@ -1737,8 +1737,7 @@ private fun hourLabel(hour: Int): String {
  * under it is [items]: the user's list ([CustomMenuSection]) of windows' buttons and controls of the app
  * ([MenuControl], [MenuControlItem]), which starts as what the menu used to hold ([CustomMenuButtons.DEFAULTS]).
  * **A window's button opens a NEW window at every click** — never closes one, and is never drawn as "open" (the
- * window bar says what is open). A right-click beside the items offers [onCustomize] and [onReset] too, so an emptied
- * menu can still be filled.
+ * window bar says what is open). A right-click beside the items offers [onReset], so an emptied menu can still be filled.
  */
 @Composable
 fun LateralMenu(
@@ -1746,9 +1745,8 @@ fun LateralMenu(
     onPageSelected: (OmniPage) -> Unit,
     /** Everything under the page button: the user's items ([CustomMenuSection]), given what the menu's bar holds. */
     items: @Composable (query: String) -> Unit = {},
-    /** Whether the menu is being customized, and a right-click on its empty part starting or ending it. */
+    /** Whether the menu is being customized. */
     customizing: Boolean = false,
-    onCustomize: (Boolean) -> Unit = {},
     /** The page's menu back to its default items. */
     onReset: () -> Unit = {},
     /** Held by the caller, which scrolls the menu to its end when it adds an item there. */
@@ -1762,10 +1760,7 @@ fun LateralMenu(
     onConfigChange: (org.example.project.scheduler.domain.SearchDomain.Config) -> Unit = {},
 ) {
     var backgroundMenu by remember { mutableStateOf(false) }
-    val ownActions = listOf(
-        MenuAction(if (customizing) "Stop customizing" else "Customize") { onCustomize(!customizing) },
-        MenuAction("Reset") { onReset() },
-    )
+    val ownActions = listOf(MenuAction("Reset") { onReset() })
     Column(
         modifier = modifier
             .fillMaxHeight()
@@ -2467,11 +2462,9 @@ fun ChoresManagerWindow(
                     if (constrainedName != null) {
                         Text(constrainedName, style = MaterialTheme.typography.bodyMedium)
                         // A small clear affordance to detach the constraint.
-                        TextButton(
-                            onClick = {
-                                rows[index] = row.copy(constrainedToReminderId = ""); push()
-                            },
-                        ) { Text("✕", color = CalColors.muted) }
+                        CrossButton {
+                            rows[index] = row.copy(constrainedToReminderId = ""); push()
+                        }
                     } else {
                         Text("(none)", style = MaterialTheme.typography.bodyMedium, color = CalColors.muted)
                     }
@@ -2907,22 +2900,13 @@ fun HistoryManagerWindow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    OutlinedTextField(
-                        value = filter.query,
-                        onValueChange = { filter = filter.copy(query = it) },
-                        label = { Text("Filter") },
-                        placeholder = { Text("a label, a detail line, a rule, a notification") },
-                        singleLine = true,
-                        trailingIcon = { SearchBarCross(filter.query) { filter = filter.copy(query = "") } },
-                        modifier = Modifier.weight(1f).leaveFocusOnOutsidePress()
-                            .revertsOnEscape(filter.query) { filter = filter.copy(query = it) },
+                    SearchBar(
+                        filter.query, { filter = filter.copy(query = it) }, "Filter",
+                        modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
+                        placeholder = "a label, a detail line, a rule, a notification",
                     )
-                    Button(
-                        // Back to the default view: all windows, any chord, no query.
-                        onClick = { filter = HistoryFilterConfig() },
-                    ) {
-                        Text("Reset")
-                    }
+                    // Back to the default view: all windows, any chord, no query. The one Reset button of the app.
+                    ResetButton(enabled = filter != HistoryFilterConfig()) { filter = HistoryFilterConfig() }
                 }
 
                 // PRD §6 configuration menu: the two ORIGIN fields with the check box that says which
@@ -3759,32 +3743,9 @@ private data class ChoreRow(
 
 /** PRD §14: the unit selector beside the recurrence field — every n days (default) / months / years, or n times per week / month / year. */
 @Composable
-internal fun RecurrenceUnitDropdown(unit: ChoreRecurrenceUnit, onSelect: (ChoreRecurrenceUnit) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .border(1.dp, CalColors.grid, RoundedCornerShape(4.dp))
-                .clickable { expanded = true }
-                .padding(horizontal = 8.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(unit.label, style = MaterialTheme.typography.bodyMedium)
-            Text("▾", style = MaterialTheme.typography.bodySmall, color = CalColors.muted)
-        }
-        // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]).
-        OptionSearchMenu("RecurrenceUnitDropdown",
-            open = expanded,
-            onDismiss = { expanded = false },
-            options = choiceOptions(ChoreRecurrenceUnit.entries, { it.label }) { entry ->
-                onSelect(entry)
-                expanded = false
-            },
-        )
-    }
-}
+internal fun RecurrenceUnitDropdown(unit: ChoreRecurrenceUnit, onSelect: (ChoreRecurrenceUnit) -> Unit) =
+    // The app's one-choice drop-down ([ChoiceDropDown]).
+    ChoiceDropDown("RecurrenceUnitDropdown", ChoreRecurrenceUnit.entries, unit, { it.label }, onSelect, modifier = Modifier.width(150.dp))
 
 /** Render a day span without a forced ".0" tail for whole numbers (e.g. 7.0 → "7", 3.5 → "3.5"). */
 private fun formatDays(days: Double): String =

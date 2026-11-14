@@ -1,5 +1,6 @@
 package org.example.project.ui
 
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
@@ -45,7 +46,7 @@ internal fun Modifier.leavesEditOnEnter(): Modifier {
  * **The app's text field**: Material's `OutlinedTextField`, which a single-line one leaves on Enter
  * ([leavesEditOnEnter]). Every window draws its fields with THIS one — the rule is stated once, here, and a field
  * added tomorrow has it without being told. (A file that imports Material's own by name would opt out of it: none
- * should.) In a compact section ([LocalCompactFields]) it is drawn one task cell tall ([CompactTextField]).
+ * may, `OneTextFieldTest`.) In a compact section ([LocalCompactFields]) it is drawn one task cell tall ([CompactTextField]).
  */
 @Composable
 internal fun OutlinedTextField(
@@ -68,12 +69,13 @@ internal fun OutlinedTextField(
     singleLine: Boolean = false,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     minLines: Int = 1,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
 ) {
     if (LocalCompactFields.current) {
         CompactTextField(
             value, onValueChange, if (singleLine) modifier.leavesEditOnEnter() else modifier, enabled, readOnly, textStyle,
             label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError, visualTransformation,
-            keyboardOptions, singleLine, maxLines, minLines,
+            keyboardOptions, singleLine, maxLines, minLines, keyboardActions,
         )
         return
     }
@@ -94,6 +96,7 @@ internal fun OutlinedTextField(
         isError = isError,
         visualTransformation = visualTransformation,
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         singleLine = singleLine,
         maxLines = maxLines,
         minLines = minLines,
@@ -122,12 +125,13 @@ internal fun OutlinedTextField(
     singleLine: Boolean = false,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     minLines: Int = 1,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
 ) {
     if (LocalCompactFields.current) {
         CompactTextField(
             value, onValueChange, if (singleLine) modifier.leavesEditOnEnter() else modifier, enabled, readOnly, textStyle,
             label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError, visualTransformation,
-            keyboardOptions, singleLine, maxLines, minLines,
+            keyboardOptions, singleLine, maxLines, minLines, keyboardActions,
         )
         return
     }
@@ -148,6 +152,7 @@ internal fun OutlinedTextField(
         isError = isError,
         visualTransformation = visualTransformation,
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         singleLine = singleLine,
         maxLines = maxLines,
         minLines = minLines,

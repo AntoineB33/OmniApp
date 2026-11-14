@@ -194,14 +194,8 @@ fun TaskPickerMenu(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                label = { Text("Find a task") },
-                singleLine = true,
-                trailingIcon = { SearchBarCross(draft) { draft = "" } },
-                modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus),
-            )
+            // Escape closes the picker: the bar does not take it ([SearchBar]).
+            SearchBar(draft, { draft = it }, "Find a task", modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus), escapeReverts = false)
             // User rule 2026-10-14: typing in the bar brings the suggestions under it back to their top.
             val suggestionsScroll = rememberScrollState()
             ScrollsToTopWhenTyped(draft, suggestionsScroll)

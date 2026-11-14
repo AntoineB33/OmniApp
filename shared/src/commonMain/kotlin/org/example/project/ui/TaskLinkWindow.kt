@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -94,13 +93,8 @@ fun TaskLinkWindow(
                     )
                 }
                 if (tree == null) return@Column
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text("Task") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // It finds a task in the list under it: a search bar ([SearchBar]).
+                SearchBar(query, { query = it }, "Task", modifier = Modifier.fillMaxWidth())
                 val rows = linkedTasks(tree).filter { (_, name) -> query.isBlank() || name.contains(query.trim(), ignoreCase = true) }
                 if (rows.isEmpty()) NoteText("No task of “${tree.title}” matches.")
                 for ((id, name) in rows) {

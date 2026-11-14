@@ -185,6 +185,26 @@ class ElementTreeTest {
         assertFalse(taskKey(s, "One") in SearchDomain.results(linked, setOf(Kind.Task), "", filters = SearchDomain.Filters(noParentOfKinds = setOf(Kind.Chrono))).map(SearchDomain::keyOf))
     }
 
+    /** User rule 2026-11-14, the use case *"display all the root cells of every tree"*: the task filter "Root of a tree". */
+    @Test
+    fun the_roots_of_the_trees_are_found_by_the_task_filter() {
+        val tasks = withTasks("One", "Two", "Three")
+        val s = link(tasks, taskKey(tasks, "One"), taskKey(tasks, "Two"))
+        fun names(root: SearchDomain.Tri) =
+            SearchDomain.results(s, setOf(Kind.Task), "", filters = SearchDomain.Filters(taskTreeRoot = root))
+                // Unfiltered, the list also offers to make a task: no task.
+                .filterIsInstance<SearchDomain.TaskResult>().map { it.name }.toSet()
+        val tops = s.lists[s.rootListId]!!.cellIds.mapNotNull { s.cells[it]?.taskId }.mapNotNull { s.tasks[it]?.title }.filter { it.isNotEmpty() }.toSet()
+        assertTrue("One" in tops && "Three" in tops)
+        assertEquals(tops, names(SearchDomain.Tri.Yes))
+        assertEquals(names(SearchDomain.Tri.Any) - tops, names(SearchDomain.Tri.No))
+        // It is a filter that is on, kept by the store; a configuration written before it has none.
+        val config = SearchDomain.Config(filters = SearchDomain.Filters(taskTreeRoot = SearchDomain.Tri.Yes))
+        assertTrue(config.filters.isOn(SearchDomain.Setting.TaskTreeRoot))
+        assertEquals(SearchDomain.Tri.Yes, SearchDomain.Config.decode(config.encode())!!.filters.taskTreeRoot)
+        assertEquals(SearchDomain.Tri.Any, SearchDomain.Config.decode("""{"query":"x","kinds":["Task"],"taskInTree":"Yes"}""")!!.filters.taskTreeRoot)
+    }
+
     @Test
     fun the_parent_filter_survives_the_store_and_an_older_configuration_has_none() {
         val config = SearchDomain.Config(filters = SearchDomain.Filters(noParentOfKinds = setOf(Kind.Task)))
