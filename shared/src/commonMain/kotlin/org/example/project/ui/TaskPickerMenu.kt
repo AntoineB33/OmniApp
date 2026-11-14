@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -177,7 +176,7 @@ fun TaskPickerMenu(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = SCROLLBAR_ROOM)) {
                         itemsIndexed(entries, key = { _, entry -> entry.taskId.value }) { index, entry ->
                             TaskPickerRow(
                                 label = entry.label,
@@ -189,6 +188,8 @@ fun TaskPickerMenu(
                             )
                         }
                     }
+                    // The Search window's scrollbar ([ListScrollbar]): anomaly 2026-11-14, this list scrolled with none.
+                    ListScrollbar(listState, Modifier.align(Alignment.CenterEnd))
                 }
             }
 
@@ -203,7 +204,7 @@ fun TaskPickerMenu(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 200.dp)
-                    .verticalScroll(suggestionsScroll),
+                    .verticalScrollWithBar(suggestionsScroll),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 EditModeMenuBlock(

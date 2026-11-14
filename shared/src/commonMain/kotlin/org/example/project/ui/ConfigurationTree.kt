@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -356,8 +355,9 @@ private fun TreeColumn(
             .reportsHover(LocalMenuHover.current)
             .width(treeColumnWidth(nodes))
             .heightIn(max = TREE_COLUMN_MAX_HEIGHT)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = TREE_COLUMN_PADDING),
+            .verticalScrollWithBar(rememberScrollState())
+            // The scrollbar stands in a room of its own at the right, as beside the Search window's list.
+            .padding(start = TREE_COLUMN_PADDING, end = TREE_COLUMN_PADDING + SCROLLBAR_ROOM),
     ) {
         for (node in nodes) {
             when (node) {
@@ -505,13 +505,14 @@ private val TREE_POPUP_PADDING = 8.dp
  * configuration needs, and its pop-up is as wide as its column** ([treePopupWidth]); one of categories alone stays narrow.
  */
 private fun treeColumnWidth(nodes: List<SearchDomain.ConfigurationNode>) =
-    if (nodes.any { it is SearchDomain.ConfigurationLeaf }) TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 else TREE_CATEGORY_COLUMN_WIDTH
+    (if (nodes.any { it is SearchDomain.ConfigurationLeaf }) TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 else TREE_CATEGORY_COLUMN_WIDTH) +
+        SCROLLBAR_ROOM
 
 /** The width of the pop-up holding a column of [nodes]: the column's, and what stands around it. */
 private fun treePopupWidth(nodes: List<SearchDomain.ConfigurationNode>) = treeColumnWidth(nodes) + TREE_POPUP_PADDING * 2
 
 /** The root's pop-up: it holds every configuration, whatever its field has narrowed it to — it never changes width as one types. */
-private val TREE_ROOT_POPUP_WIDTH = TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 + TREE_POPUP_PADDING * 2
+private val TREE_ROOT_POPUP_WIDTH = TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 + SCROLLBAR_ROOM + TREE_POPUP_PADDING * 2
 private val TREE_COLUMN_MAX_HEIGHT = 480.dp
 
 /**

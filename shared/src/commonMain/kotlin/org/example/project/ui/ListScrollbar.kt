@@ -3,6 +3,8 @@ package org.example.project.ui
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
@@ -21,6 +24,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
@@ -88,28 +97,80 @@ internal fun openEndRows(openEnd: Int?, firstShown: Int, lastShown: Int, total: 
     if (openEnd == null) total else maxOf(openEnd, lastShown + 1 + (lastShown - firstShown + 1)).coerceAtMost(total)
 
 /**
- * [ListScrollbar] for a plain scrolling column ([ScrollState]) — the same thumb and track, read off the exact
- * content height the column measured (`maxValue` past the viewport). Hidden while everything fits.
+ * **The one way a plain column scrolls** ([ScrollState]): `verticalScroll` with the scrollbar the Search window's list
+ * has ([ListScrollbar]) — the same width, colour and thumb ([thumbOf]), read off the exact content height the column
+ * measured (`maxValue` past the viewport), hidden while everything fits. Drag the thumb to scroll; press the track to
+ * page towards the press.
+ *
+ * Anomaly 2026-11-14 (*"in the down arrow of the default search window, there is no vertical scrollbar, even though it
+ * is supposed to be using the same code as the default Search window"*): every column scrolled by a bare
+ * `verticalScroll` — the ▾ tree's columns, the menus, every window's body — and showed no bar; only the lazy lists had
+ * one. Drawn as a modifier, not a sibling composable: a menu measures its entries' INTRINSIC width, which a
+ * `BoxWithConstraints` cannot answer, and the bar needs no room of its own (it is drawn over the column's right edge,
+ * where its padding is). `OneScrollbarTest` fails on a `verticalScroll(` anywhere else.
  */
-@Composable
-internal fun ColumnScrollbar(state: ScrollState, modifier: Modifier = Modifier) {
-    val metrics by remember(state) {
-        derivedStateOf {
-            val viewport = state.viewportSize.toFloat()
-            if (viewport <= 0f || state.maxValue <= 0) return@derivedStateOf null
-            val content = viewport + state.maxValue
-            ScrollMetrics(viewport = viewport, content = content, scrolled = state.value.toFloat())
-        }
-    }
-    val m = metrics ?: return
+internal fun Modifier.verticalScrollWithBar(state: ScrollState, enabled: Boolean = true): Modifier = composed {
+    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = SCROLLBAR_ALPHA)
     val scope = rememberCoroutineScope()
-    ScrollbarTrack(
-        m,
-        modifier,
-        key = state,
-        page = { delta -> scope.launch { state.animateScrollBy(delta) } },
-        drag = { delta -> state.dispatchRawDelta(delta) },
-    )
+    this
+        .pointerInput(state) {
+            awaitEachGesture {
+                // Initial pass: a press on the bar is the bar's, never the row drawn under it.
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                if (state.maxValue <= 0 || down.position.x < size.width - SCROLLBAR_WIDTH.toPx()) return@awaitEachGesture
+                val track = size.height.toFloat()
+                val m = ScrollMetrics(viewport = track, content = track + state.maxValue, scrolled = state.value.toFloat())
+                val thumb = thumbOf(m, track, SCROLLBAR_MIN_THUMB.toPx())
+                down.consume()
+                if (down.position.y < thumb.top || down.position.y > thumb.top + thumb.size) {
+                    val delta = track * if (down.position.y < thumb.top) -1f else 1f
+                    scope.launch { state.animateScrollBy(delta) }
+                }
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!change.pressed) { change.consume(); break }
+                    val dy = change.position.y - change.previousPosition.y
+                    if (dy != 0f) state.dispatchRawDelta(dy * thumb.contentPerThumbPx)
+                    change.consume()
+                }
+            }
+        }
+        .drawWithContent {
+            drawContent()
+            if (state.maxValue <= 0) return@drawWithContent
+            val track = size.height
+            val m = ScrollMetrics(viewport = track, content = track + state.maxValue, scrolled = state.value.toFloat())
+            val thumb = thumbOf(m, track, SCROLLBAR_MIN_THUMB.toPx())
+            val width = SCROLLBAR_WIDTH.toPx()
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(size.width - width, thumb.top),
+                size = Size(width, thumb.size),
+                cornerRadius = CornerRadius(SCROLLBAR_CORNER.toPx()),
+            )
+        }
+        .verticalScroll(state, enabled)
+}
+
+private val SCROLLBAR_WIDTH = 10.dp
+
+/** The room a scrolling list leaves at its right for its bar, so the bar covers no row ([ListScrollbar]'s list's). */
+internal val SCROLLBAR_ROOM = 12.dp
+private val SCROLLBAR_MIN_THUMB = 24.dp
+private val SCROLLBAR_CORNER = 5.dp
+private const val SCROLLBAR_ALPHA = 0.45f
+
+/** Where the thumb of a [trackPx]-tall bar stands and how tall it is, for both scrollbars. */
+private class Thumb(val top: Float, val size: Float, val contentPerThumbPx: Float)
+
+private fun thumbOf(m: ScrollMetrics, trackPx: Float, minThumbPx: Float): Thumb {
+    val size = (trackPx * m.viewport / m.content).coerceIn(minOf(minThumbPx, trackPx), trackPx)
+    val travel = trackPx - size
+    val top = if (travel <= 0f) 0f else travel * m.scrolled / (m.content - m.viewport)
+    // One pixel of thumb travel moves this many pixels of content.
+    val perPx = if (travel <= 0f) 0f else (m.content - m.viewport) / travel
+    return Thumb(top, size, perPx)
 }
 
 /** The track and the thumb both scrollbars draw: a press pages towards it ([page]), the thumb drags ([drag]). */
@@ -122,14 +183,12 @@ private fun ScrollbarTrack(
     drag: (Float) -> Unit,
 ) {
     val density = LocalDensity.current
-    BoxWithConstraints(modifier.fillMaxHeight().width(10.dp)) {
+    BoxWithConstraints(modifier.fillMaxHeight().width(SCROLLBAR_WIDTH)) {
         val trackPx = constraints.maxHeight.toFloat()
-        val minThumbPx = with(density) { 24.dp.toPx() }
-        val thumbPx = (trackPx * m.viewport / m.content).coerceIn(minOf(minThumbPx, trackPx), trackPx)
-        val travelPx = trackPx - thumbPx
-        val thumbTopPx = if (travelPx <= 0f) 0f else travelPx * m.scrolled / (m.content - m.viewport)
-        // One pixel of thumb travel moves this many pixels of content.
-        val contentPerThumbPx = if (travelPx <= 0f) 0f else (m.content - m.viewport) / travelPx
+        val thumb = thumbOf(m, trackPx, with(density) { SCROLLBAR_MIN_THUMB.toPx() })
+        val thumbPx = thumb.size
+        val thumbTopPx = thumb.top
+        val contentPerThumbPx = thumb.contentPerThumbPx
 
         Box(
             Modifier
@@ -148,8 +207,8 @@ private fun ScrollbarTrack(
                 .fillMaxWidth()
                 .height(with(density) { thumbPx.toDp() })
                 .background(
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                    RoundedCornerShape(5.dp),
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = SCROLLBAR_ALPHA),
+                    RoundedCornerShape(SCROLLBAR_CORNER),
                 )
                 .pointerInput(key, contentPerThumbPx) {
                     detectVerticalDragGestures { change, dragAmount ->

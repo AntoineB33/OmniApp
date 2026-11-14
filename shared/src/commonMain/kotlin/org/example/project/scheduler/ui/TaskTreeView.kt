@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -94,6 +93,7 @@ import org.example.project.ui.isModifierKey
 import org.example.project.ui.LocalTransientMenuHost
 import org.example.project.ui.LocalWindowFrameHost
 import org.example.project.ui.printableChar
+import org.example.project.ui.verticalScrollWithBar
 
 /**
  * **The task tree.** Everything the tree *is* — the rows and their chrome, Edit Mode and its naming menus,
@@ -932,7 +932,7 @@ internal fun TaskTreeView(
                     val top = coords.positionInWindow().y
                     treeViewport = top..(top + coords.size.height)
                 }
-                .verticalScroll(treeScroll)
+                .verticalScrollWithBar(treeScroll)
                 // The tree keeps its natural width and scrolls horizontally when the content is wider than
                 // the viewport — it does NOT stretch to fill (or shrink to) the app's width, mirroring the
                 // vertical scroll above. width(IntrinsicSize.Max) sizes the column to its widest row so the

@@ -441,10 +441,13 @@ means.
   so it ate the press that closed it. Now the press outside closes it and still lands: a second right-click opens the
   menu where it was made. Its `transientMenuDismissal` is keyed on the anchor — the closing press and the reopening
   one are the same event, so "open" never reads false between two menus.
-- **A check-box drop-down's list has a vertical scroll bar while it is long enough to scroll** (user rule 2026-10-11;
-  `CheckBoxDropDown`, `DropDownScrollbar`). The list scrolls in a column of its own, 360 dp at most, with the bar at
-  its right edge — gone while everything fits; dragging along the bar scrolls the list. It is its own drawing and not
-  `ColumnScrollbar`: a menu measures its entries' intrinsic width, which a `BoxWithConstraints` cannot answer.
+- **Everything that scrolls vertically shows the one scrollbar** (user rule 2026-10-11 for the drop-downs; anomaly
+  2026-11-14, the ▾ tree's columns had none). A plain column scrolls by `verticalScrollWithBar` (`ListScrollbar.kt`),
+  never a bare `verticalScroll`; a lazy list stands beside a `ListScrollbar`. Both draw the same thumb (`thumbOf`): at
+  the right edge, gone while everything fits, dragged to scroll, the track pressed to page. The column's bar is a
+  modifier, not a sibling: a menu measures its entries' intrinsic width, which a `BoxWithConstraints` cannot answer. A
+  list leaves `SCROLLBAR_ROOM` at its right so the bar covers no row. `OneScrollbarTest` reads the sources for either.
+  (`DropDownScrollbar`, the drop-downs' own drawing, had been unused since they became Search windows; removed.)
 
 ### Search bars
 

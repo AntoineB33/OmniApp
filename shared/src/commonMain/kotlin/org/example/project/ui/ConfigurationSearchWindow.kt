@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -224,7 +223,7 @@ fun ConfigurationSearchWindow(
             val resultScroll = rememberScrollState()
             ScrollsToTopWhenTyped(own.query, resultScroll)
             Column(
-                modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(resultScroll),
+                modifier = Modifier.fillMaxWidth().weight(1f).verticalScrollWithBar(resultScroll),
                 verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP),
             ) {
                 if (groups.isEmpty()) NoteText("No configuration matches.")

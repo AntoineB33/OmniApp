@@ -1,7 +1,5 @@
 package org.example.project.ui
 
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -276,14 +274,20 @@ private fun Modifier.pickOnClick(onClick: () -> Unit): Modifier =
 @Composable
 private fun CompletionList(options: List<String>, modifier: Modifier = Modifier, onPick: (String) -> Unit) {
     if (options.isEmpty()) return
-    LazyColumn(
-        modifier = modifier.fillMaxWidth().heightIn(max = COMPLETION_LIST_MAX_HEIGHT),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        items(options.size, key = { options[it] }) { index ->
-            val option = options[index]
-            EditMenuRow(label = option, focusPreserving = true) { onPick(option) }
+    // Its scrollbar is the result list's ([ListScrollbar]): anomaly 2026-11-14, a lazy list scrolled with none.
+    val listState = rememberLazyListState()
+    Box(modifier.fillMaxWidth().heightIn(max = COMPLETION_LIST_MAX_HEIGHT)) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxWidth().padding(end = SCROLLBAR_ROOM),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            items(options.size, key = { options[it] }) { index ->
+                val option = options[index]
+                EditMenuRow(label = option, focusPreserving = true) { onPick(option) }
+            }
         }
+        ListScrollbar(listState, Modifier.align(Alignment.CenterEnd))
     }
 }
 
@@ -1320,7 +1324,7 @@ fun SearchWindow(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(end = 12.dp)
+                            .padding(end = SCROLLBAR_ROOM)
                             .focusRequester(listFocus)
                             .onFocusChanged { listFocused = it.hasFocus }
                             .focusable()
@@ -2448,49 +2452,6 @@ internal fun <T> CheckBoxDropDown(name: String,
             ),
         )
     }
-}
-
-/** The tallest a drop-down's list is before it scrolls — and shows its scroll bar ([DropDownScrollbar]). */
-private val DROP_DOWN_LIST_MAX_HEIGHT = 360.dp
-private val DROP_DOWN_SCROLLBAR_WIDTH = 10.dp
-
-/**
- * User rule 2026-10-11: **the vertical scroll bar of a drop-down's list**, at its right edge while the list is long
- * enough to scroll ([state]'s `maxValue`), gone while everything fits. The thumb is as tall as the part shown is of
- * the whole and stands where the list is scrolled to; dragged anywhere along the bar, it scrolls the list.
- *
- * Its own drawing rather than [ColumnScrollbar]: a menu measures its entries' INTRINSIC width, and that one is a
- * `BoxWithConstraints`, which cannot be asked for it.
- */
-@Composable
-private fun DropDownScrollbar(state: androidx.compose.foundation.ScrollState, modifier: Modifier = Modifier) {
-    if (state.maxValue <= 0) return
-    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-    Box(
-        modifier
-            .width(DROP_DOWN_SCROLLBAR_WIDTH)
-            .fillMaxHeight()
-            .pointerInput(state) {
-                detectVerticalDragGestures { change, dragAmount ->
-                    change.consume()
-                    val track = size.height.toFloat()
-                    // One pixel along the bar is this many pixels of the list.
-                    if (track > 0f) state.dispatchRawDelta(dragAmount * (track + state.maxValue) / track)
-                }
-            }
-            .drawBehind {
-                val track = size.height
-                val whole = track + state.maxValue
-                val thumb = (track * track / whole).coerceAtLeast(minOf(24.dp.toPx(), track))
-                val top = (track - thumb) * state.value / state.maxValue
-                drawRoundRect(
-                    color = color,
-                    topLeft = androidx.compose.ui.geometry.Offset(0f, top),
-                    size = androidx.compose.ui.geometry.Size(size.width, thumb),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()),
-                )
-            },
-    )
 }
 
 /** How close to its bottom a list is "at its end" ([CheckBoxDropDown]'s `onNearEnd`): about two rows. */

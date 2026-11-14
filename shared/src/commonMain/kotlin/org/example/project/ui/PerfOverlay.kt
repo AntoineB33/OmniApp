@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -237,7 +236,7 @@ fun PerfOverlay(
                         fontWeight = FontWeight.Bold,
                     )
                     Column(
-                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        modifier = Modifier.verticalScrollWithBar(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(1.dp),
                     ) {
                         w.counters.filter { it.calls > 0 }.sortedByDescending { it.calls }.forEach {

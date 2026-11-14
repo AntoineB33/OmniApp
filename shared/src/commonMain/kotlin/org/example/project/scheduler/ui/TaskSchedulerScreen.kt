@@ -38,7 +38,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.RadioButton
 import org.example.project.scheduler.domain.PeriodDrawing
@@ -202,6 +201,7 @@ import org.example.project.ui.EditModeMenuBlock
 import org.example.project.ui.TaskCategoryCell
 import org.example.project.ui.EditModeOption
 import kotlinx.coroutines.withTimeoutOrNull
+import org.example.project.ui.verticalScrollWithBar
 
 /** Width of one weight-table column (text field + stacked +/- buttons + pin button). */
 private val WEIGHT_COLUMN_WIDTH = 130.dp
@@ -507,7 +507,7 @@ fun TaskSchedulerScreen(
                 .fillMaxHeight()
                 .onSizeChanged { configurationShownPx = it.width }
                 .keepsWidthAbove(TASK_TREE_CONFIGURATION_WIDTH)
-                .verticalScroll(rememberScrollState())
+                .verticalScrollWithBar(rememberScrollState())
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -1924,7 +1924,7 @@ internal fun PriorityWeightWindow(
                 Column(
                     Modifier
                         .weight(1f)
-                        .verticalScroll(rememberScrollState())
+                        .verticalScrollWithBar(rememberScrollState())
                         .horizontalScroll(rememberScrollState()),
                 ) {
                     WeightTableHeader(
@@ -2186,7 +2186,7 @@ internal fun PriorityWeightWindow(
                     fractions = chartRows.map { row ->
                         row.cellId?.let { RelativePriorityDomain.cellShare(state, it) } ?: 0.0
                     },
-                    modifier = Modifier.width(220.dp).verticalScroll(rememberScrollState()),
+                    modifier = Modifier.width(220.dp).verticalScrollWithBar(rememberScrollState()),
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -2335,7 +2335,7 @@ internal fun RelativePriorityWindow(
             } else {
                 Column(
                     Modifier
-                        .verticalScroll(rememberScrollState())
+                        .verticalScrollWithBar(rememberScrollState())
                         .horizontalScroll(rememberScrollState()),
                 ) {
                     chains.forEach { chain ->
@@ -3806,7 +3806,7 @@ internal fun TaskEditWindow(
             modifier = Modifier.align(Alignment.Center),
         ) {
             Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                Modifier.weight(1f).verticalScrollWithBar(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 // Section 0: where the task sits, and where else it may go. Structural, so applied at once — each
@@ -4025,7 +4025,7 @@ internal fun DeepCopyWindow(
                 },
         ) {
             Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                Modifier.weight(1f).verticalScrollWithBar(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
 

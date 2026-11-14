@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -113,7 +112,7 @@ fun CategoriesWindow(
                 // Follows the height the window was given (it is resizable), then scrolls — an
                 // account may hold many categories.
                 .weight(1f)
-                .verticalScroll(rememberScrollState())
+                .verticalScrollWithBar(rememberScrollState())
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {

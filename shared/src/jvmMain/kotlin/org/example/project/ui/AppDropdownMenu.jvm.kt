@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -425,7 +424,7 @@ private fun MenuSurface(
         ) {
             // Material's own menu column: the caller's modifier, the menu's padding, as wide as its widest entry.
             Column(
-                modifier = modifier.padding(vertical = 8.dp).width(IntrinsicSize.Max).verticalScroll(rememberScrollState()),
+                modifier = modifier.padding(vertical = 8.dp).width(IntrinsicSize.Max).verticalScrollWithBar(rememberScrollState()),
                 content = content,
             )
         }

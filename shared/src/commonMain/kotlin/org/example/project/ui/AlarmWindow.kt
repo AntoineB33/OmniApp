@@ -18,7 +18,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -649,7 +648,7 @@ fun AlarmWindow(
                 // Follows the height the window was given (it is resizable), then scrolls — an account
                 // may hold many alarms.
                 .weight(1f)
-                .verticalScroll(rememberScrollState())
+                .verticalScrollWithBar(rememberScrollState())
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {

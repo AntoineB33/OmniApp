@@ -42,7 +42,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -1814,7 +1813,7 @@ fun LateralMenu(
                             .fillMaxSize()
                             // Scroll when the buttons exceed the available height (e.g. short windows / calendar
                             // expanded) so nothing is clipped off the bottom.
-                            .verticalScroll(scrollState)
+                            .verticalScrollWithBar(scrollState)
                             // The window bar is drawn OVER this menu along the bottom of the app (WindowBar), so the scrolled
                             // content ends a bar's height lower: scrolled to the end, the last button always clears the bar.
                             // Always, not only while the bar shows — the menu does not jump when a window opens or closes, and
@@ -2586,7 +2585,7 @@ fun ChoresManagerWindow(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .verticalScrollWithBar(rememberScrollState())
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -2983,7 +2982,7 @@ fun HistoryManagerWindow(
                         SelectionContainer(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .verticalScroll(rowsScroll),
+                                .verticalScrollWithBar(rowsScroll),
                         ) {
                             Column(
                                 modifier = Modifier
@@ -3607,7 +3606,7 @@ private fun HistoryEntryInfoWindow(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .verticalScroll(rememberScrollState())
+                .verticalScrollWithBar(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -10326,7 +10325,7 @@ fun ManualEntryEditWindow(
             modifier = Modifier.align(Alignment.Center),
         ) {
             Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                Modifier.weight(1f).verticalScrollWithBar(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
 
@@ -10643,7 +10642,7 @@ fun PeriodEditWindow(
             modifier = Modifier.align(Alignment.Center),
         ) {
             Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                Modifier.weight(1f).verticalScrollWithBar(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
@@ -10882,7 +10881,7 @@ fun ReminderEditWindow(
             modifier = Modifier.align(Alignment.Center),
         ) {
             Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                Modifier.weight(1f).verticalScrollWithBar(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
 
@@ -11017,7 +11016,7 @@ fun ReminderConstraintEditWindow(
                 modifier = Modifier.align(Alignment.Center),
             ) {
                 Column(
-                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                    Modifier.weight(1f).verticalScrollWithBar(rememberScrollState()).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
 
@@ -11354,7 +11353,7 @@ private fun EditMenuSection(
     Column(
         modifier = Modifier
             .heightIn(max = EDIT_MENU_ROW_HEIGHT * EDIT_MENU_IDENTITY_VISIBLE_ROWS)
-            .verticalScroll(scrollState),
+            .verticalScrollWithBar(scrollState),
         // The rows are one child of the caller's `Column` now, so its own spacing no longer falls between
         // them: the section reproduces it here.
         verticalArrangement = Arrangement.spacedBy(4.dp),

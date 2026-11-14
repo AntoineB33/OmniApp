@@ -8,7 +8,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Alignment
 import androidx.compose.material3.Switch
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
@@ -34,6 +33,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import org.example.project.scheduler.sync.AccountInfo
 import org.example.project.scheduler.sync.SyncState
+import org.example.project.ui.verticalScrollWithBar
 
 /**
  * The account / cross-device-sync status in a few words (PRD §5) — the lateral menu's "Online" button and the
@@ -103,7 +103,7 @@ fun OnlineWindow(
         claimsKeyboard = true,
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+            modifier = Modifier.fillMaxWidth().weight(1f).verticalScrollWithBar(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (state == null) {

@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### One scrollbar for everything that scrolls — 2026-11-14
+
+Anomaly: *"in the down arrow of the default search window, there is no vertical scrollbar, even though it is supposed
+to be using the same code as the default Search window that has a vertical scrollbar... find other anomalies like
+this in the app."* Cause: the Search window's list is lazy and stands beside a `ListScrollbar`; the ▾ tree's columns
+scrolled by a bare `verticalScroll`, and so did 31 other columns — every window's body (edit task, alarms, sleep,
+shortcuts, categories, relations, task trees, calendar elements, sync, the periods' windows…), the right-click menus,
+the lateral menu, the configuration Search window's result list, the weight table, the task tree itself. Two lazy lists
+had no bar either: the search bar's completion list and the task picker's. `ColumnScrollbar`, meant for plain
+columns, was never used; `DropDownScrollbar` had been dead since the drop-downs became Search windows. New
+`verticalScrollWithBar` (`ListScrollbar.kt`), a modifier (a menu asks its entries' intrinsic width): **every plain
+column scrolls through it**, drawing the Search window's thumb (`thumbOf`, shared); the two lazy lists get their
+`ListScrollbar`; the dead two are removed. **Behaviour changes:** a bar at the right of all of those while they
+overflow, dragged or its track pressed; the ▾ tree's columns and its root pop-up are 12 dp wider (`SCROLLBAR_ROOM`, the
+Search window list's room) so the bar covers no control. `OneScrollbarTest` fails on a bare `verticalScroll` or a
+lazy list without its bar, and renders one column each way. Horizontal scrolls (8) still have no bar. No migration.
+
 ### Every configuration of the ▾ tree is rows of one height — 2026-11-14
 
 User rule: *"the 'search bars' element has a big height because the text on the right is squished by the width of the
