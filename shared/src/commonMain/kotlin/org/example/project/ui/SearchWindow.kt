@@ -620,8 +620,11 @@ fun SearchWindow(
         remember(searchesTasks && addedList == null, state.cells, state.lists, state.tasks, state.taskTrees, state.activeTaskTreeId) {
             if (searchesTasks && addedList == null) SearchDomain.allPathsInAnyTree(state) else emptyMap()
         }
-    val results: List<SearchDomain.Result> =
-        if (options?.integers != null) {
+    val listed: List<SearchDomain.Result> =
+        if (menuList != null) {
+            // The left-side menu's items, as its bar keeps them ([MenuSearchRows]): rows of this list like any other.
+            remember(menuList.rows) { menuList.rows.map { SearchDomain.ItemResult(SearchDomain.Kind.Option, it.key, it.title, "") } }
+        } else if (options?.integers != null) {
             // User rule 2026-11-13: a list of integers, with no end ([SearchDomain.integerResults]).
             val integers = options.integers
             remember(integers, query) { SearchDomain.integerResults(integers.highestLabel, integers.highest, integers.count, query) }
@@ -673,6 +676,13 @@ fun SearchWindow(
                 SearchDomain.withCreationWhenEmpty(state, found, kinds)
             }
         }
+    // User rule 2026-11-14, "Arrange by dragging": a press selects and activates nothing, a held press drags the
+    // selected rows, and the order they are dragged into is kept — the menu's by the menu, any other list's in
+    // [SearchDomain.Config.arranged]. Not for a drop-down's options nor the actions section: their order is their own.
+    val arranging = config.menuCustomizing && options == null && actionRows == null && picker == null
+    val results: List<SearchDomain.Result> =
+        if (arranging && menuList == null) remember(listed, config.arranged) { SearchDomain.arrangedResults(listed, config.arranged) }
+        else listed
     val count = results.size
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
     // among the results (the question changed, the thing was deleted) reads as the first row.
@@ -688,6 +698,8 @@ fun SearchWindow(
     var deselected by remember { mutableStateOf(false) }
     // Where a Shift+click's range starts ([ClickSelection]): the last row clicked, or moved to with the keys.
     var selectionAnchor by remember { mutableStateOf<String?>(null) }
+    // The row this window selected itself, last ([select]): the selected row coming back as that one is no history move.
+    var ownSelection by remember { mutableStateOf<String?>(null) }
     /**
      * Select the row at [index] — alone: the keys and every other way of selecting one row drop a multi-selection
      * ([clickRow] puts its own back). [record] false is the window's own reset, not a position the user took.
@@ -702,6 +714,7 @@ fun SearchWindow(
         deselected = false
         childSelection.clear()
         selectionAnchor = key
+        ownSelection = key
         if (picker != null || embedded) {
             pickerSelectedKey = key
             return
@@ -715,8 +728,11 @@ fun SearchWindow(
         select(0, record = false)
         selectionSurface = null
     }
-    // History navigation changes the authoritative row without passing through clickRow.
+    // History navigation changes the authoritative row without passing through clickRow. Anomaly 2026-11-14 (*"I do
+    // shift+click to select several rows, but it doesn't work. ctrl+click doesn't work either"*): it also ran for the
+    // row a click had just selected, a frame after the click, and threw away the Ctrl/Shift selection the click made.
     LaunchedEffect(selectedKey) {
+        if (selectedKey == ownSelection) return@LaunchedEffect
         multiSelection = null
         deselected = false
         selectionAnchor = selectedKey
@@ -792,6 +808,11 @@ fun SearchWindow(
     }
     fun openSelected() {
         val row = results.getOrNull(selected) ?: return
+        if (menuList != null) {
+            if (!arranging) (row as? SearchDomain.ItemResult)?.let { menuList.onActivate(it.id) }
+            return
+        }
+        if (arranging) return
         if (options != null) {
             (row as? SearchDomain.ItemResult)?.let { actOnOption(it.id) }
             return
@@ -1223,15 +1244,16 @@ fun SearchWindow(
             // --- The result list --------------------------------------------------------------------
             // Narrowed, the list is cut — laid out at the sections' least width, never squeezed row by row.
             // The left-side menu's list is the menu's own items, at the menu's width ([MenuSearchRows]).
-            if (menuList != null) Box(Modifier.fillMaxWidth().weight(1f)) { menuList.content(query) }
-            else Box(
-                Modifier.fillMaxWidth().weight(1f).keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH)
+            Box(
+                Modifier.fillMaxWidth().weight(1f)
+                    .then(if (menuList != null) Modifier else Modifier.keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH))
                     .onGloballyPositioned { resultListTop = it.positionInWindow().y },
             ) {
                 if (count == 0) {
                     Text(
                         text =
                             when {
+                                menuList != null -> menuList.noneListed
                                 actionRows != null -> actionRows.noneListed
                                 kinds.isEmpty() -> "Tick a kind to look for."
                                 filters.activeCount > 0 -> "Nothing passes the filters."
@@ -1323,11 +1345,38 @@ fun SearchWindow(
                         )
                         }
                     }
+                    val arrange = remember(listState) { ArrangeState(listState) }
+                    run {
+                        val given = { key: String -> menuList?.byKey?.get(menuItemOf(key)) }
+                        arrange.depthOf = { given(it)?.depth ?: 0 }
+                        arrange.parentOf = { key -> given(key)?.parent?.let(::menuListKey) }
+                        arrange.movable = { given(it)?.movable ?: true }
+                        arrange.canGroup = menuList?.onGroup != null
+                    }
+                    LaunchedEffect(arranging) { if (!arranging) arrange.cancel() }
+                    // The release of a drag: the menu moves its items itself; any other list keeps the order it was given.
+                    fun endArrange() = arrange.end(
+                        inOrder = { keys -> resultKeys.filter { it in keys } },
+                        onGroup = { keys, onto -> menuList?.onGroup?.invoke(keys.map(::menuItemOf), menuItemOf(onto)) },
+                        onArrange = { keys, before, parent ->
+                            if (menuList != null) menuList.onArrange(keys.map(::menuItemOf), before?.let(::menuItemOf), parent?.let(::menuItemOf))
+                            else onConfigChange(config.copy(arranged = SearchDomain.arrangedAfterDrop(resultKeys, config.arranged, keys, before)))
+                        },
+                    )
+                    LaunchedEffect(menuList?.scrollToEnd) {
+                        if ((menuList?.scrollToEnd ?: 0) == 0) return@LaunchedEffect
+                        withFrameNanos { }
+                        if (count > 0) listState.animateScrollToItem(count - 1)
+                    }
+                    val dropColor = CalColors.accent
                     LazyColumn(
                         state = listState,
+                        verticalArrangement = Arrangement.spacedBy(menuList?.rowGap ?: 0.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = menuList?.bottomPadding ?: 0.dp),
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(end = SCROLLBAR_ROOM)
+                            .then(with(arrange) { Modifier.dropIndicator(dropColor, menuList?.levelStep ?: 0.dp) })
                             .focusRequester(listFocus)
                             .onFocusChanged { listFocused = it.hasFocus }
                             .focusable()
@@ -1396,6 +1445,42 @@ fun SearchWindow(
                             },
                     ) {
                         itemsIndexed(results, key = { _, r -> resultKey(r) }) { index, result ->
+                            val rowKey = resultKey(result)
+                            // "Arrange by dragging": the row's press is the list's — selecting, dragging, never acting.
+                            val arranged =
+                                if (!arranging) Modifier
+                                else with(arrange) {
+                                    Modifier.followsDrag(rowKey).arrangePress(
+                                        rowKey,
+                                        onPress = { ctrl, shift ->
+                                            clickRow(index, ctrl, shift, keepIfSelected = true)
+                                            // The selection as that press left it (the shown one is a frame behind).
+                                            val picked = multiSelection
+                                            val moving = picked?.takeIf { rowKey in it }?.let { p -> resultKeys.filter { it in p } } ?: listOf(rowKey)
+                                            if (menuList?.byKey?.get(menuItemOf(rowKey))?.movable != false) arrange.start(moving, rowKey)
+                                        },
+                                        onDrag = { dy -> arrange.by(dy) },
+                                        onEnd = { endArrange() },
+                                        // A click that did not drag, on a row of a multi-selection: that row alone, as anywhere.
+                                        onClick = { ctrl, shift -> if (!ctrl && !shift) clickRow(index, false, false, keepIfSelected = false) },
+                                    )
+                                }
+                            Box(arranged) {
+                            // The left-side menu's items: drawn by the menu, selected and arranged by the list.
+                            val given = menuList?.byKey?.get((result as? SearchDomain.ItemResult)?.id)
+                            if (menuList != null && given != null) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .outsidePressPart(resultRows)
+                                        .then(selectionLook(rowSelected(index), rowInSelection(index)))
+                                        .then(
+                                            if (arranging) Modifier
+                                            else Modifier.modifiedPressSelects(rowKey) { ctrl, shift -> clickRow(index, ctrl, shift, keepIfSelected = false) },
+                                        ),
+                                ) { menuList.row(given.key, arranging) }
+                                return@itemsIndexed
+                            }
                             // User rule 2026-11-12: a row of the actions section — a result row like any other, its arrow
                             // opening it, an open action's controls under it.
                             val actionRow = actionRows?.let { given -> (result as? SearchDomain.ItemResult)?.let { given.byKey[it.id] } }
@@ -1499,6 +1584,7 @@ fun SearchWindow(
                                         )
                                     }
                                 }
+                            }
                             }
                             }
                         }
@@ -2184,15 +2270,6 @@ private const val REMOVE_OTHERS_LABEL: String = "remove the others"
  */
 private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
 
-/**
- * User rule 2026-11-13: **what the left-side menu gives the Search window that is it** ([LateralMenu]): its list
- * ([content], given what the bar holds: the items answering it), and what its background menu holds of its own before
- * the window's parts ([backgroundActions]: "Customize", "Reset").
- */
-class MenuSearchRows(
-    val content: @Composable (query: String) -> Unit,
-    val backgroundActions: List<MenuAction> = emptyList(),
-)
 
 /** The left-side menu's Search window as it opens: its items are given, not searched; nothing typed. */
 val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Option), pageTypesOnly = false) }
@@ -2627,14 +2704,22 @@ internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false):
     Modifier
         .fillMaxWidth()
         .height(RESULT_ROW_HEIGHT)
-        // The TASK TREE's selection, not a look of its own: the selection said by the cell's grey background,
-        // darker for the main selection ([taskCellOutline], the tree's one rule).
-        .background(taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).fill)
-        .border(
-            taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderWidth,
-            taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection).borderColor,
-        )
+        .then(selectionLook(selected, inSelection))
         .padding(horizontal = 6.dp)
+
+/**
+ * A selected row's look, whatever draws the row (a result's, a menu item's): the TASK TREE's selection, not a look of its
+ * own — the cell's grey background, darker for the main selection ([taskCellOutline], the tree's one rule).
+ */
+internal fun selectionLook(selected: Boolean, inSelection: Boolean): Modifier {
+    val outline = taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection)
+    return Modifier.background(outline.fill).border(outline.borderWidth, outline.borderColor)
+}
+
+/** A menu item's key in the Search window's list (an [SearchDomain.ItemResult] of [SearchDomain.Kind.Option]), and back. */
+internal fun menuListKey(item: String): String = SearchDomain.Kind.Option.name + "/" + item
+
+internal fun menuItemOf(listKey: String): String = listKey.removePrefix(SearchDomain.Kind.Option.name + "/")
 
 /**
  * A task row: the TASK TREE's own cell ([TaskRow]) — its task colour, its expand arrow, its title and Edit

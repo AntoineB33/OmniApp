@@ -18,7 +18,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import org.example.project.ui.GivenRow
 import org.example.project.ui.LateralMenu
+import org.example.project.ui.MenuItemRows
 
 /**
  * Anomaly 2026-11-01: *"when right-clicking on the left-side menu but not on a button, all the buttons shift down a little
@@ -37,7 +39,11 @@ class LateralMenuShiftTest {
                         page = OmniPage.TaskScheduler,
                         onPageSelected = {},
                         items = {
-                            Box(Modifier.fillMaxWidth().height(40.dp).onGloballyPositioned { y = it.positionInRoot().y })
+                            MenuItemRows(
+                                rows = listOf(GivenRow("item", "Item")),
+                                row = { _, _ -> Box(Modifier.fillMaxWidth().height(40.dp).onGloballyPositioned { y = it.positionInRoot().y }) },
+                                onActivate = {}, onArrange = { _, _, _ -> }, onGroup = { _, _ -> },
+                            )
                         },
                     )
                 }

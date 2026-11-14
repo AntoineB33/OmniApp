@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.ui.CustomMenuButton
 import org.example.project.ui.CustomMenuButtons
-import org.example.project.ui.CustomMenuSection
+import org.example.project.ui.customMenuRows
 import org.example.project.ui.LATERAL_MENU_SEARCH
 import org.example.project.ui.LateralMenu
 
@@ -42,7 +42,7 @@ class LateralMenuSearchTest {
                         config = config,
                         onConfigChange = { config = it },
                         items = { typed ->
-                            CustomMenuSection(
+                            customMenuRows(
                                 buttons = buttons, onClick = {}, editingId = null, onStartRename = {}, onRename = { _, _ -> },
                                 onEditDone = {}, onRemove = {}, query = typed,
                             )

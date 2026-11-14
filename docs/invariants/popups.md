@@ -105,10 +105,18 @@ means.
     restart (`SearchPartsStore`, with the windows' sections), as each actions section's are (`<window>/actions`).
     The menu is the very `SearchWindow`, its search section alone, at the menu's width (never a section's least):
     its **bar** keeps the items whose name holds what it holds (`CustomMenuButtons.answering`), its **▾** opens its
-    configurations, its **background menu** holds "Customize" and "Reset" then the window's parts. **Its list is the
-    menu's items, drawn by the menu's own code** (`CustomMenuSection`): their order, their folders, their drag in
-    customization and their own right-click menus are unchanged — they are not result rows (no row selection, no
-    sorting: the order is the user's). Its background is the menu's (`CalColors.menuBackground`), not the windows'. Its
+    configurations, its **background menu** holds "Reset" then the window's parts. **Its items are rows of the Search
+    window's own list** (anomaly 2026-11-14: *"I do shift+click to select several rows, but it doesn't work"* — the menu
+    drew a list of its own, `CustomMenuSection`, with no selection; `customMenuRows`, `MenuItemRows`, `GivenRow`,
+    `MenuFolderDragTest`): the list selects them (Ctrl, Shift — a Ctrl/Shift press selects without pressing the item),
+    walks them by the keyboard (Enter presses the selected one), scrolls them with its bar; the menu draws each item in
+    its row (its folder lines, its arrow, its own right-click menu) and keeps their order — no sorting: the order is the
+    user's. While **"Arrange by dragging"** is on (it was "Customize the left-side menu", 2026-11-14) a press selects and
+    presses nothing, and a held press drags **the selected rows** (`ArrangeState`, `arrangePress`): over the middle of
+    a row they go into a folder with it, between two before the lower, at the depth the line shows. The same drag
+    arranges **any** Search window's list, which keeps the order in `Config.arranged` (`SearchDomain.arrangedResults`,
+    `arrangedAfterDrop`, `ArrangedOrderTest`) while the setting is on; not a drop-down's options nor the actions
+    section. Its background is the menu's (`CalColors.menuBackground`), not the windows'. Its
     configuration is kept by `App` as any Search window's (`searchConfigs[LATERAL_MENU_ID]`, its placement row, its
     History Units), its ▾ windows are named after it (`LateralMenu▾`), and "State in each window" lists it. Which of
     its parts are shown is not kept across a restart.
@@ -205,7 +213,7 @@ means.
     2026-11-01: the right-click menu alone does, as Stop customizing), and
     a right-click on one offers exactly "add in the left-side menu", at the pointer (`MenuAddable`). **The menu's own items do nothing at
     a press meanwhile** (anomaly 2026-10-08: a switch was still flipped): a press HOLDS the item, and moved, DRAGS it
-    to another place of the menu (user rule 2026-10-08; `heldDrag`, `CustomMenuButtons.moved` / `dropBefore`) — the
+    to another place of the menu (user rule 2026-10-08; `arrangePress`, `CustomMenuButtons.placed` / `dropPlace`) — the
     item follows the hand, a line says where a release would put it, and it lands before the item under it. The page
     button is not an item and does not move. Only their right-click menu answers otherwise; the controls outlined
     elsewhere in the app still work. It lands at the bottom; a control

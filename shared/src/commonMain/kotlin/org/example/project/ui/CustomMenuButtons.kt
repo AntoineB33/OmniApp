@@ -250,43 +250,6 @@ internal fun Modifier.greyedAndDeaf(disabled: Boolean): Modifier =
 /** Cut at its own bounds — an editor made for a wide section, shown in the narrow menu. */
 internal fun Modifier.cutAtBounds(): Modifier = clipToBounds()
 
-/**
- * A press of the left button HOLDS what is under it instead of pressing it: the press, its moves and its release are
- * taken before whatever is there (the Initial pass, consumed — so a switch is not flipped and a button opens nothing,
- * anomaly 2026-10-08), and told as a drag: [onStart], the vertical movement since the last event ([onDrag]), [onEnd].
- * The right button is left alone. On a node that does not move with the drag, so the movements are true.
- */
-internal fun Modifier.heldDrag(key: Any?, onStart: () -> Unit, onDrag: (dy: Float) -> Unit, onEnd: () -> Unit): Modifier =
-    pointerInput(key) {
-        awaitPointerEventScope {
-            var held = false
-            while (true) {
-                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                if (event.buttons.isSecondaryPressed) continue
-                when (event.type) {
-                    androidx.compose.ui.input.pointer.PointerEventType.Press -> {
-                        event.changes.forEach { it.consume() }
-                        held = true
-                        onStart()
-                    }
-                    androidx.compose.ui.input.pointer.PointerEventType.Move ->
-                        if (held) {
-                            val dy = event.changes.firstOrNull()?.let { it.position.y - it.previousPosition.y } ?: 0f
-                            event.changes.forEach { it.consume() }
-                            if (dy != 0f) onDrag(dy)
-                        }
-                    androidx.compose.ui.input.pointer.PointerEventType.Release -> {
-                        event.changes.forEach { it.consume() }
-                        if (held) {
-                            held = false
-                            onEnd()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
 /** A right-click taken BEFORE whatever is under it (the Initial pass, consumed): a field's or a switch's own answer never runs. */
 internal fun Modifier.secondaryPressFirst(key: Any?, onPress: () -> Unit): Modifier =
     pointerInput(key) {
@@ -1002,21 +965,25 @@ object CustomMenuButtons {
  * ([CustomMenuButton]): a window's button, or a control of the app ([MenuControl], drawn by [controlContent]). They
  * all have the SAME right-click menu: Update (a window's button whose window changed), Rename, Remove and Reset
  * ([onReset]) — Reset also works from the empty menu background, so a
- * menu emptied of everything can still be filled again. Customizing is ended there alone (user rule 2026-11-01).
+ * menu emptied of everything can still be filled again.
  *
  * User rule 2026-11-01: **an item dropped on another makes a folder of the two** ([onGroup], [CustomMenuButton.folder]),
  * dropped on a folder it joins it. A folder has an arrow ([onToggleFolder]). A thin vertical line per level shows the
  * tree; a row is indented and lined for its [MAX_MENU_LEVELS] deepest levels alone, the ones above hidden to the left.
  *
- * (Formerly) the lateral menu's bottom section: the buttons the user made ([CustomMenuButton]), drawn like the menu's own.
  * [editingId]'s title is an edit field instead, opened with the whole title selected — so typing replaces it and
  * Enter keeps it. Enter or leaving the field commits ([onRename]; a blank title keeps the old one), Escape keeps
  * the title it had. A right-click offers Rename (the same field) and Remove — and **Update** (user rule 2026-10-07)
  * while the window the button opened is open and is no longer what the button holds ([canUpdate], asked when the menu
  * opens): the button then keeps that window's state as it stands ([onUpdate]).
+ *
+ * Since 2026-11-14 (*"I do shift+click to select several rows, but it doesn't work"*) the menu draws no list of its own:
+ * **its items are rows of the Search window it is** ([MenuSearchRows]), which selects them (Ctrl, Shift), walks them by
+ * the keyboard and drags them while "Arrange by dragging" is on ([customizing]: then an item activates nothing). This
+ * gives the rows the bar keeps ([query]), how each is drawn, and what a drag does to them: [onMove] each before the row
+ * the line stood above, in its folder; [onGroup] each onto the row under them.
  */
-@Composable
-internal fun CustomMenuSection(
+internal fun customMenuRows(
     buttons: List<CustomMenuButton>,
     onClick: (CustomMenuButton) -> Unit,
     editingId: String?,
@@ -1026,12 +993,10 @@ internal fun CustomMenuSection(
     onRemove: (id: String) -> Unit,
     canUpdate: (CustomMenuButton) -> Boolean = { false },
     onUpdate: (CustomMenuButton) -> Unit = {},
-    /** Whether the menu is being customized ([MenuCustomizer.active]). */
-    customizing: Boolean = false,
     /** Draws the control an item is, under the name the user gave it (null: the control's own). */
     controlContent: @Composable (control: MenuControl, title: String?) -> Unit = { _, _ -> },
-    /** The customization mode's drag: the item [id] dropped just before [beforeId] (null: at the end), in the folder [parent]. */
-    onMove: (id: String, beforeId: String?, parent: String?) -> Unit = { _, _, _ -> },
+    /** The drag: the items [ids], in the menu's order, dropped just before [beforeId] (null: at the end), in the folder [parent]. */
+    onMove: (ids: List<String>, beforeId: String?, parent: String?) -> Unit = { _, _, _ -> },
     /** Draws an item that is a Search action on its elements ([CustomMenuButton.action]). */
     actionContent: @Composable (CustomMenuButton) -> Unit = {},
     /** User rule 2026-10-18: the item [id] made global (it stands in the menu of every page) or its page's own again. */
@@ -1040,176 +1005,144 @@ internal fun CustomMenuSection(
     onSetWholeState: (id: String, on: Boolean) -> Unit = { _, _ -> },
     /** The page's menu back to its default items ([CustomMenuButtons.withPageReset]). */
     onReset: () -> Unit = {},
-    /** The customization mode's drag: the item [id] dropped on the item [targetId]. */
-    onGroup: (id: String, targetId: String) -> Unit = { _, _ -> },
+    /**
+     * The drag: the items [ids] dropped on the item [targetId] — the first makes the folder (or joins it), the others
+     * join that folder.
+     */
+    onGroup: (ids: List<String>, targetId: String) -> Unit = { _, _ -> },
     /** The arrow of the folder [id] pressed. */
     onToggleFolder: (id: String) -> Unit = {},
     /** User rule 2026-11-13: what the menu's search bar holds — the items it finds are drawn ([CustomMenuButtons.answering]). */
     query: String = "",
-) {
-    // User rule 2026-10-08: "in customization mode, the user can drag the buttons or fields in the left-side menu".
-    // Each drawn item's row (its top and height in this column), the one held and how far the hand has it. The held
-    // item follows the hand; a line says where a release would put it ([CustomMenuButtons.dropBefore]).
-    val rows = remember { androidx.compose.runtime.mutableStateMapOf<String, Pair<Float, Float>>() }
-    var draggedId by remember { mutableStateOf<String?>(null) }
-    var dragOffset by remember { mutableStateOf(0f) }
+): MenuItemRows {
     val visible = CustomMenuButtons.answering(CustomMenuButtons.visibleRows(buttons), query)
-    // What a drag can land on: not on itself, nor inside itself.
-    fun others(): List<CustomMenuButtons.DropRow> {
-        val id = draggedId ?: return emptyList()
-        val block = CustomMenuButtons.descendantIds(buttons, id) + id
-        return visible.filter { it.button.id !in block }.mapNotNull { row ->
-            rows[row.button.id]?.let { (top, height) -> CustomMenuButtons.DropRow(row.button.id, row.button.parent, row.depth, top, height) }
-        }
-    }
-    fun draggedMiddle(): Float? {
-        val (top, height) = rows[draggedId] ?: return null
-        return top + height / 2f + dragOffset
-    }
-    fun dropOnto(): String? = draggedMiddle()?.let { CustomMenuButtons.dropOnto(others(), it) }
-    fun dropPlace(): CustomMenuButtons.DropPlace? = draggedMiddle()?.let { CustomMenuButtons.dropPlace(others(), it) }
-    val lineColor = CalColors.accent
-    val treeColor = CalColors.grid
-    Column(
-        verticalArrangement = Arrangement.spacedBy(MENU_ROW_GAP),
-        modifier = Modifier.drawWithContent {
-            drawContent()
-            if (draggedId == null) return@drawWithContent
-            val onto = dropOnto()?.let(rows::get)
-            if (onto != null) {
-                // Over an item: a release makes a folder of the two, or joins this one.
-                drawRoundRect(
-                    color = lineColor,
-                    topLeft = Offset(0f, onto.first),
-                    size = androidx.compose.ui.geometry.Size(size.width, onto.second),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(8.dp.toPx()),
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+    val byId = buttons.associateBy { it.id }
+    val depthOf = visible.associate { it.button.id to it.depth }
+    return MenuItemRows(
+        rows = visible.map { (button, depth) -> GivenRow(button.id, CustomMenuButtons.titleOf(button), depth, button.parent) },
+        row = { id, arranging ->
+            val button = byId[id]
+            if (button != null) {
+                MenuItemRow(
+                    button, depthOf[id] ?: 0, arranging, editingId, onClick, onStartRename, onRename, onEditDone, onRemove, canUpdate,
+                    onUpdate, controlContent, actionContent, onSetGlobal, onSetWholeState, onReset, onToggleFolder,
                 )
-                return@drawWithContent
             }
-            val place = dropPlace() ?: return@drawWithContent
-            val y =
-                place.lineAbove?.let(rows::get)?.let { it.first - 5.dp.toPx() }
-                    ?: place.lineBelow?.let(rows::get)?.let { it.first + it.second + 5.dp.toPx() }
-            // It starts where a row of that depth would (user rule 2026-11-01): shorter, one level deeper.
-            val x = MENU_LEVEL_STEP.toPx() * minOf(place.depth, MAX_MENU_LEVELS)
-            if (y != null) drawLine(lineColor, Offset(x, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
         },
-    ) {
-        for ((button, depth) in visible) {
-            androidx.compose.runtime.key(button.id) {
-                val levels = minOf(depth, MAX_MENU_LEVELS)
-                androidx.compose.foundation.layout.Row(
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onGloballyPositioned { rows[button.id] = it.positionInParent().y to it.size.height.toFloat() }
-                        .drawBehind {
-                            // One line per level, from the gap above the row to its bottom: with the next row's, a line
-                            // that runs as long as the folder does, and stops at its last item.
-                            for (level in 0 until levels) {
-                                val x = (level + 0.5f) * MENU_LEVEL_STEP.toPx()
-                                drawLine(treeColor, Offset(x, -MENU_ROW_GAP.toPx()), Offset(x, size.height), strokeWidth = 1f)
-                            }
-                        }
-                        .padding(start = MENU_LEVEL_STEP * levels),
-                ) {
-                    if (button.folder) SectionArrow(button.collapsed) { onToggleFolder(button.id) }
-                    if (button.id == editingId) {
-                        Box(Modifier.weight(1f)) { CustomMenuTitleField(button, onRename, onEditDone) }
-                    } else {
-                        val control = MenuControl.of(button.control)
-                        var menuOpen by remember(button.id) { mutableStateOf(false) }
-                        Box(
-                            // While the menu is being customized its items do NOTHING at a press (anomaly 2026-10-08: a switch
-                            // was still flipped, a button still opened its window): they are there to be renamed and removed.
-                            // Only their right-click menu answers.
-                            // …and a press held and moved DRAGS the item to another place of the menu ([heldDrag], which is
-                            // also what swallows the press). The row is measured on what does not move; what follows the
-                            // hand is the box inside it. A folder's arrow stands outside this: it still answers.
-                            Modifier
-                                .weight(1f)
-                                .then(
-                                    if (!customizing) Modifier
-                                    else Modifier.heldDrag(
-                                        button.id,
-                                        onStart = { draggedId = button.id; dragOffset = 0f },
-                                        onDrag = { dy -> if (draggedId == button.id) dragOffset += dy },
-                                        onEnd = {
-                                            if (draggedId == button.id) {
-                                                val onto = dropOnto()
-                                                val place = dropPlace()
-                                                val moved = kotlin.math.abs(dragOffset) > 4f
-                                                draggedId = null
-                                                dragOffset = 0f
-                                                if (moved) {
-                                                    if (onto != null) onGroup(button.id, onto)
-                                                    else if (place != null) onMove(button.id, place.beforeId, place.parent)
-                                                }
-                                            }
-                                        },
-                                    ),
-                                )
-                                // A control answers a right-click itself (a field's own menu, a switch): the item's menu is
-                                // asked first. A window's button keeps the app's one right-click gesture.
-                                .then(
-                                    if (control != null || button.action != null) Modifier.secondaryPressFirst(button.id) { menuOpen = true }
-                                    else Modifier,
-                                ),
-                        ) {
-                            Box(
-                                Modifier
-                                    .zIndex(if (draggedId == button.id) 1f else 0f)
-                                    .graphicsLayer {
-                                        translationY = if (draggedId == button.id) dragOffset else 0f
-                                        alpha = if (draggedId == button.id) 0.85f else 1f
-                                    },
-                            ) {
-                                if (button.action != null) {
-                                    actionContent(button)
-                                } else if (control != null) {
-                                    controlContent(control, button.title.takeIf { it.isNotBlank() })
-                                } else {
-                                    MenuButton(
-                                        label = button.title,
-                                        active = false,
-                                        onClick = { onClick(button) },
-                                        modifier = contextMenuModifier(enabled = true, key = button.id) { menuOpen = true },
-                                    )
-                                }
-                            }
-                            // User rule 2026-11-12: the menu is a Search window of its entries.
-                            ActionMenu("lateral menu button menu",
-                                open = menuOpen,
-                                onDismiss = { menuOpen = false },
-                                actions = buildList {
-                                    if (!button.folder && canUpdate(button)) add(MenuAction("Update") { onUpdate(button) })
-                                    if (CustomMenuButtons.canRename(button)) add(MenuAction("Rename") { onStartRename(button.id) })
-                                    // Checked while the item stands in the menu of every page. A folder is its items, each global or not.
-                                    // User rule 2026-11-04: named "all pages" (it was "Global").
-                                    if (!button.folder) add(MenuAction((if (button.global) "✓ " else "") + "all pages") { onSetGlobal(button.id, !button.global) })
-                                    // User rule 2026-11-05: a window's button only — checked, it brings back its window only as it keeps it whole.
-                                    if (!button.folder && button.control == null && button.action == null && button.windowId.isNotBlank()) {
-                                        val on = CustomMenuButtons.wholeStateOn(button)
-                                        add(MenuAction((if (on) "✓ " else "") + "match the whole state") { onSetWholeState(button.id, !on) })
-                                    }
-                                    add(MenuAction("Remove") { onRemove(button.id) })
-                                    add(MenuAction("Reset") { onReset() })
-                                },
-                            )
-                        }
-                    }
+        onActivate = { id -> byId[id]?.let(onClick) },
+        onArrange = onMove,
+        onGroup = onGroup,
+    )
+}
+
+/** What the menu's items give the Search window that draws them ([customMenuRows], [MenuSearchRows]). */
+class MenuItemRows(
+    val rows: List<GivenRow>,
+    val row: @Composable (key: String, arranging: Boolean) -> Unit,
+    val onActivate: (key: String) -> Unit,
+    val onArrange: (keys: List<String>, beforeKey: String?, parent: String?) -> Unit,
+    val onGroup: (keys: List<String>, ontoKey: String) -> Unit,
+) {
+    companion object {
+        val NONE = MenuItemRows(emptyList(), { _, _ -> }, {}, { _, _, _ -> }, { _, _ -> })
+    }
+}
+
+/** One item of the menu in its row: its folder lines and indent, its arrow, and the item — or its title's field. */
+@Composable
+private fun MenuItemRow(
+    button: CustomMenuButton,
+    depth: Int,
+    arranging: Boolean,
+    editingId: String?,
+    onClick: (CustomMenuButton) -> Unit,
+    onStartRename: (id: String) -> Unit,
+    onRename: (id: String, title: String) -> Unit,
+    onEditDone: () -> Unit,
+    onRemove: (id: String) -> Unit,
+    canUpdate: (CustomMenuButton) -> Boolean,
+    onUpdate: (CustomMenuButton) -> Unit,
+    controlContent: @Composable (control: MenuControl, title: String?) -> Unit,
+    actionContent: @Composable (CustomMenuButton) -> Unit,
+    onSetGlobal: (id: String, global: Boolean) -> Unit,
+    onSetWholeState: (id: String, on: Boolean) -> Unit,
+    onReset: () -> Unit,
+    onToggleFolder: (id: String) -> Unit,
+) {
+    val levels = minOf(depth, MAX_MENU_LEVELS)
+    val treeColor = CalColors.grid
+    androidx.compose.foundation.layout.Row(
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                // One line per level, from the gap above the row to its bottom: with the next row's, a line that runs as
+                // long as the folder does, and stops at its last item.
+                for (level in 0 until levels) {
+                    val x = (level + 0.5f) * MENU_LEVEL_STEP.toPx()
+                    drawLine(treeColor, Offset(x, -MENU_ROW_GAP.toPx()), Offset(x, size.height), strokeWidth = 1f)
                 }
             }
+            .padding(start = MENU_LEVEL_STEP * levels),
+    ) {
+        // While the menu is arranged the list takes every press first: the arrow too.
+        if (button.folder) SectionArrow(button.collapsed) { onToggleFolder(button.id) }
+        if (button.id == editingId) {
+            Box(Modifier.weight(1f)) { CustomMenuTitleField(button, onRename, onEditDone) }
+            return@Row
+        }
+        val control = MenuControl.of(button.control)
+        var menuOpen by remember(button.id) { mutableStateOf(false) }
+        Box(
+            // A control answers a right-click itself (a field's own menu, a switch): the item's menu is asked first. A
+            // window's button keeps the app's one right-click gesture.
+            Modifier
+                .weight(1f)
+                .then(
+                    if (control != null || button.action != null || arranging) Modifier.secondaryPressFirst(button.id) { menuOpen = true }
+                    else Modifier,
+                ),
+        ) {
+            if (button.action != null) {
+                actionContent(button)
+            } else if (control != null) {
+                controlContent(control, button.title.takeIf { it.isNotBlank() })
+            } else {
+                MenuButton(
+                    label = button.title,
+                    active = false,
+                    onClick = { onClick(button) },
+                    modifier = contextMenuModifier(enabled = true, key = button.id) { menuOpen = true },
+                )
+            }
+            // User rule 2026-11-12: the menu is a Search window of its entries.
+            ActionMenu("lateral menu button menu",
+                open = menuOpen,
+                onDismiss = { menuOpen = false },
+                actions = buildList {
+                    if (!button.folder && canUpdate(button)) add(MenuAction("Update") { onUpdate(button) })
+                    if (CustomMenuButtons.canRename(button)) add(MenuAction("Rename") { onStartRename(button.id) })
+                    // Checked while the item stands in the menu of every page. A folder is its items, each global or not.
+                    // User rule 2026-11-04: named "all pages" (it was "Global").
+                    if (!button.folder) add(MenuAction((if (button.global) "✓ " else "") + "all pages") { onSetGlobal(button.id, !button.global) })
+                    // User rule 2026-11-05: a window's button only — checked, it brings back its window only as it keeps it whole.
+                    if (!button.folder && button.control == null && button.action == null && button.windowId.isNotBlank()) {
+                        val on = CustomMenuButtons.wholeStateOn(button)
+                        add(MenuAction((if (on) "✓ " else "") + "match the whole state") { onSetWholeState(button.id, !on) })
+                    }
+                    add(MenuAction("Remove") { onRemove(button.id) })
+                    add(MenuAction("Reset") { onReset() })
+                },
+            )
         }
     }
 }
 
 /** The gap between two rows of the menu, which a level's line crosses. */
-private val MENU_ROW_GAP = 10.dp
+internal val MENU_ROW_GAP = 10.dp
 
 /** How far each level of a folder is indented, and where its line stands. */
-private val MENU_LEVEL_STEP = 9.dp
+internal val MENU_LEVEL_STEP = 9.dp
 
 /** How many levels a row is indented for: there is no limit to the depth, and past this the levels above are out of view. */
 internal const val MAX_MENU_LEVELS: Int = 6

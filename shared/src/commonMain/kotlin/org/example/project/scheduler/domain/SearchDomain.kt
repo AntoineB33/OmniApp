@@ -759,8 +759,17 @@ object SearchDomain {
          * only if it answers, a group only while one of its actions does.
          */
         val actionSearchSortsOnly: Boolean = true,
-        /** User rule 2026-11-14: the lateral menu's items are inert while this is on, so they can be dragged. */
+        /**
+         * User rule 2026-11-14, "Arrange by dragging" ([Setting.MenuCustomizing]): **a press selects, nothing activates,
+         * and a held press drags the selected rows** — in any Search window. The left-side menu keeps its own order (its
+         * items); any other list keeps it in [arranged].
+         */
         val menuCustomizing: Boolean = false,
+        /**
+         * User rule 2026-11-14: **the order the user dragged the rows into** ([arrangedResults]), by result key — read
+         * while [menuCustomizing] is on. Rows not in it follow, in the list's own order.
+         */
+        val arranged: List<String> = emptyList(),
         /**
          * User rule 2026-11-12, a search configuration ([Setting.DropButtons]): **every element of the list with a button to
          * drop it** — the "List of parents" takes the parent off ([ElementTree.parentIntents]); any other Search window takes
@@ -924,6 +933,7 @@ object SearchDomain {
                     actionsExpanded = actionsExpanded,
                     actionSearchSortsOnly = actionSearchSortsOnly,
                     menuCustomizing = menuCustomizing,
+                    arranged = arranged,
                     dropButtons = dropButtons,
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
@@ -1060,6 +1070,7 @@ object SearchDomain {
                     actionsExpanded = stored.actionsExpanded,
                     actionSearchSortsOnly = stored.actionSearchSortsOnly,
                     menuCustomizing = stored.menuCustomizing,
+                    arranged = stored.arranged,
                     dropButtons = stored.dropButtons,
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
@@ -1925,6 +1936,31 @@ object SearchDomain {
         return (relevant + first.take(1) + on + first.drop(1)).distinct()
     }
 
+    /**
+     * User rule 2026-11-14, "Arrange by dragging": [results] in the order the user dragged them into ([Config.arranged])
+     * — those it names first, in its order; the others after, in the list's own.
+     */
+    fun arrangedResults(results: List<Result>, arranged: List<String>): List<Result> {
+        if (arranged.isEmpty()) return results
+        val rank = arranged.withIndex().associate { (i, key) -> key to i }
+        val (named, rest) = results.partition { keyOf(it) in rank }
+        return named.sortedBy { rank.getValue(keyOf(it)) } + rest
+    }
+
+    /**
+     * The order [arranged] becomes when the rows [moved] (keys, in the list's order) are dropped before [beforeKey] (null:
+     * at the end) of [shown], the list's keys as drawn: the shown rows in their new order, then what [arranged] named
+     * that is not shown, so a row filtered out keeps its rank among the others when it comes back.
+     */
+    fun arrangedAfterDrop(shown: List<String>, arranged: List<String>, moved: List<String>, beforeKey: String?): List<String> {
+        val movedSet = moved.toSet()
+        val rest = shown.filterNot { it in movedSet }
+        val at = beforeKey?.let { rest.indexOf(it) }?.takeIf { it >= 0 } ?: rest.size
+        val order = rest.subList(0, at) + shown.filter { it in movedSet } + rest.subList(at, rest.size)
+        val shownSet = shown.toSet()
+        return order + arranged.filterNot { it in shownSet }
+    }
+
     /** The Claude kinds' filters but the prompt's: the same three filters, listed again under another kind. */
     val CLAUDE_SETTING_ECHOES: Set<Setting> by lazy {
         setOf(
@@ -2400,6 +2436,8 @@ object SearchDomain {
         val actionsExpanded: Boolean = false,
         val actionSearchSortsOnly: Boolean = true,
         val menuCustomizing: Boolean = false,
+        /** New 2026-11-14: absent = no order dragged ([Config.arranged]). */
+        val arranged: List<String> = emptyList(),
         /** New 2026-11-12: absent = no drop button ([Config.dropButtons]). */
         val dropButtons: Boolean = false,
         /** New 2026-10-11: absent from an older build's = the actions in their own order. */

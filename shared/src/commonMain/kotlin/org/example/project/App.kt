@@ -101,7 +101,6 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.ui.undoRedoIntentFor
 import org.example.project.ui.CustomMenuButton
 import org.example.project.ui.CustomMenuButtons
-import org.example.project.ui.CustomMenuSection
 import org.example.project.ui.LocalMenuButtonHost
 import org.example.project.ui.MenuButtonHost
 import androidx.compose.ui.focus.onFocusChanged
@@ -1041,15 +1040,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val menuCustomizer = remember { org.example.project.ui.MenuCustomizer() }
         // The one whose title is being typed: a new button opens so, and so does "Rename". Compose-only.
         var editingMenuButton by remember { mutableStateOf<String?>(null) }
-        // The menu's scroll, held here so a new button can be brought into view: the menu is scrolled to its
-        // very end once the button is laid out (a frame after it is added — the end is not known before).
-        val menuScroll = rememberScrollState()
+        // Bumped when a button is added at the menu's end: the menu's list brings its end into view
+        // (a frame after it is added — the end is not laid out before).
         var menuButtonAdded by remember { mutableIntStateOf(0) }
-        LaunchedEffect(menuButtonAdded) {
-            if (menuButtonAdded == 0) return@LaunchedEffect
-            withFrameNanos { }
-            menuScroll.animateScrollTo(menuScroll.maxValue)
-        }
         // Every page's menu at once (user rule 2026-10-18: a global item stands in all of them): the rows that changed are
         // written, and ONE History Unit holds them all, so an undo puts every page back together.
         fun setMenuLists(next: Map<String, List<CustomMenuButton>>, renameOnly: Boolean = false) {
@@ -4386,11 +4379,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             page = it
                         }
                     },
-                    scrollState = menuScroll,
-                    customizing = menuSearchConfig.menuCustomizing,
+                    scrollToEnd = menuButtonAdded,
                     onReset = { resetMenuButtons() },
                     items = { menuQuery ->
-                        CustomMenuSection(
+                        org.example.project.ui.customMenuRows(
                             query = menuQuery,
                             buttons = menuButtons.filter(::menuButtonShown),
                             // PRD §7: every window button of the menu opens a NEW window ([openNewWindow]).
@@ -4431,16 +4423,27 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     setMenuButtons(CustomMenuButtons.updated(menuButtons, button.id, config, layout))
                                 }
                             },
-                            customizing = menuSearchConfig.menuCustomizing,
                             onReset = { resetMenuButtons() },
                             controlContent = { control, title -> org.example.project.ui.MenuControlItem(control, title, menuControlHost) },
-                            onMove = { id, beforeId, parent -> setMenuButtons(CustomMenuButtons.placed(menuButtons, id, beforeId, parent)) },
-                            onGroup = { id, targetId ->
+                            // One at a time, each before the same row: they land in the order they stood.
+                            onMove = { ids, beforeId, parent ->
+                                setMenuButtons(ids.fold(menuButtons) { list, id -> CustomMenuButtons.placed(list, id, beforeId, parent) })
+                            },
+                            onGroup = { ids, targetId ->
                                 val used = menuListsNow().values.flatten().mapTo(HashSet()) { it.id }
-                                val (list, folder) = CustomMenuButtons.grouped(menuButtons, id, targetId, used)
+                                // The first makes the folder (or joins it); the others join the folder it went into.
+                                var list = menuButtons
+                                var made: String? = null
+                                var onto = targetId
+                                for (id in ids) {
+                                    val (next, folder) = CustomMenuButtons.grouped(list, id, onto, used + list.map { it.id })
+                                    list = next
+                                    if (folder != null) made = folder
+                                    onto = list.firstOrNull { it.id == id }?.parent ?: onto
+                                }
                                 setMenuButtons(list)
                                 // A new folder's title is in edit at once, as a new button's is.
-                                if (folder != null) editingMenuButton = folder
+                                if (made != null) editingMenuButton = made
                             },
                             onToggleFolder = { setMenuButtons(CustomMenuButtons.toggled(menuButtons, it)) },
                             actionContent = { button ->

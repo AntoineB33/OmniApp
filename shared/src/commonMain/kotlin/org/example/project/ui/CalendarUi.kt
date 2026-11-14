@@ -1733,7 +1733,7 @@ private fun hourLabel(hour: Int): String {
  * PRD §7 Lateral menu: a persistent left rail. Its first element, under its search bar (user rule 2026-11-14), is the
  * page-navigation button (present on every feature page) — the ONE thing of it that is not the user's (user rule 2026-10-08: *"Make the entire left-side menu
  * of the app customizable, except for the top button that allows the user to switch between pages"*). Everything
- * under it is [items]: the user's list ([CustomMenuSection]) of windows' buttons and controls of the app
+ * under it is [items]: the user's list ([customMenuRows], rows of the menu's Search window) of windows' buttons and controls of the app
  * ([MenuControl], [MenuControlItem]), which starts as what the menu used to hold ([CustomMenuButtons.DEFAULTS]).
  * **A window's button opens a NEW window at every click** — never closes one, and is never drawn as "open" (the
  * window bar says what is open). A right-click beside the items offers [onReset], so an emptied menu can still be filled.
@@ -1742,14 +1742,12 @@ private fun hourLabel(hour: Int): String {
 fun LateralMenu(
     page: OmniPage,
     onPageSelected: (OmniPage) -> Unit,
-    /** Everything under the page button: the user's items ([CustomMenuSection]), given what the menu's bar holds. */
-    items: @Composable (query: String) -> Unit = {},
-    /** Whether the menu is being customized. */
-    customizing: Boolean = false,
+    /** Everything under the page button: the user's items ([customMenuRows]), given what the menu's bar holds. */
+    items: (query: String) -> MenuItemRows = { MenuItemRows.NONE },
     /** The page's menu back to its default items. */
     onReset: () -> Unit = {},
-    /** Held by the caller, which scrolls the menu to its end when it adds an item there. */
-    scrollState: ScrollState = rememberScrollState(),
+    /** Bumped by the caller, which brings the menu's end into view when it adds an item there. */
+    scrollToEnd: Int = 0,
     modifier: Modifier = Modifier,
     /**
      * User rule 2026-11-13: the menu is a Search window — its configuration (what its bar holds, its ▾'s settings), kept
@@ -1807,36 +1805,34 @@ fun LateralMenu(
             splits = splits,
             onSplitsChange = { splits = it },
             embedded = true,
-            menuList = MenuSearchRows(
-                content = { query ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            // Scroll when the buttons exceed the available height (e.g. short windows / calendar
-                            // expanded) so nothing is clipped off the bottom.
-                            .verticalScrollWithBar(scrollState)
-                            // The window bar is drawn OVER this menu along the bottom of the app (WindowBar), so the scrolled
-                            // content ends a bar's height lower: scrolled to the end, the last button always clears the bar.
-                            // Always, not only while the bar shows — the menu does not jump when a window opens or closes, and
-                            // without the bar the last button simply sits that much above the floor.
-                            .padding(top = 6.dp, bottom = 12.dp + MINIMIZED_BAR_HEIGHT),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        // User rule 2026-11-14: *"The feature page selector must be an element, so it must appear below
-                        // the search bar"* — the first of the menu's list, found by the bar as the items are: by the
-                        // page it shows, or by any page it leads to.
-                        if (pageSelectorAnswers(query, page)) {
-                            // In a box of its own: open, its list is a node of the layout, and the column's gap, given to
-                            // it, moved every item under it (anomaly 2026-11-01, `LateralMenuShiftTest`).
-                            Box(Modifier.fillMaxWidth()) {
-                                PageNavButton(page = page, onPageSelected = onPageSelected)
-                            }
-                        }
-                        items(query)
-                    }
-                },
-                backgroundActions = ownActions,
-            ),
+            menuList = run {
+                val query = (config ?: held).query
+                val given = items(query)
+                // User rule 2026-11-14: *"The feature page selector must be an element, so it must appear below the
+                // search bar"* — the first of the menu's rows, found by the bar as the items are: by the page it shows,
+                // or by any page it leads to. Never moved: the items are dragged below it.
+                val selector = pageSelectorAnswers(query, page)
+                MenuSearchRows(
+                    rows = listOfNotNull(GivenRow(PAGE_SELECTOR_ROW, page.label, movable = false).takeIf { selector }) + given.rows,
+                    row = { key, arranging ->
+                        // In a box of its own: open, its list is a node of the layout, and the column's gap, given to
+                        // it, moved every item under it (anomaly 2026-11-01, `LateralMenuShiftTest`).
+                        if (key == PAGE_SELECTOR_ROW) Box(Modifier.fillMaxWidth()) { PageNavButton(page = page, onPageSelected = onPageSelected) }
+                        else given.row(key, arranging)
+                    },
+                    onActivate = { key -> if (key != PAGE_SELECTOR_ROW) given.onActivate(key) },
+                    onArrange = given.onArrange,
+                    onGroup = given.onGroup,
+                    backgroundActions = ownActions,
+                    levelStep = MENU_LEVEL_STEP,
+                    rowGap = MENU_ROW_GAP,
+                    // The window bar is drawn OVER this menu along the bottom of the app (WindowBar), so the list ends a
+                    // bar's height lower: scrolled to the end, the last item always clears the bar. Always, not only
+                    // while the bar shows — the menu does not jump when a window opens or closes.
+                    bottomPadding = 12.dp + MINIMIZED_BAR_HEIGHT,
+                    scrollToEnd = scrollToEnd,
+                )
+            },
             // The Search window's section has its own margin: with this much more, its items stand under the page button.
             modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 2.dp),
         )
@@ -1849,6 +1845,9 @@ fun LateralMenu(
  * item are one drawing. `App` provides it over every window; null elsewhere (a test, a preview), where they draw nothing.
  */
 val LocalMenuControlHost = androidx.compose.runtime.compositionLocalOf<MenuControlHost?> { null }
+
+/** The left-side menu's page selector as a row of its list ([LateralMenu]): no item of the user's has this id. */
+internal const val PAGE_SELECTOR_ROW: String = "page-selector"
 
 /**
  * What the controls of the app that can stand in the lateral menu ([MenuControl]) read and do — `App`'s, handed to

@@ -11,6 +11,26 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The left-side menu's items are Search window rows; Ctrl/Shift+click works again; "Arrange by dragging" anywhere — 2026-11-14
+
+Anomaly: *"I do shift+click to select several rows, but it doesn't work. ctrl+click doesn't work either."* — and the
+user's go-ahead to unify the menu's list with the Search window's. **Two causes.** (1) Every Search window: a
+`LaunchedEffect(selectedKey)` meant for history moves (`Alt+←`) also ran a frame after a click, for the row the click
+had just selected, and threw away the Ctrl/Shift selection the click made — it came in with "rows of one height"
+(`3d4af746`, this morning). It now skips a row the window selected itself (`ownSelection`). (2) The left-side menu drew
+its own list (`CustomMenuSection`), with no selection at all. **Its items are now rows of the Search window's list**
+(`customMenuRows` gives `MenuItemRows`: `GivenRow`s and how each is drawn; `LateralMenu` adds the page selector, never
+moved): the list selects them (a Ctrl/Shift press selects without pressing the item), Enter presses the selected one,
+its scrollbar scrolls them. **"Arrange by dragging" is one drag for every Search window** (`ArrangeList.kt`:
+`ArrangeState`, `arrangePress`, the menu's `dropOnto`/`dropPlace` rule): a press selects and presses nothing, a held
+press drags **the selected rows** — into a folder over the middle of a row (the menu), before the row the line stands
+above. Outside the menu the order is kept in the new `Config.arranged` (`arrangedResults`, `arrangedAfterDrop`), read
+while the setting is on; not a drop-down's options nor the actions section. `heldDrag` is gone. **Behaviour changes:**
+several menu items move at once; a Ctrl/Shift-press on a menu item selects it instead of pressing it; any Search
+window's rows can be dragged into an order of the user's. Tests: `MenuFolderDragTest` (on real pointer events, on the
+Swing thread — off it the scene hung the test JVM), `ArrangedOrderTest` (with the shape before `arranged`). Not looked
+at in the running app. No migration: `arranged` is optional in the stored configuration.
+
 ### Ctrl/Shift+click in the actions section; "Arrange by dragging"; "Relevant here" — 2026-11-14
 
 Anomaly: *"I do shift+click to select several rows, but it doesn't work. ctrl+click doesn't work either."* The rows of
