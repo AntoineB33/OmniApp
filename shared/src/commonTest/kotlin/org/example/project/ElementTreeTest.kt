@@ -152,6 +152,31 @@ class ElementTreeTest {
         assertTrue(org.example.project.scheduler.domain.TaskPathsDomain.occurrences(given, loose.id).isNotEmpty())
     }
 
+    /**
+     * Anomaly 2026-11-14: *"Tasks: root of a tree to yes, … add all the resulting tasks to the added elements list, then …
+     * Parents, then list of parents, and the list is empty"*. Every tree's root is a child of the global root, so the list
+     * of parents of the roots lists it — and the global root is still no parent of a task under another task.
+     */
+    @Test
+    fun the_list_of_parents_of_the_tree_roots_lists_the_global_root() {
+        val tasks = withTasks("One", "Two", "Three")
+        val root = SearchDomain.taskKey(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK)
+        // Two under One alone: given One as a parent, then taken from the top level.
+        val linked = link(tasks, taskKey(tasks, "One"), taskKey(tasks, "Two"))
+        val s = run(linked, ElementTree.parentIntents(linked, listOf(taskKey(linked, "Two")), root, on = false))
+        assertEquals(listOf(taskKey(s, "One")), ElementTree.parentsOf(s, taskKey(s, "Two")))
+        fun parentsListed(children: List<String>): List<String> {
+            val listed = SearchDomain.parentsListConfig(children)
+            return SearchDomain.results(s, listed.searchedKinds, "", filters = listed.filters).map(SearchDomain::keyOf)
+        }
+        val treeRoots =
+            SearchDomain.results(s, setOf(Kind.Task), "", filters = SearchDomain.Filters(taskTreeRoot = SearchDomain.Tri.Yes))
+                .filterIsInstance<SearchDomain.TaskResult>().map(SearchDomain::keyOf)
+        assertEquals(setOf(taskKey(s, "One"), taskKey(s, "Three")), treeRoots.toSet())
+        assertEquals(listOf(root), parentsListed(treeRoots))
+        assertEquals(listOf(taskKey(s, "One")), parentsListed(listOf(taskKey(s, "Two"))), "Two's parent is One alone")
+    }
+
     private fun TaskIdOf(key: String) = org.example.project.scheduler.model.TaskId(key.substringAfter('/'))
 
     @Test

@@ -734,7 +734,8 @@ suggestions before it was ever entered.
   `Filters.taskTreeRoot`, `Setting.TaskTreeRoot`, `ElementTreeTest`): the task filter that keeps the tasks standing
   directly under the global root of the live tree (`treeRootsByTask`: a task is in its own `TaskResult.treeRoots`), or
   none of them. Not "Has no parent of the types: task", which finds the global root alone — a tree's root has it as its
-  task parent (user rule 2026-11-13). Local view state: stored `taskTreeRoot`, absent = any.
+  task parent (user rule 2026-11-13). The global root is a search row where it can be what is asked: "Has no parent of the types: task" and a list of
+  parents (`Filters.parentsOf`), where every tree's root lists it (anomaly 2026-11-14). Local view state: stored `taskTreeRoot`, absent = any.
 - **A path is the titles from the root down to the PARENT**, and its first segment is the **tree's name** (the
   active tree's, else the root task's title). The task's own title is the row's first section; repeating it
   would spend the width the two sections fight over.

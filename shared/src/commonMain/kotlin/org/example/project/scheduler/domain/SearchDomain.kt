@@ -3240,7 +3240,13 @@ object SearchDomain {
                 .filter { it in kinds }
                 .flatMap { kind ->
                     if (kind == Kind.Task) {
-                        taskResults(state, kindQuery, allPaths(), withRoot = withRoot || Kind.Task in filters.noParentOfKinds)
+                        // The global root is offered where it can be what is asked: what has no task parent, and the
+                        // parents of some elements (anomaly 2026-11-14: a tree's root listed no parent) — the filter
+                        // below keeps it only where it is one.
+                        taskResults(
+                            state, kindQuery, allPaths(),
+                            withRoot = withRoot || Kind.Task in filters.noParentOfKinds || filters.parentsOf.isNotEmpty(),
+                        )
                     } else if (kind in CLAUDE_KINDS) {
                         claudeResults(kind, kindQuery, claudeLogs, filters, timeZone)
                     } else {

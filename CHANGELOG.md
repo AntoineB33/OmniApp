@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The list of parents of a tree's root lists the global root — 2026-11-14
+
+Anomaly: *"Tasks: root of a tree to yes, then I add all the resulting tasks to the added elements list, then … Parents,
+then list of parents, and the list is empty"*. `ElementTree.parentsOf` named the global root, but the search offered it
+as a row only for "Has no parent of the types: task"; it is now offered whenever the window asks for the parents of some
+elements (`Filters.parentsOf`), and the parent filter keeps it only where it is one
+(`ElementTreeTest.the_list_of_parents_of_the_tree_roots_lists_the_global_root`). No migration.
+
 ### The left-side menu's items are Search window rows; Ctrl/Shift+click works again; "Arrange by dragging" anywhere — 2026-11-14
 
 Anomaly: *"I do shift+click to select several rows, but it doesn't work. ctrl+click doesn't work either."* — and the
