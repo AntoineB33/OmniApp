@@ -33,7 +33,7 @@ class ConfigurationTreeTest {
     private fun categoriesOf(nodes: List<ConfigurationNode>): List<ConfigurationCategory> =
         nodes.filterIsInstance<ConfigurationCategory>().flatMap { listOf(it) + categoriesOf(it.children) }
 
-    /** How many categories are hovered from the root to reach [setting], "Recently changed" and "On for this list" left out. */
+    /** How many categories are hovered from the root to reach [setting], "Recently changed" and "Relevant here" left out. */
     private fun hoversTo(tree: List<ConfigurationNode>, setting: Setting): Int? {
         fun depth(nodes: List<ConfigurationNode>, at: Int): Int? =
             nodes.mapNotNull { node ->
@@ -150,7 +150,7 @@ class ConfigurationTreeTest {
         var config = SearchDomain.Config()
         config = SearchDomain.withChanged(config, config.copy(query = "a"), listOf(Setting.SearchText), 100)
         config = SearchDomain.withChanged(config, config.copy(filters = config.filters.copy(matchCase = true)), listOf(Setting.MatchCase), 200)
-        // "Match case" is on: what is on now stands before it ("On for this list").
+        // "Match case" is on: what is on now stands before it ("Relevant here").
         val first = SearchDomain.configurationTree(config)[1] as ConfigurationCategory
         assertEquals("Recently changed", first.label)
         assertEquals("recent", (SearchDomain.configurationTree(SearchDomain.Config()).first() as ConfigurationCategory).id)
@@ -169,11 +169,26 @@ class ConfigurationTreeTest {
             menuCustomizing = true,
         )
         val first = SearchDomain.configurationTree(opened, opened).first() as ConfigurationCategory
-        assertEquals("On for this list", first.label)
+        assertEquals("Relevant here", first.label)
         assertEquals(
             listOf(Setting.MatchCase, Setting.MenuCustomizing),
             first.children.map { (it as ConfigurationLeaf).setting },
         )
+    }
+
+    /**
+     * User rule 2026-11-14: *"this search configuration is something relevant for the left-side menu, so it should be
+     * accessible intuitively in the down arrow of the left-side menu"* — what a window is about leads "Relevant here",
+     * off as well as on, and a window about nothing has no such node while nothing is on.
+     */
+    @Test
+    fun what_a_window_is_about_leads_relevant_here_even_off() {
+        val menu = org.example.project.ui.LATERAL_MENU_SEARCH
+        val first = SearchDomain.configurationTree(menu, menu, org.example.project.ui.LATERAL_MENU_RELEVANT).first() as ConfigurationCategory
+        assertEquals("Relevant here", first.label)
+        assertEquals(Setting.MenuCustomizing, (first.children.first() as ConfigurationLeaf).setting)
+        assertEquals("Arrange by dragging", Setting.MenuCustomizing.label)
+        assertEquals("recent", (SearchDomain.configurationTree(menu, menu).first() as ConfigurationCategory).id)
     }
 
     @Test

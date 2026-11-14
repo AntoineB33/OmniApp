@@ -65,6 +65,8 @@ internal fun ConfigurationTreeArrow(
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
     depth: Int = 0,
+    /** What the window is about, on or off: first in "Relevant here" ([SearchDomain.configurationTree]). */
+    relevant: List<SearchDomain.Setting> = emptyList(),
 ) {
     var open by remember { mutableStateOf(false) }
     // The configuration of the search this pop-up IS (user rule 2026-11-11, [SearchDomain.CONFIGURATION_SEARCH]).
@@ -182,7 +184,7 @@ internal fun ConfigurationTreeArrow(
         AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
         SearchPopupParts(SearchDomain.windowTitle(own), TREE_ROOT_POPUP_WIDTH, parts, { parts = it }, onClose = { close() }) {
             if (!parts.barRemoved) TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
-            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth) { which ->
+            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth, relevant = relevant) { which ->
             close()
             onPickOnCalendar(which)
             }
@@ -248,6 +250,7 @@ private fun ConfigurationTreeColumns(
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
     /** The arrow level of this tree ([TreePopupBar]): what its pop-ups' own arrows count from. */
     level: Int,
+    relevant: List<SearchDomain.Setting> = emptyList(),
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
 ) {
     // The pop-ups are windows of their own: what they write reaches the Search window and comes back a frame or more
@@ -261,9 +264,9 @@ private fun ConfigurationTreeColumns(
         if (echo >= 0) repeat(echo + 1) { written.removeFirst() } else { written.clear(); shown = config }
     }
     // The whole configuration: the tree's first node is what is on now ([SearchDomain.activeSettings]).
-    val tree = remember(shown, query, openedConfig) {
+    val tree = remember(shown, query, openedConfig, relevant) {
         // User rule 2026-11-13: what the window was opened on comes first ([SearchDomain.contextSettings]).
-        SearchDomain.configurationTree(shown, openedConfig).filterConfigurationNodes(query)
+        SearchDomain.configurationTree(shown, openedConfig, relevant).filterConfigurationNodes(query)
     }
     val leaf: @Composable (SearchDomain.ConfigurationLeaf) -> Unit = { node ->
         ConfigurationLeafRow(

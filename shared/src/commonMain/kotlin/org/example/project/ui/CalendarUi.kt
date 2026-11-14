@@ -1802,6 +1802,7 @@ fun LateralMenu(
             config = config ?: held,
             onConfigChange = { if (config == null) held = it else onConfigChange(it) },
             openedConfig = LATERAL_MENU_SEARCH,
+            relevantSettings = LATERAL_MENU_RELEVANT,
             onOpenConfigurations = {},
             splits = splits,
             onSplitsChange = { splits = it },

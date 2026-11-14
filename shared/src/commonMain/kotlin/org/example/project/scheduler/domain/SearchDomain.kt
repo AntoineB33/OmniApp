@@ -1771,8 +1771,12 @@ object SearchDomain {
         ExpandResults(null, "Expand the results"),
         /** User rule 2026-11-12: the search bar sorts and hides nothing ([Config.actionSearchSortsOnly]). */
         SearchSortsOnly(null, "Search sorts, hides nothing"),
-        /** The lateral menu's rows can be dragged instead of activated. */
-        MenuCustomizing(null, "Customize the left-side menu"),
+        /**
+         * The rows are dragged instead of pressed: a press activates nothing, and the order the user drags them into is
+         * kept ([Config.menuCustomizing]). User rule 2026-11-14: named for what it does, not for the left-side menu —
+         * the one list that honours it so far, whose tree shows it in "Relevant here" ([configurationTree]'s `relevant`).
+         */
+        MenuCustomizing(null, "Arrange by dragging"),
         /** User rule 2026-11-12: a button on every element to drop it ([Config.dropButtons]). */
         DropButtons(null, "A drop button per element"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
@@ -1908,17 +1912,17 @@ object SearchDomain {
     /**
      * User rule 2026-11-13: **the search configurations a context is about** — what the window was opened with
      * ([opened]) says it: the filters it set, and what goes with them (the "List of parents" asks the parents of some
-     * elements, so how far above them comes first; its drop buttons). They come first in the tree's "On for this list"
+     * elements, so how far above them comes first; its drop buttons). They come first in the tree's "Relevant here"
      * ([configurationTree]), before what is on now ([activeSettings]). None for a window opened on nothing.
      */
-    fun contextSettings(opened: Config?): List<Setting> {
-        opened ?: return emptyList()
+    fun contextSettings(opened: Config?, relevant: List<Setting> = emptyList()): List<Setting> {
+        opened ?: return relevant
         val on = Setting.entries.filter { opened.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES }
         val first = listOfNotNull(
             Setting.ParentDistance.takeIf { opened.filters.parentsOf.isNotEmpty() },
             Setting.DropButtons.takeIf { opened.dropButtons },
         )
-        return (first.take(1) + on + first.drop(1)).distinct()
+        return (relevant + first.take(1) + on + first.drop(1)).distinct()
     }
 
     /** The Claude kinds' filters but the prompt's: the same three filters, listed again under another kind. */
@@ -2018,8 +2022,8 @@ object SearchDomain {
      * 2026-11-14 (*"it must be easy with a very intuitive navigation"*, *"directly have the children of 'task
      * scheduler', and then an element called something like 'other feature pages'"*). From the root:
      *
-     * 1. **"On for this list"** — what the window was opened on ([contextSettings]) and every configuration that is on
-     *    now ([activeSettings]); none where nothing is.
+     * 1. **"Relevant here"** — what the window is about ([relevant], on or off), what it was opened on
+     *    ([contextSettings]) and every configuration that is on now ([activeSettings]); none where nothing is.
      * 2. **"Recently changed"** — every configuration, the last changed first ([Config.settingsChangedAt]).
      * 3. The groups of what is about every row ([TreeGroup]); "Sorting" holds every type's order too.
      * 4. **The types of the window's own page** ([Config.page]), each holding its filters and its order — one hover
@@ -2029,10 +2033,15 @@ object SearchDomain {
      *    to directly get the search configuration I want by typing its name in the first pop-up"*) — each saying its
      *    type, what is kept before how it is laid out. Typed in the root's field, a name leaves its configuration there.
      *
+     * [relevant]: user rule 2026-11-14 (*"this search configuration is something relevant for the left-side menu, so it
+     * should be accessible intuitively in the down arrow of the left-side menu"*) — the configurations the window is
+     * about whatever it holds, said by the code that draws it and never stored (the left-side menu: "Arrange by
+     * dragging"). They lead "Relevant here", on or off.
+     *
      * Every configuration stands in it ([Setting.entries]), and a category is never empty. Nothing but a search field
      * narrows it — never the types the window searches (anomaly 2026-11-11).
      */
-    fun configurationTree(config: Config, opened: Config? = null): List<ConfigurationNode> {
+    fun configurationTree(config: Config, opened: Config? = null, relevant: List<Setting> = emptyList()): List<ConfigurationNode> {
         fun qualified(settings: List<Setting>) = settings.map { ConfigurationLeaf(it, qualified = true) }
         fun typesOf(page: FeaturePage) =
             Kind.entries.filter { it in page.kinds }.mapNotNull { kind ->
@@ -2043,8 +2052,8 @@ object SearchDomain {
             }
         val own = FEATURE_PAGES.firstOrNull { it.id == config.page }
         val ownKinds = own?.kinds.orEmpty().toSet()
-        val active = (contextSettings(opened) + activeSettings(config)).distinct().takeIf { it.isNotEmpty() }
-            ?.let { ConfigurationCategory("context", "On for this list", qualified(it)) }
+        val active = (contextSettings(opened, relevant) + activeSettings(config)).distinct().takeIf { it.isNotEmpty() }
+            ?.let { ConfigurationCategory("context", RELEVANT_NODE_LABEL, qualified(it)) }
         val recent = ConfigurationCategory(
             "recent", "Recently changed",
             qualified(Setting.entries.sortedByDescending { config.settingsChangedAt[it] ?: Long.MIN_VALUE }),
@@ -2062,6 +2071,13 @@ object SearchDomain {
         return listOfNotNull(active, recent) + groups + own?.let(::typesOf).orEmpty() + listOfNotNull(others) +
             qualified(Setting.entries.sortedBy { it.sorts })
     }
+
+    /**
+     * The tree's first node ([configurationTree]): what the window is about (its `relevant`), what it was opened on
+     * ([contextSettings]) and what is on now ([activeSettings]). "On for this list" until 2026-11-14, when the first
+     * of it could be off (*"something like 'relevant config'"*).
+     */
+    const val RELEVANT_NODE_LABEL: String = "Relevant here"
 
     /** The id of the node holding the pages the window is not on ([configurationTree]). */
     const val OTHER_PAGES_NODE: String = "other-pages"

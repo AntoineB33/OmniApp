@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Ctrl/Shift+click in the actions section; "Arrange by dragging"; "Relevant here" — 2026-11-14
+
+Anomaly: *"I do shift+click to select several rows, but it doesn't work. ctrl+click doesn't work either."* The rows of
+a Search window's actions section selected the row alone (`select(index)`), skipping `clickRow`'s Ctrl/Shift rule that
+every other row of the result list follows; they now go through it. **Not fixed:** the left-side menu's items are not
+Search window rows — `CustomMenuSection` draws its own list inside the menu's Search window — so they have no
+selection at all. User rule: the configuration "Customize the left-side menu" is now **"Arrange by dragging"**, named
+for what it does (presses activate nothing, the dragged order is kept); only the left-side menu honours it so far, for
+the same reason. User rule: *"it should be accessible intuitively in the down arrow of the left-side menu"* — the ▾
+tree's first node, "On for this list", is now **"Relevant here"**, led by what the window is about, on or off
+(`configurationTree`'s `relevant`, given by the code that draws the window and never stored; the left-side menu's is
+`LATERAL_MENU_RELEVANT`). No migration: the setting's stored name and field are unchanged.
+
 ### One scrollbar for everything that scrolls — 2026-11-14
 
 Anomaly: *"in the down arrow of the default search window, there is no vertical scrollbar, even though it is supposed

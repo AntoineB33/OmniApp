@@ -461,6 +461,8 @@ fun SearchWindow(
     onConfigChange: (SearchDomain.Config) -> Unit,
     /** The configuration this window opened with — what Reset goes back to first ([SearchDomain.resetConfig]). */
     openedConfig: SearchDomain.Config? = null,
+    /** What the window is about, on or off: first in its ▾'s "Relevant here" ([SearchDomain.configurationTree]). */
+    relevantSettings: List<SearchDomain.Setting> = emptyList(),
     /**
      * Open with the type selector deployed (the calendar's "add…", user rule 2026-10-01): a one-shot — the drop-down
      * opens once and [onKindsDeployed] takes the request back.
@@ -1208,6 +1210,7 @@ fun SearchWindow(
                 androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides LocalArrowOwner.current.takeIf { !embedded }) {
                     ConfigurationTreeArrow(
                         state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
+                        relevant = relevantSettings,
                     )
                 }
             }
@@ -1408,7 +1411,9 @@ fun SearchWindow(
                                             query = query,
                                             selected = rowSelected(index),
                                             inSelection = rowInSelection(index),
-                                            onSelect = { select(index) },
+                                            // Anomaly 2026-11-14 (*"I do shift+click to select several rows, but it
+                                            // doesn't work. ctrl+click doesn't work either"*): it selected the row alone.
+                                            onSelect = { clickRow(index, pressModifiers.ctrl, pressModifiers.shift, keepIfSelected = false) },
                                             onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
                                             onOpen = {},
                                             onDoubleClick = { actionRows.onToggle(actionRow.id) },
@@ -2191,6 +2196,9 @@ class MenuSearchRows(
 
 /** The left-side menu's Search window as it opens: its items are given, not searched; nothing typed. */
 val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Option), pageTypesOnly = false) }
+
+/** What the left-side menu is about, on or off: its ▾'s "Relevant here" leads with it (user rule 2026-11-14). */
+val LATERAL_MENU_RELEVANT: List<SearchDomain.Setting> = listOf(SearchDomain.Setting.MenuCustomizing)
 
 /**
  * The left-side menu's id as a Search window: what its ▾ windows, its kept configuration and its kept parts are named

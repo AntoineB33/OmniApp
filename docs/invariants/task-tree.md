@@ -1018,8 +1018,11 @@ suggestions before it was ever entered.
   easily see the search configuration element about the parent distance"*; `SearchDomain.contextSettings`,
   `configurationTree(config, opened)`). What the window was opened with says its context: the filters it set, and what
   goes with them — the "List of parents" gets "Parent distance", "Parents of" and its drop buttons. They are the first rows of the
-  tree's first node, "On for this list", before the configurations that are on now (2026-11-14); a window opened on
-  nothing with nothing on has no such node.
+  tree's first node, "Relevant here", before the configurations that are on now (2026-11-14); a window opened on
+  nothing with nothing on has no such node. Before them stands **what the window is about, on or off**, said by the
+  code that draws it and never stored (`configurationTree`'s `relevant`; user rule 2026-11-14, *"this search
+  configuration is something relevant for the left-side menu, so it should be accessible intuitively in the down arrow
+  of the left-side menu"*): the left-side menu's is "Arrange by dragging" (`LATERAL_MENU_RELEVANT`).
 - **THE PARENT DISTANCE** (user rule 2026-11-13; `Filters.parentDistance`, `ElementTree.parentLevels` /
   `parentsWithin` / `highestParentDistance`): how far above the elements of "Parents of" a parent may stand to be
   listed — 1 by default (the direct parents), n for every parent at a distance of n **or less**, an element standing at
@@ -1491,7 +1494,8 @@ suggestions before it was ever entered.
 - **THE ROOT OF THE ▾ TREE: WHAT THE USER IS AFTER IS ONE CATEGORY AWAY** (user rule 2026-11-14: *"it must be easy with
   a very intuitive navigation … directly have the children of 'task scheduler', and then an element called something
   like 'other feature pages'"*; `SearchDomain.configurationTree`, `TreeGroup`, `treeGroupOf`, `ConfigurationTreeTest`).
-  In order: **"On for this list"** (what the window was opened on, then every configuration that is on now —
+  In order: **"Relevant here"** ("On for this list" until 2026-11-14: what the window is about, what it was opened on,
+  then every configuration that is on now —
   `contextSettings`, `activeSettings`; no node where nothing is); **"Recently changed"** (every configuration, the last
   changed first, `Config.settingsChangedAt`, local-only, no part of the search); **the groups of what is about every
   row** — "Search text", "Types", "Sorting", "Parents and children", "Filters on every type", "Display" (there is no
