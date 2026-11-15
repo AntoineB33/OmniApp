@@ -25,7 +25,8 @@ import org.example.project.ui.LateralMenu
 import org.example.project.ui.MenuItemRows
 
 /**
- * User rule 2026-11-15: Shift+scroll scrolls a Search window's result list vertically. Compose Desktop sends a
+ * User rule 2026-11-15: Shift+scroll scrolls a Search window's result list vertically while it is not cut sideways
+ * (cut, it scrolls sideways: [SearchListSidewaysTest]). Compose Desktop sends a
  * Shift+wheel notch as a horizontal delta; the list moves down by it as by a plain notch, and up for the other way.
  * Without Shift, a horizontal delta (a sideways swipe) leaves it where it is.
  */

@@ -534,6 +534,8 @@ fun SearchWindow(
     // Which copy of the window this is: its selection is its own (PRD §5, `Alt+←` walks it back).
     val instance = LocalWindowInstance.current?.suffix ?: ""
     val listState = rememberLazyListState(splits?.scrolls?.getOrNull(0) ?: 0, splits?.scrolls?.getOrNull(1) ?: 0)
+    // User rule 2026-11-15: narrowed until cut, the list scrolls sideways under Shift+wheel ([shiftWheelScrolls]).
+    val listCut = remember { SideCut() }
     // User rule 2026-10-14: typing in the bar brings the result list back to its top.
     ScrollsToTopWhenTyped(query, listState)
     val fieldFocus = remember { FocusRequester() }
@@ -1271,7 +1273,7 @@ fun SearchWindow(
             // The left-side menu's list is the menu's own items, at the menu's width ([MenuSearchRows]).
             Box(
                 Modifier.fillMaxWidth().weight(1f)
-                    .then(if (menuList != null) Modifier else Modifier.keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH))
+                    .then(if (menuList != null) Modifier else Modifier.keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH, listCut))
                     .onGloballyPositioned { resultListTop = it.positionInWindow().y },
             ) {
                 if (count == 0) {
@@ -1402,7 +1404,7 @@ fun SearchWindow(
                             .fillMaxSize()
                             .padding(end = SCROLLBAR_ROOM)
                             .then(with(arrange) { Modifier.dropIndicator(dropColor, menuList?.levelStep ?: 0.dp) })
-                            .shiftWheelScrollsVertically(listState)
+                            .shiftWheelScrolls(listState, listCut)
                             .focusRequester(listFocus)
                             .onFocusChanged { listFocused = it.hasFocus }
                             .focusable()

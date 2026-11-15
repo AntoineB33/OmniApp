@@ -93,12 +93,18 @@ internal fun buttonVerticalPadding(regular: Dp): Dp = if (LocalCompactFields.cur
  * **Shrinking a section sideways hides its content, it never makes it taller** (user rule 2026-10-06): the content is
  * laid out at [min] at least and cut at the section's edge. Without it every row squeezed by a narrower section wraps
  * its texts, and the section grows downwards as it shrinks.
+ *
+ * Given a [cut], what is hidden can be scrolled into view sideways ([SideCut], user rule 2026-11-15: the Search window's
+ * result list, by Shift+wheel). The offset is read only where the content is placed, so a scroll re-places, never
+ * re-measures.
  */
-internal fun Modifier.keepsWidthAbove(min: Dp): Modifier =
+internal fun Modifier.keepsWidthAbove(min: Dp, cut: SideCut? = null): Modifier =
     clipToBounds().layout { measurable, constraints ->
         val width = if (constraints.hasBoundedWidth) maxOf(constraints.maxWidth, min.roundToPx()) else constraints.maxWidth
         val placeable = measurable.measure(constraints.copy(maxWidth = width))
-        layout(minOf(placeable.width, constraints.maxWidth), placeable.height) { placeable.place(0, 0) }
+        val shown = minOf(placeable.width, constraints.maxWidth)
+        cut?.measured(shown = shown, laidOut = placeable.width)
+        layout(shown, placeable.height) { placeable.place(-(cut?.offset ?: 0), 0) }
     }
 
 /** A line of explanation in a compact section: ONE line, cut where the section ends. */
