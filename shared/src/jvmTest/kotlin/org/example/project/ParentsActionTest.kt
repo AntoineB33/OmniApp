@@ -208,6 +208,7 @@ class ParentsActionTest {
                 // elements" — the list must hold it.
                 rightClick(find("New task 2"))
                 click(find("add"))
+                closeMenu() // every menu stays open after its entry: closed by a click outside it
                 assertTrue(popups.request != null, "the list's window is still open: ${texts()}")
                 // Under its one row: the list's background.
                 rightClick(find("New task 2") + Offset(0f, 120f))
@@ -255,6 +256,7 @@ class ParentsActionTest {
                 // action open, its own "list of parents" clicked — a second window opens over the first.
                 rightClick(find("New task 2"))
                 click(find("add"))
+                closeMenu() // every menu stays open after its entry: closed by a click outside it
                 rightClick(find("New task 2") + Offset(0f, 120f))
                 // User rule 2026-11-15: its field is its bar — the background menu does not offer to hide it.
                 assertTrue(texts().none { it == "Hide the search bar" }, "no hiding the field: ${texts()}")

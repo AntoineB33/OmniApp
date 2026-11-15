@@ -507,6 +507,11 @@ means.
     the ▾ tree's, a drop-down's list. Each host had drawn a padded surface of its own, and the head stood inside it. A
     host gives `PopupChrome` and draws nothing around; a menu window holding one shows it bare (`LocalBareMenu`, the
     desktop's `MenuSurface`: no menu surface, no padding).
+  - **EVERY menu stays open after its entry is chosen** (user rule 2026-11-15: *"Every menu stay open after you choose an
+    entry"*; `OptionSearchMenu`'s `held`, `MenuActsOnReleaseTest`): the entry acts and the menu stays, whatever its caller
+    does in the pick — most callers close their own menu there, which the menu outlives — until a press outside it,
+    Escape, or its anchor leaving the screen. `MenuAction.keepsOpen` says nothing any more. An entry that gives the
+    keyboard to something else (a window it opens, a field) closes it as the keyboard leaving any menu does.
   - **The background menu of a Search window stays open as its entries show and hide parts** (anomaly 2026-11-15: *"the
     right-click menu of the background of the search window disappears when selecting an option"*; `SearchPartsMenu`,
     `MenuAction.keepsOpen`): each entry turns into its other way round, ready for the next part. A press outside it closes

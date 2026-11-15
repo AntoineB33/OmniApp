@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every menu stays open after its entry is chosen — 2026-11-15
+
+User rule: *"Every menu stay open after you choose an entry."* `OptionSearchMenu` (every menu and drop-down) holds itself
+open after a pick, whatever its caller does in it, until a press outside, Escape, or its anchor leaving; `ActionMenu` no
+longer dismisses on an entry. An entry that hands the keyboard elsewhere still closes it as the keyboard leaving does.
+No migration. Deploy: client apps.
+
 ### The Search window's background menu stays open as parts are shown and hidden — 2026-11-15
 
 User: *"the right-click menu of the background of the search window disappears when selecting an option"*. Its

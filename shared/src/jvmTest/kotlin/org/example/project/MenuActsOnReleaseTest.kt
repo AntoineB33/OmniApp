@@ -3,6 +3,8 @@ package org.example.project
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
@@ -35,7 +37,9 @@ class MenuActsOnReleaseTest {
             ImageComposeScene(800, 600, density = Density(1f)) {
                 CompositionLocalProvider(org.example.project.ui.LocalTransientMenuHost provides menus) {
                     Box(Modifier.fillMaxSize().transientMenuDismissRoot(menus)) {
-                        ActionMenu("Test", open = true, onDismiss = {}, actions = listOf(MenuAction("Show the header") { acted++ }))
+                        // As most callers do: the entry's own handler closes the menu.
+                        var open by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(true) }
+                        ActionMenu("Test", open = open, onDismiss = { open = false }, actions = listOf(MenuAction("Show the header") { acted++; open = false }))
                     }
                 }
             }
@@ -59,6 +63,12 @@ class MenuActsOnReleaseTest {
             onEdt { scene.sendPointerEvent(PointerEventType.Release, at, timeMillis = time + 40, button = PointerButton.Primary) }
             frames(4)
             assertEquals(1, acted, "the release acts, once")
+            // User rule 2026-11-15: *"Every menu stay open after you choose an entry"* — whatever its caller does on the pick.
+            val stillShown = onEdt {
+                scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                    .any { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == "Show the header" } == true }
+            }
+            kotlin.test.assertTrue(stillShown, "the menu stays open after its entry")
         } finally {
             onEdt { scene.close() }
         }

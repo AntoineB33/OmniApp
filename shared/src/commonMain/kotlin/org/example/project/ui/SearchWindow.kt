@@ -2032,8 +2032,8 @@ data class IntegerRows(val highestLabel: String, val highest: Int, val count: In
 
 /**
  * User rule 2026-11-12: **an entry of a right-click menu** — the menu being a Search window ([ActionMenu]): its [label], what
- * a click on it does ([onClick]), whether it can ([enabled]: greyed, never hidden), whether the menu stays open after it
- * ([keepsOpen]: a nudge pressed in turn), and a mark drawn before it ([mark]: a loading wheel).
+ * a click on it does ([onClick]), whether it can ([enabled]: greyed, never hidden), and a mark drawn before it ([mark]: a
+ * loading wheel). [keepsOpen] says nothing since 2026-11-15: every menu stays open after its entry ([OptionSearchMenu]).
  */
 class MenuAction(
     val label: String,
@@ -2058,7 +2058,6 @@ internal fun ActionMenu(name: String,
     offset: androidx.compose.ui.unit.DpOffset = androidx.compose.ui.unit.DpOffset(0.dp, 0.dp),
 ) {
     val latest by rememberUpdatedState(actions)
-    val latestDismiss by rememberUpdatedState(onDismiss)
     OptionSearchMenu(name,
         open = open,
         onDismiss = onDismiss,
@@ -2070,10 +2069,8 @@ internal fun ActionMenu(name: String,
             checked = null,
             onClick = { id ->
                 val action = id.toIntOrNull()?.let(latest::getOrNull)
-                if (action != null && action.enabled) {
-                    if (!action.keepsOpen) latestDismiss()
-                    action.onClick()
-                }
+                // User rule 2026-11-15: every menu stays open after its entry is chosen ([OptionSearchMenu] holds it).
+                if (action != null && action.enabled) action.onClick()
             },
             leading = if (actions.any { it.mark != null }) { id -> id.toIntOrNull()?.let(actions::getOrNull)?.mark?.invoke() } else null,
             disabled = actions.indices.filter { !actions[it].enabled }.mapTo(HashSet()) { it.toString() },
@@ -2167,12 +2164,32 @@ internal fun OptionSearchMenu(
     atPointer: Boolean = false,
     offset: androidx.compose.ui.unit.DpOffset = androidx.compose.ui.unit.DpOffset(0.dp, 0.dp),
 ) {
-    transientMenuDismissal(open, onDismiss)
+    // User rule 2026-11-15: *"Every menu stay open after you choose an entry"* — a pick acts and the menu stays, whatever
+    // its caller does on the pick (most close their own menu in it): it is held open until a press outside it, Escape, or
+    // its anchor leaving the screen. A menu the caller closes otherwise closes.
+    var held by remember { mutableStateOf(false) }
+    val shown = open || held
+    val latestDismiss by rememberUpdatedState(onDismiss)
+    val close = {
+        held = false
+        latestDismiss()
+    }
+    fun holding(act: (String) -> Unit): (String) -> Unit = { id ->
+        held = true
+        act(id)
+    }
+    val options = SearchOptions(
+        options = options.options, checked = options.checked, onClick = holding(options.onClick),
+        onSelectAll = { ids -> held = true; options.onSelectAll(ids) }, onSolo = holding(options.onSolo),
+        leading = options.leading, onNearEnd = options.onNearEnd, onDrop = options.onDrop, canDrop = options.canDrop,
+        disabled = options.disabled, onCreate = options.onCreate?.let(::holding), integers = options.integers,
+    )
+    transientMenuDismissal(shown, close)
     // It is a Search window: its menu window shows it bare, and it wears a window's surface ([LocalPopupChrome]).
     androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
     AppDropdownMenu(
-        expanded = open,
-        onDismissRequest = onDismiss,
+        expanded = shown,
+        onDismissRequest = close,
         properties = PopupProperties(focusable = focusable),
         modifier = modifier,
         offset = offset,
@@ -2207,7 +2224,7 @@ internal fun OptionSearchMenu(
             onDeepCopyCell = {},
             actionHandlers = OPTION_HANDLERS,
             onIntent = {},
-            onDismiss = onDismiss,
+            onDismiss = close,
             config = config,
             onConfigChange = setConfig,
             onOpenConfigurations = {},

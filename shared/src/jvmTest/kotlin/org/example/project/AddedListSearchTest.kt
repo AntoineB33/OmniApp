@@ -238,6 +238,8 @@ class AddedListSearchTest {
             press(at(names[1]), secondary = true)
             press(at("add"))
             assertEquals(1, config.added.size, "added: ${config.added}")
+            // User rule 2026-11-15: the menu stays open after its entry; a press outside it (the window's title) closes it.
+            press(at("all chronos"))
             press(at(names[0]))
             assertEquals("Added elements  ·  2", count(), "the added row and the selected one: ${texts()}")
         } finally {
