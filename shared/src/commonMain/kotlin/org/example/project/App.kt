@@ -328,6 +328,7 @@ private val VIEW_ROWS: Set<String> =
         CustomMenuButtons.SETTINGS_PLACEMENT_ID, CustomMenuButtons.TAB_ORDER_PLACEMENT_ID,
         org.example.project.ui.AppViewState.PLACEMENT_ID,
         org.example.project.scheduler.domain.LifePlanDomain.PLACEMENT_ID,
+        org.example.project.ui.PopupMemory.PLACEMENT_ID,
     )
 
 private const val MENU_KEY: String = org.example.project.scheduler.state.ExternalKeys.MENU
@@ -1403,7 +1404,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     if (id == FloatingWindow.Calendar.name) {
                         kept.splits.firstOrNull()?.let { calendarConfigurationWidth = it }
                         if (kept.hidden.isNotEmpty()) calendarSectionsHidden = kept.hidden
-                    } else if (id != org.example.project.ui.LATERAL_MENU_ID && placements[id.substringBefore('/')]?.visible != true) {
+                    } else if (
+                        id != org.example.project.ui.LATERAL_MENU_ID &&
+                        placements[org.example.project.ui.PopupMemory.windowOf(id)]?.visible != true
+                    ) {
                         // Closed since: nothing of it is the next window's under that id — nor of a Search window drawn
                         // inside it (its actions section, `<window>/actions`). The left-side menu is no window that closes.
                     } else if (id.startsWith(FloatingWindow.Calendar.name + "#")) {
@@ -1440,6 +1444,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         ),
                 )
             }
+        // Anomaly 2026-11-15: the pop-ups left open — a field's window, a pinned configurations tree — come back after a
+        // restart ([org.example.project.ui.PopupMemory]); those of windows no longer open are dropped as it is read.
+        val popupMemory = remember(placementStore) {
+            org.example.project.ui.PopupMemory(
+                read = {
+                    org.example.project.ui.PopupMemory.kept(placements[org.example.project.ui.PopupMemory.PLACEMENT_ID]?.config) { frameId ->
+                        frameId == org.example.project.ui.LATERAL_MENU_ID || placements[frameId]?.visible == true
+                    }
+                },
+                write = { text ->
+                    updatePlacementById(org.example.project.ui.PopupMemory.PLACEMENT_ID) { it.copy(config = text) }
+                },
+            )
+        }
         // Anomaly 2026-11-14: the parts shown by the Search windows drawn inside the app — the left-side menu, each actions
         // section — are kept where the windows' own are, by their id.
         val searchPartsStore = remember {
@@ -4289,6 +4307,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             LocalTransientMenuHost provides transientMenus,
             org.example.project.ui.LocalPopupPositions provides popupPositions,
             org.example.project.ui.LocalSearchPartsStore provides searchPartsStore,
+            org.example.project.ui.LocalPopupMemory provides popupMemory,
             org.example.project.ui.LocalMenuKeyForward provides menuKeyForward,
             org.example.project.ui.LocalCellEditPopupHost provides cellEditPopups,
             org.example.project.ui.LocalFieldSearchPopupHost provides fieldSearchPopups,

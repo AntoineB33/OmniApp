@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The pop-ups left open come back after a restart — 2026-11-15
+
+User: *"I pinned the window …, I restart the app, and all the windows disappeared... Only the first one, the default
+search window, remains"*. A field's Search window left open and a configurations tree left pinned (with the categories
+it showed) come back (`PopupMemory`, local-only `OpenPopups` placement row); each pop-up's shown parts are kept by its id
+(`rememberKeptParts`), and the window sections' loader recognises a ▾ id's window. No sync, no schema change: a new
+local placement row. Deploy: client apps.
+
 ### The ▾ tree's pop-ups no longer blink; a field's window starts each opening with no added element — 2026-11-15
 
 Read off the `[popup]` trace of the user's reproduction: the "task" pop-up's window resized 360 → 216 → 360 … without

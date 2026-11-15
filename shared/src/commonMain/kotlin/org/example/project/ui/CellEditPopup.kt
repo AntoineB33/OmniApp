@@ -395,6 +395,18 @@ internal fun PopupSearchField(
         focusManager.clearFocus()
     }
     val region = rememberOutsidePressEditor(active = open) { close() }
+    // Anomaly 2026-11-15: left open, it is open again after a restart ([PopupMemory]); closed, it and every pop-up opened
+    // inside it are forgotten. What its window shows of itself is kept by its id ([rememberKeptParts]).
+    val memory = LocalPopupMemory.current
+    var restored by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(windowId) {
+        if (windowId != null && memory?.fieldOpen(windowId) == true) open = true
+        restored = true
+    }
+    androidx.compose.runtime.LaunchedEffect(open, restored) {
+        if (restored && windowId != null) memory?.setField(windowId, open)
+    }
+    var parts by rememberKeptParts(windowId, EMBEDDED_SEARCH_SPLITS)
     // Anomaly 2026-11-15 (*"I clicked on 'list of parents', right-click, 'show the added elements' and there was an
     // element"*): what is added in a field's window belongs to that opening — each opening starts with none, though the
     // rest of its configuration (its bar's settings, its sorting) is kept. It held what an earlier opening had added.
@@ -461,7 +473,10 @@ internal fun PopupSearchField(
             anchor = { bounds },
             region = region,
             search = search,
-            embedded = EmbeddedSearchRequest(config, onConfigChange, onDrop, canDrop, picker?.invoke(close), barOutside = true),
+            embedded = EmbeddedSearchRequest(
+                config, onConfigChange, onDrop, canDrop, picker?.invoke(close), barOutside = true,
+                splits = parts, onSplitsChange = { parts = it },
+            ),
             onClose = close,
             locals = locals,
             enclosing = LocalEnclosingEdits.current,

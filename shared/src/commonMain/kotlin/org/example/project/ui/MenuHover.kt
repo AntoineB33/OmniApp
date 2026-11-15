@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
@@ -43,7 +44,7 @@ class MenuHoverTracker(
      * descendants."* — a press in the pop-up pins it, and every pop-up it is a branch of: the pointer leaving no longer
      * closes them. What closes them then is the keyboard going to a window outside the tree (the menu's own dismissal).
      */
-    var pinned: Boolean = false
+    var pinned: Boolean by androidx.compose.runtime.mutableStateOf(false)
         private set
 
     /** Pinned ([pinned]), it and its ancestors. A wait already running for the pointer gone is dropped. */

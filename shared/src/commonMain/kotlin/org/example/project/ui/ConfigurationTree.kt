@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -81,7 +82,7 @@ internal fun ConfigurationTreeArrow(
     var path by remember { mutableStateOf(listOf<String>()) }
     // User rule 2026-11-11: the pop-up IS a Search window, its header and its two right sections hidden as it opens;
     // its background menu shows them ([SearchPartsMenu]). Kept while the arrow stands, as its path is.
-    var parts by remember { mutableStateOf(CellEditPopupHost.PICKER_SPLITS) }
+    var parts by rememberKeptParts(arrowId, CellEditPopupHost.PICKER_SPLITS)
     val positions = LocalPopupPositions.current
     // Anomaly 2026-11-11 (*"three headless search windows deep … ctrl+alt+<- opened the two first, not the third"*,
     // measured in diagnostics.log): a pop-up of the tree — a category's, or the tree an arrow in a pop-up's bar opens —
@@ -116,6 +117,25 @@ internal fun ConfigurationTreeArrow(
     val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { close() }
     tracker[0] = hover
     LaunchedEffect(open) { if (!open) hover.unpin() }
+    // Anomaly 2026-11-15 (*"I pinned the window …, I restart the app, and all the windows disappeared"*): left pinned, it
+    // comes back after a restart showing the categories it showed, pinned along them — brought back as a walk through
+    // the positions brings it ([TreeKeeper.wanted]), once no other walk is under way. Kept by its ▾ id ([PopupMemory]).
+    val memory = LocalPopupMemory.current
+    var restoredTree by remember { mutableStateOf(false) }
+    LaunchedEffect(arrowId) {
+        val kept = arrowId?.let { memory?.tree(it) }
+        if (kept != null) {
+            androidx.compose.runtime.snapshotFlow { keeper.wanted }.first { it == null }
+            keeper.wanted = prefix + listOf(kept)
+        }
+        restoredTree = true
+    }
+    LaunchedEffect(open, path, hover.pinned, restoredTree) {
+        if (!restoredTree || arrowId == null) return@LaunchedEffect
+        // Waiting to be brought back: not yet open, and not to be forgotten for that.
+        if (!open && keeper.wanted?.let { it.take(prefix.size) == prefix && it.size > prefix.size } == true) return@LaunchedEffect
+        memory?.setTree(arrowId, if (open && hover.pinned) path else null)
+    }
     // User rule 2026-11-11: the keyboard coming to the pop-up is a position of the app; walked back to, the trees are
     // brought back down to it, pinned ([TreeKeeper.wanted]), and it gets the keyboard.
     DisposableEffect(hover, positions, token) {
@@ -522,7 +542,7 @@ private fun TreeColumn(
                                     var own by rememberArrowSearch(branchId, true)
                                     // Anomaly 2026-11-11 (*"the right-click menu doesn't appear on the background of the
                                     // 2nd headless search window"*): it is a Search window too, as the root's pop-up is.
-                                    var parts by remember { mutableStateOf(CellEditPopupHost.PICKER_SPLITS) }
+                                    var parts by rememberKeptParts(branchId, CellEditPopupHost.PICKER_SPLITS)
                                     val children = remember(node.children, own.query) {
                                         node.children.filterConfigurationNodes(own.query)
                                     }

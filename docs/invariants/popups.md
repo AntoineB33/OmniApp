@@ -516,6 +516,14 @@ means.
     right-click menu open it needs a second right-click to open the menu"*; `MenuSession.settling`): for 600 ms after
     it opens, the menu losing the keyboard or the active window to a window of the app, with no press since, leaves it
     open. Windows activating the app's window for the right press could land after the menu took the keyboard.
+  - **The pop-ups left open come back after a restart, as the windows do** (anomaly 2026-11-15: *"I pinned the window
+    …, I restart the app, and all the windows disappeared... Only the first one, the default search window,
+    remains"*; `PopupMemory`, the `OpenPopups` placement row, local-only): a field's Search window left open, and a
+    configurations tree left PINNED with the categories it showed (brought back as a walk brings it, `TreeKeeper.wanted`,
+    pinned along them). What each showed of itself is kept by its id (`rememberKeptParts`: "Show the actions" of a
+    "List of parents" included, without which the field inside it would not be there to come back). A pop-up closed
+    forgets every one opened inside it (their ids start with its own); those of a window no longer open are dropped as
+    the row is read. A hover pop-up not pinned is no pop-up to keep.
   - **A field's pop-up carries the composition locals of where its field stands** (anomaly 2026-11-15: *"I select
     'show the actions' …, find the list of parents field, click it, but it doesn't open a window, even though it should
     use the same code as the first list of parents field"*; `FieldSearchPopupRequest.locals`), as a desktop menu does:
