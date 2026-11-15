@@ -27,11 +27,6 @@ import org.example.project.ui.SearchWindow
  * when double-clicking"*: the creation row of a list holding one setup, which that setup's own double-click applies.
  */
 class SearchDoubleClickTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     private val setup = WorkplaceSetup("workplace-1", "OmniApp project", WorkplaceOs.Windows11, listOf(WorkplaceWindow(listOf("C:\\code"))))
 

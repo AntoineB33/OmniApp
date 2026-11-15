@@ -74,11 +74,6 @@ class MenuFolderDragTest {
     private var time = 0L
 
     /** On the Swing thread, as the app's scenes are (the Search window's menus and windows ask AWT). */
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     private fun frames(scene: ImageComposeScene) = onEdt { repeat(4) { time += 16_000_000L; scene.render(time) } }
 

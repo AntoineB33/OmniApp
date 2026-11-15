@@ -26,11 +26,6 @@ import org.example.project.ui.withAddedListElements
  * drawn inside the window whose added elements it lists.
  */
 class AddedListSearchTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     /** Draws a Search window holding [added], its sections as [splits]; the splits it told, and its picture's bytes. */
     private fun draw(added: List<String>, splits: SearchSplits = SearchSplits(), width: Int = 1200, height: Int = 700): Pair<List<SearchSplits>, ByteArray> {

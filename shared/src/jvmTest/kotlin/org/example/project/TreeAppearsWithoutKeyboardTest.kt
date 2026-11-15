@@ -31,11 +31,6 @@ import org.example.project.ui.OutlinedTextField
  * (`keyboardActive = false`, a Search sub-tree nobody went to) leaves it where it is as it appears.
  */
 class TreeAppearsWithoutKeyboardTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     @Test
     fun a_tree_appearing_without_the_keyboard_leaves_the_field_its_caret() {

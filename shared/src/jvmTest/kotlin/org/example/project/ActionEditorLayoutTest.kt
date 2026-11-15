@@ -30,11 +30,6 @@ import org.example.project.ui.MenuActionItem
  * under what follows it) in the actions section, and every such action as an item of the lateral menu.
  */
 class ActionEditorLayoutTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var out: Result<T>? = null
-        SwingUtilities.invokeAndWait { out = runCatching(block) }
-        return out!!.getOrThrow()
-    }
 
     private val state =
         SchedulerState.empty().copy(

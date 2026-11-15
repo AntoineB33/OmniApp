@@ -67,7 +67,7 @@ class SelectionHandlesTouchTest {
     }
 
     @Test
-    fun dragging_the_dots_extends_and_shortens_the_selection() {
+    fun dragging_the_dots_extends_and_shortens_the_selection() = onEdt<Unit> {
         var state by mutableStateOf(tree())
         state = SchedulerReducer.reduce(
             state,

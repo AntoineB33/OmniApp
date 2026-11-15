@@ -30,7 +30,7 @@ import org.example.project.ui.MenuItemRows
 @OptIn(InternalComposeUiApi::class, ExperimentalComposeUiApi::class)
 class LateralMenuShiftTest {
     @Test
-    fun a_right_click_beside_the_buttons_moves_none_of_them() {
+    fun a_right_click_beside_the_buttons_moves_none_of_them() = onEdt<Unit> {
         var y = -1f
         val scene =
             ImageComposeScene(width = 300, height = 500, density = Density(1f)) {

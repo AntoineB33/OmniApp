@@ -31,7 +31,7 @@ class WindowBarDragTest {
     private val opened = listOf("A", "Search", "Conf", "Deep", "B")
 
     @Test
-    fun a_tab_goes_with_all_it_is_linked_to_up_and_down() {
+    fun a_tab_goes_with_all_it_is_linked_to_up_and_down() = onEdt<Unit> {
         val bar = layout(opened)
         assertEquals(listOf(listOf("A"), listOf("Search", "Conf", "Deep"), listOf("B")), bar.groups)
         for (id in listOf("Search", "Conf", "Deep")) {
@@ -41,7 +41,7 @@ class WindowBarDragTest {
     }
 
     @Test
-    fun a_lone_tab_never_lands_inside_a_group() {
+    fun a_lone_tab_never_lands_inside_a_group() = onEdt<Unit> {
         val bar = layout(opened)
         assertEquals(listOf("Search", "Conf", "Deep", "A", "B"), WindowTabGroups.moved(bar, "A", "B"))
         // Asked to stand before the middle of a group, it stands before the group.
@@ -50,7 +50,7 @@ class WindowBarDragTest {
     }
 
     @Test
-    fun the_order_dragged_is_read_first_and_a_new_window_stands_at_the_end() {
+    fun the_order_dragged_is_read_first_and_a_new_window_stands_at_the_end() = onEdt<Unit> {
         val place = listOf("B", "A", "Search", "Conf", "Deep")
         assertEquals(place, layout(opened, place).order)
         assertEquals(place + "New", layout(listOf("New") + opened, place).order)
@@ -61,7 +61,7 @@ class WindowBarDragTest {
     }
 
     @Test
-    fun a_group_lands_before_the_first_group_whose_middle_is_past_its_own() {
+    fun a_group_lands_before_the_first_group_whose_middle_is_past_its_own() = onEdt<Unit> {
         val others = listOf("a" to 100f, "b" to 300f)
         assertEquals("a", WindowTabGroups.dropBefore(others, 50f))
         assertEquals("b", WindowTabGroups.dropBefore(others, 200f))
@@ -100,7 +100,7 @@ class WindowBarDragTest {
     }
 
     @Test
-    fun a_mouse_drag_moves_the_group_and_is_no_click() {
+    fun a_mouse_drag_moves_the_group_and_is_no_click() = onEdt<Unit> {
         val host = host("A", "Search", "Conf", "B")
         var told: Pair<List<String>, List<String>>? = null
         host.onTabOrderChanged = { before, after -> told = before to after }
@@ -113,7 +113,7 @@ class WindowBarDragTest {
     }
 
     @Test
-    fun a_press_that_does_not_move_is_still_a_click() {
+    fun a_press_that_does_not_move_is_still_a_click() = onEdt<Unit> {
         val host = host("A", "B")
         drag(host, Offset(12f, 20f), 0f, steps = 1)
         assertEquals(setOf("A"), host.selectedTabs)
@@ -121,7 +121,7 @@ class WindowBarDragTest {
     }
 
     @Test
-    fun ctrl_tab_walks_the_order_drawn_and_a_closed_window_leaves_the_order() {
+    fun ctrl_tab_walks_the_order_drawn_and_a_closed_window_leaves_the_order() = onEdt<Unit> {
         val host = host("A", "B", "C")
         host.tabOrder = listOf("C", "A", "B")
         host.focus("C")

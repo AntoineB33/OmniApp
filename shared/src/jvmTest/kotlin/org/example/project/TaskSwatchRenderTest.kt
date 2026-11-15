@@ -43,14 +43,14 @@ class TaskSwatchRenderTest {
     }
 
     @Test
-    fun a_pale_task_colour_is_outlined_in_black() {
+    fun a_pale_task_colour_is_outlined_in_black() = onEdt<Unit> {
         val (edge, inside) = edgeAndInside(Color.White)
         assertTrue(inside > 240, "the inside is the task's own colour: $inside")
         assertTrue(edge < 60, "the edge is the colour of highest contrast with it: $edge")
     }
 
     @Test
-    fun a_dark_task_colour_is_outlined_in_white() {
+    fun a_dark_task_colour_is_outlined_in_white() = onEdt<Unit> {
         val (edge, inside) = edgeAndInside(Color.Black)
         assertTrue(inside < 15, "the inside is the task's own colour: $inside")
         assertTrue(edge > 195, "the edge is the colour of highest contrast with it: $edge")

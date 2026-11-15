@@ -70,7 +70,7 @@ class HistoryChordRoutingTest {
     }
 
     @Test
-    fun the_root_takes_the_chord_before_a_focused_text_field_while_the_next_change_is_app_wide() {
+    fun the_root_takes_the_chord_before_a_focused_text_field_while_the_next_change_is_app_wide() = onEdt<Unit> {
         val probe = Probe()
         val scene = scene(probe, focusField = true)
         try {
@@ -91,7 +91,7 @@ class HistoryChordRoutingTest {
     }
 
     @Test
-    fun with_nothing_focused_no_modifier_sees_the_chord_and_has_focus_says_so() {
+    fun with_nothing_focused_no_modifier_sees_the_chord_and_has_focus_says_so() = onEdt<Unit> {
         val probe = Probe()
         val scene = scene(probe, focusField = false)
         try {

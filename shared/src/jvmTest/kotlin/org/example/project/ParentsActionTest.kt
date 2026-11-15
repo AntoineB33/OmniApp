@@ -46,11 +46,6 @@ import org.example.project.ui.transientMenuDismissRoot
  */
 @OptIn(ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
 class ParentsActionTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     private val openers = SearchRowOpeners(onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {})
     private val handlers =

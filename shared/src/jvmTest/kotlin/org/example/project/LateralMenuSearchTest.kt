@@ -25,11 +25,6 @@ class LateralMenuSearchTest {
     private val buttons =
         listOf("Search", "Alarms", "Life plan", "Search timers").mapIndexed { i, title -> CustomMenuButton(id = "b$i", windowId = "w$i", title = title) }
 
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     private fun draw(query: String): ByteArray {
         val scene = onEdt {

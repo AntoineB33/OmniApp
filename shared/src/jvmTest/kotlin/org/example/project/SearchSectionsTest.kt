@@ -92,11 +92,6 @@ class SearchSectionsTest {
         return null
     }
 
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     /** Finds the line among [froms] with a quick drag, then drags it from there in a fresh window, as a mouse does. */
     private fun dragFirstHit(initial: SearchSplits, froms: Sequence<Offset>, by: Offset): List<SearchSplits> {

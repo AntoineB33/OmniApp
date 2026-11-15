@@ -135,6 +135,16 @@ tasks.withType<Test>().configureEach {
     systemProperty("omniapp.silentAudio", layout.buildDirectory.file("silenced-audio.log").get().asFile.path)
 }
 
+// `checkChange`'s longest step: the suite in several test JVMs at once — a quarter of the cores, at most four
+// (`-PtestForks=1` for one JVM). Only here: `startupCheck` and `longTest` time things and stay alone in theirs. Each
+// test class runs in one fork, whose JVM other classes ran in before it — a process-wide seam one of them left set is
+// read by the next (`SchedulerReducer.releaseEngineSeams`).
+tasks.named<Test>("jvmTest") {
+    maxParallelForks =
+        providers.gradleProperty("testForks").orNull?.toInt()
+            ?: (Runtime.getRuntime().availableProcessors() / 4).coerceIn(1, 4)
+}
+
 // The LONG tier of the scheduler simulations (`ScheduleSimulationLongTest`): hundreds of tasks lived through for weeks.
 // Minutes to hours, so it is not in `jvmTest` (its tests skip themselves there); run it when the scheduler's answer
 // can have changed — `docs/invariants/scheduler.md` § *Simulations*. `-PlongScale=0.25` shrinks the accounts,

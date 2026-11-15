@@ -39,7 +39,7 @@ import org.example.project.ui.WindowFrameState
 class WindowHoldsKeyboardTest {
 
     @Test
-    fun ctrl_w_reaches_the_app_in_a_focused_window_that_has_no_key_handler_of_its_own() {
+    fun ctrl_w_reaches_the_app_in_a_focused_window_that_has_no_key_handler_of_its_own() = onEdt<Unit> {
         val host = WindowFrameHost()
         val closed = mutableListOf<String>()
         var open by mutableStateOf(setOf("Calendar", "Search#2"))

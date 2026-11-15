@@ -28,11 +28,6 @@ import org.example.project.ui.TREE_LEAF_CONTENT_WIDTH
  * one row as it opens, and one more per thing the user adds to it (a search bar, a sorting method).
  */
 class SettingRowHeightTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var out: Result<T>? = null
-        SwingUtilities.invokeAndWait { out = runCatching(block) }
-        return out!!.getOrThrow()
-    }
 
     /** The height of every configuration's row under [config], each labelled as "Recently changed" labels it. */
     private fun heights(config: SearchDomain.Config, width: Dp = TREE_LEAF_CONTENT_WIDTH): Map<Setting, Float> {

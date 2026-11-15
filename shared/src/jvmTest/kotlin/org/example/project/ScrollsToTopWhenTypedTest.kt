@@ -34,7 +34,7 @@ class ScrollsToTopWhenTypedTest {
     }
 
     @Test
-    fun a_scrolled_list_goes_back_to_its_top_when_the_bar_is_typed_in_and_keeps_its_place_otherwise() {
+    fun a_scrolled_list_goes_back_to_its_top_when_the_bar_is_typed_in_and_keeps_its_place_otherwise() = onEdt<Unit> {
         val text = mutableStateOf("ab")
         lateinit var scroll: ScrollState
         val scene = ImageComposeScene(width = 200, height = 200, density = Density(1f)) {
@@ -69,7 +69,7 @@ class ScrollsToTopWhenTypedTest {
      * themselves then the scroll comes back to what it was before entering edit mode in the search bar."*
      */
     @Test
-    fun deleting_what_was_typed_puts_the_list_back_where_it_was_unless_the_hand_scrolled_it() {
+    fun deleting_what_was_typed_puts_the_list_back_where_it_was_unless_the_hand_scrolled_it() = onEdt<Unit> {
         val text = mutableStateOf("")
         lateinit var scroll: ScrollState
         // The results the bar gives: fifty rows with nothing typed, fewer with something — three for "a…", forty for
@@ -112,7 +112,7 @@ class ScrollsToTopWhenTypedTest {
     }
 
     @Test
-    fun a_lazy_list_is_put_back_on_the_row_it_was_on() {
+    fun a_lazy_list_is_put_back_on_the_row_it_was_on() = onEdt<Unit> {
         val text = mutableStateOf("")
         val list = LazyListState()
         val scene = ImageComposeScene(width = 200, height = 200, density = Density(1f)) {
@@ -138,7 +138,7 @@ class ScrollsToTopWhenTypedTest {
     }
 
     @Test
-    fun a_lazy_list_goes_back_to_its_first_item_when_the_bar_is_typed_in() {
+    fun a_lazy_list_goes_back_to_its_first_item_when_the_bar_is_typed_in() = onEdt<Unit> {
         val text = mutableStateOf("")
         val list = LazyListState()
         val scene = ImageComposeScene(width = 200, height = 200, density = Density(1f)) {

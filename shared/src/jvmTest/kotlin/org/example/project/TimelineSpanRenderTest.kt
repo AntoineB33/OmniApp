@@ -62,14 +62,14 @@ class TimelineSpanRenderTest {
     }
 
     @Test
-    fun an_element_with_no_edge_on_the_line_is_whole_pixel_geometry() {
+    fun an_element_with_no_edge_on_the_line_is_whole_pixel_geometry() = onEdt<Unit> {
         val still = coverage(topFollows = false, bottomFollows = false, driftHours = 0.035)
         assertEquals(20.0, still.top(), 0.02)
         assertEquals(50.0, still.bottom(), 0.02)
     }
 
     @Test
-    fun a_dragged_pose_glides_rigidly_between_pixels() {
+    fun a_dragged_pose_glides_rigidly_between_pixels() = onEdt<Unit> {
         // 0.035 h at 10 px/h is 0.35 px: both edges move by exactly that, and the height does not change.
         val moved = coverage(topFollows = true, bottomFollows = true, driftHours = 0.035)
         assertEquals(20.35, moved.top(), 0.03, "the top edge lands between pixels")
@@ -78,21 +78,21 @@ class TimelineSpanRenderTest {
     }
 
     @Test
-    fun the_panel_growing_behind_the_line_stretches_by_a_fraction_of_a_pixel() {
+    fun the_panel_growing_behind_the_line_stretches_by_a_fraction_of_a_pixel() = onEdt<Unit> {
         val grown = coverage(topFollows = false, bottomFollows = true, driftHours = 0.062)
         assertEquals(20.0, grown.top(), 0.03, "the fixed top stays on its pixel row")
         assertEquals(50.62, grown.bottom(), 0.03, "the moving bottom lands between pixels")
     }
 
     @Test
-    fun the_panel_resuming_after_the_line_shrinks_from_its_top() {
+    fun the_panel_resuming_after_the_line_shrinks_from_its_top() = onEdt<Unit> {
         val shrunk = coverage(topFollows = true, bottomFollows = false, driftHours = 0.081)
         assertEquals(20.81, shrunk.top(), 0.03)
         assertEquals(50.0, shrunk.bottom(), 0.03)
     }
 
     @Test
-    fun the_motion_is_continuous_across_a_pixel_boundary() {
+    fun the_motion_is_continuous_across_a_pixel_boundary() = onEdt<Unit> {
         // Sweep the drift through a whole pixel and more: the drawn top must advance by the drift every time,
         // never hold still and jump.
         var previous = Double.NaN

@@ -36,11 +36,6 @@ import org.example.project.ui.SearchWindow
  */
 @OptIn(ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
 class SearchSelectAllTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     private val chronos = listOf(ChronoEntry(id = "a", label = "First"), ChronoEntry(id = "b", label = "Second"), ChronoEntry(id = "c", label = "Third"))
 

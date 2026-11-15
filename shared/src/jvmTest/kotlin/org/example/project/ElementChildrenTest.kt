@@ -30,11 +30,6 @@ import org.example.project.ui.SearchWindow
  * screen, in the real Search window.
  */
 class ElementChildrenTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     private val account =
         QuotaScenario.account().copy(chronos = listOf(ChronoEntry(id = "a", label = "First"), ChronoEntry(id = "b", label = "Second")))

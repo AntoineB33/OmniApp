@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### `jvmTest` runs in four test JVMs: 12 min → about 3 — 2026-11-15
+
+`maxParallelForks` on `:shared:jvmTest` (a quarter of the cores, at most 4; `-PtestForks=1` for one JVM; never on
+`startupCheck`/`longTest`). Three things broke under forks, none of them CPU load. (1) **A dead engine's seams.**
+`SchedulerEngine.start` installs process-wide seams on `SchedulerReducer` (mode, live pause, horizon, evidence…) and
+took only `frozenScreenBreaks` back down; most engine tests never cancel their scope, so a reducer test run after one in
+the same JVM planned with that engine's mode — `PlanConcurrencyTest` and `SchedulerPeerProtocolTest` lost every 20 s
+look-away. The engine now claims and releases them all (`SchedulerReducer.claimEngineSeams`/`releaseEngineSeams`), and
+the two tests release them before they run. (2) **A Compose lock-order deadlock.** An `ImageComposeScene` rendered on
+the test thread takes the scene's `FlushCoroutineDispatcher` lock then the `SnapshotStateObserver` one, while
+`GlobalSnapshotManager` on the AWT thread takes them the other way round (`LateralMenuShiftTest` 39 min,
+`CheckBoxDropDownRenderTest` 28 min). Every scene test runs on the AWT thread now, through the one `onEdt` helper
+(jvmTest `OnEdt.kt`, which replaces fifteen private copies). No migration, no deploy.
+
 ### The list of parents of a tree's root lists the global root — 2026-11-14
 
 Anomaly: *"Tasks: root of a tree to yes, then I add all the resulting tasks to the added elements list, then … Parents,

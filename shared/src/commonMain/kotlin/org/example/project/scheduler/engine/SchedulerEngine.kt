@@ -930,6 +930,10 @@ class SchedulerEngine(
         // ([SchedulerDomain.liveRestPeriod] off [SchedulerReducer.liveRestGap]) rather than as an overlay on
         // a stored anchor. There is no stored anchor: nothing seeds, serves or advances a `lastRest` any
         // more (ADR 0003).
+        // The seams below are process-wide: they leave with this engine ([SchedulerReducer.releaseEngineSeams]), or a
+        // reducer run after it would read a dead engine's mode, pause and horizon.
+        SchedulerReducer.claimEngineSeams(this)
+        scope.coroutineContext[Job]?.invokeOnCompletion { SchedulerReducer.releaseEngineSeams(this) }
         // PRD §9/§12: what the DEVICES observed about whether anyone was at a screen, feeding §9's "assume
         // nothing happened" rule. Cached, because reading it is a process launch; refreshed at every screen edge
         // by [launchNoScreenEvidenceScan] below and read here synchronously by every banking reducer path.
@@ -942,13 +946,7 @@ class SchedulerEngine(
         // otherwise. Read at fill time from the same account-wide pause the calendar draws ([tpModeNow]).
         SchedulerReducer.tpMode = { planTpModeNow() }
         // `docs/scheduler_requirements.md` § *frozen past*: every fill continues from the banked screen breaks.
-        val frozenSeam: () -> org.example.project.scheduler.domain.FrozenScreenBreaks? = { _frozenBreaks.value }
-        SchedulerReducer.frozenScreenBreaks = frozenSeam
-        // The seam is process-wide; a record that outlived its engine would be read by whoever reduces next (an
-        // engine is scoped to the app on both hosts, so this only ever runs when a host or a test tears it down).
-        scope.coroutineContext[Job]?.invokeOnCompletion {
-            if (SchedulerReducer.frozenScreenBreaks === frozenSeam) SchedulerReducer.frozenScreenBreaks = { null }
-        }
+        SchedulerReducer.frozenScreenBreaks = { _frozenBreaks.value }
         // PRD §9 / `docs/scheduler_requirements.md` § *Progressive Calculation*: every refill materializes the
         // plan out to $t_{goal}$ — the end of the timeline the calendar shows, or `now + 10 min` if further.
         SchedulerReducer.scheduleHorizonEndMillis = { now -> scheduleHorizonEndMillis(now) }

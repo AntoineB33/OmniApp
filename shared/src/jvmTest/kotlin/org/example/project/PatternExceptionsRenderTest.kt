@@ -29,7 +29,7 @@ import org.example.project.ui.PatternExceptionsNote
 @OptIn(InternalComposeUiApi::class)
 class PatternExceptionsRenderTest {
     @Test
-    fun the_exceptions_lay_out_as_block_rows_with_and_without_the_apps_state() {
+    fun the_exceptions_lay_out_as_block_rows_with_and_without_the_apps_state() = onEdt<Unit> {
         val tz = TimeZone.currentSystemDefault()
         val hour = 3_600_000L
         val day = 24 * hour

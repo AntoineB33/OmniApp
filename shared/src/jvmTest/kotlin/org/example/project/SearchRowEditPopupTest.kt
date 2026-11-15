@@ -35,11 +35,6 @@ import org.example.project.ui.SearchWindow
  */
 @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
 class SearchRowEditPopupTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     @Test
     fun a_result_row_in_edit_mode_shows_the_rectangle() {

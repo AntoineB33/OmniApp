@@ -126,9 +126,4 @@ class SearchPartsMenuTest {
         }
     }
 
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 }

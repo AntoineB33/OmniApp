@@ -58,14 +58,14 @@ class CheckBoxDropDownRenderTest {
     }
 
     @Test
-    fun a_short_list_and_a_long_one_both_lay_out_open() {
+    fun a_short_list_and_a_long_one_both_lay_out_open() = onEdt<Unit> {
         // Short: nothing to scroll, no bar. Long: taller than the list may be, so it scrolls beside its bar.
         render(Probe().apply { options = (0 until 3).toList() }, more = false)
         render(Probe().apply { options = (0 until 200).toList() }, more = false)
     }
 
     @Test
-    fun a_list_with_no_end_asks_for_more_until_it_is_long_enough_to_scroll() {
+    fun a_list_with_no_end_asks_for_more_until_it_is_long_enough_to_scroll() = onEdt<Unit> {
         val probe = Probe().apply { options = (0 until 2).toList() }
         render(probe, more = true)
         assertTrue(probe.deployed, "the list opened")

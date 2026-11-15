@@ -1,5 +1,6 @@
 package org.example.project
 
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -29,6 +30,14 @@ class SchedulerPeerProtocolTest {
     private val HOUR = 60 * MIN
     private val DAY = 24 * HOUR
     private val NOW = 1_788_343_200_000L
+
+    /**
+     * The leader plans by `SchedulerDomain.fillSchedule` with no engine; the follower adopts through the reducer,
+     * which reads the engine seams — so they must be no engine's: one an earlier test in this JVM started leaves its
+     * own (a dead engine's mode left the follower without the leader's 20 s look-aways).
+     */
+    @BeforeTest
+    fun noEngine() = SchedulerReducer.releaseEngineSeams()
 
     @Test
     fun every_message_survives_the_wire() {

@@ -151,7 +151,7 @@ class CalendarSecondsRenderTest {
     }
 
     @Test
-    fun a_calendar_opened_on_six_seconds_lays_out_and_draws_the_panel_running_through_them() {
+    fun a_calendar_opened_on_six_seconds_lays_out_and_draws_the_panel_running_through_them() = onEdt<Unit> {
         // Six seconds of an eight-hour panel: its day's column is the panel from the top of the grid to the bottom
         // (the window's title bar and the day headers take the rest of the height).
         val seconds = panelRun(at(17, 10, 0) to at(17, 10, 6))
@@ -162,7 +162,7 @@ class CalendarSecondsRenderTest {
     }
 
     @Test
-    fun the_open_calendar_is_fitted_again_when_the_notifications_it_shows_change() {
+    fun the_open_calendar_is_fitted_again_when_the_notifications_it_shows_change() = onEdt<Unit> {
         // Anomaly 2026-10-14: a standing pair given new notifications kept the view fitted before them. A panel ending
         // at 17:10:03: over 17:10:00–17:10:06 it fills half the grid; the window then shows a notification from
         // 17:09:00 (the stretch 17:09:00–17:10:06), and the panel must fill 63/66 of it — the view followed.
@@ -171,7 +171,7 @@ class CalendarSecondsRenderTest {
     }
 
     @Test
-    fun the_view_grows_as_the_line_moves_on() {
+    fun the_view_grows_as_the_line_moves_on() = onEdt<Unit> {
         // Anomaly 2026-10-14: *"the $now line$ is moving forward, so the window is supposed to get larger"*. The same
         // stretch (17:10:00, the line at 17:10:06), the window left open while the line moves on to 17:10:12: the view
         // is now 17:10:00–17:10:12, so a panel ending at 17:10:03 fills a quarter of it instead of half.
@@ -183,7 +183,7 @@ class CalendarSecondsRenderTest {
 
     /** User rule 2026-11-12: the calendar button's calendar opens with "Lock to now" on, and opening it releases nothing. */
     @Test
-    fun a_calendar_opens_locked_to_now_and_stays_so() {
+    fun a_calendar_opens_locked_to_now_and_stays_so() = onEdt<Unit> {
         for (mode in org.example.project.ui.CalendarDisplayMode.entries) {
             val view = CalendarElementView(day)
             val scene =

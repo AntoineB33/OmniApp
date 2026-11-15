@@ -85,7 +85,7 @@ class LifePlanWindowTest {
     }
 
     @Test
-    fun new_step_adds_a_row_to_the_list() {
+    fun new_step_adds_a_row_to_the_list() = onEdt<Unit> {
         val plan = Plan(emptyList(), LifePlanView())
         scene(plan).use { scene ->
             scene.frames()
@@ -97,7 +97,7 @@ class LifePlanWindowTest {
     }
 
     @Test
-    fun the_arrow_of_a_step_shows_its_sub_elements() {
+    fun the_arrow_of_a_step_shows_its_sub_elements() = onEdt<Unit> {
         val (one, parent) = LifePlanDomain.addedStep(emptyList(), null)
         val (entries, child) = LifePlanDomain.addedStep(one, parent)
         val plan = Plan(entries, LifePlanView())
@@ -111,7 +111,7 @@ class LifePlanWindowTest {
     }
 
     @Test
-    fun every_section_draws_with_a_plan_and_with_none() {
+    fun every_section_draws_with_a_plan_and_with_none() = onEdt<Unit> {
         val (tabbed, tab) = LifePlanDomain.addedTab(emptyList())
         val written = LifePlanDomain.withText(tabbed, tab, "one\ntwo")
         for (entries in listOf(emptyList(), written)) for (section in LifePlanSection.entries) {

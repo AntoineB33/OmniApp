@@ -26,9 +26,14 @@ import kotlin.test.assertTrue
  */
 class PlanConcurrencyTest {
 
-    // The rules under test only show over a plan longer than the calendar-closed ten-minute goal.
+    // The rules under test only show over a plan longer than the calendar-closed ten-minute goal. The expected plan
+    // is `SchedulerDomain.fillSchedule`'s with no engine, so the reducer's must read no engine's seams either: an engine
+    // test run earlier in this JVM leaves its own installed (its scope is never cancelled).
     @BeforeTest
-    fun showTheCalendar() = CalendarHorizonFixture.show()
+    fun showTheCalendar() {
+        SchedulerReducer.releaseEngineSeams()
+        CalendarHorizonFixture.show()
+    }
 
     @AfterTest
     fun closeTheCalendar() = CalendarHorizonFixture.close()

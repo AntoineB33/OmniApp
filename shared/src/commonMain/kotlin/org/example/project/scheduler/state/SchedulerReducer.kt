@@ -217,6 +217,37 @@ object SchedulerReducer {
     var scheduleHorizonEndMillis: (Long) -> Long = { it + 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS }
 
     /**
+     * Who installed the input seams above, or null: the [org.example.project.scheduler.engine.SchedulerEngine]
+     * whose `start` set them last. They are process-wide, so a seam that outlived its engine is read by whoever
+     * reduces next — a dead engine's mode, live pause or horizon planted into a plan nobody asked it about (a test
+     * class run after an engine test in the same JVM planned without its 20 s look-aways, 2026-11-15).
+     */
+    private var engineSeamsOwner: Any? = null
+
+    /** [owner] installs the engine seams: called by the engine before it sets them. */
+    fun claimEngineSeams(owner: Any) {
+        engineSeamsOwner = owner
+    }
+
+    /**
+     * Every seam an engine installs back to what a reducer with NO engine reads — the default each one declares —
+     * when [owner] is still the engine that installed them (null: whoever did). A later engine's seams are not
+     * this one's to take down.
+     */
+    fun releaseEngineSeams(owner: Any? = null) {
+        if (owner != null && owner !== engineSeamsOwner) return
+        engineSeamsOwner = null
+        noScreenEvidence = { emptyList() }
+        atScreenEvidence = { emptyList() }
+        liveRestGap = { null }
+        tpMode = { DynamicPeriods.MODE_AT_SCREEN }
+        frozenScreenBreaks = { null }
+        scheduleHorizonEndMillis = { it + 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS }
+        planSearchSink = { _, _ -> }
+        planAbandoned = { false }
+    }
+
+    /**
      * The app's one dispatch point — [reduceIntent] followed by the PRD §5 **category-rule invariant**.
      *
      * A category rule ("the tasks carrying this under that cell are worth 33 % of it") is not a fact stored

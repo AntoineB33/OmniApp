@@ -44,11 +44,6 @@ import org.example.project.ui.transientMenuDismissRoot
  * is stood for by a publication of the session it would make.
  */
 class CellEditPopupTest {
-    private fun <T> onEdt(block: () -> T): T {
-        var result: Result<T>? = null
-        javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
-        return result!!.getOrThrow()
-    }
 
     private fun r(state: SchedulerState, intent: SchedulerIntent) = SchedulerReducer.reduce(state, intent)
 

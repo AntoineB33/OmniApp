@@ -48,7 +48,7 @@ class SectionSeparatorDragTest {
     }
 
     @Test
-    fun the_line_follows_the_pointer() {
+    fun the_line_follows_the_pointer() = onEdt<Unit> {
         for (density in listOf(1f, 1.5f)) for (render in listOf(true, false)) {
             assertEquals(400f, dragged(100, density, render, density), 0.5f, "1px steps, density $density, render $render")
             assertEquals(400f, dragged(10, 10f * density, render, density), 0.5f, "10px steps, density $density, render $render")

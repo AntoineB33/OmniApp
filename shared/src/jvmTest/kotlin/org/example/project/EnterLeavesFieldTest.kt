@@ -72,7 +72,7 @@ class EnterLeavesFieldTest {
     }
 
     @Test
-    fun enter_ends_the_edit_of_a_single_line_field() {
+    fun enter_ends_the_edit_of_a_single_line_field() = onEdt<Unit> {
         val probe = Probe()
         val scene = scene(probe, singleLine = true)
         try {
@@ -89,7 +89,7 @@ class EnterLeavesFieldTest {
     }
 
     @Test
-    fun the_keypads_enter_does_too() {
+    fun the_keypads_enter_does_too() = onEdt<Unit> {
         val probe = Probe()
         val scene = scene(probe, singleLine = true)
         try {
@@ -102,7 +102,7 @@ class EnterLeavesFieldTest {
     }
 
     @Test
-    fun a_field_with_an_enter_of_its_own_answers_first_and_a_field_of_several_lines_keeps_it() {
+    fun a_field_with_an_enter_of_its_own_answers_first_and_a_field_of_several_lines_keeps_it() = onEdt<Unit> {
         val own = Probe()
         val first = scene(own, singleLine = true, ownEnter = true)
         try {

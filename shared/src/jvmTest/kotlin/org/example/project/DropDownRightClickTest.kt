@@ -40,7 +40,7 @@ class DropDownRightClickTest {
     }
 
     @Test
-    fun a_right_click_on_an_option_picks_it_alone_and_opens_no_menu_under_the_list() {
+    fun a_right_click_on_an_option_picks_it_alone_and_opens_no_menu_under_the_list() = onEdt<Unit> {
         val probe = Probe()
         val scene =
             ImageComposeScene(width = 500, height = 700, density = Density(1f)) {

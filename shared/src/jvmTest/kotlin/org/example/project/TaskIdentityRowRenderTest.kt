@@ -47,7 +47,7 @@ class TaskIdentityRowRenderTest {
     }
 
     @Test
-    fun the_row_lays_out_under_a_parent_that_offers_no_maximum_width() {
+    fun the_row_lays_out_under_a_parent_that_offers_no_maximum_width() = onEdt<Unit> {
         val s = stateWithTasks()
         val paths = SearchDomain.allPathsInAnyTree(s)
         val tasks = s.tasks.values.filter { it.title.isNotBlank() && it.title != "root" }
@@ -64,7 +64,7 @@ class TaskIdentityRowRenderTest {
 
     /** The reported crash: a parent sized by its content's INTRINSIC width asks the row how wide it would be. */
     @Test
-    fun the_row_answers_a_parent_sized_by_its_intrinsic_width() {
+    fun the_row_answers_a_parent_sized_by_its_intrinsic_width() = onEdt<Unit> {
         val s = stateWithTasks()
         val paths = SearchDomain.allPathsInAnyTree(s)
         val tasks = s.tasks.values.filter { it.title.isNotBlank() && it.title != "root" }
@@ -79,7 +79,7 @@ class TaskIdentityRowRenderTest {
 
     /** A task cell picker lists ONE task id once per path: each row carries its own path, and both lay out. */
     @Test
-    fun the_same_task_listed_once_per_path_lays_out() {
+    fun the_same_task_listed_once_per_path_lays_out() = onEdt<Unit> {
         val s = stateWithTasks()
         val task = s.tasks.values.first { it.title == "Child" }
         render {
@@ -92,7 +92,7 @@ class TaskIdentityRowRenderTest {
     }
 
     @Test
-    fun the_row_lays_out_in_a_narrow_parent_too() {
+    fun the_row_lays_out_in_a_narrow_parent_too() = onEdt<Unit> {
         val s = stateWithTasks()
         val paths = SearchDomain.allPathsInAnyTree(s)
         val task = s.tasks.values.first { it.title.startsWith("Transformation") }
