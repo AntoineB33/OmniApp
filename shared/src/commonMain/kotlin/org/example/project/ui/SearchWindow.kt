@@ -1402,6 +1402,7 @@ fun SearchWindow(
                             .fillMaxSize()
                             .padding(end = SCROLLBAR_ROOM)
                             .then(with(arrange) { Modifier.dropIndicator(dropColor, menuList?.levelStep ?: 0.dp) })
+                            .shiftWheelScrollsVertically(listState)
                             .focusRequester(listFocus)
                             .onFocusChanged { listFocused = it.hasFocus }
                             .focusable()
