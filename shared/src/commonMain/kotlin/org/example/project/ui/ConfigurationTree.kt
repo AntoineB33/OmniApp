@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -381,6 +382,21 @@ private fun TreeColumn(
     onFit: ((Int) -> Unit)? = null,
 ) {
     val scroll = rememberScrollState()
+    // Anomaly 2026-11-15 (*"hovering over 'task' shows a window that blinks continuously"*, the `[popup]` trace: its
+    // window resized 360 → 216 → 360 … without end): the pop-up is fitted to the tree's OWN height — its rows measured
+    // whole, which no height of the pop-up changes — against the room the pop-up gives it. It was fitted to what the
+    // scroll said of the two, which did not hold still as the pop-up changed size.
+    var viewportPx by remember { mutableStateOf(-1) }
+    var contentPx by remember { mutableStateOf(-1) }
+    if (onFit != null) {
+        val latestFit by androidx.compose.runtime.rememberUpdatedState(onFit)
+        LaunchedEffect(viewportPx, contentPx) {
+            if (viewportPx < 0 || contentPx < 0) return@LaunchedEffect
+            val delta = contentPx - viewportPx
+            // A couple of px is no change: two heights a rounding apart must not take turns.
+            if (kotlin.math.abs(delta) > FIT_DEAD_BAND_PX) latestFit(delta)
+        }
+    }
     Column(
         Modifier
             .reportsHover(LocalMenuHover.current)
@@ -388,12 +404,8 @@ private fun TreeColumn(
             .then(
                 if (onFit == null) Modifier.heightIn(max = TREE_COLUMN_MAX_HEIGHT)
                 else Modifier.layout { measurable, constraints ->
+                    if (constraints.hasBoundedHeight && viewportPx != constraints.maxHeight) viewportPx = constraints.maxHeight
                     val placeable = measurable.measure(constraints)
-                    if (constraints.hasBoundedHeight) {
-                        val delta = if (placeable.height < constraints.maxHeight) placeable.height - constraints.maxHeight else scroll.maxValue
-                        // A couple of px is no change: two heights a rounding apart must not take turns.
-                        if (kotlin.math.abs(delta) > FIT_DEAD_BAND_PX) onFit(delta)
-                    }
                     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                 },
             )
@@ -401,6 +413,8 @@ private fun TreeColumn(
             // The scrollbar stands in a room of its own at the right, as beside the Search window's list.
             .padding(start = TREE_COLUMN_PADDING, end = TREE_COLUMN_PADDING + SCROLLBAR_ROOM),
     ) {
+        // The rows, measured whole: the tree's own height ([onFit]).
+        Column(Modifier.onSizeChanged { if (it.height != contentPx) contentPx = it.height }) {
         for (node in nodes) {
             when (node) {
                 is SearchDomain.ConfigurationCategory -> {
@@ -552,6 +566,7 @@ private fun TreeColumn(
                 }
             }
         }
+        }
     }
 }
 
@@ -620,9 +635,16 @@ private fun TreeSearchWindow(
     var heightPx by remember { mutableStateOf(with(density) { TREE_POPUP_FIRST_HEIGHT.toPx() }) }
     val leastPx = with(density) { (if (rightShown) TREE_POPUP_RIGHT_MIN_HEIGHT else TREE_POPUP_MIN_HEIGHT).toPx() }
     val mostPx = with(density) { TREE_POPUP_MAX_HEIGHT.toPx() }
+    // The height it had before its last fit: never fitted straight back to it — two heights taking turns are a blinking
+    // window (anomaly 2026-11-15), whatever asks for it.
+    var beforeLastFit by remember { mutableStateOf(-1f) }
     val fit = { delta: Int ->
         val next = (heightPx + delta).coerceIn(leastPx, mostPx)
-        if (next != heightPx) heightPx = next
+        if (next != heightPx && kotlin.math.abs(next - beforeLastFit) > 0.5f) {
+            popupTrace("tree pop-up fitted ${heightPx.toInt()} -> ${next.toInt()}")
+            beforeLastFit = heightPx
+            heightPx = next
+        }
     }
     val latestFit by androidx.compose.runtime.rememberUpdatedState(fit)
     val treeList = remember(arrowDepth) {

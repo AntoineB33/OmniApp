@@ -395,6 +395,14 @@ internal fun PopupSearchField(
         focusManager.clearFocus()
     }
     val region = rememberOutsidePressEditor(active = open) { close() }
+    // Anomaly 2026-11-15 (*"I clicked on 'list of parents', right-click, 'show the added elements' and there was an
+    // element"*): what is added in a field's window belongs to that opening — each opening starts with none, though the
+    // rest of its configuration (its bar's settings, its sorting) is kept. It held what an earlier opening had added.
+    val latestConfig by androidx.compose.runtime.rememberUpdatedState(config)
+    val latestChange by androidx.compose.runtime.rememberUpdatedState(onConfigChange)
+    androidx.compose.runtime.LaunchedEffect(open) {
+        if (open && latestConfig.added.isNotEmpty()) latestChange(latestConfig.copy(added = emptyList()))
+    }
     // Anomaly 2026-11-13 (*"when I hover over the down arrow, the search bar looks different than the search bar of other
     // search windows"*): the very layout of the Search window's bar — the field named by its label (grey in the empty
     // field), its cross inside it, and the configurations arrow BESIDE it, outside the field.

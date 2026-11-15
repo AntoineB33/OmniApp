@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The ▾ tree's pop-ups no longer blink; a field's window starts each opening with no added element — 2026-11-15
+
+Read off the `[popup]` trace of the user's reproduction: the "task" pop-up's window resized 360 → 216 → 360 … without
+end — its height was fitted to what the scroll said, which moved with the pop-up's own size. It is now fitted to the
+rows' own height against the room given (`TreeColumn`), and never fitted straight back to the height it left
+(`TreeSearchWindow`). The "List of parents" still showed an element added in an earlier opening (the release DB held
+`added=["Task/task/root"]` under that field's id): a field's window starts each opening with no added element, the
+rest of its configuration kept (`PopupSearchField`). The `[popup]` trace stays until the user confirms. No migration.
+Deploy: client apps.
+
 ### Menus survive another application; the list of parents' added elements are its parents; notif window's added list hidden — 2026-11-15
 
 User anomalies. **4**: every menu (not an unpinned hover pop-up) stays while the user is in another application and is
