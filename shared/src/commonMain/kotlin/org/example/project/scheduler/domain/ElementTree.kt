@@ -250,8 +250,11 @@ object ElementTree {
      * history and the logs come and go on their own, so they are reached by the Search window's own lists instead.
      */
     fun pickable(state: SchedulerState): List<Pair<String, String>> {
-        val tasks = state.tasks.values.filter { it.title.isNotEmpty() }.sortedBy { it.title.lowercase() }.map { SearchDomain.taskKey(it.id) to Kind.Task.label + ": " + it.title }
-        val items = PICKED_KINDS.flatMap { kind -> SearchDomain.itemResults(state, kind, "").map { SearchDomain.keyOf(it) to kind.label + ": " + it.name } }
+        // The rows a Search window lists ([SearchDomain.kindRows]), the global root among them — not a second listing of
+        // the tasks that drifted from it (it kept a blank title and missed a stored tree's tasks).
+        val tasks = SearchDomain.kindRows(state, Kind.Task, "", { emptyMap() }, withRoot = true)
+            .sortedBy { it.name.lowercase() }.map { SearchDomain.keyOf(it) to Kind.Task.label + ": " + it.name }
+        val items = PICKED_KINDS.flatMap { kind -> SearchDomain.kindRows(state, kind, "", { emptyMap() }).map { SearchDomain.keyOf(it) to kind.label + ": " + it.name } }
         return tasks + items
     }
 

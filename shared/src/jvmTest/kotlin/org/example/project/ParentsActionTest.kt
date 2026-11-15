@@ -64,7 +64,7 @@ class ParentsActionTest {
         return s
     }
 
-    private fun checkParentListed(listFirst: Boolean = false, child: (SchedulerState) -> String) {
+    private fun checkParentListed(listFirst: Boolean = false, thenAdd: Boolean = false, child: (SchedulerState) -> String) {
         val start = account()
         val childKey = child(start)
         var live = start
@@ -82,6 +82,10 @@ class ParentsActionTest {
             ImageComposeScene(1400, 900, density = Density(1f)) {
                 var state by remember { mutableStateOf(start) }
                 var config by remember { mutableStateOf(opened) }
+                // What `App` keeps the windows drawn inside this one with: its configuration's `inside`.
+                val registry = remember {
+                    org.example.project.ui.ArrowSearches(read = { config.inside }, write = { _, inside -> config = config.copy(inside = inside) })
+                }
                 val onIntent = { intent: SchedulerIntent ->
                     state = SchedulerReducer.reduce(state, intent)
                     live = state
@@ -101,11 +105,17 @@ class ParentsActionTest {
                     },
                 ) {
                     Box(Modifier.fillMaxSize().transientMenuDismissRoot(menus).raiseOnPress { frames.blur() }) {
+                        CompositionLocalProvider(
+                            org.example.project.ui.LocalArrowSearches provides registry,
+                            org.example.project.ui.LocalArrowOwner provides "Search",
+                            org.example.project.ui.LocalArrowRoot provides "Search",
+                        ) {
                         SearchWindow(
                             state = state, openers = openers, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
                             actionHandlers = handlers, onIntent = onIntent, onDismiss = {}, config = config,
                             onConfigChange = { config = it }, onOpenConfigurations = {}, initialSize = Size(1400f, 900f),
                         )
+                        }
                         FieldSearchPopupLayer(popups)
                     }
                 }
@@ -123,6 +133,15 @@ class ParentsActionTest {
                 scene.sendPointerEvent(PointerEventType.Move, at, timeMillis = time)
                 scene.sendPointerEvent(PointerEventType.Press, at, timeMillis = time, buttons = PointerButtons(isPrimaryPressed = true), button = PointerButton.Primary)
                 scene.sendPointerEvent(PointerEventType.Release, at, timeMillis = time + 30, button = PointerButton.Primary)
+            }
+            frames(6)
+        }
+        fun rightClick(at: Offset) {
+            onEdt {
+                time += 1_000L
+                scene.sendPointerEvent(PointerEventType.Move, at, timeMillis = time)
+                scene.sendPointerEvent(PointerEventType.Press, at, timeMillis = time, buttons = PointerButtons(isSecondaryPressed = true), button = PointerButton.Secondary)
+                scene.sendPointerEvent(PointerEventType.Release, at, timeMillis = time + 30, button = PointerButton.Secondary)
             }
             frames(6)
         }
@@ -150,6 +169,19 @@ class ParentsActionTest {
             frames(6)
             assertTrue(popups.request != null, "the list's window is open")
             assertTrue(texts().count { it == "New task 2" } > before, "the list of parents lists it: ${texts()}")
+            if (thenAdd) {
+                // Anomaly 2026-11-15: the parent right-clicked, "add", then the window's background menu, "Show the added
+                // elements" — the list must hold it.
+                rightClick(find("New task 2"))
+                click(find("add"))
+                assertTrue(popups.request != null, "the list's window is still open: ${texts()}")
+                // Under its one row: the list's background.
+                rightClick(find("New task 2") + Offset(0f, 120f))
+                assertTrue(texts().any { it == "Show the added elements" }, "the background menu: ${texts()}")
+                click(find("Show the added elements"))
+                frames(6)
+                assertTrue(texts().any { it.startsWith("Added elements") && it.endsWith("1") }, "the added elements hold the parent: ${texts()}")
+            }
         } finally {
             onEdt { scene.close() }
         }
@@ -161,6 +193,9 @@ class ParentsActionTest {
     @Test
     fun a_task_picked_as_a_task_s_parent_is_in_its_list_of_parents() =
         checkParentListed { s -> SearchDomain.taskKey(s.tasks.values.first { it.title == "New task 1" }.id) }
+
+    @Test
+    fun a_parent_added_from_the_list_of_parents_is_in_its_added_elements() = checkParentListed(thenAdd = true) { "Chrono/a" }
 
     @Test
     fun the_list_opened_before_the_parent_is_added_lists_it_after() = checkParentListed(listFirst = true) { "Chrono/a" }

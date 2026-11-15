@@ -700,6 +700,9 @@ fun SearchWindow(
     var selectionAnchor by remember { mutableStateOf<String?>(null) }
     // The row this window selected itself, last ([select]): the selected row coming back as that one is no history move.
     var ownSelection by remember { mutableStateOf<String?>(null) }
+    // Whether the selected row is one the user selected (a click, the keys), not the row the window starts a new question
+    // at ([select]'s `record` false): only those join the added elements (user rule 2026-11-15, [selectionShowsAdded]).
+    var userSelected by remember { mutableStateOf(false) }
     /**
      * Select the row at [index] — alone: the keys and every other way of selecting one row drop a multi-selection
      * ([clickRow] puts its own back). [record] false is the window's own reset, not a position the user took.
@@ -715,6 +718,7 @@ fun SearchWindow(
         childSelection.clear()
         selectionAnchor = key
         ownSelection = key
+        userSelected = record
         if (picker != null || embedded) {
             pickerSelectedKey = key
             return
@@ -886,6 +890,27 @@ fun SearchWindow(
             multiSelection?.let { picked -> resultKeys.filter { it in picked } } ?: listOfNotNull(resultKeys.getOrNull(selected))
         }
     val latestSelectedShown by rememberUpdatedState(selectedShown)
+    /**
+     * User rule 2026-11-15: *"Every selected row must appear in the added elements list. If a row is not selected anymore
+     * and the user didn't right-click it and select add or add and remove others, then it is removed from the added
+     * elements list."* The added elements shown — the list and the actions over it — are those added ([addedRows]), then
+     * the result rows the user selected (not the row a new question starts at), each once; only "add" keeps one once it is no longer selected. Where a row's "add" adds to
+     * this window's list: not the added list itself, the actions section, a drop-down's options or the left-side menu.
+     */
+    val selectionShowsAdded = addedList == null && actionRows == null && options == null && menuList == null && picker == null
+    val selectedOnly =
+        if (!selectionShowsAdded || !userSelected) emptyList()
+        else selectedShown.filter { it !in config.added && !it.startsWith(SearchDomain.Kind.Creation.name + "/") }
+    val shownAddedRows =
+        remember(addedRows, selectedOnly, results) {
+            if (selectedOnly.isEmpty()) {
+                addedRows
+            } else {
+                // Read off the rows listed, as they are drawn there.
+                val byKey = results.associateBy(::resultKey)
+                addedRows + selectedOnly.mapNotNull { byKey[it] }
+            }
+        }
     /**
      * A press on the row at [index]: [ClickSelection]'s rule over the result list — Ctrl adds or takes it, Shift takes
      * the range from the anchor, a plain press selects it alone. [keepIfSelected]: a press that must not collapse the
@@ -1710,7 +1735,7 @@ fun SearchWindow(
             ) {
             AddedActionsSection(
                 state = state,
-                added = addedRows,
+                added = shownAddedRows,
                 config = config,
                 onConfigChange = onConfigChange,
                 // User rule 2026-11-06: the section's bar has the arrow to every search configuration, as the search's has.
@@ -1747,7 +1772,9 @@ fun SearchWindow(
                         },
                     )
                     .onSizeChanged { topRightShownPx = it.height.toFloat() }
-                    .clipToBounds(),
+                    .clipToBounds()
+                    // The selected rows are among what it acts on (user rule 2026-11-15): a press in it keeps them selected.
+                    .then(if (selectionShowsAdded) Modifier.outsidePressPart(resultRows) else Modifier),
                 // Inside the section, so a scroll over that gap scrolls it too (user rule 2026-11-12).
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp),
             )
@@ -1762,13 +1789,15 @@ fun SearchWindow(
                     .fillMaxWidth()
                     .then(if (addedCollapsed && !actionsRemoved) Modifier else Modifier.weight(1f))
                     .clipToBounds()
+                    // The selected rows are listed in it (user rule 2026-11-15): a press in it keeps them selected.
+                    .then(if (selectionShowsAdded) Modifier.outsidePressPart(resultRows) else Modifier)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SectionArrow(addedCollapsed) { addedCollapsed = !addedCollapsed }
                     Text(
-                        text = "Added elements" + if (addedRows.isEmpty()) "" else "  ·  ${addedRows.size}",
+                        text = "Added elements" + if (shownAddedRows.isEmpty()) "" else "  ·  ${shownAddedRows.size}",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
@@ -1776,7 +1805,7 @@ fun SearchWindow(
                         modifier = Modifier.togglesSection { addedCollapsed = !addedCollapsed },
                     )
                 }
-                if (!addedCollapsed && addedRows.isEmpty()) {
+                if (!addedCollapsed && shownAddedRows.isEmpty()) {
                     Text(
                         text = "Right-click selected rows of the results and choose add (Ctrl+A selects them all).",
                         style = MaterialTheme.typography.bodySmall,
@@ -1831,14 +1860,14 @@ fun SearchWindow(
                             // Its drop button takes the element off the list, never off the account.
                             onDrop = { row -> onConfigChange(latestConfig.copy(added = latestConfig.added - resultKey(row))) },
                             addedList = AddedSearchRows(
-                                rows = addedRows,
+                                rows = shownAddedRows,
                                 surface = surfaceState,
                                 onAdd = { keys, replacing -> addKeys(keys, replacing) },
                                 onRemove = { keys -> onConfigChange(latestConfig.copy(added = SearchDomain.removing(latestConfig.added, keys))) },
                                 onKeepOnly = { keys -> onConfigChange(latestConfig.copy(added = SearchDomain.keepingOnly(latestConfig.added, keys))) },
                                 // User rule 2026-11-02: only the groups of actions that can apply to this element open.
                                 onShowOnlyActions = { row ->
-                                    SearchDomain.withOnlyGroupsOf(latestConfig, addedRows, row)?.let { (next, groupId) ->
+                                    SearchDomain.withOnlyGroupsOf(latestConfig, shownAddedRows, row)?.let { (next, groupId) ->
                                         onConfigChange(next)
                                         actionsCollapsed = false
                                         actionReveal = groupId to ((actionReveal?.second ?: 0) + 1)

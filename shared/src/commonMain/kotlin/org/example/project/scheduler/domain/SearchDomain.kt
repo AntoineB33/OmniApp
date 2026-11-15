@@ -2882,6 +2882,31 @@ object SearchDomain {
     }
 
     /**
+     * **The rows of [kind] the account holds**, as a Search window lists them — the ONE source of rows, read by the search
+     * ([results]) and by what names an element by its key ([resolve]): an element a list can show is an element its added
+     * elements can hold (anomaly 2026-11-15). [withRoot]: the global root among the tasks; [windowTypesOnly]: one window
+     * row per window type.
+     */
+    fun kindRows(
+        state: SchedulerState,
+        kind: Kind,
+        query: String,
+        allPaths: () -> Map<TaskId, List<List<String>>>,
+        windows: List<WindowEntry> = emptyList(),
+        schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+        filters: Filters = Filters(),
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        withRoot: Boolean = false,
+        windowTypesOnly: Boolean = false,
+    ): List<Result> =
+        when {
+            kind == Kind.Task -> taskResults(state, query, allPaths(), withRoot = withRoot)
+            kind in CLAUDE_KINDS -> claudeResults(kind, query, claudeLogs, filters, timeZone)
+            else -> itemResults(state, kind, query, windows = windows, windowTypesOnly = windowTypesOnly, schedulerRuns = schedulerRuns, claudeLogs = claudeLogs)
+        }
+
+    /**
      * Every task of the account the search can name: the live tree's tasks (a tombstone and a detached
      * parent among them — alive on their records, not in any tree) and the tasks only a stored tree holds.
      * Never an untitled task, and the root task only [withRoot] (the search for what has no task parent,
@@ -3239,23 +3264,14 @@ object SearchDomain {
                 ?: Kind.entries
                 .filter { it in kinds }
                 .flatMap { kind ->
-                    if (kind == Kind.Task) {
+                    kindRows(
+                        state, kind, kindQuery, allPaths, windows, schedulerRuns, claudeLogs, filters, timeZone,
                         // The global root is offered where it can be what is asked: what has no task parent, and the
                         // parents of some elements (anomaly 2026-11-14: a tree's root listed no parent) — the filter
                         // below keeps it only where it is one.
-                        taskResults(
-                            state, kindQuery, allPaths(),
-                            withRoot = withRoot || Kind.Task in filters.noParentOfKinds || filters.parentsOf.isNotEmpty(),
-                        )
-                    } else if (kind in CLAUDE_KINDS) {
-                        claudeResults(kind, kindQuery, claudeLogs, filters, timeZone)
-                    } else {
-                        itemResults(
-                            state, kind, kindQuery, windows = windows,
-                            windowTypesOnly = filters.windowDuplicates == WindowDuplicates.Hidden,
-                            schedulerRuns = schedulerRuns, claudeLogs = claudeLogs,
-                        )
-                    }
+                        withRoot = withRoot || Kind.Task in filters.noParentOfKinds || filters.parentsOf.isNotEmpty(),
+                        windowTypesOnly = filters.windowDuplicates == WindowDuplicates.Hidden,
+                    )
                 }
                 // A given list holds what it was given: no row offering to make an element.
                 .let { rows -> rows + withCreatedKindRows(state, kinds, query, filters) })
@@ -4024,16 +4040,13 @@ object SearchDomain {
         val kinds = keys.mapNotNullTo(LinkedHashSet()) { key -> Kind.entries.firstOrNull { it.name == key.substringBefore('/') } }
         val found = HashMap<String, Result>()
         for (kind in kinds) {
+            // Anomaly 2026-11-15 (*"the added elements list is empty"*: the global root, added from a "list of parents"
+            // that lists it, was dropped here): a key is named by the very rows a search lists ([kindRows]), with
+            // everything any list can show — the global root, and a window as one window or one window TYPE, whichever
+            // the list it was added from showed.
             val rows =
-                when (kind) {
-                    Kind.Task -> taskResults(state, "", allPaths())
-                    // A window row is one window or one window TYPE, whichever the list it was added from showed.
-                    Kind.Window ->
-                        itemResults(state, kind, "", windows = windows) +
-                            itemResults(state, kind, "", windows = windows, windowTypesOnly = true)
-                    Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning -> claudeResults(kind, "", claudeLogs)
-                    else -> itemResults(state, kind, "", windows = windows, schedulerRuns = schedulerRuns, claudeLogs = claudeLogs)
-                }
+                kindRows(state, kind, "", allPaths, windows, schedulerRuns, claudeLogs, withRoot = true) +
+                    if (kind == Kind.Window) kindRows(state, kind, "", allPaths, windows, schedulerRuns, claudeLogs, windowTypesOnly = true) else emptyList()
             for (row in rows) found.getOrPut(keyOf(row)) { row }
         }
         return keys.mapNotNull { found[it] }

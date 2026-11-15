@@ -917,6 +917,16 @@ suggestions before it was ever entered.
   parts of one outside-press edit (`rememberOutsidePressEditor`); a row's own menu is a `Popup`, so it is inside. Until a
   row is selected again, none is — not the first one the list otherwise falls back to (`deselected`). The task tree keeps
   its own rule: there, only a press on another cell moves the selection.
+- **Every row the user selected is in the added elements while it is selected** (user rule 2026-11-15: *"Every selected
+  row must appear in the added elements list. If a row is not selected anymore and the user didn't right-click it and
+  select add or add and remove others, then it is removed from the added elements list."*; `SearchWindow`'s
+  `selectionShowsAdded`, `shownAddedRows`, `AddedListSearchTest`). The added elements shown — the list, its count and the
+  actions over them — are those added (`Config.added`), then the result rows selected, each once; selecting writes
+  nothing to the configuration, and only "add" / "add and remove the others" keeps a row once it is no longer selected.
+  Only rows the user selected (a click, the keys), never the row a new question starts at. **A press in the window's
+  actions section or added elements list keeps the result rows selected** (they are what those sections show and act
+  on: `outsidePressPart(resultRows)`); a press anywhere else takes them away, as above. Not in the added list itself, the
+  actions section, a drop-down's options, the left-side menu nor a cell's picker, whose rows add nowhere or elsewhere.
 - **A double-click on a result row never opens a window** (user rule 2026-10-01): on a task row's title it enters
   Edit Mode (the tree's rule), on any other row it ADDS the element to the added elements (`addKeys`) — a "creation"
   row and a workplace setup excepted, which are commands: a creation row makes its element, a workplace setup is
@@ -1130,7 +1140,10 @@ suggestions before it was ever entered.
   - **The added elements list is a Search window too** (user rule 2026-11-13: *"Make the 'added elements' list also a
     Search window."*; `SearchWindow`'s `addedList`, `AddedSearchRows`, `ADDED_LIST_SEARCH`, `AddedListSearchTest`). Under
     the section's head ("Added elements · n", its arrow), the very `SearchWindow`, its search section alone: its rows are
-    the window's added elements in the order they were added, **drawn by the result rows' own code** (a task row with
+    the window's added elements in the order they were added, **named by the very rows a search lists** (anomaly
+    2026-11-15, *"the added elements list is empty"*: the global root, which a "list of parents" lists, was added and
+    `resolve` named nothing — it listed the tasks without the root; `SearchDomain.kindRows` is now the one row source of
+    `results`, `resolve` and `ElementTree.pickable`), **drawn by the result rows' own code** (a task row with
     its path, percentage and sub-tree; any other with its arrow and children), its bar keeping those whose name answers
     it, its own ▾ and configuration, kept with the window under `<window>/added` (`Config.inside`). Each row has its
     drop button (off the list, never off the account). **A row's menu holds, where a result row's holds "add"**:

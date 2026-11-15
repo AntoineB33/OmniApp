@@ -20,6 +20,9 @@ import org.example.project.ui.SearchSplits
 import org.example.project.ui.SearchWindow
 import org.example.project.ui.addedListElements
 import org.example.project.ui.withAddedListElements
+import org.example.project.ui.transientMenuDismissRoot
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
 
 /**
  * User rule 2026-11-13: *"Make the 'added elements' list also a Search window."* The list is the very [SearchWindow],
@@ -146,4 +149,100 @@ class AddedListSearchTest {
         assertTrue(ADDED_LIST_SEARCH.dropButtons)
         assertEquals("", ADDED_LIST_SEARCH.query)
     }
+
+    /**
+     * Anomaly 2026-11-15 (*"right-click on the parent in the list, select 'add' … but the added elements list is empty"*):
+     * the global root, listed by a "list of parents", was added and named by nothing. Every row a list shows is named by
+     * its key ([SearchDomain.resolve] reads the rows [SearchDomain.kindRows] gives the search).
+     */
+    @Test
+    fun every_row_a_list_shows_is_named_by_its_key_the_global_root_included() {
+        var s = org.example.project.scheduler.state.SchedulerState.empty()
+        val cell = s.lists[s.rootListId]!!.cellIds.last()
+        s = org.example.project.scheduler.state.SchedulerReducer.reduce(s, org.example.project.scheduler.state.SchedulerIntent.SetCellTitle(cell, "Top"))
+        val top = SearchDomain.taskKey(s.tasks.values.first { it.title == "Top" }.id)
+        val list = SearchDomain.parentsListConfig(listOf(top))
+        val parents = SearchDomain.results(s, list.searchedKinds, "", { emptyMap() }, list.filters, list.sorts).map(SearchDomain::keyOf)
+        val root = SearchDomain.taskKey(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK)
+        assertTrue(root in parents, "the list of parents of a task under the root lists the root: $parents")
+        assertEquals(parents, SearchDomain.resolve(s, parents, { emptyMap() }).map(SearchDomain::keyOf), "added, each is named")
+        // The whole account, every kind: what a search lists, its added elements can hold.
+        val account = QuotaScenario.account()
+        val all = SearchDomain.results(account, Kind.entries.toSet() - Kind.Creation, "", { emptyMap() }, withRoot = true).map(SearchDomain::keyOf)
+        assertEquals(all, SearchDomain.resolve(account, all, { emptyMap() }).map(SearchDomain::keyOf))
+    }
+
+    /**
+     * User rule 2026-11-15: *"Every selected row must appear in the added elements list. If a row is not selected anymore
+     * and the user didn't right-click it and select add or add and remove others, then it is removed from the added
+     * elements list."*
+     */
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
+    @Test
+    fun a_selected_row_is_in_the_added_elements_while_it_is_selected() {
+        val account = QuotaScenario.account().copy(
+            chronos = listOf(org.example.project.scheduler.model.ChronoEntry(id = "a", label = "Clock A"), org.example.project.scheduler.model.ChronoEntry(id = "b", label = "Clock B")),
+        )
+        var config = SearchDomain.Config(kinds = setOf(Kind.Chrono))
+        val menus = org.example.project.ui.TransientMenuHost()
+        val scene = onEdt {
+            ImageComposeScene(1200, 700, density = Density(1f)) {
+                var shown by remember { mutableStateOf(config) }
+                androidx.compose.runtime.CompositionLocalProvider(org.example.project.ui.LocalTransientMenuHost provides menus) {
+                    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.transientMenuDismissRoot(menus)) {
+                        SearchWindow(
+                            state = account,
+                            openers = SearchRowOpeners(onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {}),
+                            onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
+                            actionHandlers = AddedActionHandlers(
+                                onStartNow = {}, onEdit = {}, onGoToTaskTree = {}, onDeepCopyCell = {}, onOpenResilienceSearch = {},
+                                onOpenKindSearch = {}, timerRun = { _, _ -> }, reminderEditor = {}, onCreate = {},
+                                onDuplicate = { _, _ -> emptyList() }, onPlaceOnCalendar = {},
+                            ),
+                            onIntent = {}, onDismiss = {}, config = shown,
+                            onConfigChange = { shown = it; config = it }, onOpenConfigurations = {},
+                            initialSize = Size(1200f, 700f),
+                        )
+                    }
+                }
+            }
+        }
+        var time = 0L
+        fun frames(n: Int = 6) = repeat(n) { onEdt { time += 16L; scene.render(time * 1_000_000L) } }
+        fun nodes() = onEdt { scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) } }
+        fun texts(): List<String> = nodes().mapNotNull { n -> n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString { it.text } }
+        fun at(text: String) = nodes().first { n -> n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.any { it.text == text } == true }.boundsInWindow.center
+        fun press(at: androidx.compose.ui.geometry.Offset, secondary: Boolean = false) {
+            val buttons = if (secondary) androidx.compose.ui.input.pointer.PointerButtons(isSecondaryPressed = true) else androidx.compose.ui.input.pointer.PointerButtons(isPrimaryPressed = true)
+            val button = if (secondary) androidx.compose.ui.input.pointer.PointerButton.Secondary else androidx.compose.ui.input.pointer.PointerButton.Primary
+            onEdt {
+                time += 1_000L
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, at, timeMillis = time)
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Press, at, timeMillis = time, buttons = buttons, button = button)
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Release, at, timeMillis = time + 30, button = button)
+            }
+            frames()
+        }
+        fun count(): String? = texts().firstOrNull { it.startsWith("Added elements") }
+        try {
+            frames()
+            val names = listOf("Clock A", "Clock B")
+            assertEquals("Added elements", count(), "nothing selected, nothing added")
+            press(at(names[0]))
+            assertEquals("Added elements  ·  1", count(), "the selected row is listed: ${texts()}")
+            // Another row selected: the first, never added, leaves.
+            press(at(names[1]))
+            assertEquals("Added elements  ·  1", count())
+            assertTrue(config.added.isEmpty(), "selecting adds nothing to the configuration")
+            // "add" keeps it once it is no longer selected.
+            press(at(names[1]), secondary = true)
+            press(at("add"))
+            assertEquals(1, config.added.size, "added: ${config.added}")
+            press(at(names[0]))
+            assertEquals("Added elements  ·  2", count(), "the added row and the selected one: ${texts()}")
+        } finally {
+            onEdt { scene.close() }
+        }
+    }
 }
+

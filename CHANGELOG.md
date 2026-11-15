@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An element added from a "list of parents" is in its added elements; a selected row is in the added elements — 2026-11-15
+
+Anomaly: *"in Parents > list of parents, I right-click on the parent, select 'add', then … 'show the added elements',
+but the added elements list is empty"*. The parent was the global root, which the list of parents lists since
+2026-11-14: the key was stored (`Task/task/root`, read off the release DB), but `SearchDomain.resolve` — what names the
+added elements — built its rows by a second copy of the search's row sources, which listed the tasks without the root.
+One row source now (`SearchDomain.kindRows`), read by `results`, by `resolve` (with everything any list shows: the root,
+a window and a window type) and by `ElementTree.pickable`, whose own task list had drifted too (a blank title kept, a
+stored tree's tasks missed). User rule the same day: every row the user selects in the result list is in the added
+elements while it is selected — and in the actions over them — and leaves once it is not, unless "add" kept it; a press
+in the window's actions section or added list keeps it selected (`task-tree.md`). No migration. Deploy: client apps.
+
 ### `jvmTest` runs in four test JVMs: 12 min → about 3 — 2026-11-15
 
 `maxParallelForks` on `:shared:jvmTest` (a quarter of the cores, at most 4; `-PtestForks=1` for one JVM; never on
