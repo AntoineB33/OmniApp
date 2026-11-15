@@ -507,6 +507,10 @@ means.
     the ▾ tree's, a drop-down's list. Each host had drawn a padded surface of its own, and the head stood inside it. A
     host gives `PopupChrome` and draws nothing around; a menu window holding one shows it bare (`LocalBareMenu`, the
     desktop's `MenuSurface`: no menu surface, no padding).
+  - **The background menu of a Search window stays open as its entries show and hide parts** (anomaly 2026-11-15: *"the
+    right-click menu of the background of the search window disappears when selecting an option"*; `SearchPartsMenu`,
+    `MenuAction.keepsOpen`): each entry turns into its other way round, ready for the next part. A press outside it closes
+    it, as any menu.
   - **A menu entry acts on the RELEASE, of either button** (anomaly 2026-11-15, 7: *"under Parents, click in 'add a
     parent', right-click, select show the header, and the window disappears"*; `pickOnRelease`,
     `MenuActsOnReleaseTest`): acting on the press, the menu window vanished under a held button and the rest of the

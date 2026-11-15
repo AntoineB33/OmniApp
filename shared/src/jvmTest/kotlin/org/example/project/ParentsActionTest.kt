@@ -170,6 +170,10 @@ class ParentsActionTest {
             }
             frames(6)
         }
+        // The background menu stays open after a toggle: a click on the list's own field closes it, the list staying.
+        fun closeMenu() {
+            click(find("list of parents", first = true))
+        }
         fun escape() {
             onEdt {
                 scene.sendKeyEvent(androidx.compose.ui.input.key.KeyEvent(androidx.compose.ui.input.key.Key.Escape, androidx.compose.ui.input.key.KeyEventType.KeyDown))
@@ -210,6 +214,9 @@ class ParentsActionTest {
                 assertTrue(texts().any { it == "Show the added elements" }, "the background menu: ${texts()}")
                 click(find("Show the added elements"))
                 frames(6)
+                // Anomaly 2026-11-15: the menu stays, its entry now the other way round, ready for the next part.
+                assertTrue(texts().any { it == "Hide the added elements" }, "the background menu stays open: ${texts()}")
+                closeMenu()
                 assertTrue(texts().any { it.startsWith("Added elements") && it.endsWith("1") }, "the added elements hold the parent: ${texts()}")
                 if (reopen) {
                     // Anomaly 2026-11-15: *"when I click on list of parents it must open the default window for this
@@ -222,6 +229,7 @@ class ParentsActionTest {
                     assertEquals(1, texts().count { it == "Added elements  ·  1" }, "its added elements are not shown by default: ${texts()}")
                     rightClick(find("New task 2") + Offset(0f, 120f))
                     click(find("Show the added elements"))
+                    closeMenu()
                     frames(6)
                     assertEquals(1, texts().count { it.startsWith("Added elements") && it.endsWith("1") }, "nothing added in a fresh opening: ${texts()}")
                     assertTrue(texts().count { it.startsWith("Added elements") } >= 2, "its added elements shown: ${texts()}")
@@ -232,6 +240,7 @@ class ParentsActionTest {
                 // window's buttons; its maximize makes it a Search window of the app, maximized, and it closes.
                 rightClick(find("New task 2") + Offset(0f, 120f))
                 click(find("Show the header"))
+                closeMenu()
                 frames(6)
                 // The very head of a window ([org.example.project.ui.WindowHead]): ☆ and ⧉ before the four, then ✕.
                 for (glyph in listOf("☆", "⧉", "↔", "↕", "—", "▢")) assertTrue(texts().contains(glyph), "the window's head has $glyph: ${texts()}")
@@ -250,6 +259,7 @@ class ParentsActionTest {
                 // User rule 2026-11-15: its field is its bar — the background menu does not offer to hide it.
                 assertTrue(texts().none { it == "Hide the search bar" }, "no hiding the field: ${texts()}")
                 click(find("Show the actions"))
+                closeMenu()
                 frames(6)
                 assertTrue(texts().any { it.startsWith("Actions on the added elements") }, "the actions show: ${texts()}")
                 // Each row closed by default: the parent's group, then its "Parents" action.
@@ -298,6 +308,7 @@ class ParentsActionTest {
                 rightClick(Offset(window.left + 40f, window.bottom - 40f))
                 assertTrue(texts().any { it == "Show the header" }, "the nested window's background menu: ${texts()}")
                 click(find("Show the header"))
+                closeMenu()
                 frames(6)
                 assertEquals(2, popups.requests.size, "the nested window stays with its head: ${texts()}")
             }

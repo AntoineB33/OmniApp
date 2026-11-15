@@ -2316,7 +2316,9 @@ internal fun SearchPartsMenu(
     ActionMenu("SearchPartsMenu",
         open = open,
         onDismiss = onDismiss,
-        actions = more + parts.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed))) { onToggle(part) } },
+        // Anomaly 2026-11-15 (*"the right-click menu of the background of the search window disappears when selecting an
+        // option"*): each entry shows or hides a part, its label turning to say the other — the menu stays for the next.
+        actions = more + parts.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed)), keepsOpen = true) { onToggle(part) } },
         atPointer = true,
     )
 }

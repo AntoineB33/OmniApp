@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Search window's background menu stays open as parts are shown and hidden — 2026-11-15
+
+User: *"the right-click menu of the background of the search window disappears when selecting an option"*. Its
+entries (header, bar, search, actions, added elements) keep the menu open (`keepsOpen`), each label turning to say the
+other way; a press outside closes it. No migration. Deploy: client apps.
+
 ### A section shows no row selected until the user selects one in it — 2026-11-15
 
 User: *""root" is selected in the search section of the focused window, and "Task: root" is selected in the action
