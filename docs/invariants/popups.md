@@ -469,6 +469,22 @@ means.
     button does the same, then fills, reduces, maximizes or duplicates that window. Only the outermost tree of a Search
     window of the app and its category pop-ups (`PopupDetacher.canDetach`): a tree in a pop-up's bar is a configuration
     of another search, and a menu drawn in the app's window (no `PopupWindowControl`) keeps the title-and-✕ head.
+  - **A field's Search pop-up becomes a Search window the same way** (anomaly 2026-11-15: *"clicking the list of parents
+    opens a window, where I select 'show the header', but the header is not the usual header"*): the head is ONE
+    drawing, `SearchPopupHead`, given its window part by whatever hosts the pop-up (`LocalSearchPopupWindow`; the
+    Search window drawn in no frame reads it and gives its own sections null). `FieldSearchPopupLayer` gives it: the
+    drag moves the pop-up in the layer, the pop-ups over it closing; let go, or asked by a window button, it is a
+    Search window of the app (`PopupDetacher.detachSearch`, a copy beside the user's) with the pop-up's configuration.
+    Not a picker's ("Add a parent"): its rows pick for its field. **Where the search bar is what opened the pop-up** (a
+    field's pop-up, a cell's picker), its background menu has no "Hide the search bar" (user rule 2026-11-15).
+  - **A field's pop-up carries the composition locals of where its field stands** (anomaly 2026-11-15: *"I select
+    'show the actions' …, find the list of parents field, click it, but it doesn't open a window, even though it should
+    use the same code as the first list of parents field"*; `FieldSearchPopupRequest.locals`), as a desktop menu does:
+    drawn in the top layer, it had lost what the Search window gives what is inside it, and a field in it opened
+    nothing. One open field's pop-up per field, stacked (`FieldSearchPopupHost.requests`), a press in one counting as
+    a press in the edits its field stands in (`LocalEnclosingEdits`: the pop-up it was opened from, a cell's Edit Mode).
+    What a Search window of the app gives what is inside it is ONE funnel in `App`, `InsideSearchWindow` — the Search
+    window and its Added elements configurations window each had a copy, and the second had lost the calendar element.
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
 - **A right-click on a window's HEAD opens its menu, at the pointer** (user rule 2026-10-15: *"The user can modify
   the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove from

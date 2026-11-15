@@ -34,16 +34,25 @@ val LocalPopupWindowControl = staticCompositionLocalOf<PopupWindowControl?> { nu
 enum class DetachedAs { Moved, Duplicated, FillWidth, FillHeight, Reduced, Maximized }
 
 /**
- * `App`'s side of [PopupWindowControl]: whether the ▾ configurations tree of the Search window [canDetach] names may
- * become its Search configurations window, and [detach] — that window opened (or brought back) at [Rect] (pixels of
- * the app window's content), then as the head's button asked.
+ * `App`'s side of a pop-up becoming a window: whether the ▾ configurations tree of the Search window [canDetach] names
+ * may become its Search configurations window, and [detach] — that window opened (or brought back) at [Rect] (pixels
+ * of the app window's content), then as the head's button asked. [detachSearch]: a Search pop-up (a field's, the "List
+ * of parents") opened as a Search window of the app with its configuration, there.
  */
 class PopupDetacher(
     val canDetach: (searchId: String) -> Boolean,
     val detach: (searchId: String, bounds: Rect, how: DetachedAs) -> Unit,
+    val detachSearch: (config: org.example.project.scheduler.domain.SearchDomain.Config, bounds: Rect, how: DetachedAs) -> Unit,
 )
 
 val LocalPopupDetacher = compositionLocalOf<PopupDetacher?> { null }
+
+/**
+ * What the head of the Search pop-up drawn here does as a window's ([SearchPopupHead]), given by what hosts the pop-up
+ * (a field's pop-up layer); null: a title and its ✕. Read by the Search window drawn in no frame, which gives its own
+ * content null back — the Search windows inside it (its sections) are not the pop-up.
+ */
+val LocalSearchPopupWindow = compositionLocalOf<PopupWindowHead?> { null }
 
 /**
  * The offset a window frame keeps ([WindowFrameState.offset]: from its centred resting place in the content area

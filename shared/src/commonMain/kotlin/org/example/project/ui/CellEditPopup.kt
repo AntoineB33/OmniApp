@@ -1,6 +1,7 @@
 package org.example.project.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -270,12 +271,15 @@ internal fun CellEditPopupLayer(
                             )
                         }
                     }
-                    search(
-                        config,
-                        { next -> host.change(next, draft, onDraft) },
-                        picker,
-                        Modifier.fillMaxWidth().weight(1f),
-                    )
+                    // A field's pop-up opened in it stands inside the cell's edit ([LocalEnclosingEdits]).
+                    androidx.compose.runtime.CompositionLocalProvider(LocalEnclosingEdits provides listOf(request.region)) {
+                        search(
+                            config,
+                            { next -> host.change(next, draft, onDraft) },
+                            picker,
+                            Modifier.fillMaxWidth().weight(1f),
+                        )
+                    }
                 }
             }
         },
@@ -305,24 +309,47 @@ internal class FieldSearchPopupRequest(
     val search: @Composable (EmbeddedSearchRequest, Modifier) -> Unit,
     val embedded: EmbeddedSearchRequest,
     val onClose: () -> Unit,
+    /**
+     * Anomaly 2026-11-15 (*"show the actions … find the list of parents field, click it, but it doesn't open a window,
+     * even though it should use the same code as the first list of parents field"*): **the composition locals where the
+     * field stands**, its own ▾ id among them. The pop-up is drawn in the top layer, out of the window the field is in,
+     * and lost what that window gives — the drawing of a field's Search window first: a field in it opened nothing. As a
+     * desktop menu carries the locals of where it is declared.
+     */
+    val locals: androidx.compose.runtime.CompositionLocalContext? = null,
+    /** The edits the field stands inside ([LocalEnclosingEdits]): a press in the pop-up is a press in them too. */
+    val enclosing: List<OutsidePressEditor> = emptyList(),
 )
 
-/** What the open field publishes and the top layer draws: one such pop-up on screen at a time. */
+/**
+ * What the open fields publish and the top layer draws. A field in the pop-up of another field opens its own over it
+ * (anomaly 2026-11-15): one pop-up per open field, in the order they opened — until then one at a time, the second
+ * taking the first's place, and with it its own field.
+ */
 internal class FieldSearchPopupHost {
-    private var owner: Any? = null
+    private val owners = ArrayList<Any>()
 
-    var request: FieldSearchPopupRequest? by mutableStateOf(null)
-        private set
+    /** The open fields' pop-ups, the first opened first. */
+    val requests = androidx.compose.runtime.mutableStateListOf<FieldSearchPopupRequest>()
+
+    /** The pop-up last opened. */
+    val request: FieldSearchPopupRequest? get() = requests.lastOrNull()
 
     fun publish(from: Any, next: FieldSearchPopupRequest) {
-        owner = from
-        request = next
+        val at = owners.indexOfFirst { it === from }
+        if (at >= 0) {
+            if (requests[at] !== next) requests[at] = next
+        } else {
+            owners += from
+            requests += next
+        }
     }
 
     fun retract(from: Any) {
-        if (owner !== from) return
-        owner = null
-        request = null
+        val at = owners.indexOfFirst { it === from }
+        if (at < 0) return
+        owners.removeAt(at)
+        requests.removeAt(at)
     }
 }
 
@@ -354,6 +381,11 @@ internal fun PopupSearchField(
     var open by remember { mutableStateOf(false) }
     // User rule 2026-11-13: the field's window has an id — the window's it stands in, and the field.
     val windowId = embeddedSearchId("field:$fieldId")
+    // What the pop-up is drawn with in the top layer: the locals here, its ▾ windows named after it.
+    var locals: androidx.compose.runtime.CompositionLocalContext? = null
+    androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides windowId) {
+        locals = androidx.compose.runtime.currentCompositionLocalContext
+    }
     RegisterEmbeddedSearch(windowId, placeholder, config, open = open, saved = config != openedConfig, set = onConfigChange)
     var bounds by remember { mutableStateOf<Rect?>(null) }
     val focusManager = LocalFocusManager.current
@@ -423,6 +455,8 @@ internal fun PopupSearchField(
             search = search,
             embedded = EmbeddedSearchRequest(config, onConfigChange, onDrop, canDrop, picker?.invoke(close), barOutside = true),
             onClose = close,
+            locals = locals,
+            enclosing = LocalEnclosingEdits.current,
         )
     val owner = remember { Any() }
     SideEffect { host.publish(owner, request) }
@@ -430,18 +464,69 @@ internal fun PopupSearchField(
 }
 
 /**
- * The window a [PopupSearchField] opens, drawn over every window as the cell's Edit Mode rectangle is (a layer of the
- * content area, no `Popup`: the field keeps the caret), placed by the same rule ([cellEditPopupBounds]).
+ * The windows the [PopupSearchField]s open, drawn over every window as the cell's Edit Mode rectangle is (a layer of the
+ * content area, no `Popup`: the field keeps the caret), placed by the same rule ([cellEditPopupBounds]) — each with the
+ * locals of its field ([FieldSearchPopupRequest.locals]), a press in one counting as a press in the edits its field
+ * stands in ([FieldSearchPopupRequest.enclosing]: the pop-up of the field it was opened from, a cell's Edit Mode).
+ *
+ * User rule 2026-11-15: its head, shown, is a window's ([LocalSearchPopupWindow], [SearchPopupHead]): dragged, it
+ * follows the hand, the pop-ups over it closing; let go, or asked by a window button, it becomes a Search window of the
+ * app where it stood ([PopupDetacher.detachSearch]). Not a picker's ("Add a parent"): its rows pick for its field.
  */
 @Composable
 internal fun FieldSearchPopupLayer(host: FieldSearchPopupHost, modifier: Modifier = Modifier) {
-    val request = host.request ?: return
+    val requests = host.requests.toList()
+    val detacher = LocalPopupDetacher.current
+    for ((index, request) in requests.withIndex()) {
+        androidx.compose.runtime.key(request.region) {
+            val regions = request.enclosing + request.region
+            val closeAbove = { requests.drop(index + 1).forEach { it.onClose() } }
+            val locals = request.locals
+            if (locals != null) {
+                androidx.compose.runtime.CompositionLocalProvider(locals) {
+                    FieldSearchPopup(request, regions, modifier, detacher, closeAbove)
+                }
+            } else {
+                FieldSearchPopup(request, regions, modifier, detacher, closeAbove)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FieldSearchPopup(
+    request: FieldSearchPopupRequest,
+    regions: List<OutsidePressEditor>,
+    modifier: Modifier,
+    detacher: PopupDetacher?,
+    closeAbove: () -> Unit,
+) {
     var origin by remember { mutableStateOf(Offset.Zero) }
+    // Where the hand dragged it by its head, from where its field puts it.
+    var dragged by remember { mutableStateOf(Offset.Zero) }
+    var shownAt by remember { mutableStateOf<Rect?>(null) }
+    val latestRequest by androidx.compose.runtime.rememberUpdatedState(request)
+    val latestCloseAbove by androidx.compose.runtime.rememberUpdatedState(closeAbove)
+    val picks = request.embedded.picker != null
+    val head = remember(detacher, picks) {
+        if (detacher == null || picks) null
+        else PopupWindowHead(
+            onDragStart = { latestCloseAbove() },
+            onDrag = { dragged += it },
+            detach = { how ->
+                val at = shownAt
+                val asked = latestRequest
+                asked.onClose()
+                if (at != null) detacher.detachSearch(asked.embedded.config, at, how)
+            },
+        )
+    }
     Layout(
         content = {
             Surface(
-                modifier = Modifier
-                    .outsidePressPart(request.region)
+                modifier = regions
+                    .fold(Modifier as Modifier) { chain, region -> chain.outsidePressPart(region) }
+                    .onGloballyPositioned { shownAt = it.boundsInWindow() }
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
                             request.onClose()
@@ -457,7 +542,12 @@ internal fun FieldSearchPopupLayer(host: FieldSearchPopupHost, modifier: Modifie
                 shadowElevation = 8.dp,
             ) {
                 Column(Modifier.fillMaxSize().padding(8.dp)) {
-                    request.search(request.embedded, Modifier.fillMaxWidth().weight(1f))
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        LocalSearchPopupWindow provides head,
+                        LocalEnclosingEdits provides regions,
+                    ) {
+                        request.search(request.embedded, Modifier.fillMaxWidth().weight(1f))
+                    }
                 }
             }
         },
@@ -470,7 +560,7 @@ internal fun FieldSearchPopupLayer(host: FieldSearchPopupHost, modifier: Modifie
         }
         val placeable = measurables.single().measure(Constraints.fixed(bounds?.width ?: width, bounds?.height ?: height))
         layout(constraints.maxWidth, constraints.maxHeight) {
-            if (bounds != null) placeable.place(bounds.topLeft)
+            if (bounds != null) placeable.place(bounds.topLeft + IntOffset(dragged.x.roundToInt(), dragged.y.roundToInt()))
         }
     }
 }

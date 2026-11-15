@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A field's pop-up: a window's head, a field inside it, one set of locals — 2026-11-15
+
+Anomalies 5 (again) and 6. The "List of parents" pop-up (a field's, drawn in the top layer) wears a window's head
+once shown: dragged or asked by a button, it becomes a Search window of the app (`PopupDetacher.detachSearch`,
+`LocalSearchPopupWindow`). Its background menu has no "Hide the search bar" — the field is its bar. A field inside it
+opens its own pop-up: the pop-up carries its field's composition locals (`FieldSearchPopupRequest.locals`), the layer
+stacks them (`FieldSearchPopupHost.requests`), a press in one is inside the edits its field stands in
+(`LocalEnclosingEdits`). Duplicates folded: the Search window's and its Added elements configurations window's
+providers are `App.InsideSearchWindow` (the second had no calendar element); a task cell's Edit Mode pop-up now gives
+its fields their Search window. No migration. Deploy: client apps.
+
 ### A ▾ pop-up dragged by its head becomes a window — 2026-11-15
 
 User rule (anomaly 5): a pop-up's shown header wears a window's buttons (duplicate, fill width/height, reduce,

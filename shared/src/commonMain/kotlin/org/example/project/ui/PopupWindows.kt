@@ -241,6 +241,13 @@ fun Modifier.dismissesMenusOnPress(): Modifier {
         }
 }
 
+/**
+ * Anomaly 2026-11-15: **the edits a pop-up drawn here stands inside** — what a field's Search window, drawn in a layer of
+ * its own ([FieldSearchPopupLayer]), counts as inside besides its own field: the task cell's Edit Mode rectangle, the
+ * field's pop-up it was opened from. Each such surface provides its own on top of those around it.
+ */
+val LocalEnclosingEdits = androidx.compose.runtime.compositionLocalOf<List<OutsidePressEditor>> { emptyList() }
+
 /** One place [editor] counts as inside — see [OutsidePressEditor]. */
 @Composable
 fun Modifier.outsidePressPart(editor: OutsidePressEditor): Modifier {

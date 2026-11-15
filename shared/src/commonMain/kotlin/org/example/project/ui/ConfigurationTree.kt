@@ -154,10 +154,19 @@ internal fun ConfigurationTreeArrow(
     // configurations window when dragged by its head ([PopupDetacher]); a tree in a pop-up's bar is of another search.
     val detacher = LocalPopupDetacher.current
     val detachOwner = LocalArrowOwner.current?.takeIf { outer == null && detacher?.canDetach(it) == true }
-    fun windowHead(onDragStart: () -> Unit, closeSelf: () -> Unit, bounds: () -> androidx.compose.ui.geometry.Rect?): PopupWindowHead? {
+    fun windowHead(onDragStart: () -> Unit, closeSelf: () -> Unit, control: PopupWindowControl?): PopupWindowHead? {
         val owner = detachOwner ?: return null
         val detach = detacher ?: return null
-        return PopupWindowHead(onDragStart) { how ->
+        // A pop-up drawn in the app's window (no window of its own to carry) becomes no window.
+        control ?: return null
+        val bounds = { control.boundsInApp() }
+        return PopupWindowHead(
+            onDragStart = {
+                onDragStart()
+                control.startDrag()
+            },
+            onDrag = { control.drag() },
+        ) { how ->
             // Where it stands, read before it closes; then the pop-up gone, the window in its place.
             val at = bounds()
             closeSelf()
@@ -201,7 +210,7 @@ internal fun ConfigurationTreeArrow(
         SearchPopupParts(
             SearchDomain.windowTitle(own), TREE_ROOT_POPUP_WIDTH, parts, { parts = it }, onClose = { close() },
             // Its children: the categories it shows.
-            window = windowHead(onDragStart = { path = emptyList() }, closeSelf = { close() }) { control?.boundsInApp() },
+            window = windowHead(onDragStart = { path = emptyList() }, closeSelf = { close() }, control = control),
         ) {
             if (!parts.barRemoved) TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
             ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth, relevant = relevant) { which ->
@@ -495,7 +504,7 @@ private fun TreeColumn(
                                         window = treeWindowHead?.invoke(
                                             { onPathChange(path.take(depth + 1)) },
                                             closeThis,
-                                            { ownControl?.boundsInApp() },
+                                            ownControl,
                                         ),
                                     ) {
                                         if (!parts.barRemoved) TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, level)
@@ -837,8 +846,9 @@ internal val LocalBarPath = androidx.compose.runtime.compositionLocalOf<List<Str
 
 /**
  * The outermost tree's way of making one of its pop-ups a window ([PopupWindowHead], user rule 2026-11-15): given what
- * closes the pop-up's children, what closes the pop-up, and where it stands. Null where the tree becomes no window.
+ * closes the pop-up's children, what closes the pop-up, and the pop-up's own window ([PopupWindowControl]). Null where
+ * the tree becomes no window.
  */
 internal val LocalTreeWindowHead = androidx.compose.runtime.compositionLocalOf<
-    ((() -> Unit, () -> Unit, () -> androidx.compose.ui.geometry.Rect?) -> PopupWindowHead?)?,
+    ((() -> Unit, () -> Unit, PopupWindowControl?) -> PopupWindowHead?)?,
 > { null }

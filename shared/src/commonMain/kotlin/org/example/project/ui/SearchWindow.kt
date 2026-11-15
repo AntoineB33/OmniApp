@@ -536,6 +536,8 @@ fun SearchWindow(
     val instance = LocalWindowInstance.current?.suffix ?: ""
     // The elements the window this one is a section of shows as added only because they are selected ([LocalNotAdded]).
     val notAddedAbove = LocalNotAdded.current
+    // Drawn as a pop-up that can become a window: its head is a window's ([SearchPopupHead]).
+    val popupWindow = LocalSearchPopupWindow.current
     val listState = rememberLazyListState(splits?.scrolls?.getOrNull(0) ?: 0, splits?.scrolls?.getOrNull(1) ?: 0)
     // User rule 2026-11-15: narrowed until cut, the list scrolls sideways under Shift+wheel ([shiftWheelScrolls]).
     val listCut = remember { SideCut() }
@@ -1163,8 +1165,13 @@ fun SearchWindow(
           onDismiss = { backgroundMenu = false },
           removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved, barRemoved = barRemoved),
           more = menuList?.backgroundActions.orEmpty(),
-          // User rule 2026-11-14: the left-side menu is the one Search window whose header cannot be shown.
-          parts = if (menuList != null) SearchPart.entries - SearchPart.Header else SearchPart.entries,
+          // User rule 2026-11-14: the left-side menu is the one Search window whose header cannot be shown. User rule
+          // 2026-11-15: *"when the search bar is the element (the caller), then the search configuration of the
+          // right-click menu must remove the 'hide the search bar'"* — a field's pop-up, a cell's picker: the bar is
+          // what opened it.
+          parts = SearchPart.entries
+              .let { if (menuList != null) it - SearchPart.Header else it }
+              .let { if (barOutside || picker != null) it - SearchPart.Bar else it },
       ) { part ->
           val next = part.toggled(splitsNow())
           headerRemoved = next.headerRemoved
@@ -1925,8 +1932,9 @@ fun SearchWindow(
     if (frame == null) {
         Column(modifier) {
             // User rule 2026-11-11: shown by its background menu, the head of a Search window drawn in no frame.
-            if (!headerRemoved) SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss)
-            windowContent()
+            if (!headerRemoved) SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss, window = popupWindow)
+            // The Search windows inside it (its sections, a field's) are not this pop-up.
+            androidx.compose.runtime.CompositionLocalProvider(LocalSearchPopupWindow provides null) { windowContent() }
         }
     } else {
         AppWindowFrame(
@@ -2258,22 +2266,18 @@ internal fun SearchPartsMenu(
  */
 @Composable
 internal fun SearchPopupHead(title: String, onClose: () -> Unit, window: PopupWindowHead? = null) {
-    val control = LocalPopupWindowControl.current.takeIf { window != null }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .then(
-                if (window == null || control == null) Modifier
-                else Modifier.pointerInput(window, control) {
+                if (window == null) Modifier
+                else Modifier.pointerInput(window) {
                     detectDragGestures(
-                        onDragStart = {
-                            window.onDragStart()
-                            control.startDrag()
-                        },
-                        onDrag = { change, _ ->
+                        onDragStart = { window.onDragStart() },
+                        onDrag = { change, amount ->
                             change.consume()
-                            control.drag()
+                            window.onDrag(amount)
                         },
                         onDragEnd = { window.detach(DetachedAs.Moved) },
                         onDragCancel = { window.detach(DetachedAs.Moved) },
@@ -2285,7 +2289,7 @@ internal fun SearchPopupHead(title: String, onClose: () -> Unit, window: PopupWi
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-        if (window != null && control != null) {
+        if (window != null) {
             WindowHeadButton("⧉", "Duplicate") { window.detach(DetachedAs.Duplicated) }
             WindowHeadButton("↔", "Fill the width") { window.detach(DetachedAs.FillWidth) }
             WindowHeadButton("↕", "Fill the height") { window.detach(DetachedAs.FillHeight) }
@@ -2298,10 +2302,15 @@ internal fun SearchPopupHead(title: String, onClose: () -> Unit, window: PopupWi
 }
 
 /**
- * What a pop-up's head does as a window's ([SearchPopupHead]): [onDragStart] closes the pop-ups it opened, [detach]
- * makes it a window ([PopupDetacher]) and closes it.
+ * What a pop-up's head does as a window's ([SearchPopupHead]): [onDragStart] closes the pop-ups it opened (and takes the
+ * pop-up off its anchor), [onDrag] carries it by the pointer's move — its own OS window ([PopupWindowControl]) or its
+ * place in the layer it is drawn in — and [detach] makes it a window ([PopupDetacher]) and closes it.
  */
-internal class PopupWindowHead(val onDragStart: () -> Unit, val detach: (DetachedAs) -> Unit)
+class PopupWindowHead(
+    val onDragStart: () -> Unit,
+    val onDrag: (androidx.compose.ui.geometry.Offset) -> Unit,
+    val detach: (DetachedAs) -> Unit,
+)
 
 /**
  * User rule 2026-11-11: **what the Search window's background menu takes off the window and puts back** — the

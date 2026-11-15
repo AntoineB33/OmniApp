@@ -2388,8 +2388,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // User rule 2026-11-15: **a ▾ configurations pop-up dragged by its head, or asked by one of its head's window
         // buttons, becomes its Search window's configurations window** ([org.example.project.ui.PopupDetacher]): opened
         // or brought back where the pop-up stood, at its size, then filled, reduced, maximized or duplicated as asked.
-        val detachPopup = rememberUpdatedState { searchId: String, bounds: Rect, how: org.example.project.ui.DetachedAs ->
-            val id = openConfigurationsOf(FloatingWindow.ConfigSearch, searchId)
+        // The window [id] of [kind], opened for a pop-up that became it: where the pop-up stood, at its size, then as asked.
+        fun placeDetached(kind: FloatingWindow, id: String, bounds: Rect, how: org.example.project.ui.DetachedAs) {
             val size = Size(
                 bounds.width.coerceAtLeast(org.example.project.ui.MIN_WINDOW_WIDTH_PX),
                 bounds.height.coerceAtLeast(org.example.project.ui.MIN_WINDOW_HEIGHT_PX),
@@ -2407,12 +2407,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 val offset = org.example.project.ui.frameOffsetAt(bounds.topLeft, size, area)
                 updatePlacementById(id) { it.copy(x = offset.x, y = offset.y, width = size.width, height = size.height, visible = true) }
             }
-            if (how == org.example.project.ui.DetachedAs.Duplicated) duplicateWindow(FloatingWindow.ConfigSearch, id)
+            if (how == org.example.project.ui.DetachedAs.Duplicated) duplicateWindow(kind, id)
+        }
+        val detachPopup = rememberUpdatedState { searchId: String, bounds: Rect, how: org.example.project.ui.DetachedAs ->
+            placeDetached(FloatingWindow.ConfigSearch, openConfigurationsOf(FloatingWindow.ConfigSearch, searchId), bounds, how)
+        }
+        // A Search pop-up (a field's: the "List of parents") becomes a Search window of its own, beside the user's.
+        val detachSearchPopup = rememberUpdatedState { config: SearchDomain.Config, bounds: Rect, how: org.example.project.ui.DetachedAs ->
+            placeDetached(FloatingWindow.Search, openNewWindow(FloatingWindow.Search, config.encode(), asCopy = true), bounds, how)
         }
         val popupDetacher = remember {
             org.example.project.ui.PopupDetacher(
                 canDetach = { lateralWindowOf(it) == FloatingWindow.Search },
                 detach = { searchId, bounds, how -> detachPopup.value(searchId, bounds, how) },
+                detachSearch = { config, bounds, how -> detachSearchPopup.value(config, bounds, how) },
             )
         }
         // The calendar's "add…" ([add]) or "edit…" at [atMillis]: the Search window a previous one opened, moved to
@@ -5685,18 +5693,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     }
                     // User rule 2026-11-12: a Search window inside the actions section of the Search window [ownerId] (the
                     // "List of parents"): its search section alone, over the account; what it opens and commits is that window's.
-                    fun embeddedSearchOf(ownerId: String): @Composable (org.example.project.ui.EmbeddedSearchRequest, Modifier) -> Unit =
+                    // [ownerId] null: drawn in no Search window of the app (a task cell's Edit Mode), so nothing is linked to one.
+                    fun embeddedSearchOf(ownerId: String?): @Composable (org.example.project.ui.EmbeddedSearchRequest, Modifier) -> Unit =
                         { request, embeddedModifier ->
                             SearchWindow(
                                 state = schedulerState,
-                                openers = searchRowOpeners.askedThrough(askedFrom(ownerId)),
+                                openers = if (ownerId == null) searchRowOpeners else searchRowOpeners.askedThrough(askedFrom(ownerId)),
                                 onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
                                 onGoToTaskTree = { taskId, at -> goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at) },
                                 onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
-                                actionHandlers = addedActionHandlers.askedThrough(askedFrom(ownerId)),
+                                actionHandlers = if (ownerId == null) addedActionHandlers else addedActionHandlers.askedThrough(askedFrom(ownerId)),
                                 calendarLayerKindsAt = calendarLayers::kindsAt,
                                 onIntent = {
-                                    vm.dispatch(SchedulerIntent.MadeIn(HistoryWindow.Search, ownerId.removePrefix(FloatingWindow.Search.name), it))
+                                    if (ownerId == null) vm.dispatch(it)
+                                    else vm.dispatch(SchedulerIntent.MadeIn(HistoryWindow.Search, ownerId.removePrefix(FloatingWindow.Search.name), it))
                                 },
                                 onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
                                 onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
@@ -5717,6 +5727,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 modifier = embeddedModifier,
                             )
                         }
+                    // Anomaly 2026-11-15 (*"it doesn't open a window, even though it should use the same code as the first list
+                    // of parents field … find code duplicates like this in the whole app"*): **what is drawn inside the
+                    // Search window [ownerId] is given ONE set of locals**, here — the calendar element, a field's Search
+                    // window, the ▾ windows kept under its id. The Search window and its Added elements configurations
+                    // window each provided their own copy, and the second had lost the calendar element; a field's pop-up
+                    // carries them on ([org.example.project.ui.FieldSearchPopupRequest.locals]).
+                    @Composable
+                    fun InsideSearchWindow(ownerId: String, content: @Composable () -> Unit) {
+                        CompositionLocalProvider(
+                            org.example.project.ui.LocalCalendarElement provides { part -> CalendarElementPart(ownerId, part) },
+                            org.example.project.ui.LocalEmbeddedSearch provides embeddedSearchOf(ownerId),
+                            // Its ▾ windows are named after it ([ArrowSearches]).
+                            org.example.project.ui.LocalArrowSearches provides arrowSearches,
+                            org.example.project.ui.LocalArrowOwner provides ownerId,
+                            org.example.project.ui.LocalArrowRoot provides ownerId,
+                            content = content,
+                        )
+                    }
                     // User rule 2026-10-11: a bound of the boxes' window of the Search window [target] picked by a click on
                     // the calendar — the calendar takes the focus, the click is the instant, and [back] brings the asking
                     // window back. The configurations window's, and the configurations tree's (2026-11-04).
@@ -5732,14 +5760,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         val searchId = windowInstanceId(FloatingWindow.Search.name)
                         val searchConfig = searchConfigOf(searchId)
                         // User rule 2026-11-12: its actions section draws the calendar element, as this window's view of it.
-                        CompositionLocalProvider(
-                            org.example.project.ui.LocalCalendarElement provides { part -> CalendarElementPart(searchId, part) },
-                            org.example.project.ui.LocalEmbeddedSearch provides embeddedSearchOf(searchId),
-                            // Its ▾ windows are named after it ([ArrowSearches]).
-                            org.example.project.ui.LocalArrowSearches provides arrowSearches,
-                            org.example.project.ui.LocalArrowOwner provides searchId,
-                            org.example.project.ui.LocalArrowRoot provides searchId,
-                        ) {
+                        InsideSearchWindow(searchId) {
                         SearchWindow(
                             // User rule 2026-11-04: the configurations tree's box bounds are picked on the calendar too.
                             onPickOnCalendar = pickBoxBoundOnCalendar(searchId) { presentWindow(FloatingWindow.Search, searchId) },
@@ -5805,6 +5826,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         modifier = Modifier.zIndex(Float.MAX_VALUE),
                     ) { config, onConfigChange, picker, popupModifier ->
                         val account = cellEditPopups.request?.namingSource ?: schedulerState
+                        // Anomaly 2026-11-15: its actions section's fields ("List of parents") open their Search window too,
+                        // which no Search window of the app is around it to give.
+                        CompositionLocalProvider(org.example.project.ui.LocalEmbeddedSearch provides embeddedSearchOf(null)) {
                         SearchWindow(
                             state = account,
                             openers = searchRowOpeners,
@@ -5824,6 +5848,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             picker = picker,
                             modifier = popupModifier,
                         )
+                        }
                     }
 
                     // User rule 2026-11-12: the Search window popping up under a field of the actions section ("Add a
@@ -5943,14 +5968,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             ) {
                                 SearchDomain.resolve(schedulerState, targetConfig.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)
                             }
-                        CompositionLocalProvider(
-                            org.example.project.ui.LocalEmbeddedSearch provides embeddedSearchOf(target),
-                            // User rule 2026-11-13: what is drawn here is inside the Search window it acts on — the same
-                            // ids, the same kept configurations as in that window's own actions section.
-                            org.example.project.ui.LocalArrowSearches provides arrowSearches,
-                            org.example.project.ui.LocalArrowOwner provides target,
-                            org.example.project.ui.LocalArrowRoot provides target,
-                        ) {
+                        // User rule 2026-11-13: what is drawn here is inside the Search window it acts on — the same ids, the
+                        // same kept configurations, the same calendar element as in that window's own actions section.
+                        InsideSearchWindow(target) {
                         AddedElementsConfigurationWindow(
                             state = schedulerState,
                             added = added,

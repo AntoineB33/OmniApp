@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.getAllSemanticsNodes
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.SearchDomain.Kind
@@ -64,7 +65,13 @@ class ParentsActionTest {
         return s
     }
 
-    private fun checkParentListed(listFirst: Boolean = false, thenAdd: Boolean = false, child: (SchedulerState) -> String) {
+    private fun checkParentListed(
+        listFirst: Boolean = false,
+        thenAdd: Boolean = false,
+        nested: Boolean = false,
+        header: Boolean = false,
+        child: (SchedulerState) -> String,
+    ) {
         val start = account()
         val childKey = child(start)
         var live = start
@@ -78,6 +85,13 @@ class ParentsActionTest {
         // background dropping it ([org.example.project.ui.WindowFrameHost.blur]).
         val menus = org.example.project.ui.TransientMenuHost()
         val frames = org.example.project.ui.WindowFrameHost()
+        // What `App` does with a pop-up becoming a window: here, what it was asked.
+        val detached = ArrayList<Pair<SearchDomain.Config, org.example.project.ui.DetachedAs>>()
+        val detacher = org.example.project.ui.PopupDetacher(
+            canDetach = { false },
+            detach = { _, _, _ -> },
+            detachSearch = { config, _, how -> detached += config to how },
+        )
         val scene = onEdt {
             ImageComposeScene(1400, 900, density = Density(1f)) {
                 var state by remember { mutableStateOf(start) }
@@ -90,22 +104,26 @@ class ParentsActionTest {
                     state = SchedulerReducer.reduce(state, intent)
                     live = state
                 }
+                val embedded: @androidx.compose.runtime.Composable (org.example.project.ui.EmbeddedSearchRequest, Modifier) -> Unit = { request, modifier ->
+                    SearchWindow(
+                        state = state, openers = openers, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
+                        actionHandlers = handlers, onIntent = onIntent, onDismiss = {}, config = request.config,
+                        onConfigChange = request.onConfigChange, onOpenConfigurations = {}, splits = EMBEDDED_SEARCH_SPLITS,
+                        embedded = true, onDrop = request.onDrop, canDrop = request.canDrop, picker = request.picker,
+                        barOutside = request.barOutside, modifier = modifier,
+                    )
+                }
                 CompositionLocalProvider(
                     LocalFieldSearchPopupHost provides popups,
                     org.example.project.ui.LocalTransientMenuHost provides menus,
                     org.example.project.ui.LocalWindowFrameHost provides frames,
-                    LocalEmbeddedSearch provides { request, modifier ->
-                        SearchWindow(
-                            state = state, openers = openers, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
-                            actionHandlers = handlers, onIntent = onIntent, onDismiss = {}, config = request.config,
-                            onConfigChange = request.onConfigChange, onOpenConfigurations = {}, splits = EMBEDDED_SEARCH_SPLITS,
-                            embedded = true, onDrop = request.onDrop, canDrop = request.canDrop, picker = request.picker,
-                            barOutside = request.barOutside, modifier = modifier,
-                        )
-                    },
+                    org.example.project.ui.LocalPopupDetacher provides detacher,
                 ) {
                     Box(Modifier.fillMaxSize().transientMenuDismissRoot(menus).raiseOnPress { frames.blur() }) {
+                        // As `App` gives it: around the window alone — the pop-ups' layer stands outside it, and its
+                        // fields' pop-ups carry it on (anomaly 2026-11-15).
                         CompositionLocalProvider(
+                            LocalEmbeddedSearch provides embedded,
                             org.example.project.ui.LocalArrowSearches provides registry,
                             org.example.project.ui.LocalArrowOwner provides "Search",
                             org.example.project.ui.LocalArrowRoot provides "Search",
@@ -182,6 +200,69 @@ class ParentsActionTest {
                 frames(6)
                 assertTrue(texts().any { it.startsWith("Added elements") && it.endsWith("1") }, "the added elements hold the parent: ${texts()}")
             }
+            if (header) {
+                // User rule 2026-11-15: *"I select 'show the header', but the header is not the usual header"* — the
+                // window's buttons; its maximize makes it a Search window of the app, maximized, and it closes.
+                rightClick(find("New task 2") + Offset(0f, 120f))
+                click(find("Show the header"))
+                frames(6)
+                assertTrue(texts().contains("⧉"), "the window's head: ${texts()}")
+                click(find("▢"))
+                frames(6)
+                assertEquals(listOf(org.example.project.ui.DetachedAs.Maximized), detached.map { it.second })
+                assertTrue(childKey in detached.single().first.filters.parentsOf, "the list's own configuration")
+                assertTrue(popups.requests.isEmpty(), "the pop-up is the window now")
+            }
+            if (nested) {
+                // Anomaly 2026-11-15: in the list's window, "Show the actions", the parent added there, its "Parents"
+                // action open, its own "list of parents" clicked — a second window opens over the first.
+                rightClick(find("New task 2"))
+                click(find("add"))
+                rightClick(find("New task 2") + Offset(0f, 120f))
+                // User rule 2026-11-15: its field is its bar — the background menu does not offer to hide it.
+                assertTrue(texts().none { it == "Hide the search bar" }, "no hiding the field: ${texts()}")
+                click(find("Show the actions"))
+                frames(6)
+                assertTrue(texts().any { it.startsWith("Actions on the added elements") }, "the actions show: ${texts()}")
+                // Each row closed by default: the parent's group, then its "Parents" action.
+                // Its arrow, on its line: a click on the title selects the row.
+                fun openLast(text: String) {
+                    val title = nodes().last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == text } == true }.boundsInWindow
+                    val arrow = nodes()
+                        .filter { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == "▸" } == true }
+                        .map { it.boundsInWindow }
+                        .filter { kotlin.math.abs(it.center.y - title.center.y) < 12f && it.center.x < title.center.x }
+                        .maxByOrNull { it.center.x }
+                    click((arrow ?: title).center)
+                }
+                val parentsRows = texts().count { it == "Parents" }
+                openLast("Task: New task 2")
+                // The pop-up is short: its actions list scrolled down to the action.
+                val over = find("Children")
+                repeat(60) {
+                    if (texts().count { it == "Parents" } > parentsRows) return@repeat
+                    onEdt {
+                        time += 100L
+                        scene.sendPointerEvent(PointerEventType.Move, over, timeMillis = time)
+                        scene.sendPointerEvent(PointerEventType.Scroll, over, scrollDelta = Offset(0f, 1f), timeMillis = time)
+                    }
+                    frames(3)
+                }
+                assertTrue(texts().count { it == "Parents" } > parentsRows, "the group opened: ${texts()}")
+                openLast("Parents")
+                assertTrue(texts().count { it == "list of parents" } >= 2, "the nested field shows: ${texts()}")
+                // Brought fully into the short pop-up's view: a press must land on it, not past the pop-up's edge.
+                repeat(4) {
+                    onEdt {
+                        time += 100L
+                        scene.sendPointerEvent(PointerEventType.Scroll, over, scrollDelta = Offset(0f, 1f), timeMillis = time)
+                    }
+                    frames(3)
+                }
+                click(find("list of parents"))
+                frames(6)
+                assertEquals(2, popups.requests.size, "a second window over the first: ${texts()}")
+            }
         } finally {
             onEdt { scene.close() }
         }
@@ -196,6 +277,17 @@ class ParentsActionTest {
 
     @Test
     fun a_parent_added_from_the_list_of_parents_is_in_its_added_elements() = checkParentListed(thenAdd = true) { "Chrono/a" }
+
+    /**
+     * Anomaly 2026-11-15: *"clicking the list of parents opens a window, where I select 'show the actions' in the
+     * right-click menu, find the list of parents field, click it, but it doesn't open a window"*.
+     */
+    @Test
+    fun the_list_of_parents_inside_a_list_of_parents_opens_its_window() =
+        checkParentListed(nested = true) { s -> SearchDomain.taskKey(s.tasks.values.first { it.title == "New task 1" }.id) }
+
+    @Test
+    fun the_list_of_parents_shows_a_window_s_head_and_becomes_a_window() = checkParentListed(header = true) { "Chrono/a" }
 
     @Test
     fun the_list_opened_before_the_parent_is_added_lists_it_after() = checkParentListed(listFirst = true) { "Chrono/a" }
