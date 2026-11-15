@@ -302,20 +302,22 @@ means.
 
 ### Menus on the frame
 
-- **EVERY MENU GOES THROUGH `AppDropdownMenu`, AND ON THE DESKTOP IT IS AN OS WINDOW OF ITS OWN, ALWAYS ON TOP**
-  (user rule 2026-10-13: *"Any right-click menus must appear above all, even above Firefox's picture-in-picture
-  window"*, *"like when I right-click in the menu of Chrome: the pip is still there but behind the right-click
-  menu"*; `ui/AppDropdownMenu.kt`, `jvmMain/.../AppDropdownMenu.jvm.kt`). Material's `DropdownMenu` is drawn inside
-  the app's window, which another application's always-on-top window covers — so **never call it directly**: a menu
-  that does is the one left behind. `AppDropdownMenu` has its parameters and its anchoring (the layout it is
-  declared in, `offset`, under it or above where there is no room, kept on the screen's work area). On the desktop
-  it is a modeless, undecorated dialog owned by the window it was opened in, always on top, focusable only where the
-  menu is; elsewhere it IS material's menu. A text field's own cut / copy / paste menu is one too
+- **EVERY MENU GOES THROUGH `AppDropdownMenu`, AND ON THE DESKTOP IT IS AN OS WINDOW OF ITS OWN, OWNED BY THE APP'S
+  — NEVER ALWAYS ON TOP** (user rule 2026-11-15: *"I want the search windows to never appear above what is supposed to
+  be above the app (like the Firefox's picture-in-picture)"*; `ui/AppDropdownMenu.kt`,
+  `jvmMain/.../AppDropdownMenu.jvm.kt`). It stands above the app and under whatever stands above the app. It took back
+  the user rule of 2026-10-13 (*"Any right-click menus must appear above all, even above Firefox's picture-in-picture
+  window"*), which had made every menu always on top. Being a window of its own, it is free of the app window's edges:
+  **never call material's `DropdownMenu` directly**, which is bound by them. `AppDropdownMenu` has its parameters and
+  its anchoring (the layout it is declared in, `offset`, kept on the screen's work area). On the desktop it is a
+  modeless, undecorated dialog owned by the window it was opened in, focusable only where the menu is; elsewhere it IS
+  material's menu. A text field's own cut / copy / paste menu is one too
   (`OwnWindowContextMenuRepresentation`, set as `LocalContextMenuRepresentation` by the desktop's `main`).
   - **Nothing of the menu rules changes**: a press in a menu never reaches the root observer, a press outside it in
     the app does and still lands, a non-focusable menu leaves the keyboard where it was. What is new is the press in
-    ANOTHER application, which an always-on-top menu would otherwise outlive: the owner window losing the
-    foreground closes it (a focusable menu: the menu losing the focus), a menu opened from the menu excepted.
+    ANOTHER application, which a window of its own would otherwise outlive: the owner window losing the foreground
+    closes it (a focusable menu: the menu losing the focus), a menu opened from the menu excepted — and a PINNED pop-up
+    (below) excepted.
   - **The window is sized and placed from a task of its own on the event queue, never from inside a layout or a
     draw.** See the point on the two answers taken back.
   - **A menu opens BESIDE what it is about, never over it: below, else above, else at the right, else at the left**
@@ -390,8 +392,14 @@ means.
     The keyboard's place is ONE fact of the app (`MenuHoverTracker.focused`), cleared as a pop-up closes or leaves the
     composition — a tracker left "focused and pinned" would hold every hover of the app back.
     A menu that holds the keyboard stays only while a window of ITS tree is the active one (`activeListener`, once it
-    has held the keyboard): a pinned pop-up whose child held it stood on screen after the user went to another
-    application. Closed, it is a hover pop-up again.
+    has held the keyboard). Closed, it is a hover pop-up again.
+    - **A pinned pop-up stays while the keyboard is in ANOTHER application** (user rule 2026-11-15: *"when I click on a
+      pop-up window to pin it, make sure it doesn't disappear when click outside the app, like dragging the pip away for
+      example"*; `MenuSession.pinnedAway`: AWT names no window of the app as the one the keyboard went to). Each way the
+      desktop closed it then spares it: the menu or its owner losing the keyboard, the tracker's `windowLeft`, the
+      active window changing. Back in the app by a press on another of its windows, it closes as a press elsewhere in
+      the app closes it (`activeListener` calls `windowLeft`, which no loss of the keyboard had told it). From 2026-11-11
+      to this day, going to another application closed it.
   - **The pop-ups the keyboard went to are positions of the app** (user rule 2026-11-11, `PopupPositions`): each one
     the keyboard comes to (`MenuHoverTracker.windowFocused`, told by the desktop menu window) is a new position, and
     `Shift+Alt+←/→` walk them before the app's own history — the keyboard brought back to one still
@@ -423,33 +431,18 @@ means.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
     (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree.
   - **A pop-up opened from a field or a button opens at its left, else below, else above, else at its right**
-    (user rule 2026-11-15: *"A pop-up window opened from a field/button must adjust its position on four choices (right,
-    left, bottom, top), depending on the available space, then on its size, when the pop-up appears but also as the app
-    gets resized"*, and the order *"left then bottom then top then right"* the same day; `MenuSide.POPUP`). Told by the press that opened it (`RightPresses.justPressed`, an AWT listener that
+    (user rule 2026-11-15: *"A pop-up window opened from a field/button must adjust its position on four choices …,
+    depending on the available space, then on its size, when the pop-up appears but also as the app gets resized"*, its
+    order *"left then bottom then top then right"* the same day; `MenuSide.POPUP`). Told by the press that opened it (`RightPresses.justPressed`, an AWT listener that
     hears every press before any component): a right-click's menu keeps below, above, right, left; a click, a hover or a
     key opens a pop-up; a call site that names its own sides (`MenuSide.SUBMENU`) keeps them. **Where no side holds it
     whole, it takes the side with the most room for its size**, pushed onto the screen — no longer below over its anchor.
   - **The window a menu hangs from moving or changing size places it again, afresh** (same rule, `MenuSession.ownerMoves`):
     its anchor is said in that window, so a move alone reported nothing and the menu stayed behind.
-  - **A menu keeps off every other application's window standing over the app** (user rules 2026-11-15: first Firefox's
-    picture-in-picture, then *"not just to the pip but to anything above the app … If the user drags something over the
-    app, it doesn't adjust in live"*; `WindowsAboveApp`, `menuPlace`'s `avoid`). Windows only: the shown top-level
-    windows Windows stacks above the app's, not its own, not cloaked, not click-through, not the taskbar or desktop. It
-    is asked as the menu is placed — never watched: a window dragged over an open menu moves nothing. **It chooses among the four spots and never adds
-    one** (anomaly 2026-11-15: *"I said the pop-up must have only four position choices (right, left, bottom, top).
-    Right now, I hover over a down arrow, and the pop-up appears far away to avoid the pip"* — a spot covering it was
-    slid along its side past it): a side whose spot covers the video is passed over. **Where every side's does, the
-    pop-up is made shorter** (anomaly the same day: *"the pop-up window hides the pip … If the position choice still
-    hides the pip, the size is adjusted"*; `menuPlace`, `MenuPlace.height`): the first side, in order, where the
-    window keeps its edge on the anchor's side and brings the other in to the video, at least `MIN_SHORTENED_HEIGHT`
-    tall, and it still reports its own height, so it grows back once the video moves away. **One scrollbar**
-    (anomaly the same day: *"there are two vertical scrollbars when the height is adjusted to not hide the pip"*): the
-    part of the menu that scrolls on its own gives up the height lost (`shrinksInMenu`, fed `LocalMenuShortfall` by
-    `MenuSurface`) — the ▾ tree's columns, a drop-down's list — so the window's own column has nothing to scroll. A new
-    part that scrolls inside a menu wears it too. Only where even that fails is the video not asked about. Each placement a video changes is
-    traced in `diagnostics.log` (`[pip] video …`): what was seen, and where the menu went. It is asked
-    as a menu is placed, and its moves are HEARD (a WinEvent hook on Firefox's process, on a thread of its own, only while
-    a menu is open and a video stands) — never polled. A menu that the video moves onto is placed again (`keepsSpot`).
+  - **Nothing reacts to the other applications' windows** (user rule 2026-11-15: *"Revert from all those adjustments to
+    outside windows"*): the same day a menu kept off Firefox's picture-in-picture by its four spots, then by being made
+    shorter, and the app's windows moved and shrank away from every window over the app as they opened. All of it was
+    taken back for the one rule that answers the anomaly: a menu is not always on top (above).
   - **A right-click outside an open right-click menu that leaves it open opens it AFRESH** (user rule 2026-11-15:
     *"Right-click must open the right-click menu even if a right-click menu was already open."*; `HangingMenu`, keyed on
     `RightPresses.count`): the same row's again, another row sharing the one menu, a row of the pop-up it hangs from — a
@@ -876,17 +869,6 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   reduce bar, to the top, into the focus) — **the reduce bar's chip included**, which raised without
   focusing and so brought a keyboard-claiming window back with the tree still holding the keyboard. Opening raises it through `register`, but re-asking for the same
   subject changes no state of the caller's, so without it the window stays under whatever the user moved to.
-
-- **A window the user opens, or brings back from the reduce bar, is placed clear of what stands over the app** (user rule
-  2026-11-15: *"I want every window to adjust, and not just to the pip but to anything above the app, when a window in the
-  app opens, it must adjust its position and size. If the user drags something over the app, it doesn't adjust in live,
-  only when the window in the app opens or stops being minimized in the system tray of the app."*;
-  `WindowFrameState.avoidCovering`, `fitClear`, `LocalCoveringWindows` — Windows: `WindowsAboveApp`). Asked once, at the
-  frame's first layout after the open or the restore (`coverCheckPending`): a clear window stays; else the nearest place
-  at its size inside the content area; else the largest clear room, the window made to fit it, never under its minimum
-  size; else it stays. A window with a filled axis is the content area's and is left alone, and so is one a launch puts
-  back (`claimOnOpen` off) or the app opens at the back. The place found is kept as its geometry. Nothing watches the
-  other windows: one dragged over a window of the app moves nothing.
 
 ## What is drawn OVER what
 

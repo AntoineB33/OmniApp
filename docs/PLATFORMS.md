@@ -66,7 +66,6 @@ Two different questions, answered in two different places:
 | Scheduler solver | Built-in search **+ OR-Tools MIP** | Built-in search | Built-in search | Built-in search |
 | "The app is in focus" (the unfocused-notif window) | **The OS's answer**: one of the app's windows is the active one (`LocalAppInFocus`, AWT `activeWindow`) | The window's own flag (`isWindowFocused`) | The window's own flag | The window's own flag |
 | Window placement memory, app window chrome | Yes | — | — | — |
-| Menus and windows keep clear of other applications' windows over the app, as they open (`WindowsAboveApp`, through `user32`/`dwmapi`; `LocalCoveringWindows`) | Yes | — (nothing stands over the app) | — | — |
 | Launch-script login / start offline | System properties (`account*.bat`) | Intent extras | — | — |
 | Debug time link, perf platform stats | Yes | — | — | — |
 | The Claude Code logs page reads the logs (`claudeLogFilesSupported`) | Yes (`java.io`) | Yes (`java.io`; a folder the app may read) | No — the page says so | No — the page says so |

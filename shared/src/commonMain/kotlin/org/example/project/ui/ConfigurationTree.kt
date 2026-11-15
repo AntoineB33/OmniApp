@@ -357,8 +357,6 @@ private fun TreeColumn(
         Modifier
             .reportsHover(LocalMenuHover.current)
             .width(treeColumnWidth(nodes))
-            // A menu made shorter for a video: this column gives up the height, not the window (one scrollbar).
-            .shrinksInMenu()
             .heightIn(max = TREE_COLUMN_MAX_HEIGHT)
             .verticalScrollWithBar(rememberScrollState())
             // The scrollbar stands in a room of its own at the right, as beside the Search window's list.

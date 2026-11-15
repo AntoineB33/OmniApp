@@ -37,7 +37,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.geometry.Rect
@@ -423,51 +422,9 @@ class WindowFrameState(
         minimized = true
     }
 
-    /**
-     * Back from the reduce bar. The window returns as it was, filled axes included — then moved and made smaller where
-     * another application's window now stands over it ([avoidCovering], user rule 2026-11-15).
-     */
+    /** Back from the reduce bar. The window returns exactly as it was, filled axes included. */
     fun restore() {
-        if (minimized) coverCheckPending = true
         minimized = false
-    }
-
-    /**
-     * User rule 2026-11-15: *"when a window in the app opens, it must adjust its position and size"* to what stands over
-     * the app — **asked once**, at the frame's next layout after the window was opened by the user or came back from the
-     * reduce bar ([requestCoverCheck], [restore]), never as other windows move. In memory only.
-     */
-    var coverCheckPending: Boolean = false
-        private set
-
-    /** The window was just opened by the user: it is placed clear of what stands over the app at its first layout. */
-    fun requestCoverCheck() {
-        coverCheckPending = true
-    }
-
-    /**
-     * **Moved, and made smaller if it must, to be clear of [covering]** — the other applications' windows over the app,
-     * in the coordinates of the content area it is centred in ([containerSize]) — by [fitClear]. Asked once per
-     * [coverCheckPending]; a window with a filled axis is the content area's on that axis and is left as it is. True
-     * when it moved or changed size: a geometry to keep.
-     */
-    fun avoidCovering(containerSize: Size, covering: List<Rect>): Boolean {
-        if (!coverCheckPending) return false
-        if (minimized || containerSize.width <= 0f || containerSize.height <= 0f || size.width <= 0f || size.height <= 0f) return false
-        coverCheckPending = false
-        if (fill != WindowFill.None || covering.isEmpty()) return false
-        val left = (containerSize.width - size.width) / 2f + offset.x
-        val top = (containerSize.height - size.height) / 2f + offset.y
-        val now = Rect(left, top, left + size.width, top + size.height)
-        val area = Rect(0f, 0f, containerSize.width, containerSize.height)
-        val to = fitClear(now, area, covering, Size(minWidth, minHeight)) ?: return false
-        half = null
-        clampedFrom = null
-        if (to.width != size.width) setNormalWidth(to.width)
-        if (to.height != size.height) setNormalHeight(to.height)
-        setNormalOffsetX(to.left - (containerSize.width - to.width) / 2f)
-        setNormalOffsetY(to.top - (containerSize.height - to.height) / 2f)
-        return true
     }
 
     private fun applyFill(next: WindowFill) {
@@ -1550,9 +1507,6 @@ fun AppWindowFrame(
         // (Not the windows a launch puts back: [WindowFrameHost.claimOnOpen].)
         // …nor one the app opened at the back ([WindowFrameHost.openAtBack]).
         if (claimsKeyboard && host != null && host.claimOnOpen && !atBack) host.focus(state.id)
-        // User rule 2026-11-15: a window the user opens is placed clear of what stands over the app — at its first layout.
-        // Not one a launch puts back, nor one the app opens at the back.
-        if (host != null && host.claimOnOpen && !atBack) state.requestCoverCheck()
         onDispose { host?.unregister(state.id) }
     }
     SideEffect {
@@ -1592,8 +1546,6 @@ fun AppWindowFrame(
     val widthDp = with(density) { state.size.width.takeIf { it > 0f }?.toDp() } ?: defaultWidth
     val heightDp = with(density) { state.size.height.takeIf { it > 0f }?.toDp() } ?: defaultHeight
     val commit = { onGeometryChange(state.offset, state.size) }
-    // What stands over the app ([LocalCoveringWindows]): asked only when the window opens or comes back from the bar.
-    val coveringWindows = LocalCoveringWindows.current
 
     Box(
         modifier = Modifier
@@ -1631,17 +1583,6 @@ fun AppWindowFrame(
                 if (state.fitHalf(coordinates.parentLayoutCoordinates?.size?.height?.toFloat() ?: 0f)) {
                     commit()
                     return@onGloballyPositioned
-                }
-                // User rule 2026-11-15: just opened by the user, or back from the reduce bar — moved, and made smaller if
-                // it must, clear of the other applications' windows over the app. Once; never as they move.
-                val parent = coordinates.parentLayoutCoordinates
-                if (state.coverCheckPending && coveringWindows != null && parent != null) {
-                    val origin = parent.positionInWindow()
-                    val covering = coveringWindows().map { it.translate(-origin) }
-                    if (state.avoidCovering(Size(parent.size.width.toFloat(), parent.size.height.toFloat()), covering)) {
-                        commit()
-                        return@onGloballyPositioned
-                    }
                 }
                 state.clampVertical(
                     containerHeight = coordinates.parentLayoutCoordinates?.size?.height?.toFloat() ?: 0f,

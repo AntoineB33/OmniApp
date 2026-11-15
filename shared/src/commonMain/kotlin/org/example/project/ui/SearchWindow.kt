@@ -2134,8 +2134,7 @@ internal fun OptionSearchMenu(
             options = options,
             onDrop = options.onDrop?.let { drop -> { row -> (row as? SearchDomain.ItemResult)?.id?.let(drop) } },
             canDrop = { row -> (row as? SearchDomain.ItemResult)?.id?.let { it != SearchDomain.SELECT_ALL_OPTION && options.canDrop(it) } == true },
-            // A menu made shorter for a video: the list gives up the height, not the window (one scrollbar).
-            modifier = Modifier.width(width).shrinksInMenu().height(height),
+            modifier = Modifier.width(width).height(height),
         )
         }
     }

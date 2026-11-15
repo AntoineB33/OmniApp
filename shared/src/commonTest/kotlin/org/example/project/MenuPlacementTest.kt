@@ -8,9 +8,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.example.project.ui.MenuSide
-import org.example.project.ui.MenuPlace
 import org.example.project.ui.keepsSpot
-import org.example.project.ui.menuPlace
 import org.example.project.ui.menuSpot
 
 /**
@@ -106,47 +104,5 @@ class MenuPlacementTest {
         assertEquals(IntOffset(0, 100), spot)
         // Near the bottom, above has the more room: placed there, held on the screen's top.
         assertEquals(IntOffset(0, 0), menuSpot(IntRect(0, 700, 1000, 730), tall, screen, MenuSide.POPUP))
-    }
-
-    /**
-     * User rule 2026-11-15: *"I'd like the pop-up windows to avoid hiding the pip as the user moves the app or the pip."*
-     * The video chooses among the four spots and never adds one (anomaly the same day: the pop-up of a ▾ appeared far
-     * away, slid along its side past the video), and where every spot covers it, the pop-up is made SHORTER (anomaly the
-     * same day: *"If the position choice still hides the pip, the size is adjusted."*).
-     */
-    @Test
-    fun a_menu_keeps_off_the_picture_in_picture_by_its_four_spots_and_its_height_alone() {
-        val popup = MenuSide.POPUP
-        val field = IntRect(400, 300, 500, 330)
-        // The four spots, each as a rectangle: [menuPlace] answers one of them, or one made shorter on its anchor's side.
-        val spots = listOf(MenuSide.Left, MenuSide.Below, MenuSide.Above, MenuSide.Right).associateWith { side ->
-            val at = menuSpot(field, menu, screen, listOf(side))
-            IntRect(at.x, at.y, at.x + menu.width, at.y + menu.height)
-        }
-        fun MenuPlace.rect() = IntRect(offset.x, offset.y, offset.x + menu.width, offset.y + height)
-        // The video at its left: below.
-        val left = IntRect(200, 350, 390, 500)
-        assertEquals(MenuPlace(IntOffset(400, 330), 300), menuPlace(field, menu, screen, popup, listOf(left)))
-        // A video anywhere: one of the four spots, whole or shorter on its anchor's side — never one slid past it.
-        for (x in 0..900 step 50) for (y in 0..700 step 50) {
-            val pip = IntRect(x, y, x + 200, y + 120)
-            val placed = menuPlace(field, menu, screen, popup, listOf(pip))
-            val r = placed.rect()
-            val within = spots.any { (side, s) ->
-                r.left == s.left && r.right == s.right && r.top >= s.top && r.bottom <= s.bottom &&
-                    (if (side == MenuSide.Above) r.bottom == s.bottom else r.top == s.top)
-            }
-            assertTrue(within, "a video at ($x, $y) put the pop-up at $r, none of the four spots")
-            if (placed.height < menu.height) assertFalse(r.overlaps(pip), "made shorter and still over the video at ($x, $y)")
-        }
-        // Every spot covers the videos: the first side in order made shorter, its top kept, its bottom on the video.
-        val low = IntRect(0, 500, 1000, 800)
-        val high = IntRect(0, 0, 1000, 150)
-        assertEquals(MenuPlace(IntOffset(250, 300), 200), menuPlace(field, menu, screen, popup, listOf(low, high)))
-        // Shorter than a bar and a few rows on every side: placed as if there were no video, whole.
-        val lower = IntRect(0, 420, 1000, 800)
-        assertEquals(MenuPlace(IntOffset(250, 300), 300), menuPlace(field, menu, screen, popup, listOf(lower, high)))
-        // A menu shown where the video has come is placed again.
-        assertFalse(keepsSpot(IntOffset(250, 300), menu, field, screen, listOf(left)))
     }
 }

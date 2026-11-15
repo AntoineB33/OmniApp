@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Menus are never always on top; a pinned pop-up survives another application; the outside-window adjustments taken back — 2026-11-15
+
+User: *"The problem was that pop-up windows appeared above the pip. Actually, instead of doing those position and size
+adjustments, I want the search windows to never appear above what is supposed to be above the app (like the Firefox's
+picture-in-picture). Also, when I click on a pop-up window to pin it, make sure it doesn't disappear when click outside
+the app, like dragging the pip away for example. Revert from all those adjustments to outside windows."* A menu's window
+is owned by the app's and no longer always on top (it was since 2026-10-13): above the app, under what stands above it.
+A pinned pop-up stays while the keyboard is in another application (`MenuSession.pinnedAway`); back in the app by a press
+on another of its windows, it closes. Taken back: `PictureInPictureWindows` and its hook, the menus' avoidance and
+shortening (`menuPlace`, `shrinksInMenu`), `WindowsAboveApp`, and the app windows' `avoidCovering` / `fitClear`.
+Kept: the pop-up order left, below, above, right; the most-room fallback; menus placed again as the app moves or
+resizes. No migration. Deploy: client apps.
+
 ### Every window and menu keeps clear of the windows over the app, as it opens — 2026-11-15
 
 User rule: *"I want every window to adjust, and not just to the pip but to anything above the app, when a window in the

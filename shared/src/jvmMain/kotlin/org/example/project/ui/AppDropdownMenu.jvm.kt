@@ -34,7 +34,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -59,9 +58,10 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /**
- * Desktop: **a menu is an OS window of its own, always on top** — over every other application's window, an
- * always-on-top one included (Firefox's picture-in-picture), with nothing else of the app raised. It is what a
- * browser's own menus are: a borderless pop-up window of the topmost band that does not take the foreground.
+ * Desktop: **a menu is an OS window of its own, owned by the app's window** — above the app, free of its bounds (a field
+ * near the bottom of a small window still has its menu below it), and under whatever stands above the app: user rule
+ * 2026-11-15, *"I want the search windows to never appear above what is supposed to be above the app (like the
+ * Firefox's picture-in-picture)"*. From 2026-10-13 it was always on top, over that too.
  *
  * Why not Compose's own way to the same thing (`compose.layers.type=WINDOW`, which makes every `Popup` such a
  * window): it was shipped on 2026-10-13 and **crashed the app at the first right-click** — in Compose 1.11.0 a layer
@@ -258,9 +258,17 @@ private class MenuSession(
     private var size: Dimension? = null
     private var closed = false
 
+    /**
+     * User rule 2026-11-15: *"when I click on a pop-up window to pin it, make sure it doesn't disappear when click outside
+     * the app, like dragging the pip away for example"* — **a pinned pop-up stays while the keyboard is in ANOTHER
+     * application** (AWT names no window of ours then: [opposite] null). A press elsewhere in the app still closes it
+     * ([activeListener], [MenuHoverTracker.windowLeft]). Since 2026-11-11 the user going to another application closed it.
+     */
+    private fun pinnedAway(opposite: AwtWindow?): Boolean = opposite == null && hover?.pinned == true
+
     private val ownerListener = object : WindowAdapter() {
         override fun windowDeactivated(event: WindowEvent) {
-            if (!ours(event.oppositeWindow)) dismiss.value()
+            if (!ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow)) dismiss.value()
         }
     }
     private var heldKeyboard = false
@@ -269,7 +277,7 @@ private class MenuSession(
             heldKeyboard = true
         }
         override fun windowLostFocus(event: WindowEvent) {
-            if (focusable && !ours(event.oppositeWindow)) dismiss.value()
+            if (focusable && !ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow)) dismiss.value()
         }
     }
 
@@ -284,7 +292,14 @@ private class MenuSession(
             // Not before it has held the keyboard once: opening, the app's window is still the active one.
             if (closed || dialog == null || !heldKeyboard) return@invokeLater
             val active = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
-            if (!ours(active)) dismiss.value()
+            // Another application active: a pinned pop-up stays ([pinnedAway]).
+            if (pinnedAway(active)) return@invokeLater
+            if (!ours(active)) {
+                // Back in the app by a press on another of its windows — which no loss of the keyboard told the pop-up,
+                // having lost it to the other application: it closes as a press elsewhere in the app closes it.
+                if (hover?.pinned == true) hover?.windowLeft()
+                dismiss.value()
+            }
         }
     }
 
@@ -334,7 +349,7 @@ private class MenuSession(
         size = MenuWindows.lastSize[site]
         window.size = size ?: Dimension(2, 2)
         // A size not known yet: composed and measured out of sight, shown where it belongs once it is ([fit]).
-        if (size == null) window.location = Point(-32000, -32000) else place()
+        window.location = if (size == null) Point(-32000, -32000) else location()
         window.compositionLocalContext = locals.value
         window.setContent(
             // A focusable menu is material's: Escape closes it. A non-focusable one never sees a key.
@@ -363,7 +378,8 @@ private class MenuSession(
                     // descendants — a press elsewhere in the app, or in another application.
                     override fun windowLostFocus(event: WindowEvent) {
                         val inside = generateSequence(event.oppositeWindow) { it.owner }.any { it in tracker.windows }
-                        if (!inside) tracker.windowLeft()
+                        // Gone to another application, pinned: it stays (user rule 2026-11-15, [pinnedAway]).
+                        if (!inside && !(event.oppositeWindow == null && tracker.pinned)) tracker.windowLeft()
                     }
                 }
                 tracker.windows += window
@@ -381,7 +397,7 @@ private class MenuSession(
             }
             // Inside, a menu opened is this window's, and opens by the default sides unless its call site says otherwise.
             androidx.compose.runtime.CompositionLocalProvider(LocalMenuWindow provides window, LocalMenuSides provides MenuSide.DEFAULT) {
-                MenuSurface(owner, modifier.value, content.value, limit, ::fit)
+                MenuSurface(owner, modifier.value, content.value, ::fit)
             }
         }
         // `popups.md`: a menu leaves on the first press outside it. A press in the app is the root observer's to see;
@@ -389,8 +405,6 @@ private class MenuSession(
         // for a menu that holds the keyboard, as the menu losing it.
         owner.addWindowListener(ownerListener)
         owner.addComponentListener(ownerMoves)
-        // Not another application's window moving over it: user rule 2026-11-15, *"If the user drags something over the
-        // app, it doesn't adjust in live"* — it is placed as it opens ([WindowsAboveApp]).
         window.addWindowFocusListener(focusListener)
         if (focusable) {
             KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("activeWindow", activeListener)
@@ -408,41 +422,25 @@ private class MenuSession(
         EventQueue.invokeLater {
             val window = dialog ?: return@invokeLater
             val scale = window.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
-            // Its own size — never taller than the screen it is on: past that the menu scrolls, as material's does.
-            val screenHeight = workAreaAt(ScreenPoint(owner.x, owner.y))?.height ?: Int.MAX_VALUE
-            val fitted = Dimension(
-                ceil(wanted.width / scale).toInt().coerceAtLeast(1),
-                ceil(wanted.height / scale).toInt().coerceIn(1, maxOf(1, screenHeight)),
-            )
-            if (fitted == size && window.isShowing) return@invokeLater
+            val fitted = Dimension(ceil(wanted.width / scale).toInt().coerceAtLeast(1), ceil(wanted.height / scale).toInt().coerceAtLeast(1))
             MenuWindows.lastSize[site] = fitted
             size = fitted
-            // Shown already: it stays where it is if it can ([keepsSpot]) — a menu never moves under the eye. Not one
-            // made shorter for a video: it is placed afresh, and grows back where the video lets it.
-            val shownAt = window.location.takeIf { window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN && limit.value == null }
+            // Shown already: it stays where it is if it can ([keepsSpot]) — a menu never moves under the eye.
+            val shownAt = window.location.takeIf { window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN }
+            if (window.size != fitted) window.size = fitted
             place(keeping = shownAt)
         }
     }
 
-    /**
-     * User rule 2026-11-15: how tall the menu is shown where it is, when that is LESS than its own height — made shorter
-     * to keep off a window above the app ([menuPlace], [WindowsAboveApp]); null at its own height. Its content scrolls inside it.
-     */
-    private val limit = androidx.compose.runtime.mutableStateOf<Int?>(null)
-
-    /**
-     * Placed by its anchor, or kept at [keeping] (where it is shown) if it still may stand there ([keepsSpot]) — and
-     * sized: its own size, or shorter where a video would otherwise be covered ([menuPlace]).
-     */
+    /** Placed by its anchor, or kept at [keeping] (where it is shown) if it still may stand there ([keepsSpot]). */
     private fun place(keeping: Point? = null) {
         val window = dialog ?: return
-        val own = size ?: return
-        val (at, height) = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, own, sides, keeping)
-        val shown = Dimension(own.width, height.coerceIn(1, own.height))
-        limit.value = shown.height.takeIf { it < own.height }
-        if (window.size != shown) window.size = shown
+        if (size == null) return
+        val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping)
         if (window.location != at) window.location = at
     }
+
+    private fun location(): Point = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides)
 
     fun close() {
         closed = true
@@ -478,51 +476,23 @@ private fun MenuSurface(
     owner: AwtWindow,
     modifier: Modifier,
     content: @Composable ColumnScope.() -> Unit,
-    /** How tall the window shows it, in AWT units (the window's dp), when less than its own height ([MenuSession.place]). */
-    limit: State<Int?>,
     onWanted: (IntSize) -> Unit,
 ) {
     // Never taller than the screen it is on: past that the menu scrolls, as material's does.
     val tallest = remember(owner) { (workAreaAt(ScreenPoint(owner.x, owner.y))?.height ?: 2000).dp }
-    val shownMax = limit.value?.dp?.let { minOf(it, tallest) } ?: tallest
-    val scroll = rememberScrollState()
-    val reported = remember { arrayOfNulls<IntSize>(1) }
-    // Its own height (pixels), measured while it is shown whole and kept while it is shown shorter: the shorter content
-    // measures shorter then, and said as its own it would never grow back once the video moves away.
-    val ownHeight = remember { intArrayOf(-1) }
-    val density = LocalDensity.current.density
-    // Anomaly 2026-11-15 (*"two vertical scrollbars when the height is adjusted to not hide the pip"*): what the window
-    // lost, handed to the part that scrolls on its own ([shrinksInMenu]), so this column has nothing left to scroll.
-    val shortfall = limit.value?.let { shown -> if (ownHeight[0] < 0) 0 else (ownHeight[0] - (shown * density).toInt()).coerceAtLeast(0) } ?: 0
     // A menu opened inside a hover pop-up is one of its descendants ([LocalMenuHover]): the pointer over it holds the pop-up.
-    Box(
-        Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true)
-            // Its OWN size, whatever height it is shown at: what the column scrolls past is part of it. Made shorter for a
-            // video, it must still say how tall it is, or it would never grow back once the video moves away.
-            .layout { measurable, constraints ->
-                val placeable = measurable.measure(constraints)
-                if (limit.value == null || ownHeight[0] < 0) ownHeight[0] = placeable.height + scroll.maxValue.coerceAtMost(Int.MAX_VALUE / 2)
-                val own = IntSize(placeable.width, ownHeight[0])
-                if (reported[0] != own) {
-                    reported[0] = own
-                    onWanted(own)
-                }
-                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-            },
-    ) {
+    Box(Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true).onSizeChanged(onWanted)) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainer,
             contentColor = MaterialTheme.colorScheme.onSurface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier.heightIn(max = shownMax),
+            modifier = Modifier.heightIn(max = tallest),
         ) {
             // Material's own menu column: the caller's modifier, the menu's padding, as wide as its widest entry.
-            androidx.compose.runtime.CompositionLocalProvider(LocalMenuShortfall provides shortfall) {
-                Column(
-                    modifier = modifier.padding(vertical = 8.dp).width(IntrinsicSize.Max).verticalScrollWithBar(scroll),
-                    content = content,
-                )
-            }
+            Column(
+                modifier = modifier.padding(vertical = 8.dp).width(IntrinsicSize.Max).verticalScrollWithBar(rememberScrollState()),
+                content = content,
+            )
         }
     }
 }
@@ -545,7 +515,9 @@ internal object MenuWindows {
         ComposeDialog(owner, Dialog.ModalityType.MODELESS).apply {
             isUndecorated = true
             isResizable = false
-            isAlwaysOnTop = true
+            // User rule 2026-11-15: *"I want the search windows to never appear above what is supposed to be above the
+            // app (like the Firefox's picture-in-picture)"* — owned by the app's window, a menu stands above IT and
+            // nothing more: never always-on-top. (It was, from 2026-10-13: "even above Firefox's picture-in-picture".)
             type = AwtWindow.Type.POPUP
         }
 
@@ -692,7 +664,7 @@ private fun menuPlacement(
     sides: List<MenuSide> = MenuSide.DEFAULT,
     /** Where the menu is shown, kept if it still may stand there ([keepsSpot]); null for a menu placed afresh. */
     keeping: Point? = null,
-): Pair<Point, Int> {
+): Point {
     val pane = (owner as? RootPaneContainer)?.contentPane
     val origin = runCatching { (pane ?: owner).locationOnScreen }.getOrNull() ?: owner.location
     val scale = owner.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
@@ -704,26 +676,9 @@ private fun menuPlacement(
         bottom = origin.y + screen(anchor.bottom + offsetPx.y),
     )
     val area = workAreaAt(ScreenPoint(on.left, on.top)) ?: workAreaAt(ScreenPoint(origin.x, origin.y))
-        ?: return (keeping ?: Point(on.left, on.bottom)) to size.height
+        ?: return keeping ?: Point(on.left, on.bottom)
     val screen = IntRect(area.x, area.y, area.x + area.width, area.y + area.height)
-    // User rule 2026-11-15: the other applications' windows it keeps off — every one above the app ([WindowsAboveApp]),
-    // Firefox's picture-in-picture among them.
-    val avoid = WindowsAboveApp.bounds(owner).map { IntRect(it.x, it.y, it.x + it.width, it.y + it.height) }
-    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, screen, avoid)) {
-        return keeping to size.height
-    }
-    val placed = menuPlace(on, IntSize(size.width, size.height), screen, sides, avoid)
-    // What a video did to a menu, for `diagnostics.log` (user anomaly 2026-11-15: the pop-up hid the video — was it seen?).
-    if (avoid.isNotEmpty()) {
-        val line = "[above] windows $avoid; menu ${size.width}x${size.height} by $on, sides $sides -> " +
-            "${placed.offset} height ${placed.height}"
-        if (line != lastPipTrace) {
-            lastPipTrace = line
-            org.example.project.scheduler.platform.Diagnostics.log(line)
-        }
-    }
-    return Point(placed.offset.x, placed.offset.y) to placed.height
+    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, screen)) return keeping
+    val spot = menuSpot(on, IntSize(size.width, size.height), screen, sides)
+    return Point(spot.x, spot.y)
 }
-
-/** The last [menuPlacement] trace written: a drag of the video places the menu many times the same way. */
-private var lastPipTrace: String? = null

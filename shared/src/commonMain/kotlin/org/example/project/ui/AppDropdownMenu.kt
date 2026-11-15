@@ -12,13 +12,13 @@ import androidx.compose.ui.window.PopupProperties
  * (`docs/invariants/popups.md`): material's `DropdownMenu`, with its parameters and its anchoring (the menu hangs
  * from the layout it is declared in, moved by [offset]).
  *
- * User rule 2026-10-13: *"Any right-click menus must appear above all, even above Firefox's picture-in-picture
- * window"* — *"like when I right-click in the menu of Chrome: the pip is still there but behind the right-click
- * menu"*. Material's menu is drawn inside the app's window, which another application's always-on-top window covers.
- * So on the desktop a menu is an OS window of its own, always on top (`AppDropdownMenu.jvm.kt`), and nothing else of
- * the app is raised; everywhere else it IS material's menu — a phone and the browser have no other window to be under.
+ * On the desktop a menu is an OS window of its own, owned by the app's window (`AppDropdownMenu.jvm.kt`): it is not
+ * bound by the app window's edges, and it stands above the app and under whatever stands above the app — user rule
+ * 2026-11-15, *"I want the search windows to never appear above what is supposed to be above the app (like the
+ * Firefox's picture-in-picture)"*, which took back the 2026-10-13 rule that menus be over it too. Everywhere else it
+ * IS material's menu.
  *
- * Never call material's `DropdownMenu` directly: a menu that does is the one left behind the other window.
+ * Never call material's `DropdownMenu` directly: a menu that does is bound by the app window's edges.
  */
 @Composable
 expect fun AppDropdownMenu(
