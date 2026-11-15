@@ -516,6 +516,11 @@ means.
     right-click menu open it needs a second right-click to open the menu"*; `MenuSession.settling`): for 600 ms after
     it opens, the menu losing the keyboard or the active window to a window of the app, with no press since, leaves it
     open. Windows activating the app's window for the right press could land after the menu took the keyboard.
+  - **A Search window drawn inside another shows no row selected until the user selects one in it** (anomaly
+    2026-11-15: *""root" is selected in the search section of the focused window, and "Task: root" is selected in the
+    action section"*; `SearchWindow`'s `unselectedUntilChosen`): its sections and a field's window. The row a new question
+    starts at is where its keys start (the first ↓ lands on it), not a selection; each section showing its own read as
+    several selections in one window. A drop-down's list, the left-side menu and a picker keep theirs: Enter takes it.
   - **A field's window opened by the user is its DEFAULT window** (anomaly 2026-11-15: *"when I click on list of parents
     it must open the default window for this element"*; `PopupSearchField.openFresh`): a click or a letter typed opens
     it with what it opens with (its `openedConfig`, the bar's text kept), its default parts, and nothing of what was

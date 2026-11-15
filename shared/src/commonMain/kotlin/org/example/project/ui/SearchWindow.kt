@@ -50,6 +50,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.composed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
@@ -891,7 +893,13 @@ fun SearchWindow(
     val resultKeys = remember(results) { results.map(::resultKey) }
     // "A row is selected" is the outline's own rule: not while the bar holds the focus, nor while a row's
     // sub-tree does.
-    val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null && rowsSelectable && !deselected
+    // Anomaly 2026-11-15 (*""root" is selected in the search section of the focused window, and "Task: root" is selected
+    // in the action section"*, neither selected by the user): a Search window drawn inside another — a section, a
+    // field's window — shows no row selected until the user selects one in it. The row a new question starts at is where
+    // its keys start, not a selection: two sections each showing theirs read as two selections in one window. A
+    // drop-down's list, the left-side menu and a picker keep theirs: it is the one Enter takes.
+    val unselectedUntilChosen = embedded && !userSelected && options == null && menuList == null && picker == null
+    val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null && rowsSelectable && !deselected && !unselectedUntilChosen
     // The rows of the list: a press outside every one of them takes the selection away (the app's one observer).
     val resultRows = rememberOutsidePressEditor(active = hasSelection) {
         deselected = true
@@ -1324,7 +1332,7 @@ fun SearchWindow(
                     // The list holds the keyboard once the user leaves the bar: the tree's keys, for its rows.
                     val rowSelected = { index: Int ->
                         index == selected && !fieldFocused && subtreeFocusOwner == null && rowsSelectable && !deselected &&
-                            selectionSurface?.startsWith(RESULT_SURFACE) != true
+                            !unselectedUntilChosen && selectionSurface?.startsWith(RESULT_SURFACE) != true
                     }
                     // A row of the multi-selection other than the selected one: the tree's lighter selection grey.
                     val rowInSelection = { index: Int ->
@@ -1460,7 +1468,8 @@ fun SearchWindow(
                                         val order = shownRowOrder(state, results, expandedElements, windows, schedulerRuns, claudeLogs)
                                         val at = childSelection.main?.let { main -> order.indexOfFirst { it.child?.rowKey == main } }?.takeIf { it >= 0 }
                                             ?: order.indexOfFirst { it.child == null && it.index == selected }
-                                        val next = at + if (event.key == Key.DirectionDown) 1 else -1
+                                        // Nothing shown selected yet ([unselectedUntilChosen]): the first ↓ is the first row.
+                                        val next = if (unselectedUntilChosen && event.key == Key.DirectionDown) 0 else at + if (event.key == Key.DirectionDown) 1 else -1
                                         val target = order.getOrNull(next)
                                         when {
                                             next < 0 -> runCatching { fieldFocus.requestFocus() }
@@ -2859,6 +2868,8 @@ internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false):
     Modifier
         .fillMaxWidth()
         .height(RESULT_ROW_HEIGHT)
+        // Said to accessibility, and to the tests that read which rows show as selected.
+        .semantics { this.selected = selected }
         .then(selectionLook(selected, inSelection))
         .padding(horizontal = 6.dp)
 

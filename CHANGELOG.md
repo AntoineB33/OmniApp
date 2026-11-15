@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A section shows no row selected until the user selects one in it — 2026-11-15
+
+User: *""root" is selected in the search section of the focused window, and "Task: root" is selected in the action
+section"*, neither chosen. A Search window drawn inside another (a section, a field's window) showed the row its
+question starts at as selected; it now shows none until the user selects one in it (the first ↓ lands on the first
+row). Drop-down lists, the left-side menu and pickers keep theirs. Result rows say `selected` to accessibility. No
+migration. Deploy: client apps.
+
 ### A field's window opened by a click is its default window; restored, it is as left — 2026-11-15
 
 User: *"it stopped at the list of parents because it has nothing in the action section. When I told you there must be

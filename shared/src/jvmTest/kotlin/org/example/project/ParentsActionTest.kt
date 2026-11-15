@@ -179,6 +179,11 @@ class ParentsActionTest {
         }
         try {
             frames(6)
+            // Anomaly 2026-11-15: *""root" is selected in the search section …, and "Task: root" is selected in the action
+            // section"* — a section shows no row selected until the user selects one in it: the window's own starting
+            // row is shown only once the bar lets go of the keyboard — and here it holds it.
+            val shownSelected = nodes().count { it.config.getOrNull(SemanticsProperties.Selected) == true }
+            assertEquals(0, shownSelected, "no row shows as selected: ${texts()}")
             if (listFirst) {
                 // The list opened once while it is empty, then left.
                 click(find("list of parents"))
