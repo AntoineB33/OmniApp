@@ -624,10 +624,24 @@ object BreakMachine {
                 bars = stretchBars(bars, r.startMillis, x).toMutableMap()
             }
         }
-        val kept = stillOwed(state.copy(bars = bars), chains, byLabel)
+        // A break that happened inside a no-screen period took that period's occurrence of its label, as [enter] records
+        // it for the line's own (anomaly 2026-11-15, `ManualLookAwayTest`, red whenever the test's instant fell in the
+        // machine's local night): a machine started from history ([SchedulerDomain.breakMachineAt] with no carried one)
+        // knew the bar a conducted look-away set inside the Sleep window, but not that the window's one 20 s break was
+        // taken — so the pull ("starts at max(now line, t_s)") brought the next one onto the line a second after it, where
+        // the machine the line carries says the window's end. Only ever the LATER period: a key the line set stays.
+        var taken = state.taken
+        fun tookIn(label: String, start: Long) {
+            val key = periodAt(state, start, chains)?.startMillis ?: return
+            val held = taken[label]
+            if (held == null || held < key) taken = taken + (label to key)
+        }
+        for (b in banked) if (b.endMillis <= x && b.endMillis > b.startMillis && b.label in byLabel) tookIn(b.label, b.startMillis)
+        if (LABEL_20S in byLabel) for (d in dynamic) if (d.endMillis <= x && d.endMillis > d.startMillis) tookIn(LABEL_20S, d.startMillis)
+        val kept = stillOwed(state.copy(bars = bars, taken = taken), chains, byLabel)
         // What is left of it is dragged only if the mode drags it; otherwise its labels simply fall due at the line.
         val drag = kept?.takeIf { drags(it.label, state, Policy.HOLD) }
-        return state.copy(bars = bars, drag = drag)
+        return state.copy(bars = bars, drag = drag, taken = taken)
     }
 
     /**

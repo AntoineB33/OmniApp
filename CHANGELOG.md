@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Screen breaks: a machine started from history let a second look-away follow a conducted one inside a night — 2026-11-15
+
+`ManualLookAwayTest` was red on this machine (it was noted "intermittent" on 2026-10-07). Its instant is fixed at
+1970-01-06 00:00 UTC, which in the machine's zone (Paris, 01:00) lies in the default Sleep window, a "no screen" period.
+`BreakMachine.absorbHistory` — how a machine with nothing carried (`SchedulerDomain.breakMachineAt`) starts — raised the
+20 s bar after the conducted look-away but did not record that it took the period's one 20 s break (`State.taken`), so
+the pull ("starts at max(now line, t_s)") put the next look-away one second after it; the machine the line carries,
+which recorded it in `enter`, said the window's end. Now a banked or conducted break that ended behind the line takes
+its period's occurrence there too, never replacing a later period's key. `ManualLookAwayZonesTest` runs the scenario
+in both zones. Same kind as the 2026-10-02 anomaly (two 15-min breaks back to back). No migration. Deploy: client apps.
+
 ### Pop-ups: right-click reopens, four sides for a field's pop-up, follow the app, keep off the picture-in-picture; search bars; indented rows — 2026-11-15
 
 User rules the same day. **A right-click outside an open right-click menu that leaves it open opens it afresh** at the
