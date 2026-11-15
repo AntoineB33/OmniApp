@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
@@ -2374,14 +2375,45 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // led to one and the same window, which the last press re-pointed — the first Search window lost its own).
         // The button brings back the window of [kind] that is on [searchId]; when none is, it opens one — the
         // original where it is not open (keeping what its bar and types were left on), else a copy.
-        fun openConfigurationsOf(kind: FloatingWindow, searchId: String) {
+        // Returns the frame id of the window opened or brought back.
+        fun openConfigurationsOf(kind: FloatingWindow, searchId: String): String {
             val open = listOfNotNull(kind.name.takeIf { isWindowOpen(kind) }) + windowCopies.filter { lateralWindowOf(it) == kind }
             open.firstOrNull { configTargetOf(it) == searchId }?.let { existing ->
                 presentWindow(kind, existing)
-                return
+                return existing
             }
             val own = if (isWindowOpen(kind)) SearchDomain.ConfigurationSearch() else configSearchOf(kind.name)
-            openNewWindow(kind, own.copy(target = searchId).encode())
+            return openNewWindow(kind, own.copy(target = searchId).encode())
+        }
+        // User rule 2026-11-15: **a ▾ configurations pop-up dragged by its head, or asked by one of its head's window
+        // buttons, becomes its Search window's configurations window** ([org.example.project.ui.PopupDetacher]): opened
+        // or brought back where the pop-up stood, at its size, then filled, reduced, maximized or duplicated as asked.
+        val detachPopup = rememberUpdatedState { searchId: String, bounds: Rect, how: org.example.project.ui.DetachedAs ->
+            val id = openConfigurationsOf(FloatingWindow.ConfigSearch, searchId)
+            val size = Size(
+                bounds.width.coerceAtLeast(org.example.project.ui.MIN_WINDOW_WIDTH_PX),
+                bounds.height.coerceAtLeast(org.example.project.ui.MIN_WINDOW_HEIGHT_PX),
+            )
+            windowFrames.placeAt(id, bounds.topLeft, size) { frame ->
+                when (how) {
+                    org.example.project.ui.DetachedAs.FillWidth -> frame.setFillWidth(true)
+                    org.example.project.ui.DetachedAs.FillHeight -> frame.setFillHeight(true)
+                    org.example.project.ui.DetachedAs.Reduced -> frame.minimize()
+                    org.example.project.ui.DetachedAs.Maximized -> frame.toggleMaximize()
+                    org.example.project.ui.DetachedAs.Moved, org.example.project.ui.DetachedAs.Duplicated -> Unit
+                }
+            }
+            windowFrames.area?.let { area ->
+                val offset = org.example.project.ui.frameOffsetAt(bounds.topLeft, size, area)
+                updatePlacementById(id) { it.copy(x = offset.x, y = offset.y, width = size.width, height = size.height, visible = true) }
+            }
+            if (how == org.example.project.ui.DetachedAs.Duplicated) duplicateWindow(FloatingWindow.ConfigSearch, id)
+        }
+        val popupDetacher = remember {
+            org.example.project.ui.PopupDetacher(
+                canDetach = { lateralWindowOf(it) == FloatingWindow.Search },
+                detach = { searchId, bounds, how -> detachPopup.value(searchId, bounds, how) },
+            )
         }
         // The calendar's "add…" ([add]) or "edit…" at [atMillis]: the Search window a previous one opened, moved to
         // this right-click with the matching filter on and the other off — its added elements and the rest of its
@@ -4220,6 +4252,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             org.example.project.ui.LocalCellEditPopupHost provides cellEditPopups,
             org.example.project.ui.LocalFieldSearchPopupHost provides fieldSearchPopups,
             LocalWindowFrameHost provides windowFrames,
+            org.example.project.ui.LocalPopupDetacher provides popupDetacher,
             LocalHeadObstacle provides menuToggleBounds,
             LocalWindowChromeMemory provides windowChromeMemory,
             LocalMenuButtonHost provides menuButtonHost,

@@ -38,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.runtime.Stable
@@ -494,6 +495,33 @@ class WindowFrameHost {
 
     /** The half asked for [id] before its frame was made, handed over once. */
     internal fun takePendingHalf(id: String): WindowHalf? = pendingHalves.remove(id)
+
+    /**
+     * The content area the windows stand in, in the app window's pixels, as the last window laid out saw it — what a
+     * pop-up becoming a window is placed against ([frameOffsetAt], [PopupDetacher]). Plain, read on demand.
+     */
+    var area: androidx.compose.ui.geometry.Rect? = null
+        internal set
+
+    /** A layout asked for [id] before its frame was made ([placeAt]), handed over once. */
+    private val pendingLayouts = HashMap<String, (WindowFrameState) -> Unit>()
+
+    /**
+     * The window [id] put at [topLeft] (the app window's pixels) at [size], then [then] done to it — at once if it is up,
+     * else as its frame is made. A pop-up becoming a window ([PopupDetacher]): it opens where the pop-up stood.
+     */
+    fun placeAt(id: String, topLeft: androidx.compose.ui.geometry.Offset, size: androidx.compose.ui.geometry.Size, then: (WindowFrameState) -> Unit = {}) {
+        val apply = { frame: WindowFrameState ->
+            val within = area
+            val offset = if (within != null) frameOffsetAt(topLeft, size, within) else frame.offset
+            frame.applyLayout(offset, size, WindowFill.None, minimized = false)
+            then(frame)
+        }
+        val frame = entries.firstOrNull { it.id == id }?.state
+        if (frame != null) apply(frame) else pendingLayouts[id] = apply
+    }
+
+    internal fun takePendingLayout(id: String): ((WindowFrameState) -> Unit)? = pendingLayouts.remove(id)
 
     class Registration(
         val id: String,
@@ -1147,6 +1175,8 @@ fun rememberWindowFrameState(
         WindowFrameState(fullId, offset, size, initialChrome = memory?.saved(fullId) ?: defaultChrome)
             // A half the app asked for before this frame existed ([WindowFrameHost.holdHalf]).
             .also { frame -> host?.takePendingHalf(fullId)?.let(frame::holdHalf) }
+            // Where a pop-up that became this window stood ([WindowFrameHost.placeAt]).
+            .also { frame -> host?.takePendingLayout(fullId)?.invoke(frame) }
     }
 }
 
@@ -1577,6 +1607,7 @@ fun AppWindowFrame(
             // Measure the window and the content area around it, so a window can never be left with its
             // head — and its five buttons — off the top or the bottom of the app.
             .onGloballyPositioned { coordinates ->
+                coordinates.parentLayoutCoordinates?.let { host?.area = it.boundsInWindow() }
                 // A window the app holds in a half of the content area is fitted to the area as it is NOW — it grows
                 // with the maximize at launch, the window bar coming and going — and the place it is fitted to is kept
                 // as its geometry. Its height was just set, so this pass's measure is stale: the clamp waits for the next.

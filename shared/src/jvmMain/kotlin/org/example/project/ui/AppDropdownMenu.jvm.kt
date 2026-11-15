@@ -238,6 +238,46 @@ private class MenuSession(
     fun contains(window: AwtWindow?): Boolean = ours(window)
 
     /**
+     * User rule 2026-11-15: a pop-up dragged by its head ([PopupWindowControl]) follows the pointer and is no longer
+     * placed by its anchor — neither as its content changes size nor as the app moves.
+     */
+    private var heldByHand = false
+    private var dragFrom: Point? = null
+    private var dragPointerFrom: Point? = null
+
+    val control = object : PopupWindowControl {
+        override fun startDrag() {
+            val window = dialog ?: return
+            heldByHand = true
+            dragFrom = window.location
+            dragPointerFrom = java.awt.MouseInfo.getPointerInfo()?.location
+        }
+
+        override fun drag() {
+            val window = dialog ?: return
+            val from = dragFrom ?: return
+            val pointerFrom = dragPointerFrom ?: return
+            val pointer = java.awt.MouseInfo.getPointerInfo()?.location ?: return
+            // Read off the screen: the content the drag is said in moves with the window.
+            window.location = Point(from.x + pointer.x - pointerFrom.x, from.y + pointer.y - pointerFrom.y)
+        }
+
+        override fun boundsInApp(): Rect? {
+            val window = dialog ?: return null
+            return runCatching {
+                val app = generateSequence(owner) { it.owner }.last()
+                val origin = ((app as? RootPaneContainer)?.contentPane ?: app).locationOnScreen
+                val at = window.locationOnScreen
+                val scale = app.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
+                Rect(
+                    ((at.x - origin.x) * scale).toFloat(), ((at.y - origin.y) * scale).toFloat(),
+                    ((at.x - origin.x + window.width) * scale).toFloat(), ((at.y - origin.y + window.height) * scale).toFloat(),
+                )
+            }.getOrNull()
+        }
+    }
+
+    /**
      * User rule 2026-11-15: *"as the app gets resized"* and *"as the user moves the app"* — the window the menu hangs
      * from moving or changing size places it again, afresh: its anchor went with it. (A resize lays the anchor out
      * again too, which reports it; a move alone does not, the anchor being said in the window.)
@@ -249,7 +289,7 @@ private class MenuSession(
 
 
     private fun placeAfresh() {
-        if (closed || dialog == null) return
+        if (closed || dialog == null || heldByHand) return
         place()
     }
     private var anchor: Rect? = null
@@ -399,7 +439,11 @@ private class MenuSession(
                 }
             }
             // Inside, a menu opened is this window's, and opens by the default sides unless its call site says otherwise.
-            androidx.compose.runtime.CompositionLocalProvider(LocalMenuWindow provides window, LocalMenuSides provides MenuSide.DEFAULT) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalMenuWindow provides window,
+                LocalMenuSides provides MenuSide.DEFAULT,
+                LocalPopupWindowControl provides control,
+            ) {
                 MenuSurface(owner, modifier.value, content.value, ::fit)
             }
         }
@@ -439,6 +483,8 @@ private class MenuSession(
     private fun place(keeping: Point? = null) {
         val window = dialog ?: return
         if (size == null) return
+        // Dragged by its head: where the hand left it ([control]).
+        if (heldByHand && window.isShowing) return
         val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping)
         if (window.location != at) window.location = at
     }

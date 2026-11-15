@@ -457,6 +457,18 @@ means.
     `RightPresses.count`): the same row's again, another row sharing the one menu, a row of the pop-up it hangs from — a
     new session, at the new pointer. It stood where the first right-click had put it. A right-click inside the menu or a
     menu opened from it is the menu's own.
+  - **A ▾ pop-up dragged by its head becomes its Search window's configurations window** (user rule 2026-11-15: *"I
+    click on show the header for a pop-up window, but it doesn't show the usual header with the buttons to save,
+    duplicate, resize… When the user does this, they can drag it somewhere. When a pop-up window gets the position of
+    the side that is stuck to the caller change, it gets shown in the [window bar] and all its children windows
+    disappear."*; `PopupDetach.kt`, `SearchPopupHead`). Its head, shown, wears the window buttons — duplicate, fill the
+    width, fill the height, reduce, maximize, close. A drag of the head closes its child pop-ups, carries its own
+    window (`PopupWindowControl`, the desktop's `MenuSession.control`: read off the screen, never re-placed by its
+    anchor again) and, let go, closes it for the Search configurations window of the Search window its tree is of —
+    opened or brought back there, at its size (`WindowFrameHost.placeAt`), so in the window bar. Each other window
+    button does the same, then fills, reduces, maximizes or duplicates that window. Only the outermost tree of a Search
+    window of the app and its category pop-ups (`PopupDetacher.canDetach`): a tree in a pop-up's bar is a configuration
+    of another search, and a menu drawn in the app's window (no `PopupWindowControl`) keeps the title-and-✕ head.
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
 - **A right-click on a window's HEAD opens its menu, at the pointer** (user rule 2026-10-15: *"The user can modify
   the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove from

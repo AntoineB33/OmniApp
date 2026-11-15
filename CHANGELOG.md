@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A ▾ pop-up dragged by its head becomes a window — 2026-11-15
+
+User rule (anomaly 5): a pop-up's shown header wears a window's buttons (duplicate, fill width/height, reduce,
+maximize, close) and drags it. The drag closes its child pop-ups and moves its own OS window; let go, it becomes its
+Search window's configurations window where it stood, at its size, listed in the window bar. The other buttons do the
+same, then act on that window. Outermost trees of the app's Search windows only (`PopupDetacher`,
+`PopupWindowControl`, `WindowFrameHost.placeAt`). No migration. Deploy: client apps.
+
 ### Pop-up spots re-ordered; a category's click pins; a type's filter keeps its type alone; selection per window; selected-only rows greyed — 2026-11-15
 
 User anomalies 1–4 and two rules. **Pop-up placement**: *"right side to the top, then bottom side to the right, then top

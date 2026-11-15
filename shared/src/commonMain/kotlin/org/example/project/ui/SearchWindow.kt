@@ -66,6 +66,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isCtrlPressed as isPointerCtrlPressed
@@ -2247,22 +2248,60 @@ internal fun SearchPartsMenu(
 /**
  * User rule 2026-11-11: **the head of a Search window that is no window of its own** — the cell's Edit Mode picker, the
  * configurations pop-up — once its background menu shows it ([SearchPart.Header]): the window's title and its ✕, on the
- * windows' head colour. A pop-up has nothing to move, reduce or keep, so the frame's other buttons are not there.
+ * windows' head colour.
+ *
+ * User rule 2026-11-15 (*"it doesn't show the usual header with the buttons to save, duplicate, resize… When the user
+ * does this, they can drag it somewhere"*): a pop-up that can become a window ([window], [PopupDetacher]) wears the
+ * buttons of a window's head — duplicate, fill the width, fill the height, reduce, maximize — and its head drags it.
+ * Each of them makes it the window it is the pop-up form of, then does to that window what it says; the drag carries
+ * the pop-up, its child pop-ups closing as it starts, and makes it the window where it is let go.
  */
 @Composable
-internal fun SearchPopupHead(title: String, onClose: () -> Unit) {
+internal fun SearchPopupHead(title: String, onClose: () -> Unit, window: PopupWindowHead? = null) {
+    val control = LocalPopupWindowControl.current.takeIf { window != null }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant)
+            .then(
+                if (window == null || control == null) Modifier
+                else Modifier.pointerInput(window, control) {
+                    detectDragGestures(
+                        onDragStart = {
+                            window.onDragStart()
+                            control.startDrag()
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            control.drag()
+                        },
+                        onDragEnd = { window.detach(DetachedAs.Moved) },
+                        onDragCancel = { window.detach(DetachedAs.Moved) },
+                    )
+                },
+            )
             .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        if (window != null && control != null) {
+            WindowHeadButton("⧉", "Duplicate") { window.detach(DetachedAs.Duplicated) }
+            WindowHeadButton("↔", "Fill the width") { window.detach(DetachedAs.FillWidth) }
+            WindowHeadButton("↕", "Fill the height") { window.detach(DetachedAs.FillHeight) }
+            WindowHeadButton("—", "Reduce") { window.detach(DetachedAs.Reduced) }
+            WindowHeadButton("▢", "Maximize") { window.detach(DetachedAs.Maximized) }
+        }
         // The ✕ of a window's head, the one drawing of it ([WindowHeadButton]).
         WindowHeadButton("✕", "Close", onClose)
     }
 }
+
+/**
+ * What a pop-up's head does as a window's ([SearchPopupHead]): [onDragStart] closes the pop-ups it opened, [detach]
+ * makes it a window ([PopupDetacher]) and closes it.
+ */
+internal class PopupWindowHead(val onDragStart: () -> Unit, val detach: (DetachedAs) -> Unit)
 
 /**
  * User rule 2026-11-11: **what the Search window's background menu takes off the window and puts back** — the
