@@ -433,8 +433,11 @@ means.
     its anchor is said in that window, so a move alone reported nothing and the menu stayed behind.
   - **A menu keeps off Firefox's picture-in-picture** (user rule 2026-11-15: *"I'd like the pop-up windows to avoid hiding
     the pip as the user moves the app or the pip"*; `PictureInPictureWindows`, `menuSpot`'s `avoid`). Windows only: a
-    visible, always-on-top window of `firefox.exe` of a video's size. On a side, a spot that covers it slides along the
-    side past it; a side with no clear spot is passed over; where no side is clear, the anchor comes first. It is asked
+    visible, always-on-top window of `firefox.exe` of a video's size. **It chooses among the four spots and never adds
+    one** (anomaly 2026-11-15: *"I said the pop-up must have only four position choices (right, left, bottom, top).
+    Right now, I hover over a down arrow, and the pop-up appears far away to avoid the pip"* — a spot covering it was
+    slid along its side past it): a side whose spot covers the video is passed over; where every side's does, the
+    anchor comes first. It is asked
     as a menu is placed, and its moves are HEARD (a WinEvent hook on Firefox's process, on a thread of its own, only while
     a menu is open and a video stands) — never polled. A menu that the video moves onto is placed again (`keepsSpot`).
   - **A right-click outside an open right-click menu that leaves it open opens it AFRESH** (user rule 2026-11-15:

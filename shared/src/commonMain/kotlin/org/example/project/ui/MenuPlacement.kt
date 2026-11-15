@@ -17,9 +17,11 @@ import androidx.compose.ui.unit.IntSize
  * moved left), which never puts it over the anchor.
  *
  * User rule 2026-11-15: *"I'd like the pop-up windows to avoid hiding the pip"* — [avoid] are other applications'
- * windows the menu keeps off (Firefox's picture-in-picture). On a side, a spot that covers one of them is moved along
- * the side past it, the nearest way; a side where no spot is clear of them is passed over. Where no side has a clear
- * spot, they are not asked about any more: the anchor comes before them.
+ * windows the menu keeps off (Firefox's picture-in-picture). **They choose among the four spots, never add one**
+ * (anomaly the same day: *"I said the pop-up must have only four position choices (right, left, bottom, top). Right
+ * now, I hover over a down arrow, and the pop-up appears far away to avoid the pip"* — a spot covering the video was
+ * slid along its side past it). A side whose spot covers one of them is passed over; where every side's does, they are
+ * not asked about any more: the anchor comes before them.
  *
  * Where no side has room for the whole menu, it goes on the side with the most room for its size (user rule
  * 2026-11-15: *"depending on the available space, then on its size"*), pushed back onto the screen.
@@ -33,17 +35,10 @@ internal fun menuSpot(
 ): IntOffset {
     fun slideX(x: Int) = x.coerceIn(area.left, maxOf(area.left, area.right - size.width))
     fun slideY(y: Int) = y.coerceIn(area.top, maxOf(area.top, area.bottom - size.height))
-    fun clear(x: Int, y: Int): Boolean {
-        val at = IntRect(x, y, x + size.width, y + size.height)
+    fun clear(spot: IntOffset): Boolean {
+        val at = IntRect(spot.x, spot.y, spot.x + size.width, spot.y + size.height)
         return avoid.none { it.overlaps(at) }
     }
-    // Along a side, the spots tried: where it would stand, then past each window to avoid, nearest first.
-    fun alongX(x: Int, y: Int): IntOffset? =
-        (listOf(x) + avoid.flatMap { listOf(slideX(it.right), slideX(it.left - size.width)) })
-            .distinct().sortedBy { kotlin.math.abs(it - x) }.firstOrNull { clear(it, y) }?.let { IntOffset(it, y) }
-    fun alongY(x: Int, y: Int): IntOffset? =
-        (listOf(y) + avoid.flatMap { listOf(slideY(it.bottom), slideY(it.top - size.height)) })
-            .distinct().sortedBy { kotlin.math.abs(it - y) }.firstOrNull { clear(x, it) }?.let { IntOffset(x, it) }
     fun on(side: MenuSide, avoiding: Boolean): IntOffset? {
         val spot = when (side) {
             MenuSide.Below -> if (anchor.bottom + size.height <= area.bottom) IntOffset(slideX(anchor.left), maxOf(anchor.bottom, area.top)) else null
@@ -51,11 +46,7 @@ internal fun menuSpot(
             MenuSide.Right -> if (anchor.right + size.width <= area.right) IntOffset(maxOf(anchor.right, area.left), slideY(anchor.top)) else null
             MenuSide.Left -> if (anchor.left - size.width >= area.left) IntOffset(minOf(anchor.left - size.width, area.right - size.width), slideY(anchor.top)) else null
         } ?: return null
-        if (!avoiding || avoid.isEmpty()) return spot
-        return when (side) {
-            MenuSide.Below, MenuSide.Above -> alongX(spot.x, spot.y)
-            MenuSide.Right, MenuSide.Left -> alongY(spot.x, spot.y)
-        }
+        return spot.takeIf { !avoiding || clear(it) }
     }
     if (avoid.isNotEmpty()) for (side in sides) on(side, avoiding = true)?.let { return it }
     for (side in sides) on(side, avoiding = false)?.let { return it }

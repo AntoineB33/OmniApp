@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pop-ups: the picture-in-picture chooses among the four spots, never adds one — 2026-11-15
+
+Anomaly: *"I said the pop-up must have only four position choices (right, left, bottom, top). Right now, I hover over a
+down arrow, and the pop-up appears far away to avoid the pip"*. `menuSpot` slid a spot covering the video along its
+side past it. Now a side whose spot covers it is passed over, and where every side's does, the video is not asked about.
+`MenuPlacementTest`. No migration. Deploy: client apps.
+
 ### Screen breaks: a machine started from history let a second look-away follow a conducted one inside a night — 2026-11-15
 
 `ManualLookAwayTest` was red on this machine (it was noted "intermittent" on 2026-10-07). Its instant is fixed at
