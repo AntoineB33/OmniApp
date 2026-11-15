@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The ▾ configurations pop-up is the Search window itself — 2026-11-15
+
+User: *"Yes, rebuild it"*. `SearchPopupParts` (a look-alike: its own head, bar and parts menu, its right sections
+placeholders) and `TreePopupBar` are gone. Every pop-up of the configurations tree is `SearchWindow` drawn in no
+frame with the tree as its list (`SearchTreeList`, `TreeSearchWindow`), through `App`'s embedded Search window
+(`EmbeddedSearchRequest` now carries the tree, the parts, the opened configuration and the ✕). A configuration or a
+category right-clicked, "add", is an added element of the pop-up, its actions real. The pop-up's height follows its
+tree. No migration. Deploy: client apps.
+
 ### A pop-up's head is the window's head; the window it becomes shows its bar — 2026-11-15
 
 User: *"the header is not the same as the header of the default search window. Fix it and search in the whole app

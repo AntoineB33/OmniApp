@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -208,15 +210,20 @@ internal fun ConfigurationTreeArrow(
         ) {
         AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
         val control = LocalPopupWindowControl.current
-        SearchPopupParts(
-            SearchDomain.windowTitle(own), TREE_ROOT_POPUP_WIDTH, parts, { parts = it }, onClose = { close() },
+        TreeSearchWindow(
+            own, { own = it }, parts, { parts = it }, onClose = { close() },
             // Its children: the categories it shows.
             window = windowHead(onDragStart = { path = emptyList() }, closeSelf = { close() }, control = control),
-        ) {
-            if (!parts.barRemoved) TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, depth)
-            ConfigurationTreeColumns(state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth, relevant = relevant) { which ->
-            close()
-            onPickOnCalendar(which)
+            width = TREE_ROOT_POPUP_WIDTH,
+            state = state, nowMillis = nowMillis, windows = windows, claudeLogs = claudeLogs, onPickOnCalendar = onPickOnCalendar,
+            arrowDepth = depth + 1,
+        ) { onFit ->
+            ConfigurationTreeColumns(
+                state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth,
+                relevant = relevant, onFit = onFit,
+            ) { which ->
+                close()
+                onPickOnCalendar(which)
             }
         }
     }
@@ -224,41 +231,8 @@ internal fun ConfigurationTreeArrow(
     }
 }
 
-/**
- * The bar of a pop-up of the tree: its search field, the search text of [own] — the configuration of the search the
- * pop-up is — and the arrow that opens the tree of [own] itself, one level down (user rule 2026-11-11: *"this is the
- * search configuration of the search configuration of the default search window"*), bounded at [MAX_TREE_DEPTH].
- */
-@Composable
-private fun TreePopupBar(
-    own: SearchDomain.Config,
-    onOwnChange: (SearchDomain.Config) -> Unit,
-    state: SchedulerState,
-    nowMillis: () -> Long,
-    windows: List<SearchDomain.WindowEntry>,
-    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
-    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
-    depth: Int,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
-    ) {
-        // Anomaly 2026-11-14 (*"the search bar looks different than the search bar of the default search window"*):
-        // it was Material's own field, imported here by name. The one bar of the app, named as the window's is.
-        SearchBar(own.query, { onOwnChange(own.copy(query = it)) }, "Search", modifier = Modifier.weight(1f))
-        if (depth < MAX_TREE_DEPTH) {
-            ConfigurationTreeArrow(
-                state, own, SearchDomain.CONFIGURATION_SEARCH, onOwnChange, nowMillis, windows, claudeLogs,
-                onPickOnCalendar, depth + 1,
-            )
-        }
-    }
-}
-
 /** How deep the arrows go: each opens the configuration of the pop-up it stands in, which has its own arrow. */
-private const val MAX_TREE_DEPTH = 3
+internal const val MAX_TREE_DEPTH = 3
 
 /**
  * The tree from its root: one pop-up per level. A category hovered shows its children in a pop-up of their own, hung from
@@ -281,6 +255,8 @@ private fun ConfigurationTreeColumns(
     /** The arrow level of this tree ([TreePopupBar]): what its pop-ups' own arrows count from. */
     level: Int,
     relevant: List<SearchDomain.Setting> = emptyList(),
+    /** Its pop-up fitted to it ([TreeColumn]'s). */
+    onFit: ((Int) -> Unit)? = null,
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
 ) {
     // The pop-ups are windows of their own: what they write reaches the Search window and comes back a frame or more
@@ -313,7 +289,7 @@ private fun ConfigurationTreeColumns(
     HighlightsSearch("") {
         TreeColumn(
             tree, 0, path, onPathChange, leaf,
-            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar, level,
+            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar, level, onFit,
         )
     }
 }
@@ -380,15 +356,31 @@ private fun TreeColumn(
     windows: List<SearchDomain.WindowEntry>,
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
-    /** The arrow level of the tree this column is of ([TreePopupBar]). */
+    /** The arrow level of the tree this column is of (its pop-up's ▾ stands one level down). */
     level: Int,
+    /**
+     * Told how many px the pop-up holding the column ([TreeSearchWindow]) should grow (or, negative, shrink) to hold it
+     * whole: the column is that pop-up's list, which takes the height the pop-up is given. Null: a column of its own height.
+     */
+    onFit: ((Int) -> Unit)? = null,
 ) {
+    val scroll = rememberScrollState()
     Column(
         Modifier
             .reportsHover(LocalMenuHover.current)
             .width(treeColumnWidth(nodes))
-            .heightIn(max = TREE_COLUMN_MAX_HEIGHT)
-            .verticalScrollWithBar(rememberScrollState())
+            .then(
+                if (onFit == null) Modifier.heightIn(max = TREE_COLUMN_MAX_HEIGHT)
+                else Modifier.layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints)
+                    if (constraints.hasBoundedHeight) {
+                        val delta = if (placeable.height < constraints.maxHeight) placeable.height - constraints.maxHeight else scroll.maxValue
+                        if (delta != 0) onFit(delta)
+                    }
+                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                },
+            )
+            .verticalScrollWithBar(scroll)
             // The scrollbar stands in a room of its own at the right, as beside the Search window's list.
             .padding(start = TREE_COLUMN_PADDING, end = TREE_COLUMN_PADDING + SCROLLBAR_ROOM),
     ) {
@@ -448,7 +440,7 @@ private fun TreeColumn(
                     // A category's pop-up is a ▾ window too: its owner's id and the category.
                     val owner = LocalArrowOwner.current
                     val branchId = owner?.let { it + "/" + node.id }
-                    Box {
+                    AddableTreeRow(SearchDomain.CONFIGURATION_NODE_PREFIX + node.id) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -498,8 +490,8 @@ private fun TreeColumn(
                                     }
                                     val closeThis = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) }
                                     val ownControl = LocalPopupWindowControl.current
-                                    SearchPopupParts(
-                                        SearchDomain.windowTitle(own), treePopupWidth(node.children), parts, { parts = it },
+                                    TreeSearchWindow(
+                                        own, { own = it }, parts, { parts = it },
                                         onClose = closeThis,
                                         // Its children: the categories below it; it stands where its own control says.
                                         window = treeWindowHead?.invoke(
@@ -507,11 +499,15 @@ private fun TreeColumn(
                                             closeThis,
                                             ownControl,
                                         ),
-                                    ) {
-                                        if (!parts.barRemoved) TreePopupBar(own, { own = it }, state, nowMillis, windows, claudeLogs, onPickOnCalendar, level)
+                                        width = treePopupWidth(node.children),
+                                        state = state, nowMillis = nowMillis, windows = windows, claudeLogs = claudeLogs,
+                                        onPickOnCalendar = onPickOnCalendar,
+                                        arrowDepth = level + 1,
+                                    ) { onFit ->
                                         TreeColumn(
                                             children, depth + 1, path, onPathChange, leaf,
                                             state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar, level,
+                                            onFit,
                                         )
                                     }
                                 }
@@ -522,7 +518,9 @@ private fun TreeColumn(
                 is SearchDomain.ConfigurationLeaf -> {
                     // An end node closes what a category hovered in this column opened — a hover like the rows'.
                     val around = LocalMenuHover.current
-                    Box(Modifier.onHoverEnter { if (path.size > depth && MenuHoverTracker.hoverActs(around)) onPathChange(path.take(depth)) }) { leaf(node) }
+                    Box(Modifier.onHoverEnter { if (path.size > depth && MenuHoverTracker.hoverActs(around)) onPathChange(path.take(depth)) }) {
+                        AddableTreeRow(node.setting.name) { leaf(node) }
+                    }
                 }
             }
         }
@@ -561,70 +559,120 @@ private val TREE_ROOT_POPUP_WIDTH = TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDIN
 private val TREE_COLUMN_MAX_HEIGHT = 480.dp
 
 /**
- * User rule 2026-11-11: **a pop-up of the configurations tree as the Search window it is** — the root's and every
- * category's alike (one drawing, so the two cannot differ again): [parts] says what its background menu
- * ([SearchPartsMenu]) shows — its head ([SearchPopupHead], [onClose] its ✕), its search section ([search]: the bar and
- * the column), and its two right sections, empty since the tree adds nothing. Its own layer: a press in it closes the
+ * User rule 2026-11-11: **a pop-up of the configurations tree IS a Search window** — since 2026-11-15 (*"Yes, rebuild
+ * it"*) the very [SearchWindow], drawn in no frame, its list the tree ([SearchTreeList]): its head, its bar and ▾ (the
+ * configurations of its own search [own], one level down: [arrowDepth]), its background menu, its actions and its added
+ * elements are a Search window's, the root's pop-up and every category's alike. Until then it drew a look-alike of its
+ * own, whose right sections were placeholders. Drawn through `App`'s embedded Search window where there is one
+ * ([LocalEmbeddedSearch]: its actions get the app's handlers), else with none. Its height is the tree's ([TreeColumn]'s
+ * `onFit`), as far as [TREE_POPUP_MAX_HEIGHT]; its right sections shown, it widens for them. A right-click on a
+ * configuration or a category adds it to its added elements ([AddableTreeRow]). Its own layer: a press in it closes the
  * menus itself ([dismissesMenusOnPress]).
  */
 @Composable
-private fun SearchPopupParts(
-    title: String,
-    width: androidx.compose.ui.unit.Dp,
+private fun TreeSearchWindow(
+    own: SearchDomain.Config,
+    onOwnChange: (SearchDomain.Config) -> Unit,
     parts: SearchSplits,
     onPartsChange: (SearchSplits) -> Unit,
     onClose: () -> Unit,
     /** What its head does as a window's ([SearchPopupHead]); null: a pop-up that becomes no window. */
-    window: PopupWindowHead? = null,
-    search: @Composable () -> Unit,
+    window: PopupWindowHead?,
+    width: androidx.compose.ui.unit.Dp,
+    state: SchedulerState,
+    nowMillis: () -> Long,
+    windows: List<SearchDomain.WindowEntry>,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
+    arrowDepth: Int,
+    tree: @Composable (onFit: (Int) -> Unit) -> Unit,
 ) {
-    var menu by remember { mutableStateOf(false) }
-    Column(
-        Modifier
-            .width(width)
-            .dismissesMenusOnPress()
-            // A right-click nothing in it answered: the Search window's background menu.
-            .then(org.example.project.scheduler.ui.contextMenuModifier(enabled = true, key = "configuration-background") { menu = true }),
-    ) {
-        SearchPartsMenu(menu, { menu = false }, parts) { part -> onPartsChange(part.toggled(parts)) }
-        if (!parts.headerRemoved) SearchPopupHead(title, onClose, window)
-        Column(
-            modifier = Modifier.padding(TREE_POPUP_PADDING),
-            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
-        ) {
-            if (!parts.searchRemoved) search()
-            if (!parts.actionsRemoved) {
-                EmptySearchSection("Actions on the added elements", parts.actionsHidden) { onPartsChange(parts.copy(actionsHidden = !parts.actionsHidden)) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val rightShown = !(parts.actionsRemoved && parts.addedRemoved)
+    var heightPx by remember { mutableStateOf(with(density) { TREE_POPUP_FIRST_HEIGHT.toPx() }) }
+    val leastPx = with(density) { (if (rightShown) TREE_POPUP_RIGHT_MIN_HEIGHT else TREE_POPUP_MIN_HEIGHT).toPx() }
+    val mostPx = with(density) { TREE_POPUP_MAX_HEIGHT.toPx() }
+    val fit = { delta: Int ->
+        val next = (heightPx + delta).coerceIn(leastPx, mostPx)
+        if (next != heightPx) heightPx = next
+    }
+    val latestFit by androidx.compose.runtime.rememberUpdatedState(fit)
+    val treeList = remember(arrowDepth) {
+        SearchTreeList(arrowDepth) { add ->
+            androidx.compose.runtime.CompositionLocalProvider(LocalTreeAdd provides { key -> add(listOf(key)) }) {
+                tree { latestFit(it) }
             }
-            if (!parts.addedRemoved) {
-                EmptySearchSection("Added elements", parts.addedHidden) { onPartsChange(parts.copy(addedHidden = !parts.addedHidden)) }
-            }
+        }
+    }
+    val shownHeight = with(density) { heightPx.coerceAtLeast(leastPx).toDp() }
+    val modifier = Modifier
+        .width(if (rightShown) width + TREE_POPUP_RIGHT_WIDTH else width)
+        .height(shownHeight)
+        .dismissesMenusOnPress()
+    val drawn = LocalEmbeddedSearch.current
+    androidx.compose.runtime.CompositionLocalProvider(LocalSearchPopupWindow provides window) {
+        if (drawn != null) {
+            drawn(
+                EmbeddedSearchRequest(
+                    config = own, onConfigChange = onOwnChange, onDrop = null,
+                    treeList = treeList, splits = parts, onSplitsChange = onPartsChange,
+                    openedConfig = SearchDomain.CONFIGURATION_SEARCH, onDismiss = onClose,
+                ),
+                modifier,
+            )
+        } else {
+            SearchWindow(
+                state = state, openers = OPTION_OPENERS, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
+                actionHandlers = OPTION_HANDLERS, onIntent = {}, windows = windows, nowMillis = nowMillis,
+                onPickOnCalendar = onPickOnCalendar, claudeLogs = claudeLogs, onDismiss = onClose,
+                config = own, onConfigChange = onOwnChange, openedConfig = SearchDomain.CONFIGURATION_SEARCH,
+                onOpenConfigurations = {}, splits = parts, onSplitsChange = onPartsChange, embedded = true,
+                treeList = treeList, modifier = modifier,
+            )
         }
     }
 }
 
-/** A right section of a Search window with nothing added ([ConfigurationTreeArrow]'s pop-up): its title, its arrow, and what it waits for. */
+/** What adds a configuration of the tree, by its [SearchDomain.Kind.SearchConfiguration] id, to its pop-up's added elements. */
+private val LocalTreeAdd = androidx.compose.runtime.compositionLocalOf<((String) -> Unit)?> { null }
+
+/**
+ * A row of the tree that a right-click offers to "add" — the configuration (or the category) [id], a
+ * [SearchDomain.Kind.SearchConfiguration] row, into its pop-up's added elements, whose actions are about it.
+ */
 @Composable
-private fun EmptySearchSection(title: String, collapsed: Boolean, onToggle: () -> Unit) {
-    Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionArrow(collapsed, onToggle)
-            Text(
-                title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.togglesSection(onToggle),
-            )
-        }
-        if (!collapsed) {
-            Text(
-                "No element added.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+private fun AddableTreeRow(id: String, content: @Composable () -> Unit) {
+    val add = LocalTreeAdd.current
+    if (add == null) {
+        Box { content() }
+        return
+    }
+    var menu by remember { mutableStateOf(false) }
+    Box(Modifier.then(org.example.project.scheduler.ui.contextMenuModifier(enabled = true, key = "tree-row:$id") { menu = true })) {
+        content()
+        ActionMenu(
+            "TreeRowMenu",
+            open = menu,
+            onDismiss = { menu = false },
+            actions = listOf(
+                MenuAction("add") {
+                    menu = false
+                    add(SearchDomain.keyOf(SearchDomain.ItemResult(SearchDomain.Kind.SearchConfiguration, id, "", "")))
+                },
+            ),
+            atPointer = true,
+        )
     }
 }
+
+/** The height a tree pop-up first opens at, before it is fitted to its tree ([TreeSearchWindow]). */
+private val TREE_POPUP_FIRST_HEIGHT = 360.dp
+private val TREE_POPUP_MIN_HEIGHT = 120.dp
+private val TREE_POPUP_MAX_HEIGHT = TREE_COLUMN_MAX_HEIGHT + 140.dp
+
+/** Its right sections shown: what it widens by, and the least height they need. */
+private val TREE_POPUP_RIGHT_WIDTH = 440.dp
+private val TREE_POPUP_RIGHT_MIN_HEIGHT = 420.dp
 
 /**
  * Anomaly 2026-11-11: **the positions ([PopupPositions]) of every pop-up of a configurations tree**, kept by the

@@ -1585,10 +1585,13 @@ suggestions before it was ever entered.
   layout kept before lists three and hides nothing).
   `SearchPartsMenuTest`. **Every Search window has that menu** (user rule 2026-11-11: *"They both supposed to be Search
   windows"*): the cell's Edit Mode picker (opening with its header and two right sections hidden), and the configurations
-  pop-up of the "▾" (`ConfigurationTreeArrow`: header and right sections hidden as it opens; its header is
-  `SearchPopupHead`, its search section the bar and the tree, its two right sections empty since the tree adds nothing).
-  Every pop-up of the tree, the root's and each category's, is drawn by ONE `SearchPopupParts` (anomaly 2026-11-11: the
-  category's had no menu). Each is a layer of its own, which the root's press observer never sees: its content
+  pop-up of the "▾" (`ConfigurationTreeArrow`: header and right sections hidden as it opens). **Every pop-up of the tree,
+  the root's and each category's, IS the `SearchWindow`** (user rule 2026-11-15, *"Yes, rebuild it"*; `TreeSearchWindow`,
+  `SearchTreeList`): drawn in no frame, its list the tree, its head, bar, ▾, background menu, actions and added elements
+  a Search window's own — drawn through `App`'s embedded Search window where there is one, so its actions have the app's
+  handlers. A configuration or a category right-clicked, "add", is an added element of it (`AddableTreeRow`, a
+  `SearchConfiguration` row). Its height is its tree's (`TreeColumn`'s `onFit`); its right sections shown, it widens.
+  Until that day it was `SearchPopupParts`, a look-alike whose right sections were placeholders — never draw one again. Each is a layer of its own, which the root's press observer never sees: its content
   reports a press itself (`dismissesMenusOnPress` → `TransientMenuHost.onPressInPopup`), closing the menus and no edit —
   anomaly 2026-11-11, a click on its background left the background menu open.
   The actions section has no "All

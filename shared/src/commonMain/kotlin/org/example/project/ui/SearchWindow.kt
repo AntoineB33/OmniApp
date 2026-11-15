@@ -520,6 +520,12 @@ fun SearchWindow(
      * by the menu's own code, the bar keeping those it finds; laid out at the menu's width, never at a section's least.
      */
     menuList: MenuSearchRows? = null,
+    /**
+     * User rule 2026-11-15 (*"Yes, rebuild it"*: the ▾ configurations pop-up a real Search window): **the configurations
+     * tree in place of the result list** ([SearchTreeList]) — the window's head, bar, background menu, actions and added
+     * elements its own, as any Search window's.
+     */
+    treeList: SearchTreeList? = null,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -628,7 +634,10 @@ fun SearchWindow(
             if (searchesTasks && addedList == null) SearchDomain.allPathsInAnyTree(state) else emptyMap()
         }
     val listed: List<SearchDomain.Result> =
-        if (menuList != null) {
+        if (treeList != null) {
+            // The tree draws what it finds itself ([SearchTreeList]): no row of a list to select.
+            emptyList()
+        } else if (menuList != null) {
             // The left-side menu's items, as its bar keeps them ([MenuSearchRows]): rows of this list like any other.
             remember(menuList.rows) { menuList.rows.map { SearchDomain.ItemResult(SearchDomain.Kind.Option, it.key, it.title, "") } }
         } else if (options?.integers != null) {
@@ -1266,11 +1275,16 @@ fun SearchWindow(
                 // User rule 2026-11-04: the header is the bar alone, and at its right the arrow that opens the tree of
                 // every configuration (the types, Reset, the filters, the sorting — what the header's buttons were).
                 // A window drawn inside another has no id of its own: its ▾ window keeps its own state ([ArrowSearches]).
-                androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides LocalArrowOwner.current.takeIf { !embedded }) {
-                    ConfigurationTreeArrow(
-                        state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
-                        relevant = relevantSettings,
-                    )
+                // A ▾ pop-up's arrow opens the configurations of the pop-up's own search, one level down, named after it
+                // ([SearchTreeList.arrowDepth]), as far as [MAX_TREE_DEPTH].
+                if (treeList == null || treeList.arrowDepth <= MAX_TREE_DEPTH) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides LocalArrowOwner.current.takeIf { !embedded || treeList != null }) {
+                        ConfigurationTreeArrow(
+                            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
+                            depth = treeList?.arrowDepth ?: 0,
+                            relevant = relevantSettings,
+                        )
+                    }
                 }
             }
             val completionOptions =
@@ -1287,7 +1301,10 @@ fun SearchWindow(
                     .then(if (menuList != null) Modifier else Modifier.keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH, listCut))
                     .onGloballyPositioned { resultListTop = it.positionInWindow().y },
             ) {
-                if (count == 0) {
+                if (treeList != null) {
+                    // A configuration of it right-clicked, "add": into this window's added elements.
+                    treeList.content { keys -> addKeys(keys) }
+                } else if (count == 0) {
                     Text(
                         text =
                             when {
@@ -2189,6 +2206,25 @@ class EmbeddedSearchRequest(
     val picker: SearchPicker? = null,
     /** Its bar is a field outside it ([PopupSearchField]). */
     val barOutside: Boolean = false,
+    /** The configurations tree in place of its list (a ▾ pop-up, [SearchTreeList]). */
+    val treeList: SearchTreeList? = null,
+    /** What it shows of itself, and where that is told; null: [EMBEDDED_SEARCH_SPLITS], kept by the window itself. */
+    val splits: SearchSplits? = null,
+    val onSplitsChange: (SearchSplits) -> Unit = {},
+    /** What its configurations' Reset goes back to. */
+    val openedConfig: SearchDomain.Config? = null,
+    /** Its head's ✕. */
+    val onDismiss: () -> Unit = {},
+)
+
+/**
+ * User rule 2026-11-15: **the configurations tree drawn as a Search window's list** ([SearchWindow]'s `treeList`): the ▾
+ * pop-ups. [content] draws it, given what adds configurations to the window's added elements (a row's right-click
+ * "add"); [arrowDepth] is the level of the ▾ in the window's bar — the configurations of this pop-up's own search.
+ */
+class SearchTreeList(
+    val arrowDepth: Int,
+    val content: @Composable (add: (List<String>) -> Unit) -> Unit,
 )
 
 /**
