@@ -18,7 +18,7 @@ end — its height was fitted to what the scroll said, which moved with the pop-
 rows' own height against the room given (`TreeColumn`), and never fitted straight back to the height it left
 (`TreeSearchWindow`). The "List of parents" still showed an element added in an earlier opening (the release DB held
 `added=["Task/task/root"]` under that field's id): a field's window starts each opening with no added element, the
-rest of its configuration kept (`PopupSearchField`). The `[popup]` trace stays until the user confirms. No migration.
+rest of its configuration kept (`PopupSearchField`). The `[popup]` trace was removed once the user confirmed. No migration.
 Deploy: client apps.
 
 ### Menus survive another application; the list of parents' added elements are its parents; notif window's added list hidden — 2026-11-15
@@ -28,8 +28,7 @@ there on coming back without a press in the app (`MenuSession.pinnedAway`). **3*
 group's row (the same for every set of elements) showed as added what was added among other elements' parents; it shows
 only parents of its elements (`SearchDomain.parentsListShown`). The unfocused notifications window opens with its added
 elements hidden. A ▾ pop-up's drag reads the pointer on the screen (`PopupWindowControl.pointerMoved`): its own window
-steps off screen, and the move read in it jumped by as much. **TEMPORARY**: a `[popup]` trace in `diagnostics.log`
-(`popupTrace`) for the blinking category pop-up, to remove once understood. No migration. Deploy: client apps.
+steps off screen, and the move read in it jumped by as much. A `[popup]` trace in `diagnostics.log` (`popupTrace`) found the blinking; removed since. No migration. Deploy: client apps.
 
 ### A dragged pop-up is a window at once; no jump; no blinking pop-ups — 2026-11-15
 

@@ -77,11 +77,3 @@ internal fun frameOffsetAt(topLeft: Offset, size: Size, area: Rect): Offset =
         topLeft.x - area.left - (area.width - size.width) / 2f,
         topLeft.y - area.top - (area.height - size.height) / 2f,
     )
-
-/**
- * TEMPORARY (anomaly 2026-11-15, *"hovering over 'task' shows a window that blinks continuously"*): the pop-ups' events in
- * `diagnostics.log` — a category opened or closed and why, a menu window shown, moved, dismissed and by what. Desktop
- * pop-ups are OS windows whose focus order no headless test reproduces (`popup-walk-trace-diagnosis`). Remove once the
- * blinking is understood.
- */
-internal fun popupTrace(message: String) = org.example.project.scheduler.platform.Diagnostics.log("[popup] $message")

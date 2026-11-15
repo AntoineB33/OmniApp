@@ -424,7 +424,6 @@ private fun TreeColumn(
                     // a hover pop-up of its own: it goes once the pointer has left its row, it and its descendants
                     // ([MenuHoverTracker], the grace being the crossing from the row to it), a branch of the tree's.
                     val branch = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
-                        popupTrace("category ${node.id}: closed, the pointer left it")
                         if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
                     }
                     // User rule 2026-11-11: the keyboard coming to it is a position of the app. Kept by the outermost
@@ -467,7 +466,6 @@ private fun TreeColumn(
                     }
                     val reveal = {
                         if (!revealing) {
-                            popupTrace("category ${node.id}: opened by a hover")
                             onPathChange(path.take(depth) + node.id)
                         }
                     }
@@ -511,7 +509,6 @@ private fun TreeColumn(
                                 AppDropdownMenu(
                                     expanded = true,
                                     onDismissRequest = {
-                                        popupTrace("category ${node.id}: closed, its window dismissed")
                                         if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
                                     },
                                     // The whole pop-up is the branch, its search field and padding included, wherever the
@@ -641,7 +638,6 @@ private fun TreeSearchWindow(
     val fit = { delta: Int ->
         val next = (heightPx + delta).coerceIn(leastPx, mostPx)
         if (next != heightPx && kotlin.math.abs(next - beforeLastFit) > 0.5f) {
-            popupTrace("tree pop-up fitted ${heightPx.toInt()} -> ${next.toInt()}")
             beforeLastFit = heightPx
             heightPx = next
         }
