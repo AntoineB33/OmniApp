@@ -247,8 +247,6 @@ private class MenuSession(
         override fun componentResized(event: java.awt.event.ComponentEvent) = placeAfresh()
     }
 
-    /** Stops hearing the picture-in-picture move ([PictureInPictureWindows.onMoved]). */
-    private var stopPip: (() -> Unit)? = null
 
     private fun placeAfresh() {
         if (closed || dialog == null) return
@@ -391,8 +389,8 @@ private class MenuSession(
         // for a menu that holds the keyboard, as the menu losing it.
         owner.addWindowListener(ownerListener)
         owner.addComponentListener(ownerMoves)
-        // The picture-in-picture moving onto the menu, or off the side it had to avoid, places it again.
-        stopPip = PictureInPictureWindows.onMoved { placeAfresh() }
+        // Not another application's window moving over it: user rule 2026-11-15, *"If the user drags something over the
+        // app, it doesn't adjust in live"* — it is placed as it opens ([WindowsAboveApp]).
         window.addWindowFocusListener(focusListener)
         if (focusable) {
             KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("activeWindow", activeListener)
@@ -428,7 +426,7 @@ private class MenuSession(
 
     /**
      * User rule 2026-11-15: how tall the menu is shown where it is, when that is LESS than its own height — made shorter
-     * to keep off a picture-in-picture ([menuPlace]); null at its own height. Its content scrolls inside it.
+     * to keep off a window above the app ([menuPlace], [WindowsAboveApp]); null at its own height. Its content scrolls inside it.
      */
     private val limit = androidx.compose.runtime.mutableStateOf<Int?>(null)
 
@@ -452,8 +450,6 @@ private class MenuSession(
         dialog = null
         owner.removeWindowListener(ownerListener)
         owner.removeComponentListener(ownerMoves)
-        stopPip?.invoke()
-        stopPip = null
         window.removeWindowFocusListener(focusListener)
         KeyboardFocusManager.getCurrentKeyboardFocusManager().removePropertyChangeListener("activeWindow", activeListener)
         KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(keyDispatcher)
@@ -710,15 +706,16 @@ private fun menuPlacement(
     val area = workAreaAt(ScreenPoint(on.left, on.top)) ?: workAreaAt(ScreenPoint(origin.x, origin.y))
         ?: return (keeping ?: Point(on.left, on.bottom)) to size.height
     val screen = IntRect(area.x, area.y, area.x + area.width, area.y + area.height)
-    // User rule 2026-11-15: the other applications' windows it keeps off — Firefox's picture-in-picture.
-    val avoid = PictureInPictureWindows.bounds().map { IntRect(it.x, it.y, it.x + it.width, it.y + it.height) }
+    // User rule 2026-11-15: the other applications' windows it keeps off — every one above the app ([WindowsAboveApp]),
+    // Firefox's picture-in-picture among them.
+    val avoid = WindowsAboveApp.bounds(owner).map { IntRect(it.x, it.y, it.x + it.width, it.y + it.height) }
     if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, screen, avoid)) {
         return keeping to size.height
     }
     val placed = menuPlace(on, IntSize(size.width, size.height), screen, sides, avoid)
     // What a video did to a menu, for `diagnostics.log` (user anomaly 2026-11-15: the pop-up hid the video — was it seen?).
     if (avoid.isNotEmpty()) {
-        val line = "[pip] video $avoid; menu ${size.width}x${size.height} by $on, sides $sides -> " +
+        val line = "[above] windows $avoid; menu ${size.width}x${size.height} by $on, sides $sides -> " +
             "${placed.offset} height ${placed.height}"
         if (line != lastPipTrace) {
             lastPipTrace = line

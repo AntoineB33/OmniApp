@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every window and menu keeps clear of the windows over the app, as it opens — 2026-11-15
+
+User rule: *"I want every window to adjust, and not just to the pip but to anything above the app, when a window in the
+app opens, it must adjust its position and size. If the user drags something over the app, it doesn't adjust in live,
+only when the window in the app opens or stops being minimized in the system tray of the app."* `WindowsAboveApp`
+(Windows) replaces `PictureInPictureWindows`: every shown window stacked above the app's, not the app's own, not cloaked
+or click-through, not the taskbar or desktop. Menus avoid them by their four spots and their height, as they did the
+video; the WinEvent hook is gone (no live adjustment). A window of the app opened by the user or brought back from the
+reduce bar moves, and shrinks if it must, clear of them (`WindowFrameState.avoidCovering`, `fitClear`), once; the
+place found is kept as its geometry. `WindowAvoidanceTest`. No migration. Deploy: client apps.
+
 ### Pop-ups: one scrollbar in a pop-up made shorter for the picture-in-picture — 2026-11-15
 
 Anomaly: *"there are two vertical scrollbars when the height is adjusted to not hide the pip"*. The menu window's own

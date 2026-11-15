@@ -97,6 +97,8 @@ fun main() {
                 LocalAppKeyFallback provides keyFallback,
                 // The window its menus hang from: never the active window, which may be a menu just hidden.
                 org.example.project.ui.LocalAppWindow provides awtWindow,
+                // User rule 2026-11-15: what stands over the app, which a window of it keeps clear of as it opens.
+                org.example.project.ui.LocalCoveringWindows provides { org.example.project.ui.coveringWindowsOf(awtWindow) },
                 org.example.project.ui.LocalInputActivity provides org.example.project.scheduler.platform.InputActivityRecorder,
                 // A text field's own right-click menu is a window of its own, as every menu of the app is on the
                 // desktop (`AppDropdownMenu.jvm.kt`): over another application's always-on-top window.

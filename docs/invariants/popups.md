@@ -431,9 +431,11 @@ means.
     whole, it takes the side with the most room for its size**, pushed onto the screen — no longer below over its anchor.
   - **The window a menu hangs from moving or changing size places it again, afresh** (same rule, `MenuSession.ownerMoves`):
     its anchor is said in that window, so a move alone reported nothing and the menu stayed behind.
-  - **A menu keeps off Firefox's picture-in-picture** (user rule 2026-11-15: *"I'd like the pop-up windows to avoid hiding
-    the pip as the user moves the app or the pip"*; `PictureInPictureWindows`, `menuSpot`'s `avoid`). Windows only: a
-    visible, always-on-top window of `firefox.exe` of a video's size. **It chooses among the four spots and never adds
+  - **A menu keeps off every other application's window standing over the app** (user rules 2026-11-15: first Firefox's
+    picture-in-picture, then *"not just to the pip but to anything above the app … If the user drags something over the
+    app, it doesn't adjust in live"*; `WindowsAboveApp`, `menuPlace`'s `avoid`). Windows only: the shown top-level
+    windows Windows stacks above the app's, not its own, not cloaked, not click-through, not the taskbar or desktop. It
+    is asked as the menu is placed — never watched: a window dragged over an open menu moves nothing. **It chooses among the four spots and never adds
     one** (anomaly 2026-11-15: *"I said the pop-up must have only four position choices (right, left, bottom, top).
     Right now, I hover over a down arrow, and the pop-up appears far away to avoid the pip"* — a spot covering it was
     slid along its side past it): a side whose spot covers the video is passed over. **Where every side's does, the
@@ -874,6 +876,17 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   reduce bar, to the top, into the focus) — **the reduce bar's chip included**, which raised without
   focusing and so brought a keyboard-claiming window back with the tree still holding the keyboard. Opening raises it through `register`, but re-asking for the same
   subject changes no state of the caller's, so without it the window stays under whatever the user moved to.
+
+- **A window the user opens, or brings back from the reduce bar, is placed clear of what stands over the app** (user rule
+  2026-11-15: *"I want every window to adjust, and not just to the pip but to anything above the app, when a window in the
+  app opens, it must adjust its position and size. If the user drags something over the app, it doesn't adjust in live,
+  only when the window in the app opens or stops being minimized in the system tray of the app."*;
+  `WindowFrameState.avoidCovering`, `fitClear`, `LocalCoveringWindows` — Windows: `WindowsAboveApp`). Asked once, at the
+  frame's first layout after the open or the restore (`coverCheckPending`): a clear window stays; else the nearest place
+  at its size inside the content area; else the largest clear room, the window made to fit it, never under its minimum
+  size; else it stays. A window with a filled axis is the content area's and is left alone, and so is one a launch puts
+  back (`claimOnOpen` off) or the app opens at the back. The place found is kept as its geometry. Nothing watches the
+  other windows: one dragged over a window of the app moves nothing.
 
 ## What is drawn OVER what
 
