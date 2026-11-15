@@ -482,6 +482,22 @@ means.
     Not a picker's ("Add a parent"): its rows pick for its field. The window it becomes opens whole, **its search bar
     shown** even where the pop-up's bar was its field (user rule 2026-11-15). **Where the search bar is what opened the pop-up** (a
     field's pop-up, a cell's picker), its background menu has no "Hide the search bar" (user rule 2026-11-15).
+  - **A Search window drawn as a pop-up wears a window's surface, its head at the top edge** (anomaly 2026-11-15: *"only
+    a colored band inside the window with a margin"*; `WindowSurface`, `LocalPopupChrome`): ONE surface for a window
+    frame and every Search pop-up — a field's, a cell's Edit Mode (its rename / switch task inside, under the head),
+    the ▾ tree's, a drop-down's list. Each host had drawn a padded surface of its own, and the head stood inside it. A
+    host gives `PopupChrome` and draws nothing around; a menu window holding one shows it bare (`LocalBareMenu`, the
+    desktop's `MenuSurface`: no menu surface, no padding).
+  - **A menu entry acts on the RELEASE, of either button** (anomaly 2026-11-15, 7: *"under Parents, click in 'add a
+    parent', right-click, select show the header, and the window disappears"*; `pickOnRelease`,
+    `MenuActsOnReleaseTest`): acting on the press, the menu window vanished under a held button and the rest of the
+    click reached what was under it — the "add a parent" pop-up's row, which picked and closed it. The 2026-10-15 fix
+    had taken the right button alone.
+  - **The keyboard settling as a menu opens never closes it** (anomaly 2026-11-15, 8: *"Sometimes, even when there is no
+    right-click menu open it needs a second right-click to open the menu"*; `MenuSession.settling`): for 600 ms after
+    it opens, the menu losing the keyboard or the active window to a window of the app, with no press since, leaves it
+    open (and a menu that holds the keyboard takes it back). Windows activating the app's window for the right press
+    could land after the menu took the keyboard.
   - **A field's pop-up carries the composition locals of where its field stands** (anomaly 2026-11-15: *"I select
     'show the actions' …, find the list of parents field, click it, but it doesn't open a window, even though it should
     use the same code as the first list of parents field"*; `FieldSearchPopupRequest.locals`), as a desktop menu does:

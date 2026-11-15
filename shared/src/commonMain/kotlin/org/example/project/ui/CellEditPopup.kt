@@ -232,7 +232,7 @@ internal fun CellEditPopupLayer(
 
     Layout(
         content = {
-            Surface(
+            androidx.compose.foundation.layout.Box(
                 modifier = Modifier
                     .outsidePressPart(request.region)
                     .raiseOnPress { cellWindow?.let { frames?.focus(it) } }
@@ -245,14 +245,10 @@ internal fun CellEditPopupLayer(
                             false
                         }
                     },
-                shape = RoundedCornerShape(8.dp),
-                // User rule 2026-11-04: it IS the Search window, so it is drawn on the windows' own background and
-                // border ([WindowFrame]'s): a tonal elevation tinted it, and it read as another thing.
-                color = MaterialTheme.colorScheme.surface,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                shadowElevation = 8.dp,
             ) {
-                Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                // It IS the Search window: it wears a window's surface itself ([LocalPopupChrome], [WindowSurface]), the
+                // rename / switch task above its search, inside it.
+                val top: @Composable () -> Unit = {
                     // A cell being created has one mode, and so no switch ([cellEditModeOptions]).
                     val modes = if (cellId == null) emptyList() else cellEditModeOptions(state, cellId, intent, request.refocusField)
                     if (modes.isNotEmpty()) {
@@ -271,15 +267,18 @@ internal fun CellEditPopupLayer(
                             )
                         }
                     }
-                    // A field's pop-up opened in it stands inside the cell's edit ([LocalEnclosingEdits]).
-                    androidx.compose.runtime.CompositionLocalProvider(LocalEnclosingEdits provides listOf(request.region)) {
-                        search(
-                            config,
-                            { next -> host.change(next, draft, onDraft) },
-                            picker,
-                            Modifier.fillMaxWidth().weight(1f),
-                        )
-                    }
+                }
+                // A field's pop-up opened in it stands inside the cell's edit ([LocalEnclosingEdits]).
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalEnclosingEdits provides listOf(request.region),
+                    LocalPopupChrome provides PopupChrome(top),
+                ) {
+                    search(
+                        config,
+                        { next -> host.change(next, draft, onDraft) },
+                        picker,
+                        Modifier.fillMaxSize(),
+                    )
                 }
             }
         },
@@ -524,7 +523,7 @@ private fun FieldSearchPopup(
     }
     Layout(
         content = {
-            Surface(
+            androidx.compose.foundation.layout.Box(
                 modifier = regions
                     .fold(Modifier as Modifier) { chain, region -> chain.outsidePressPart(region) }
                     .onGloballyPositioned { shownAt = it.boundsInWindow() }
@@ -536,19 +535,14 @@ private fun FieldSearchPopup(
                             false
                         }
                     },
-                shape = RoundedCornerShape(8.dp),
-                // It IS the Search window: the windows' own background and border, as the cell's rectangle.
-                color = MaterialTheme.colorScheme.surface,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                shadowElevation = 8.dp,
             ) {
-                Column(Modifier.fillMaxSize().padding(8.dp)) {
-                    androidx.compose.runtime.CompositionLocalProvider(
-                        LocalSearchPopupWindow provides head,
-                        LocalEnclosingEdits provides regions,
-                    ) {
-                        request.search(request.embedded, Modifier.fillMaxWidth().weight(1f))
-                    }
+                // It IS the Search window: it wears a window's surface itself ([LocalPopupChrome], [WindowSurface]).
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalSearchPopupWindow provides head,
+                    LocalEnclosingEdits provides regions,
+                    LocalPopupChrome provides PopupChrome(),
+                ) {
+                    request.search(request.embedded, Modifier.fillMaxSize())
                 }
             }
         },

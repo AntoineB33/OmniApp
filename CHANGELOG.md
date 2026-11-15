@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### One window surface for every Search pop-up; menus act on the release; a menu survives its first focus settling — 2026-11-15
+
+Anomalies 5 (again), 7 and 8. **5**: a Search window drawn as a pop-up wears the window frame's surface
+(`WindowSurface`, `LocalPopupChrome`), its head at the top edge; the field pop-ups, the cell's Edit Mode, the ▾ tree
+and the drop-down lists drew padded surfaces of their own, and a menu window holding one now shows it bare
+(`LocalBareMenu`). **7**: a menu entry acted on the press, so the rest of the click reached what lay under the vanished
+menu window — "add a parent"'s row picked and closed it; entries act on the release of either button (`pickOnRelease`,
+which had covered the right button since 2026-10-15). **8**: a menu losing the keyboard to a window of the app within
+600 ms of opening, with no press since, stays open (`MenuSession.settling`). No migration. Deploy: client apps.
+
 ### The ▾ configurations pop-up is the Search window itself — 2026-11-15
 
 User: *"Yes, rebuild it"*. `SearchPopupParts` (a look-alike: its own head, bar and parts menu, its right sections

@@ -306,9 +306,23 @@ private class MenuSession(
      */
     private fun pinnedAway(opposite: AwtWindow?): Boolean = opposite == null && hover?.pinned == true
 
+    /**
+     * Anomaly 2026-11-15 (8, *"Sometimes, even when there is no right-click menu open it needs a second right-click to open
+     * the menu"*): **the keyboard settling after the menu opened is no reason to close it.** The right press activates the
+     * app's window as Windows answers it, and that can land after the menu took the keyboard: the menu lost it to a window
+     * of the app with no press since, and closed — the right-click had done nothing. For [SETTLE_NANOS] after it opens,
+     * a change to a window of the app ([to] non-null) with no press since ([RightPresses.presses]) leaves it open; a press,
+     * another application, or the time gone, and it is the change it always was.
+     */
+    private var openedAt = 0L
+    private var pressesAtOpen = 0L
+
+    private fun settling(to: AwtWindow?): Boolean =
+        to != null && RightPresses.presses == pressesAtOpen && System.nanoTime() - openedAt < SETTLE_NANOS
+
     private val ownerListener = object : WindowAdapter() {
         override fun windowDeactivated(event: WindowEvent) {
-            if (!ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow)) dismiss.value()
+            if (!ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) dismiss.value()
         }
     }
     private var heldKeyboard = false
@@ -317,7 +331,9 @@ private class MenuSession(
             heldKeyboard = true
         }
         override fun windowLostFocus(event: WindowEvent) {
-            if (focusable && !ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow)) dismiss.value()
+            if (focusable && !ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
+                dismiss.value()
+            }
         }
     }
 
@@ -334,6 +350,11 @@ private class MenuSession(
             val active = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
             // Another application active: a pinned pop-up stays ([pinnedAway]).
             if (pinnedAway(active)) return@invokeLater
+            // The keyboard settling as it opens ([settling]): the menu takes it back.
+            if (!ours(active) && settling(active)) {
+                if (focusable) dialog?.let { window -> window.toFront(); window.requestFocus() }
+                return@invokeLater
+            }
             if (!ours(active)) {
                 // Back in the app by a press on another of its windows — which no loss of the keyboard told the pop-up,
                 // having lost it to the other application: it closes as a press elsewhere in the app closes it.
@@ -385,6 +406,8 @@ private class MenuSession(
     private fun open() {
         val window = MenuWindows.take(owner)
         dialog = window
+        openedAt = System.nanoTime()
+        pressesAtOpen = RightPresses.presses
         window.focusableWindowState = focusable
         size = MenuWindows.lastSize[site]
         window.size = size ?: Dimension(2, 2)
@@ -530,6 +553,15 @@ private fun MenuSurface(
     // Never taller than the screen it is on: past that the menu scrolls, as material's does.
     val tallest = remember(owner) { (workAreaAt(ScreenPoint(owner.x, owner.y))?.height ?: 2000).dp }
     // A menu opened inside a hover pop-up is one of its descendants ([LocalMenuHover]): the pointer over it holds the pop-up.
+    // A Search window's menu ([LocalBareMenu]) is shown bare: it wears a window's surface itself (anomaly 2026-11-15, 5).
+    if (LocalBareMenu.current) {
+        Box(Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true).onSizeChanged(onWanted)) {
+            androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides false) {
+                Column(modifier = modifier.heightIn(max = tallest), content = content)
+            }
+        }
+        return
+    }
     Box(Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true).onSizeChanged(onWanted)) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainer,
@@ -658,6 +690,10 @@ internal object RightPresses {
     /** Whether the last press of any button was the right one. */
     private var lastWasRight: Boolean = false
 
+    /** How many presses of any button the app has heard ([MenuSession.settling]). */
+    var presses: Long = 0L
+        private set
+
     /** When the last right press was heard ([System.nanoTime]). */
     private var lastRightAt: Long = 0L
 
@@ -671,6 +707,7 @@ internal object RightPresses {
         runCatching {
             java.awt.Toolkit.getDefaultToolkit().addAWTEventListener({ event ->
                 if (event is java.awt.event.MouseEvent && event.id == java.awt.event.MouseEvent.MOUSE_PRESSED) {
+                    presses++
                     lastWasRight = javax.swing.SwingUtilities.isRightMouseButton(event)
                     if (lastWasRight) {
                         val source = event.component
@@ -731,3 +768,6 @@ private fun menuPlacement(
     val spot = menuSpot(on, IntSize(size.width, size.height), screen, sides)
     return Point(spot.x, spot.y)
 }
+
+/** How long after a menu opens the keyboard settling is not taken for the user going elsewhere ([MenuSession]). */
+private const val SETTLE_NANOS = 600_000_000L

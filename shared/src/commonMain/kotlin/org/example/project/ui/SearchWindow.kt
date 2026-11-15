@@ -544,6 +544,8 @@ fun SearchWindow(
     val notAddedAbove = LocalNotAdded.current
     // Drawn as a pop-up that can become a window: its head is a window's ([SearchPopupHead]).
     val popupWindow = LocalSearchPopupWindow.current
+    // Drawn as a pop-up: it wears a window's surface itself ([WindowSurface]).
+    val popupChrome = LocalPopupChrome.current
     val listState = rememberLazyListState(splits?.scrolls?.getOrNull(0) ?: 0, splits?.scrolls?.getOrNull(1) ?: 0)
     // User rule 2026-11-15: narrowed until cut, the list scrolls sideways under Shift+wheel ([shiftWheelScrolls]).
     val listCut = remember { SideCut() }
@@ -1604,16 +1606,16 @@ fun SearchWindow(
                                         query = query,
                                         selected = rowSelected(index),
                                         inSelection = rowInSelection(index),
-                                        onSelect = {
-                                            if (option != null) {
+                                        onSelect = { clickRow(index, pressModifiers.ctrl, pressModifiers.shift, keepIfSelected = false) },
+                                        onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
+                                        // An option acts on the RELEASE of either button ([pickOnRelease]): its click picks it,
+                                        // its right-click picks it alone, the list closed.
+                                        onPrimaryRelease = option?.let {
+                                            {
                                                 select(index)
                                                 actOnOption(result.id)
-                                            } else {
-                                                clickRow(index, pressModifiers.ctrl, pressModifiers.shift, keepIfSelected = false)
                                             }
                                         },
-                                        onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
-                                        // An option's right-click: that one alone, the list closed — on the release.
                                         onSecondaryRelease = option?.takeIf { !selectAll }?.let { given -> { given.onSolo(result.id) } },
                                         onOpen = { openers.open(state, result) },
                                         // User rule 2026-10-01: a double-click ADDS the element (a task row's enters
@@ -1946,7 +1948,20 @@ fun SearchWindow(
     }
     // User rule 2026-11-04: with the bar's match case or whole word on, only what matches with them is highlighted.
     androidx.compose.runtime.CompositionLocalProvider(LocalSearchMatch provides filters.queryOptions) {
-    if (frame == null) {
+    if (frame == null && popupChrome != null) {
+        // A pop-up: the window's surface, its head at the top edge (anomaly 2026-11-15, 5). What is inside is not it.
+        androidx.compose.runtime.CompositionLocalProvider(LocalSearchPopupWindow provides null, LocalPopupChrome provides null) {
+            WindowSurface(
+                modifier = modifier,
+                head = if (headerRemoved) null else { { SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss, window = popupWindow) } },
+            ) {
+                Column(Modifier.fillMaxSize().padding(POPUP_CONTENT_PADDING), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    popupChrome.top?.invoke()
+                    windowContent()
+                }
+            }
+        }
+    } else if (frame == null) {
         Column(modifier) {
             // User rule 2026-11-11: shown by its background menu, the head of a Search window drawn in no frame.
             if (!headerRemoved) SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss, window = popupWindow)
@@ -2097,6 +2112,9 @@ internal val LocalNotAdded = androidx.compose.runtime.compositionLocalOf<Set<Str
 /** How faint a row listed only because it is selected is drawn ([LocalNotAdded]). */
 internal const val NOT_ADDED_ALPHA = 0.5f
 
+/** The room between a pop-up's window surface and its search ([LocalPopupChrome]). */
+internal val POPUP_CONTENT_PADDING = 8.dp
+
 /** How far each level of the actions section's rows stands in: an action under its group, a group inside another. */
 internal val ACTION_ROW_INDENT = 14.dp
 
@@ -2141,6 +2159,8 @@ internal fun OptionSearchMenu(
     offset: androidx.compose.ui.unit.DpOffset = androidx.compose.ui.unit.DpOffset(0.dp, 0.dp),
 ) {
     transientMenuDismissal(open, onDismiss)
+    // It is a Search window: its menu window shows it bare, and it wears a window's surface ([LocalPopupChrome]).
+    androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
     AppDropdownMenu(
         expanded = open,
         onDismissRequest = onDismiss,
@@ -2149,6 +2169,7 @@ internal fun OptionSearchMenu(
         offset = offset,
         atPointer = atPointer,
     ) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalPopupChrome provides PopupChrome()) {
         val opened = if (options.integers != null) SearchDomain.INTEGER_SEARCH else SearchDomain.OPTION_SEARCH
         // User rule 2026-11-13: a drop-down's list has an id — the window's it opens over, and its [name], which says
         // what list it is (written where it is called: a place in the code would change from one build to the next).
@@ -2190,6 +2211,8 @@ internal fun OptionSearchMenu(
             modifier = Modifier.width(width).height(height),
         )
         }
+        }
+    }
     }
 }
 
@@ -2775,24 +2798,35 @@ private fun Modifier.resultRowGestures(
 
 /**
  * Anomaly 2026-10-15 (*"I right-clicked on the element type drop-down menu in the Search window, and it opened a menu as
- * if I right-clicked on the element in the result list"*): **a drop-down option's right-click acts on the RELEASE**, the
- * whole click consumed here, before the row's own gestures see it. On the desktop the list is a window of its own: closed
- * on the press, it vanished under a button still held, and the rest of the click reached the row under it.
+ * if I right-clicked on the element in the result list"*): **a drop-down option acts on the RELEASE**, the whole click
+ * consumed here, before the row's own gestures see it. On the desktop the list is a window of its own: closed on the
+ * press, it vanished under a button still held, and the rest of the click reached the row under it.
+ *
+ * Anomaly 2026-11-15 (7, *"under Parents, click in 'add a parent', right-click, select show the header, and the window
+ * disappears"*): that day's fix took the RIGHT button alone, and a click on a menu entry still acted on the press — the
+ * rest of it reached the "add a parent" pop-up under the menu, whose row picked a parent and closed it. One rule for
+ * both buttons: [onPrimary] on a click's release, [onSecondary] on a right-click's.
  */
-private fun Modifier.pickOnSecondaryRelease(key: Any, onRelease: () -> Unit): Modifier =
+private fun Modifier.pickOnRelease(key: Any, onPrimary: (() -> Unit)?, onSecondary: (() -> Unit)?): Modifier =
     composed {
-        val latest by rememberUpdatedState(onRelease)
+        val primary by rememberUpdatedState(onPrimary)
+        val secondary by rememberUpdatedState(onSecondary)
         pointerInput(key) {
             awaitPointerEventScope {
                 while (true) {
                     val press = awaitPointerEvent(PointerEventPass.Initial)
-                    if (press.type != PointerEventType.Press || !press.buttons.isSecondaryPressed) continue
+                    if (press.type != PointerEventType.Press) continue
+                    val act = when {
+                        press.buttons.isSecondaryPressed -> secondary
+                        press.buttons.isPrimaryPressed -> primary
+                        else -> null
+                    } ?: continue
                     press.changes.forEach { it.consume() }
                     do {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         event.changes.forEach { it.consume() }
                     } while (event.changes.any { it.pressed })
-                    latest()
+                    act()
                 }
             }
         }
@@ -3420,6 +3454,8 @@ private fun ItemResultRow(
     menuActions: List<MenuAction>? = null,
     /** A drop-down's option: what its right-click does, on the RELEASE ([pickOnSecondaryRelease]). */
     onSecondaryRelease: (() -> Unit)? = null,
+    /** A drop-down option's click, taken on the release ([pickOnRelease]); null: the row's press selects it. */
+    onPrimaryRelease: (() -> Unit)? = null,
     /** False: greyed, a menu entry that can do nothing now. */
     enabled: Boolean = true,
     /** How many levels in the row stands: an action under its group in the actions section ([ACTION_ROW_INDENT]). */
@@ -3436,7 +3472,10 @@ private fun ItemResultRow(
         // the indent stands outside the row's background and selection outline, as a task cell's does.
         modifier = Modifier.padding(start = ACTION_ROW_INDENT * depth).then(resultRowModifier(selected, inSelection))
             .then(if (enabled) Modifier else Modifier.alpha(0.38f))
-            .then(onSecondaryRelease?.let { Modifier.pickOnSecondaryRelease(item.id, it) } ?: Modifier)
+            .then(
+                if (onPrimaryRelease == null && onSecondaryRelease == null) Modifier
+                else Modifier.pickOnRelease(item.id, onPrimaryRelease, onSecondaryRelease),
+            )
             .resultRowGestures(
                 key = item.kind.name + "/" + item.id,
                 onSelect = { currentOnSelect() },

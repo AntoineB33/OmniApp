@@ -1622,26 +1622,17 @@ fun AppWindowFrame(
                 )
             },
     ) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 10.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        // No head: none to keep reachable either ([WindowFrameState.clampVertical] skips a zero height).
+        if (!showHead) headHeight[0] = 0f
+        WindowSurface(
             modifier = Modifier
                 .fillMaxSize()
                 .onWindowFrameMeasured(state),
-        ) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .then(
-                        if (keyboardFocus != null) Modifier
-                        else Modifier.onFocusChanged { keyboardInside = it.hasFocus }.focusRequester(ownKeyboard).focusable(),
-                    ),
-            ) {
-                // No head: none to keep reachable either ([WindowFrameState.clampVertical] skips a zero height).
-                if (!showHead) headHeight[0] = 0f
-                if (showHead) WindowHead(
+            contentModifier =
+                if (keyboardFocus != null) Modifier
+                else Modifier.onFocusChanged { keyboardInside = it.hasFocus }.focusRequester(ownKeyboard).focusable(),
+            head = if (!showHead) null else { {
+                WindowHead(
                     // The user's name for the window, where it has one: a menu button's, or "Rename"'s.
                     title = host?.tabTitles?.get(state.id) ?: title,
                     ownTitle = title,
@@ -1660,13 +1651,13 @@ fun AppWindowFrame(
                     onHeadHeight = { headHeight[0] = it },
                     headTrailing = headTrailing,
                 )
-                if (showHead) Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                // What is drawn inside keeps the suffix (a window nested in a copy is that copy's) but not the
-                // copy's wiring or its button, which are this frame's alone.
-                CompositionLocalProvider(
-                    LocalWindowInstance provides instance?.let { WindowInstance(it.suffix, null, null) },
-                ) { content() }
-            }
+            } },
+        ) {
+            // What is drawn inside keeps the suffix (a window nested in a copy is that copy's) but not the
+            // copy's wiring or its button, which are this frame's alone.
+            CompositionLocalProvider(
+                LocalWindowInstance provides instance?.let { WindowInstance(it.suffix, null, null) },
+            ) { content() }
         }
 
         // The three resizable edges. A filled axis offers none: the window is pinned to the container on
@@ -1987,6 +1978,52 @@ private val NO_HEAD_ACTIONS = object : HeadActions {
     override fun minimize() = Unit
     override fun toggleMaximize() = Unit
 }
+
+/**
+ * **The surface of a window: its rounded body, its border and shadow, its head at its top edge and the line under it** —
+ * [AppWindowFrame]'s, and a Search window's drawn as a pop-up ([LocalPopupChrome]): anomaly 2026-11-15 (5, *"only a
+ * colored band inside the window with a margin"*) — each pop-up host drew a surface of its own, padded, and the head
+ * stood inside it. ONE drawing; never a surface of its own around a Search window again.
+ */
+@Composable
+internal fun WindowSurface(
+    modifier: Modifier,
+    /** On the column inside the surface (the frame's keyboard handling). */
+    contentModifier: Modifier = Modifier,
+    head: (@Composable () -> Unit)?,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 10.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = modifier,
+    ) {
+        Column(Modifier.fillMaxSize().then(contentModifier)) {
+            if (head != null) {
+                head()
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+            }
+            content()
+        }
+    }
+}
+
+/**
+ * **A Search window drawn as a pop-up wears a window's surface** ([WindowSurface]) — given by what hosts it (a field's
+ * pop-up, a cell's Edit Mode, the ▾ tree, a drop-down's list), which then draws none of its own; [top] is what that host
+ * shows inside it above the search (the cell's rename / switch task). Null: a Search window inside another's section.
+ */
+class PopupChrome(val top: (@Composable () -> Unit)? = null)
+
+val LocalPopupChrome = compositionLocalOf<PopupChrome?> { null }
+
+/**
+ * A menu whose content is a window of its own drawing ([LocalPopupChrome]): its menu window shows it bare — no menu
+ * surface, no menu padding (the desktop's `MenuSurface`). Provided around the [AppDropdownMenu] call.
+ */
+val LocalBareMenu = compositionLocalOf { false }
 
 /** One entry of a window head's right-click menu ([AppWindowFrame]'s `headMenu`, and the frame's own). */
 class HeadMenuEntry(val label: String, val enabled: Boolean = true, val onClick: () -> Unit)

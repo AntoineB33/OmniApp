@@ -69,6 +69,8 @@ class ParentsActionTest {
         listFirst: Boolean = false,
         thenAdd: Boolean = false,
         nested: Boolean = false,
+        /** The field of the nested "Parents" clicked: its list, or "add a parent" (anomaly 2026-11-15, 7). */
+        nestedField: String = "list of parents",
         header: Boolean = false,
         child: (SchedulerState) -> String,
     ) {
@@ -260,9 +262,19 @@ class ParentsActionTest {
                     }
                     frames(3)
                 }
-                click(find("list of parents"))
+                val fieldAt = nodes().last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == nestedField } == true }.boundsInWindow
+                val before = nodes().mapTo(HashSet()) { it.id }
+                click(fieldAt.center)
                 frames(6)
                 assertEquals(2, popups.requests.size, "a second window over the first: ${texts()}")
+                // Anomaly 2026-11-15 (7): its background menu, "Show the header" — the window stays, its head shown.
+                // The nested window: the largest thing that came on screen; its list's bare bottom.
+                val window = nodes().filter { it.id !in before }.map { it.boundsInWindow }.maxBy { it.width * it.height }
+                rightClick(Offset(window.left + 40f, window.bottom - 40f))
+                assertTrue(texts().any { it == "Show the header" }, "the nested window's background menu: ${texts()}")
+                click(find("Show the header"))
+                frames(6)
+                assertEquals(2, popups.requests.size, "the nested window stays with its head: ${texts()}")
             }
         } finally {
             onEdt { scene.close() }
@@ -286,6 +298,14 @@ class ParentsActionTest {
     @Test
     fun the_list_of_parents_inside_a_list_of_parents_opens_its_window() =
         checkParentListed(nested = true) { s -> SearchDomain.taskKey(s.tasks.values.first { it.title == "New task 1" }.id) }
+
+    /**
+     * Anomaly 2026-11-15 (7): *"under Parents, click in 'add a parent', right-click, select show the header, and the
+     * window disappears"*.
+     */
+    @Test
+    fun add_a_parent_inside_a_list_of_parents_shows_its_head_and_stays() =
+        checkParentListed(nested = true, nestedField = "add a parent") { s -> SearchDomain.taskKey(s.tasks.values.first { it.title == "New task 1" }.id) }
 
     @Test
     fun the_list_of_parents_shows_a_window_s_head_and_becomes_a_window() = checkParentListed(header = true) { "Chrono/a" }

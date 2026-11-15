@@ -208,6 +208,8 @@ internal fun ConfigurationTreeArrow(
             LocalArrowOwner provides arrowId,
             LocalTreeWindowHead provides if (detachOwner == null) null else ::windowHead,
         ) {
+        // A Search window: shown bare by its menu window, it wears a window's surface ([LocalBareMenu], [LocalPopupChrome]).
+        androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
         AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
         val control = LocalPopupWindowControl.current
         TreeSearchWindow(
@@ -226,6 +228,7 @@ internal fun ConfigurationTreeArrow(
                 onPickOnCalendar(which)
             }
         }
+    }
     }
         }
     }
@@ -470,6 +473,7 @@ private fun TreeColumn(
                                 LocalBarPath provides branchPath,
                                 LocalArrowOwner provides branchId,
                             ) {
+                                androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
                                 AppDropdownMenu(
                                     expanded = true,
                                     onDismissRequest = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) },
@@ -510,6 +514,7 @@ private fun TreeColumn(
                                             onFit,
                                         )
                                     }
+                                }
                                 }
                             }
                         }
@@ -610,7 +615,7 @@ private fun TreeSearchWindow(
         .height(shownHeight)
         .dismissesMenusOnPress()
     val drawn = LocalEmbeddedSearch.current
-    androidx.compose.runtime.CompositionLocalProvider(LocalSearchPopupWindow provides window) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalSearchPopupWindow provides window, LocalPopupChrome provides PopupChrome()) {
         if (drawn != null) {
             drawn(
                 EmbeddedSearchRequest(
