@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pop-ups: one scrollbar in a pop-up made shorter for the picture-in-picture — 2026-11-15
+
+Anomaly: *"there are two vertical scrollbars when the height is adjusted to not hide the pip"*. The menu window's own
+column scrolled the shortened pop-up while the ▾ tree's column kept its own bar. Now the part that scrolls on its own
+gives up the height lost (`shrinksInMenu`, `LocalMenuShortfall`): the ▾ tree's columns and every drop-down's list.
+`MenuShrinkTest`. No migration. Deploy: client apps.
+
 ### Pop-ups: left, below, above, right; made shorter rather than over the picture-in-picture — 2026-11-15
 
 Anomaly: *"I hovered over the down arrow, and the pop-up window hides the pip. It must find the best position (left

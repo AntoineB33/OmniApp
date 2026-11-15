@@ -491,6 +491,13 @@ private fun MenuSurface(
     val shownMax = limit.value?.dp?.let { minOf(it, tallest) } ?: tallest
     val scroll = rememberScrollState()
     val reported = remember { arrayOfNulls<IntSize>(1) }
+    // Its own height (pixels), measured while it is shown whole and kept while it is shown shorter: the shorter content
+    // measures shorter then, and said as its own it would never grow back once the video moves away.
+    val ownHeight = remember { intArrayOf(-1) }
+    val density = LocalDensity.current.density
+    // Anomaly 2026-11-15 (*"two vertical scrollbars when the height is adjusted to not hide the pip"*): what the window
+    // lost, handed to the part that scrolls on its own ([shrinksInMenu]), so this column has nothing left to scroll.
+    val shortfall = limit.value?.let { shown -> if (ownHeight[0] < 0) 0 else (ownHeight[0] - (shown * density).toInt()).coerceAtLeast(0) } ?: 0
     // A menu opened inside a hover pop-up is one of its descendants ([LocalMenuHover]): the pointer over it holds the pop-up.
     Box(
         Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true)
@@ -498,7 +505,8 @@ private fun MenuSurface(
             // video, it must still say how tall it is, or it would never grow back once the video moves away.
             .layout { measurable, constraints ->
                 val placeable = measurable.measure(constraints)
-                val own = IntSize(placeable.width, placeable.height + scroll.maxValue.coerceAtMost(Int.MAX_VALUE / 2))
+                if (limit.value == null || ownHeight[0] < 0) ownHeight[0] = placeable.height + scroll.maxValue.coerceAtMost(Int.MAX_VALUE / 2)
+                val own = IntSize(placeable.width, ownHeight[0])
                 if (reported[0] != own) {
                     reported[0] = own
                     onWanted(own)
@@ -513,10 +521,12 @@ private fun MenuSurface(
             modifier = Modifier.heightIn(max = shownMax),
         ) {
             // Material's own menu column: the caller's modifier, the menu's padding, as wide as its widest entry.
-            Column(
-                modifier = modifier.padding(vertical = 8.dp).width(IntrinsicSize.Max).verticalScrollWithBar(scroll),
-                content = content,
-            )
+            androidx.compose.runtime.CompositionLocalProvider(LocalMenuShortfall provides shortfall) {
+                Column(
+                    modifier = modifier.padding(vertical = 8.dp).width(IntrinsicSize.Max).verticalScrollWithBar(scroll),
+                    content = content,
+                )
+            }
         }
     }
 }

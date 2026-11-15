@@ -440,8 +440,11 @@ means.
     pop-up is made shorter** (anomaly the same day: *"the pop-up window hides the pip … If the position choice still
     hides the pip, the size is adjusted"*; `menuPlace`, `MenuPlace.height`): the first side, in order, where the
     window keeps its edge on the anchor's side and brings the other in to the video, at least `MIN_SHORTENED_HEIGHT`
-    tall; its content scrolls inside (`MenuSurface`'s limit), and it still reports its own height, so it grows back once
-    the video moves away. Only where even that fails is the video not asked about. Each placement a video changes is
+    tall, and it still reports its own height, so it grows back once the video moves away. **One scrollbar**
+    (anomaly the same day: *"there are two vertical scrollbars when the height is adjusted to not hide the pip"*): the
+    part of the menu that scrolls on its own gives up the height lost (`shrinksInMenu`, fed `LocalMenuShortfall` by
+    `MenuSurface`) — the ▾ tree's columns, a drop-down's list — so the window's own column has nothing to scroll. A new
+    part that scrolls inside a menu wears it too. Only where even that fails is the video not asked about. Each placement a video changes is
     traced in `diagnostics.log` (`[pip] video …`): what was seen, and where the menu went. It is asked
     as a menu is placed, and its moves are HEARD (a WinEvent hook on Firefox's process, on a thread of its own, only while
     a menu is open and a video stands) — never polled. A menu that the video moves onto is placed again (`keepsSpot`).
