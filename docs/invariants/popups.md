@@ -422,10 +422,10 @@ means.
     A tree's own pop-up comes back showing no category: each category it showed is a position of its own.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
     (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree.
-  - **A pop-up opened from a field or a button opens at its right, else its left, else below, else above**
+  - **A pop-up opened from a field or a button opens at its left, else below, else above, else at its right**
     (user rule 2026-11-15: *"A pop-up window opened from a field/button must adjust its position on four choices (right,
     left, bottom, top), depending on the available space, then on its size, when the pop-up appears but also as the app
-    gets resized"*; `MenuSide.POPUP`). Told by the press that opened it (`RightPresses.justPressed`, an AWT listener that
+    gets resized"*, and the order *"left then bottom then top then right"* the same day; `MenuSide.POPUP`). Told by the press that opened it (`RightPresses.justPressed`, an AWT listener that
     hears every press before any component): a right-click's menu keeps below, above, right, left; a click, a hover or a
     key opens a pop-up; a call site that names its own sides (`MenuSide.SUBMENU`) keeps them. **Where no side holds it
     whole, it takes the side with the most room for its size**, pushed onto the screen — no longer below over its anchor.
@@ -436,8 +436,13 @@ means.
     visible, always-on-top window of `firefox.exe` of a video's size. **It chooses among the four spots and never adds
     one** (anomaly 2026-11-15: *"I said the pop-up must have only four position choices (right, left, bottom, top).
     Right now, I hover over a down arrow, and the pop-up appears far away to avoid the pip"* — a spot covering it was
-    slid along its side past it): a side whose spot covers the video is passed over; where every side's does, the
-    anchor comes first. It is asked
+    slid along its side past it): a side whose spot covers the video is passed over. **Where every side's does, the
+    pop-up is made shorter** (anomaly the same day: *"the pop-up window hides the pip … If the position choice still
+    hides the pip, the size is adjusted"*; `menuPlace`, `MenuPlace.height`): the first side, in order, where the
+    window keeps its edge on the anchor's side and brings the other in to the video, at least `MIN_SHORTENED_HEIGHT`
+    tall; its content scrolls inside (`MenuSurface`'s limit), and it still reports its own height, so it grows back once
+    the video moves away. Only where even that fails is the video not asked about. Each placement a video changes is
+    traced in `diagnostics.log` (`[pip] video …`): what was seen, and where the menu went. It is asked
     as a menu is placed, and its moves are HEARD (a WinEvent hook on Firefox's process, on a thread of its own, only while
     a menu is open and a video stands) — never polled. A menu that the video moves onto is placed again (`keepsSpot`).
   - **A right-click outside an open right-click menu that leaves it open opens it AFRESH** (user rule 2026-11-15:

@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pop-ups: left, below, above, right; made shorter rather than over the picture-in-picture — 2026-11-15
+
+Anomaly: *"I hovered over the down arrow, and the pop-up window hides the pip. It must find the best position (left
+then bottom then top then right). If the position choice still hides the pip, the size is adjusted."* Where every one
+of the four spots covered the video, the video was ignored. Now `MenuSide.POPUP` is left, below, above, right, and
+`menuPlace` makes the pop-up shorter on the first side it can (its edge on the anchor's side kept, at least 160 tall),
+its content scrolling inside; it reports its own height still, so it grows back when the video moves. A
+`[pip] video …` line in `diagnostics.log` says what was seen and where the menu went. `MenuPlacementTest`. No
+migration. Deploy: client apps.
+
 ### Pop-ups: the picture-in-picture chooses among the four spots, never adds one — 2026-11-15
 
 Anomaly: *"I said the pop-up must have only four position choices (right, left, bottom, top). Right now, I hover over a
