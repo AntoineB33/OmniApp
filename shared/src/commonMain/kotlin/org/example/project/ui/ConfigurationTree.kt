@@ -175,7 +175,8 @@ internal fun ConfigurationTreeArrow(
                 control.startDrag()
                 dragging[0] = at?.let { detach.detach(owner, it, DetachedAs.Moved, name) }
             },
-            onDrag = { delta -> dragging[0]?.moveBy?.invoke(delta) },
+            // Read off the screen: the pop-up's own window stepped off it ([PopupWindowControl.pointerMoved]).
+            onDrag = { _ -> dragging[0]?.moveBy?.invoke(control.pointerMoved()) },
             onDragEnd = {
                 dragging[0]?.done?.invoke()
                 dragging[0] = null
@@ -409,6 +410,7 @@ private fun TreeColumn(
                     // a hover pop-up of its own: it goes once the pointer has left its row, it and its descendants
                     // ([MenuHoverTracker], the grace being the crossing from the row to it), a branch of the tree's.
                     val branch = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
+                        popupTrace("category ${node.id}: closed, the pointer left it")
                         if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
                     }
                     // User rule 2026-11-11: the keyboard coming to it is a position of the app. Kept by the outermost
@@ -449,7 +451,12 @@ private fun TreeColumn(
                             keeper.wanted = null
                         }
                     }
-                    val reveal = { if (!revealing) onPathChange(path.take(depth) + node.id) }
+                    val reveal = {
+                        if (!revealing) {
+                            popupTrace("category ${node.id}: opened by a hover")
+                            onPathChange(path.take(depth) + node.id)
+                        }
+                    }
                     val treeWindowHead = LocalTreeWindowHead.current
                     // The pop-up this row stands in: where a hover over it is read from ([MenuHoverTracker.hoverActs]).
                     val around = LocalMenuHover.current
@@ -489,7 +496,10 @@ private fun TreeColumn(
                                 androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
                                 AppDropdownMenu(
                                     expanded = true,
-                                    onDismissRequest = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) },
+                                    onDismissRequest = {
+                                        popupTrace("category ${node.id}: closed, its window dismissed")
+                                        if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
+                                    },
                                     // The whole pop-up is the branch, its search field and padding included, wherever the
                                     // platform's menu does not report its surface itself.
                                     modifier = Modifier.reportsHover(branch),

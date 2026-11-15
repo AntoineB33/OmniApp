@@ -147,7 +147,10 @@ class MenuHoverTracker(
         if (pinned) return
         pending = scope.launch {
             delay(GRACE_MILLIS)
-            if (inside.isEmpty() && !pinned) onLeft()
+            if (inside.isEmpty() && !pinned) {
+                popupTrace("a hover pop-up: the pointer left every part of it")
+                onLeft()
+            }
         }
     }
 

@@ -4655,6 +4655,21 @@ object SearchDomain {
      * drop button ([Config.dropButtons]). [current] is what the user made of it since (its bar, its other settings): the
      * question it asks is set again, the rest kept.
      */
+    /**
+     * Anomaly 2026-11-15 (*"when I opened 'list of parents', then selected 'show the added elements', an element was there
+     * even though I didn't click on the element in the search result list"*): **the "List of parents" of [children] as it
+     * is shown** — [parentsListConfig], its added elements those that are parents of [children] still. Its configuration
+     * is kept by the row it is opened from, and a group's row ("every element", a kind's) is the same for every set of
+     * elements: what was added to the list of others' parents was in this one's.
+     */
+    fun parentsListShown(state: SchedulerState, children: List<String>, current: Config?): Config {
+        val shown = parentsListConfig(children, current)
+        if (shown.added.isEmpty()) return shown
+        val distance = shown.filters.parentDistance.takeIf { it != PARENT_DISTANCE_HIGHEST }
+        val parents = ElementTree.parentsWithin(ElementTree.parentIndex(state), children, distance)
+        return shown.copy(added = shown.added.filter { it in parents })
+    }
+
     fun parentsListConfig(children: List<String>, current: Config? = null): Config {
         val base = current ?: Config(dropButtons = true)
         return base.copy(

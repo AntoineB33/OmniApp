@@ -177,6 +177,24 @@ class ElementTreeTest {
         assertEquals(listOf(taskKey(s, "One")), parentsListed(listOf(taskKey(s, "Two"))), "Two's parent is One alone")
     }
 
+    /**
+     * Anomaly 2026-11-15: *"when I opened 'list of parents', then selected 'show the added elements', an element was there
+     * even though I didn't click on the element"* — the list's configuration is kept by a group's row, the same for every
+     * set of elements: it shows as added only what is a parent of ITS elements still.
+     */
+    @Test
+    fun the_list_of_parents_shows_as_added_only_parents_of_its_elements() {
+        val tasks = withTasks("One", "Two", "Three")
+        val s = link(tasks, taskKey(tasks, "One"), taskKey(tasks, "Two"))
+        val two = taskKey(s, "Two")
+        val one = taskKey(s, "One")
+        val three = taskKey(s, "Three")
+        // Added in the list of another element's parents: Three; and One, a parent of Two.
+        val kept = SearchDomain.parentsListConfig(listOf(three)).copy(added = listOf(three, one))
+        assertEquals(listOf(one), SearchDomain.parentsListShown(s, listOf(two), kept).added)
+        assertEquals(setOf(two), SearchDomain.parentsListShown(s, listOf(two), kept).filters.parentsOf, "the question is Two's")
+    }
+
     private fun TaskIdOf(key: String) = org.example.project.scheduler.model.TaskId(key.substringAfter('/'))
 
     @Test

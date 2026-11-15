@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Menus survive another application; the list of parents' added elements are its parents; notif window's added list hidden — 2026-11-15
+
+User anomalies. **4**: every menu (not an unpinned hover pop-up) stays while the user is in another application and is
+there on coming back without a press in the app (`MenuSession.pinnedAway`). **3**: the "List of parents" kept by a
+group's row (the same for every set of elements) showed as added what was added among other elements' parents; it shows
+only parents of its elements (`SearchDomain.parentsListShown`). The unfocused notifications window opens with its added
+elements hidden. A ▾ pop-up's drag reads the pointer on the screen (`PopupWindowControl.pointerMoved`): its own window
+steps off screen, and the move read in it jumped by as much. **TEMPORARY**: a `[popup]` trace in `diagnostics.log`
+(`popupTrace`) for the blinking category pop-up, to remove once understood. No migration. Deploy: client apps.
+
 ### A dragged pop-up is a window at once; no jump; no blinking pop-ups — 2026-11-15
 
 User anomalies. A pop-up's head drag now makes it its window as the drag starts (in the window bar at once), the rest

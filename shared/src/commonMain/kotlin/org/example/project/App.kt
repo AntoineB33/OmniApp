@@ -2540,6 +2540,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             FloatingWindow.Search, SearchDomain.notificationsWindowConfig(since, ids).encode(), asCopy = true,
                             atBack = true,
                         )
+                    // User rule 2026-11-15: *"The unfocused notif window must hide its 'added elements' list by default"* —
+                    // as its background menu's "Hide the added elements" does; that menu shows it again.
+                    searchSplits[id] = org.example.project.ui.SearchSplits(addedRemoved = true)
                     setWindowsGlobal(listOf(id), true)
                     engineScope.launch {
                         repeat(2) { withFrameNanos { } }

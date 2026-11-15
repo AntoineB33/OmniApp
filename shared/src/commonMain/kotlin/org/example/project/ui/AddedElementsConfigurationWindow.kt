@@ -2497,7 +2497,10 @@ private fun ElementParentsEditor(
                     PopupSearchField(
                         placeholder = child.placeholder,
                         state = state,
-                        config = SearchDomain.parentsListConfig(children, listConfig),
+                        // Only what is a parent of these elements still: the list's own added elements included.
+                        config = remember(state.elementLinks, state.lists, state.cells, state.tasks, children, listConfig) {
+                            SearchDomain.parentsListShown(state, children, listConfig)
+                        },
                         onConfigChange = { listConfig = it },
                         openedConfig = SearchDomain.parentsListConfig(children),
                         fieldId = rowId + "/" + child.placeholder,

@@ -24,6 +24,13 @@ interface PopupWindowControl {
     /** The pointer moved, the button held: the pop-up's window follows it (read off the screen, not the content). */
     fun drag()
 
+    /**
+     * How far the pointer moved on the screen since the drag started or since the last call, in the app window's px.
+     * Anomaly 2026-11-15 (*"the focused window disappeared"*): the pop-up's window steps off screen as its drag makes it
+     * its window, and the pointer read in it jumped by as much — the window it became was carried that far.
+     */
+    fun pointerMoved(): Offset
+
     /** Where the pop-up stands, in pixels of the app window's content; null where it cannot be told. */
     fun boundsInApp(): Rect?
 }
@@ -70,3 +77,11 @@ internal fun frameOffsetAt(topLeft: Offset, size: Size, area: Rect): Offset =
         topLeft.x - area.left - (area.width - size.width) / 2f,
         topLeft.y - area.top - (area.height - size.height) / 2f,
     )
+
+/**
+ * TEMPORARY (anomaly 2026-11-15, *"hovering over 'task' shows a window that blinks continuously"*): the pop-ups' events in
+ * `diagnostics.log` — a category opened or closed and why, a menu window shown, moved, dismissed and by what. Desktop
+ * pop-ups are OS windows whose focus order no headless test reproduces (`popup-walk-trace-diagnosis`). Remove once the
+ * blinking is understood.
+ */
+internal fun popupTrace(message: String) = org.example.project.scheduler.platform.Diagnostics.log("[popup] $message")

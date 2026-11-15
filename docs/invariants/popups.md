@@ -398,6 +398,11 @@ means.
     composition — a tracker left "focused and pinned" would hold every hover of the app back.
     A menu that holds the keyboard stays only while a window of ITS tree is the active one (`activeListener`, once it
     has held the keyboard). Closed, it is a hover pop-up again.
+    - **Every menu stays while the user is in another application, and is there when they come back without a press in
+      the app** (anomaly 2026-11-15, 4: *"I right-clicked, which opened a window, then I clicked outside the app, then
+      came back on the app, but the right-click menu disappeared"*; `MenuSession.pinnedAway`, `awayPresses`) — a hover
+      pop-up not pinned excepted, which the pointer leaving closes. Coming back by a press in the app is a press outside
+      the menu: it closes, as ever.
     - **A pinned pop-up stays while the keyboard is in ANOTHER application** (user rule 2026-11-15: *"when I click on a
       pop-up window to pin it, make sure it doesn't disappear when click outside the app, like dragging the pip away for
       example"*; `MenuSession.pinnedAway`: AWT names no window of the app as the one the keyboard went to). Each way the
