@@ -161,16 +161,17 @@ internal fun ConfigurationTreeArrow(
         control ?: return null
         val bounds = { control.boundsInApp() }
         return PopupWindowHead(
+            windowId = "ConfigSearch",
             onDragStart = {
                 onDragStart()
                 control.startDrag()
             },
             onDrag = { control.drag() },
-        ) { how ->
+        ) { how, name ->
             // Where it stands, read before it closes; then the pop-up gone, the window in its place.
             val at = bounds()
             closeSelf()
-            if (at != null) detach.detach(owner, at, how)
+            if (at != null) detach.detach(owner, at, how, name)
         }
     }
     Box {

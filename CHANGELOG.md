@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A pop-up's head is the window's head; the window it becomes shows its bar — 2026-11-15
+
+User: *"the header is not the same as the header of the default search window. Fix it and search in the whole app
+other code duplicates like this"*. The pop-up's look-alike head is gone: `WindowHead` is the one head, its drag and
+buttons behind `HeadActions` (`frameHeadActions` for a window, `PopupWindowHeadBar` for a pop-up, whose every action
+makes it its window first — ☆ and "Rename" included). A pop-up with no window form wears it with its title and ✕
+alone. A field's pop-up becoming a Search window opens it whole, its search bar shown. No migration. Deploy: client apps.
+
 ### A field's pop-up: a window's head, a field inside it, one set of locals — 2026-11-15
 
 Anomalies 5 (again) and 6. The "List of parents" pop-up (a field's, drawn in the top layer) wears a window's head

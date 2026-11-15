@@ -2266,39 +2266,8 @@ internal fun SearchPartsMenu(
  */
 @Composable
 internal fun SearchPopupHead(title: String, onClose: () -> Unit, window: PopupWindowHead? = null) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .then(
-                if (window == null) Modifier
-                else Modifier.pointerInput(window) {
-                    detectDragGestures(
-                        onDragStart = { window.onDragStart() },
-                        onDrag = { change, amount ->
-                            change.consume()
-                            window.onDrag(amount)
-                        },
-                        onDragEnd = { window.detach(DetachedAs.Moved) },
-                        onDragCancel = { window.detach(DetachedAs.Moved) },
-                    )
-                },
-            )
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-        if (window != null) {
-            WindowHeadButton("⧉", "Duplicate") { window.detach(DetachedAs.Duplicated) }
-            WindowHeadButton("↔", "Fill the width") { window.detach(DetachedAs.FillWidth) }
-            WindowHeadButton("↕", "Fill the height") { window.detach(DetachedAs.FillHeight) }
-            WindowHeadButton("—", "Reduce") { window.detach(DetachedAs.Reduced) }
-            WindowHeadButton("▢", "Maximize") { window.detach(DetachedAs.Maximized) }
-        }
-        // The ✕ of a window's head, the one drawing of it ([WindowHeadButton]).
-        WindowHeadButton("✕", "Close", onClose)
-    }
+    // The one drawing of a head ([WindowHead]), anomaly 2026-11-15: a look-alike of its own was not the window's.
+    PopupWindowHeadBar(title, window, onClose)
 }
 
 /**
@@ -2307,9 +2276,12 @@ internal fun SearchPopupHead(title: String, onClose: () -> Unit, window: PopupWi
  * place in the layer it is drawn in — and [detach] makes it a window ([PopupDetacher]) and closes it.
  */
 class PopupWindowHead(
+    /** The frame id of the window it becomes, or of its kind ("Search", "ConfigSearch"): the head's colour is that one's. */
+    val windowId: String,
     val onDragStart: () -> Unit,
     val onDrag: (androidx.compose.ui.geometry.Offset) -> Unit,
-    val detach: (DetachedAs) -> Unit,
+    /** Made the window, then as asked; named as its head's "Rename" said, if it did. */
+    val detach: (DetachedAs, String?) -> Unit,
 )
 
 /**

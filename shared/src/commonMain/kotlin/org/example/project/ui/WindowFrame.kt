@@ -1649,7 +1649,7 @@ fun AppWindowFrame(
                     inMenu = menuButtons?.has?.invoke(state.id) == true,
                     onRemoveFromMenu = { menuButtons?.remove?.invoke(state.id) },
                     headMenu = headMenu,
-                    state = state,
+                    actions = frameHeadActions(state, commit, with(density) { Size(defaultWidth.toPx(), defaultHeight.toPx()) }),
                     // The window's own colour; a frame outside any host (a preview) keeps the theme's.
                     color = host?.colors?.get(state.id)?.let(::windowColor) ?: MaterialTheme.colorScheme.surfaceVariant,
                     obstacle = headObstacle,
@@ -1657,10 +1657,8 @@ fun AppWindowFrame(
                     onDuplicate = instance?.onDuplicate,
                     onAddToMenu = menuKey?.let { key -> menuButtons?.let { { title: String -> it.add(key, title, state.id) } } },
                     canMinimize = canMinimize,
-                    onCommit = commit,
                     onHeadHeight = { headHeight[0] = it },
                     headTrailing = headTrailing,
-                    defaultSizePx = with(density) { Size(defaultWidth.toPx(), defaultHeight.toPx()) },
                 )
                 if (showHead) Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
                 // What is drawn inside keeps the suffix (a window nested in a copy is that copy's) but not the
@@ -1758,7 +1756,8 @@ private fun WindowHead(
     inMenu: Boolean,
     onRemoveFromMenu: () -> Unit,
     headMenu: List<HeadMenuEntry>,
-    state: WindowFrameState,
+    /** What its drag and its buttons do ([HeadActions]): a window's frame, or a pop-up becoming its window. */
+    actions: HeadActions,
     /** The head's background — the window's colour; what is drawn on it takes [TaskPalette.foreground]. */
     color: Color,
     /** [LocalHeadObstacle]'s bounds, in root coordinates. */
@@ -1769,11 +1768,10 @@ private fun WindowHead(
     /** The ☆ left of the duplicate button: a lateral-menu button for this window, named [title]; null = none. */
     onAddToMenu: ((String) -> Unit)?,
     canMinimize: Boolean,
-    onCommit: () -> Unit,
     onHeadHeight: (Float) -> Unit,
     headTrailing: @Composable RowScope.() -> Unit,
-    /** The window's default size in px: what a maximized window that never had a size of its own is dragged out at. */
-    defaultSizePx: Size,
+    /** False: a pop-up with no window form — the same head, its title and its ✕ alone, no drag. */
+    windowButtons: Boolean = true,
 ) {
     // Where the title must START so none of it is hidden: the head's first point that is both visible (a window
     // dragged past the content area's edge is cut there) and not under the obstacle, plus a small gap. The title
@@ -1824,15 +1822,14 @@ private fun WindowHead(
                 updateShift()
             }
             .background(color)
-            .windowHeadGestures(
-                // A maximized window comes back to its normal size under the pointer, then follows it.
-                onDragStart = { pointer, headWidth -> state.unmaximizeUnder(pointer, headWidth, defaultSizePx) },
-                onDrag = { state.moveBy(it) },
-                onDragEnd = onCommit,
-                onDoubleClick = {
-                    state.toggleMaximize()
-                    onCommit()
-                },
+            .then(
+                if (!windowButtons) Modifier
+                else Modifier.windowHeadGestures(
+                    onDragStart = { pointer, headWidth -> actions.dragStart(pointer, headWidth) },
+                    onDrag = { actions.drag(it) },
+                    onDragEnd = { actions.dragEnd() },
+                    onDoubleClick = { actions.toggleMaximize() },
+                ),
             )
             // After the drag in the chain, so it sees a right-click first and consumes it: the head's menu, at the
             // pointer — a long-press for a finger. The head's buttons let a right-click through: still the head.
@@ -1865,41 +1862,130 @@ private fun WindowHead(
                 addAll(headMenu)
                 onAddToMenu?.let { add(HeadMenuEntry("Add a button for this window to the left menu") { it(title) }) }
                 onDuplicate?.let { add(HeadMenuEntry("Duplicate", onClick = it)) }
-                add(HeadMenuEntry(if (state.fill.fillsWidth) "Stop filling the width" else "Fill the width") {
-                    state.setFillWidth(!state.fill.fillsWidth)
-                    onCommit()
-                })
-                add(HeadMenuEntry(if (state.fill.fillsHeight) "Stop filling the height" else "Fill the height") {
-                    state.setFillHeight(!state.fill.fillsHeight)
-                    onCommit()
-                })
-                if (canMinimize) add(HeadMenuEntry("Reduce") { state.minimize() })
-                add(HeadMenuEntry(if (state.maximized) "Restore" else "Maximize") {
-                    state.toggleMaximize()
-                    onCommit()
-                })
+                if (windowButtons) {
+                    add(HeadMenuEntry(if (actions.fillsWidth) "Stop filling the width" else "Fill the width") { actions.toggleFillWidth() })
+                    add(HeadMenuEntry(if (actions.fillsHeight) "Stop filling the height" else "Fill the height") { actions.toggleFillHeight() })
+                    if (canMinimize) add(HeadMenuEntry("Reduce") { actions.minimize() })
+                    add(HeadMenuEntry(if (actions.maximized) "Restore" else "Maximize") { actions.toggleMaximize() })
+                }
                 add(HeadMenuEntry("Close", onClick = onClose))
             },
         )
         headTrailing()
         onAddToMenu?.let { WindowHeadButton("☆", "Add a button for this window to the left menu") { it(title) } }
         onDuplicate?.let { WindowHeadButton("⧉", "Duplicate", it) }
-        WindowHeadButton("↔", "Fill the width") {
-            state.setFillWidth(!state.fill.fillsWidth)
-            onCommit()
-        }
-        WindowHeadButton("↕", "Fill the height") {
-            state.setFillHeight(!state.fill.fillsHeight)
-            onCommit()
-        }
-        if (canMinimize) WindowHeadButton("—", "Reduce") { state.minimize() }
-        WindowHeadButton(if (state.maximized) "❐" else "▢", "Maximize") {
-            state.toggleMaximize()
-            onCommit()
+        if (windowButtons) {
+            WindowHeadButton("↔", "Fill the width") { actions.toggleFillWidth() }
+            WindowHeadButton("↕", "Fill the height") { actions.toggleFillHeight() }
+            if (canMinimize) WindowHeadButton("—", "Reduce") { actions.minimize() }
+            WindowHeadButton(if (actions.maximized) "❐" else "▢", "Maximize") { actions.toggleMaximize() }
         }
         WindowHeadButton("✕", "Close", onClose)
     }
     }
+}
+
+/**
+ * **What a window's head does** ([WindowHead], the ONE drawing of a head): its drag and its buttons. A window's frame
+ * ([frameHeadActions]); or a pop-up whose head is shown, each of them making the pop-up its window first
+ * ([PopupWindowHead], user rule 2026-11-15: *"the header is not the same as the header of the default search window"* —
+ * a pop-up had a look-alike head of its own).
+ */
+internal interface HeadActions {
+    val fillsWidth: Boolean
+    val fillsHeight: Boolean
+    val maximized: Boolean
+    fun dragStart(pointer: Offset, headWidth: Float)
+    fun drag(delta: Offset)
+    fun dragEnd()
+    fun toggleFillWidth()
+    fun toggleFillHeight()
+    fun minimize()
+    fun toggleMaximize()
+}
+
+/** A window frame's head: [state] moved, filled, reduced, maximized; [onCommit] keeps the geometry. */
+private fun frameHeadActions(state: WindowFrameState, onCommit: () -> Unit, defaultSizePx: Size): HeadActions =
+    object : HeadActions {
+        override val fillsWidth get() = state.fill.fillsWidth
+        override val fillsHeight get() = state.fill.fillsHeight
+        override val maximized get() = state.maximized
+        // A maximized window comes back to its normal size under the pointer, then follows it.
+        override fun dragStart(pointer: Offset, headWidth: Float) = state.unmaximizeUnder(pointer, headWidth, defaultSizePx)
+        override fun drag(delta: Offset) = state.moveBy(delta)
+        override fun dragEnd() = onCommit()
+        override fun toggleFillWidth() {
+            state.setFillWidth(!state.fill.fillsWidth)
+            onCommit()
+        }
+        override fun toggleFillHeight() {
+            state.setFillHeight(!state.fill.fillsHeight)
+            onCommit()
+        }
+        override fun minimize() = state.minimize()
+        override fun toggleMaximize() {
+            state.toggleMaximize()
+            onCommit()
+        }
+    }
+
+/**
+ * User rule 2026-11-15: **the head of a pop-up that is a window's pop-up form, shown** — the very head of a window
+ * ([WindowHead]): its title, ☆, ⧉, ↔, ↕, —, ▢, ✕, its right-click menu, its drag, in the colour of the window it becomes
+ * ([PopupWindowHead.windowId]). Each button and the drag make it that window first ([PopupWindowHead.detach]). Rename
+ * names the window it becomes.
+ */
+@Composable
+internal fun PopupWindowHeadBar(title: String, window: PopupWindowHead?, onClose: () -> Unit) {
+    val host = LocalWindowFrameHost.current
+    var named by remember { mutableStateOf<String?>(null) }
+    val actions = remember(window) {
+        if (window == null) NO_HEAD_ACTIONS
+        else object : HeadActions {
+            override val fillsWidth get() = false
+            override val fillsHeight get() = false
+            override val maximized get() = false
+            override fun dragStart(pointer: Offset, headWidth: Float) = window.onDragStart()
+            override fun drag(delta: Offset) = window.onDrag(delta)
+            override fun dragEnd() = window.detach(DetachedAs.Moved, named)
+            override fun toggleFillWidth() = window.detach(DetachedAs.FillWidth, named)
+            override fun toggleFillHeight() = window.detach(DetachedAs.FillHeight, named)
+            override fun minimize() = window.detach(DetachedAs.Reduced, named)
+            override fun toggleMaximize() = window.detach(DetachedAs.Maximized, named)
+        }
+    }
+    WindowHead(
+        title = named ?: title,
+        ownTitle = title,
+        onRename = { name -> named = name.takeIf { it.isNotBlank() && it != title } },
+        inMenu = false,
+        onRemoveFromMenu = {},
+        headMenu = emptyList(),
+        actions = actions,
+        color = window?.windowId?.let { host?.colors?.get(it) }?.let(::windowColor) ?: MaterialTheme.colorScheme.surfaceVariant,
+        obstacle = null,
+        onClose = onClose,
+        onDuplicate = window?.let { w -> { w.detach(DetachedAs.Duplicated, named) } },
+        onAddToMenu = window?.let { w -> { _: String -> w.detach(DetachedAs.AddedToMenu, named) } },
+        canMinimize = true,
+        onHeadHeight = {},
+        headTrailing = {},
+        windowButtons = window != null,
+    )
+}
+
+/** A head with no window behind it: nothing to move, fill, reduce or maximize ([PopupWindowHeadBar] without a window). */
+private val NO_HEAD_ACTIONS = object : HeadActions {
+    override val fillsWidth get() = false
+    override val fillsHeight get() = false
+    override val maximized get() = false
+    override fun dragStart(pointer: Offset, headWidth: Float) = Unit
+    override fun drag(delta: Offset) = Unit
+    override fun dragEnd() = Unit
+    override fun toggleFillWidth() = Unit
+    override fun toggleFillHeight() = Unit
+    override fun minimize() = Unit
+    override fun toggleMaximize() = Unit
 }
 
 /** One entry of a window head's right-click menu ([AppWindowFrame]'s `headMenu`, and the frame's own). */

@@ -31,7 +31,7 @@ interface PopupWindowControl {
 val LocalPopupWindowControl = staticCompositionLocalOf<PopupWindowControl?> { null }
 
 /** What a pop-up's head asked the window it becomes to be ([PopupDetacher.detach]): the head's buttons, or a drag. */
-enum class DetachedAs { Moved, Duplicated, FillWidth, FillHeight, Reduced, Maximized }
+enum class DetachedAs { Moved, Duplicated, FillWidth, FillHeight, Reduced, Maximized, AddedToMenu }
 
 /**
  * `App`'s side of a pop-up becoming a window: whether the ▾ configurations tree of the Search window [canDetach] names
@@ -41,8 +41,8 @@ enum class DetachedAs { Moved, Duplicated, FillWidth, FillHeight, Reduced, Maxim
  */
 class PopupDetacher(
     val canDetach: (searchId: String) -> Boolean,
-    val detach: (searchId: String, bounds: Rect, how: DetachedAs) -> Unit,
-    val detachSearch: (config: org.example.project.scheduler.domain.SearchDomain.Config, bounds: Rect, how: DetachedAs) -> Unit,
+    val detach: (searchId: String, bounds: Rect, how: DetachedAs, name: String?) -> Unit,
+    val detachSearch: (config: org.example.project.scheduler.domain.SearchDomain.Config, bounds: Rect, how: DetachedAs, name: String?) -> Unit,
 )
 
 val LocalPopupDetacher = compositionLocalOf<PopupDetacher?> { null }

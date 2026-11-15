@@ -89,8 +89,8 @@ class ParentsActionTest {
         val detached = ArrayList<Pair<SearchDomain.Config, org.example.project.ui.DetachedAs>>()
         val detacher = org.example.project.ui.PopupDetacher(
             canDetach = { false },
-            detach = { _, _, _ -> },
-            detachSearch = { config, _, how -> detached += config to how },
+            detach = { _, _, _, _ -> },
+            detachSearch = { config, _, how, _ -> detached += config to how },
         )
         val scene = onEdt {
             ImageComposeScene(1400, 900, density = Density(1f)) {
@@ -206,7 +206,8 @@ class ParentsActionTest {
                 rightClick(find("New task 2") + Offset(0f, 120f))
                 click(find("Show the header"))
                 frames(6)
-                assertTrue(texts().contains("⧉"), "the window's head: ${texts()}")
+                // The very head of a window ([org.example.project.ui.WindowHead]): ☆ and ⧉ before the four, then ✕.
+                for (glyph in listOf("☆", "⧉", "↔", "↕", "—", "▢")) assertTrue(texts().contains(glyph), "the window's head has $glyph: ${texts()}")
                 click(find("▢"))
                 frames(6)
                 assertEquals(listOf(org.example.project.ui.DetachedAs.Maximized), detached.map { it.second })

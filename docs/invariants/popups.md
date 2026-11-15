@@ -470,12 +470,17 @@ means.
     window of the app and its category pop-ups (`PopupDetacher.canDetach`): a tree in a pop-up's bar is a configuration
     of another search, and a menu drawn in the app's window (no `PopupWindowControl`) keeps the title-and-✕ head.
   - **A field's Search pop-up becomes a Search window the same way** (anomaly 2026-11-15: *"clicking the list of parents
-    opens a window, where I select 'show the header', but the header is not the usual header"*): the head is ONE
-    drawing, `SearchPopupHead`, given its window part by whatever hosts the pop-up (`LocalSearchPopupWindow`; the
+    opens a window, where I select 'show the header', but the header is not the usual header"*; then *"not the same as
+    the header of the default search window"*): **a pop-up's head IS a window's head** — `WindowHead`, the one drawing,
+    its drag and buttons going through `HeadActions` (a frame's `frameHeadActions`, a pop-up's `PopupWindowHeadBar`:
+    each makes the pop-up its window first, its "Rename" naming that window, its ☆ adding that window's button). A
+    pop-up with no window form (a picker, a window's own sections) wears the same head, its title and ✕ alone. Never
+    draw a head of its own beside it. `SearchPopupHead` hands it its window part, given by whatever hosts the pop-up (`LocalSearchPopupWindow`; the
     Search window drawn in no frame reads it and gives its own sections null). `FieldSearchPopupLayer` gives it: the
     drag moves the pop-up in the layer, the pop-ups over it closing; let go, or asked by a window button, it is a
     Search window of the app (`PopupDetacher.detachSearch`, a copy beside the user's) with the pop-up's configuration.
-    Not a picker's ("Add a parent"): its rows pick for its field. **Where the search bar is what opened the pop-up** (a
+    Not a picker's ("Add a parent"): its rows pick for its field. The window it becomes opens whole, **its search bar
+    shown** even where the pop-up's bar was its field (user rule 2026-11-15). **Where the search bar is what opened the pop-up** (a
     field's pop-up, a cell's picker), its background menu has no "Hide the search bar" (user rule 2026-11-15).
   - **A field's pop-up carries the composition locals of where its field stands** (anomaly 2026-11-15: *"I select
     'show the actions' …, find the list of parents field, click it, but it doesn't open a window, even though it should

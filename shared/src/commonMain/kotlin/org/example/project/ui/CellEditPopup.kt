@@ -511,13 +511,14 @@ private fun FieldSearchPopup(
     val head = remember(detacher, picks) {
         if (detacher == null || picks) null
         else PopupWindowHead(
+            windowId = "Search",
             onDragStart = { latestCloseAbove() },
             onDrag = { dragged += it },
-            detach = { how ->
+            detach = { how, name ->
                 val at = shownAt
                 val asked = latestRequest
                 asked.onClose()
-                if (at != null) detacher.detachSearch(asked.embedded.config, at, how)
+                if (at != null) detacher.detachSearch(asked.embedded.config, at, how, name)
             },
         )
     }

@@ -2389,7 +2389,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // buttons, becomes its Search window's configurations window** ([org.example.project.ui.PopupDetacher]): opened
         // or brought back where the pop-up stood, at its size, then filled, reduced, maximized or duplicated as asked.
         // The window [id] of [kind], opened for a pop-up that became it: where the pop-up stood, at its size, then as asked.
-        fun placeDetached(kind: FloatingWindow, id: String, bounds: Rect, how: org.example.project.ui.DetachedAs) {
+        // The lateral menu's buttons, made further down: what a pop-up's ☆ adds a button for its window with.
+        val menuButtonsLater = remember { arrayOfNulls<org.example.project.ui.MenuButtonHost>(1) }
+        // [title]: the window's own; [name], what the pop-up's head was renamed to.
+        fun placeDetached(
+            kind: FloatingWindow,
+            id: String,
+            bounds: Rect,
+            how: org.example.project.ui.DetachedAs,
+            title: String,
+            name: String?,
+        ) {
             val size = Size(
                 bounds.width.coerceAtLeast(org.example.project.ui.MIN_WINDOW_WIDTH_PX),
                 bounds.height.coerceAtLeast(org.example.project.ui.MIN_WINDOW_HEIGHT_PX),
@@ -2400,8 +2410,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     org.example.project.ui.DetachedAs.FillHeight -> frame.setFillHeight(true)
                     org.example.project.ui.DetachedAs.Reduced -> frame.minimize()
                     org.example.project.ui.DetachedAs.Maximized -> frame.toggleMaximize()
-                    org.example.project.ui.DetachedAs.Moved, org.example.project.ui.DetachedAs.Duplicated -> Unit
+                    org.example.project.ui.DetachedAs.Moved, org.example.project.ui.DetachedAs.Duplicated,
+                    org.example.project.ui.DetachedAs.AddedToMenu -> Unit
                 }
+            }
+            name?.let { windowFrames.rename(id, it, title) }
+            if (how == org.example.project.ui.DetachedAs.AddedToMenu) {
+                menuButtonsLater[0]?.takeIf { it.canAdd(id) }?.add(id, name ?: title, id)
             }
             windowFrames.area?.let { area ->
                 val offset = org.example.project.ui.frameOffsetAt(bounds.topLeft, size, area)
@@ -2409,18 +2424,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
             if (how == org.example.project.ui.DetachedAs.Duplicated) duplicateWindow(kind, id)
         }
-        val detachPopup = rememberUpdatedState { searchId: String, bounds: Rect, how: org.example.project.ui.DetachedAs ->
-            placeDetached(FloatingWindow.ConfigSearch, openConfigurationsOf(FloatingWindow.ConfigSearch, searchId), bounds, how)
+        val detachPopup = rememberUpdatedState { searchId: String, bounds: Rect, how: org.example.project.ui.DetachedAs, name: String? ->
+            val id = openConfigurationsOf(FloatingWindow.ConfigSearch, searchId)
+            placeDetached(FloatingWindow.ConfigSearch, id, bounds, how, FloatingWindow.ConfigSearch.title, name)
         }
         // A Search pop-up (a field's: the "List of parents") becomes a Search window of its own, beside the user's.
-        val detachSearchPopup = rememberUpdatedState { config: SearchDomain.Config, bounds: Rect, how: org.example.project.ui.DetachedAs ->
-            placeDetached(FloatingWindow.Search, openNewWindow(FloatingWindow.Search, config.encode(), asCopy = true), bounds, how)
+        val detachSearchPopup = rememberUpdatedState { config: SearchDomain.Config, bounds: Rect, how: org.example.project.ui.DetachedAs, name: String? ->
+            val id = openNewWindow(FloatingWindow.Search, config.encode(), asCopy = true)
+            // User rule 2026-11-15: *"if the search bar was not in the window because taken care by the caller that was a
+            // text field, then it must appear in the window"* — the window opens whole, its bar included, whatever a
+            // window of that id was last left showing.
+            searchSplits[id] = org.example.project.ui.SearchSplits()
+            placeDetached(FloatingWindow.Search, id, bounds, how, SearchDomain.windowTitle(config), name)
         }
         val popupDetacher = remember {
             org.example.project.ui.PopupDetacher(
                 canDetach = { lateralWindowOf(it) == FloatingWindow.Search },
-                detach = { searchId, bounds, how -> detachPopup.value(searchId, bounds, how) },
-                detachSearch = { config, bounds, how -> detachSearchPopup.value(config, bounds, how) },
+                detach = { searchId, bounds, how, name -> detachPopup.value(searchId, bounds, how, name) },
+                detachSearch = { config, bounds, how, name -> detachSearchPopup.value(config, bounds, how, name) },
             )
         }
         // The calendar's "add…" ([add]) or "edit…" at [atMillis]: the Search window a previous one opened, moved to
@@ -2686,6 +2707,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 },
             )
         }
+        menuButtonsLater[0] = menuButtonHost
         // A button the user made (☆) opens its window like every button of the menu ([openNewWindow]): a
         // per-object window on its object — the one open on it already, brought back, when there is one — or a
         // lateral-menu window with the configuration the ☆ saved. A button made before the snapshot existed opens
