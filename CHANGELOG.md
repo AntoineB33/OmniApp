@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A field's window opened by a click is its default window; restored, it is as left — 2026-11-15
+
+User: *"it stopped at the list of parents because it has nothing in the action section. When I told you there must be
+nothing in the action section when I open it, it is because when I click on list of parents it must open the default
+window for this element."* The previous round emptied a field window's added elements at every opening, the restored
+one too, which broke the chain. Now a click or a letter opens it as its default window — its opened configuration
+(the bar kept), default parts, nothing kept of the windows opened inside it — and a restart brings it back as it was
+left, its added elements and actions included. No migration. Deploy: client apps.
+
 ### The pop-ups left open come back after a restart — 2026-11-15
 
 User: *"I pinned the window …, I restart the app, and all the windows disappeared... Only the first one, the default

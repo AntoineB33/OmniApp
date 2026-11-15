@@ -2431,7 +2431,12 @@ const val LATERAL_MENU_ID: String = "LateralMenuSearch"
  * menu, by [LATERAL_MENU_ID], and each actions section, by its id (`<window>/actions`). `App` keeps them where the
  * windows' own are kept (`WindowSections`); null where nothing provides it (a test): kept while drawn.
  */
-class SearchPartsStore(val read: (id: String) -> SearchSplits?, val write: (id: String, SearchSplits) -> Unit)
+class SearchPartsStore(
+    val read: (id: String) -> SearchSplits?,
+    val write: (id: String, SearchSplits) -> Unit,
+    /** The parts of every Search window drawn inside [id] forgotten (what follows its id with "/" or "▾"). */
+    val forgetInside: (id: String) -> Unit = {},
+)
 
 val LocalSearchPartsStore = androidx.compose.runtime.staticCompositionLocalOf<SearchPartsStore?> { null }
 

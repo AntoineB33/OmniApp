@@ -827,6 +827,16 @@ class ArrowSearches(
         if (next != all) write(root, next)
     }
 
+    /**
+     * Every window drawn inside [relative] (in [root]) forgotten — what follows its id with "/" or "▾" — itself kept: a
+     * field's window opened afresh is its default window, nothing of what was opened inside it before (anomaly 2026-11-15).
+     */
+    fun forgetInside(root: String, relative: String) {
+        val all = read(root)
+        val next = all.filterKeys { !(it.startsWith("$relative/") || it.startsWith(relative + ARROW)) }
+        if (next != all) write(root, next)
+    }
+
     /** The ▾ windows of [root] that have an id now, by their id without [root]'s, a window before what hangs from it. */
     fun listed(root: String): List<String> =
         // `Search`'s are not `Search#2`'s: what follows the window's id is a ▾ or a part of the window.

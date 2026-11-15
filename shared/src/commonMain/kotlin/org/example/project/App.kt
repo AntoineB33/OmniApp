@@ -1469,6 +1469,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         saveWindowSections()
                     }
                 },
+                forgetInside = { id ->
+                    val inside = searchSplits.keys.filter { it.startsWith("$id/") || it.startsWith(id + org.example.project.ui.ArrowSearches.ARROW) }
+                    if (inside.isNotEmpty()) {
+                        inside.forEach(searchSplits::remove)
+                        saveWindowSections()
+                    }
+                },
             )
         }
         // The per-object windows (`popups.md`): each is about ONE object, and each kind is the list of its open

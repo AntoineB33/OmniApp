@@ -407,13 +407,23 @@ internal fun PopupSearchField(
         if (restored && windowId != null) memory?.setField(windowId, open)
     }
     var parts by rememberKeptParts(windowId, EMBEDDED_SEARCH_SPLITS)
-    // Anomaly 2026-11-15 (*"I clicked on 'list of parents', right-click, 'show the added elements' and there was an
-    // element"*): what is added in a field's window belongs to that opening — each opening starts with none, though the
-    // rest of its configuration (its bar's settings, its sorting) is kept. It held what an earlier opening had added.
-    val latestConfig by androidx.compose.runtime.rememberUpdatedState(config)
-    val latestChange by androidx.compose.runtime.rememberUpdatedState(onConfigChange)
-    androidx.compose.runtime.LaunchedEffect(open) {
-        if (open && latestConfig.added.isNotEmpty()) latestChange(latestConfig.copy(added = emptyList()))
+    // Anomaly 2026-11-15 (*"when I click on list of parents it must open the default window for this element"*): opened
+    // by the user — a click, a letter typed — its window is its DEFAULT one: its configuration what it opens with
+    // ([openedConfig]; what the bar holds kept), its parts the default ones, and nothing of what was opened inside it
+    // before — the windows inside it, their parts, their pop-ups left open. Brought back after a restart ([PopupMemory]),
+    // it is as it was left instead. It had kept, across openings, what an earlier one had added.
+    val registry = LocalArrowSearches.current
+    val arrowRoot = LocalArrowRoot.current
+    val partsStore = LocalSearchPartsStore.current
+    fun openFresh(query: String) {
+        onConfigChange(openedConfig.copy(query = query))
+        parts = EMBEDDED_SEARCH_SPLITS
+        if (windowId != null) {
+            if (registry != null && arrowRoot != null && windowId.startsWith(arrowRoot)) registry.forgetInside(arrowRoot, windowId.removePrefix(arrowRoot))
+            partsStore?.forgetInside(windowId)
+            memory?.setField(windowId, false)
+        }
+        open = true
     }
     // Anomaly 2026-11-13 (*"when I hover over the down arrow, the search bar looks different than the search bar of other
     // search windows"*): the very layout of the Search window's bar — the field named by its label (grey in the empty
@@ -426,9 +436,8 @@ internal fun PopupSearchField(
         SearchBar(
             config.query,
             {
-                onConfigChange(config.copy(query = it))
-                // Typing opens the window; the cross empties the bar of one that is open already.
-                if (it.isNotEmpty()) open = true
+                // Typing opens the window — its default one; the cross empties the bar of one that is open already.
+                if (it.isNotEmpty() && !open) openFresh(it) else onConfigChange(config.copy(query = it))
             },
             placeholder,
             // User rule 2026-11-13: the cross and the arrow show once the field is clicked, as a task cell's show in
@@ -441,7 +450,7 @@ internal fun PopupSearchField(
                 // A click on it gives it the caret: that is what opens the window.
                 .onFocusChanged {
                     if (it.isFocused && !open) {
-                        open = true
+                        openFresh(config.query)
                         Diagnostics.log("[field] open “$placeholder”")
                     }
                 }

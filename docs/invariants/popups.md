@@ -516,6 +516,11 @@ means.
     right-click menu open it needs a second right-click to open the menu"*; `MenuSession.settling`): for 600 ms after
     it opens, the menu losing the keyboard or the active window to a window of the app, with no press since, leaves it
     open. Windows activating the app's window for the right press could land after the menu took the keyboard.
+  - **A field's window opened by the user is its DEFAULT window** (anomaly 2026-11-15: *"when I click on list of parents
+    it must open the default window for this element"*; `PopupSearchField.openFresh`): a click or a letter typed opens
+    it with what it opens with (its `openedConfig`, the bar's text kept), its default parts, and nothing of what was
+    opened inside it before (`ArrowSearches.forgetInside`, `SearchPartsStore.forgetInside`, `PopupMemory`). Only a
+    restart brings one back as it was left (below).
   - **The pop-ups left open come back after a restart, as the windows do** (anomaly 2026-11-15: *"I pinned the window
     …, I restart the app, and all the windows disappeared... Only the first one, the default search window,
     remains"*; `PopupMemory`, the `OpenPopups` placement row, local-only): a field's Search window left open, and a

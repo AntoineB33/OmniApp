@@ -72,6 +72,8 @@ class ParentsActionTest {
         /** The field of the nested "Parents" clicked: its list, or "add a parent" (anomaly 2026-11-15, 7). */
         nestedField: String = "list of parents",
         header: Boolean = false,
+        /** After the parent is added in the list: closed and opened again by a click — its default window (anomaly 2026-11-15). */
+        reopen: Boolean = false,
         child: (SchedulerState) -> String,
     ) {
         val start = account()
@@ -204,6 +206,21 @@ class ParentsActionTest {
                 click(find("Show the added elements"))
                 frames(6)
                 assertTrue(texts().any { it.startsWith("Added elements") && it.endsWith("1") }, "the added elements hold the parent: ${texts()}")
+                if (reopen) {
+                    // Anomaly 2026-11-15: *"when I click on list of parents it must open the default window for this
+                    // element"* — nothing added, its parts the default ones.
+                    escape()
+                    assertTrue(popups.request == null, "closed: ${texts()}")
+                    click(find("list of parents"))
+                    frames(6)
+                    // The main window's own list ("Clock") is the one "Added elements  ·  1" left on screen.
+                    assertEquals(1, texts().count { it == "Added elements  ·  1" }, "its added elements are not shown by default: ${texts()}")
+                    rightClick(find("New task 2") + Offset(0f, 120f))
+                    click(find("Show the added elements"))
+                    frames(6)
+                    assertEquals(1, texts().count { it.startsWith("Added elements") && it.endsWith("1") }, "nothing added in a fresh opening: ${texts()}")
+                    assertTrue(texts().count { it.startsWith("Added elements") } >= 2, "its added elements shown: ${texts()}")
+                }
             }
             if (header) {
                 // User rule 2026-11-15: *"I select 'show the header', but the header is not the usual header"* — the
@@ -312,6 +329,10 @@ class ParentsActionTest {
 
     @Test
     fun the_list_of_parents_shows_a_window_s_head_and_becomes_a_window() = checkParentListed(header = true) { "Chrono/a" }
+
+    @Test
+    fun a_list_of_parents_opened_again_by_a_click_is_its_default_window() =
+        checkParentListed(thenAdd = true, reopen = true) { "Chrono/a" }
 
     @Test
     fun the_list_opened_before_the_parent_is_added_lists_it_after() = checkParentListed(listFirst = true) { "Chrono/a" }
