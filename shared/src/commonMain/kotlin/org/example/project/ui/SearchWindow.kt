@@ -533,6 +533,8 @@ fun SearchWindow(
     val sorts = config.sorts
     // Which copy of the window this is: its selection is its own (PRD §5, `Alt+←` walks it back).
     val instance = LocalWindowInstance.current?.suffix ?: ""
+    // The elements the window this one is a section of shows as added only because they are selected ([LocalNotAdded]).
+    val notAddedAbove = LocalNotAdded.current
     val listState = rememberLazyListState(splits?.scrolls?.getOrNull(0) ?: 0, splits?.scrolls?.getOrNull(1) ?: 0)
     // User rule 2026-11-15: narrowed until cut, the list scrolls sideways under Shift+wheel ([shiftWheelScrolls]).
     val listCut = remember { SideCut() }
@@ -903,6 +905,7 @@ fun SearchWindow(
     val selectedOnly =
         if (!selectionShowsAdded || !userSelected) emptyList()
         else selectedShown.filter { it !in config.added && !it.startsWith(SearchDomain.Kind.Creation.name + "/") }
+    val notAdded = remember(selectedOnly) { selectedOnly.toSet() }
     val shownAddedRows =
         remember(addedRows, selectedOnly, results) {
             if (selectedOnly.isEmpty()) {
@@ -1493,7 +1496,15 @@ fun SearchWindow(
                                         onClick = { ctrl, shift -> if (!ctrl && !shift) clickRow(index, false, false, keepIfSelected = false) },
                                     )
                                 }
-                            Box(arranged) {
+                            // User rule 2026-11-15: an element listed only because it is selected in the results,
+                            // never added by its menu — and an action on such elements alone — is drawn greyer.
+                            val notAddedRow = notAddedAbove.isNotEmpty() && when {
+                                addedList != null -> resultKey(result) in notAddedAbove
+                                actionRows != null -> (result as? SearchDomain.ItemResult)?.let { actionRows.byKey[it.id] }?.group?.members
+                                    ?.let { members -> members.isNotEmpty() && members.all { SearchDomain.keyOf(it) in notAddedAbove } } == true
+                                else -> false
+                            }
+                            Box(arranged.then(if (notAddedRow) Modifier.alpha(NOT_ADDED_ALPHA) else Modifier)) {
                             // The left-side menu's items: drawn by the menu, selected and arranged by the list.
                             val given = menuList?.byKey?.get((result as? SearchDomain.ItemResult)?.id)
                             if (menuList != null && given != null) {
@@ -1733,6 +1744,7 @@ fun SearchWindow(
             }
             if (!actionsRemoved) androidx.compose.runtime.CompositionLocalProvider(
                 LocalTaskChildren provides taskChildren,
+                LocalNotAdded provides notAdded,
                 // User rule 2026-11-12: the calendar element's lock on the notifications among these rows.
                 LocalSearchResults provides results,
             ) {
@@ -1831,7 +1843,7 @@ fun SearchWindow(
                             ),
                         )
                     }
-                    androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides addedId) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides addedId, LocalNotAdded provides notAdded) {
                         SearchWindow(
                             state = state,
                             openers = openers,
@@ -2046,6 +2058,18 @@ class ActionSearchRows(
 ) {
     val byKey: Map<String, SearchDomain.ActionListRow> = rows.associateBy { it.key }
 }
+
+/**
+ * User rule 2026-11-15: *"Add a visual indication in the added elements list and the action section for elements that
+ * are in the added elements list only because they are selected in the search result list but not added via the
+ * right-click menu. The actions in the action section that are only associated with not added elements also have this
+ * visual. It could be maybe a grayer color."* — the keys of those elements, given by a Search window to its two right
+ * sections (each a Search window of its own), which draw such rows at [NOT_ADDED_ALPHA].
+ */
+internal val LocalNotAdded = androidx.compose.runtime.compositionLocalOf<Set<String>> { emptySet() }
+
+/** How faint a row listed only because it is selected is drawn ([LocalNotAdded]). */
+internal const val NOT_ADDED_ALPHA = 0.5f
 
 /** How far each level of the actions section's rows stands in: an action under its group, a group inside another. */
 internal val ACTION_ROW_INDENT = 14.dp

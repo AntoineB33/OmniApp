@@ -389,6 +389,11 @@ means.
       stayed. Not pinned, as before: its own menu leaves, its ancestors stay. A walk through the positions to an
       ancestor (`takeKeyboard`) closes what is below that ancestor alone. The button that opens a pinned pop-up is
       outside it: pressed, the pop-up closes and stays closed (`takeClosedPinned`).
+    - **The keyboard going to a pop-up this one hangs from closes what is below that one, never it** (anomaly
+      2026-11-15: *"I go to down arrow then click on 'task', but instead of pinning the two pop-up window, it closes the
+      pop-up window"*; `MenuHoverTracker.windowLeft(goneTo)`): the press on a category's row pins the row's branch, and
+      the keyboard leaving the branch's pop-up for the row's had closed the whole tree. The row's click opens the branch
+      again, pinned.
     The keyboard's place is ONE fact of the app (`MenuHoverTracker.focused`), cleared as a pop-up closes or leaves the
     composition — a tracker left "focused and pinned" would hold every hover of the app back.
     A menu that holds the keyboard stays only while a window of ITS tree is the active one (`activeListener`, once it
@@ -430,13 +435,17 @@ means.
     A tree's own pop-up comes back showing no category: each category it showed is a position of its own.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
     (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree.
-  - **A pop-up opened from a field or a button opens at its left, else below, else above, else at its right**
-    (user rule 2026-11-15: *"A pop-up window opened from a field/button must adjust its position on four choices …,
-    depending on the available space, then on its size, when the pop-up appears but also as the app gets resized"*, its
-    order *"left then bottom then top then right"* the same day; `MenuSide.POPUP`). Told by the press that opened it (`RightPresses.justPressed`, an AWT listener that
+  - **A pop-up opened from a field or a button opens at its left hanging down, else above reaching left, else below
+    reaching left, else at its right hanging down** (user rule 2026-11-15: *"A pop-up window opened from a field/button
+    must adjust its position on four choices …, depending on the available space, then on its size, when the pop-up
+    appears but also as the app gets resized"*; its order the same day, last: *"the right side to the top, then bottom
+    side to the right, then top side to the right, then left side to the top"* — the pop-up's side stuck to the field
+    and where on it the field is; `MenuSide.POPUP` = `LeftTop, AboveEnd, BelowEnd, RightTop`). Each spot holds it whole
+    where it stands, unslid, or is passed over. Told by the press that opened it (`RightPresses.justPressed`, an AWT listener that
     hears every press before any component): a right-click's menu keeps below, above, right, left; a click, a hover or a
     key opens a pop-up; a call site that names its own sides (`MenuSide.SUBMENU`) keeps them. **Where no side holds it
-    whole, it takes the side with the most room for its size**, pushed onto the screen — no longer below over its anchor.
+    whole, it takes the side with the most room for its size** on both axes (off the anchor for its depth, the screen
+    along the side for its length), slid along that side as little as it must — no longer below over its anchor.
   - **The window a menu hangs from moving or changing size places it again, afresh** (same rule, `MenuSession.ownerMoves`):
     its anchor is said in that window, so a move alone reported nothing and the menu stayed behind.
   - **Nothing reacts to the other applications' windows** (user rule 2026-11-15: *"Revert from all those adjustments to

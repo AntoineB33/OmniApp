@@ -306,7 +306,7 @@ internal fun ConfigurationLeafRow(
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
 ) {
     CompactFields {
-        SettingRow(node.label, TREE_LABEL_WIDTH) {
+        SettingRow(node.label, TREE_LABEL_WIDTH, hint = SearchDomain.filterHint(listOf(node.setting))) {
             SettingEditor(state, node.setting, config, openedConfig, onChange, windows, onPickOnCalendar, claudeLogs)
         }
     }
@@ -427,8 +427,11 @@ private fun TreeColumn(
                                 .reportsHover(branch)
                                 .onHoverEnter { if (MenuHoverTracker.hoverActs(around)) reveal() }
                                 // User rule 2026-11-14: a click on the row pins the pop-up it opens.
+                                // Anomaly 2026-11-15: the press itself may have closed it (the keyboard leaving its
+                                // pop-up for this row's, [MenuHoverTracker.windowLeft]) after this was composed, so the
+                                // click opens it whatever [revealing] last said.
                                 .clickable {
-                                    reveal()
+                                    onPathChange(path.take(depth) + node.id)
                                     branch.pin()
                                 }
                                 .padding(horizontal = 8.dp, vertical = 6.dp),

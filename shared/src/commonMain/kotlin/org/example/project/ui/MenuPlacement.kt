@@ -27,28 +27,48 @@ internal fun menuSpot(
 ): IntOffset {
     fun slideX(x: Int) = x.coerceIn(area.left, maxOf(area.left, area.right - size.width))
     fun slideY(y: Int) = y.coerceIn(area.top, maxOf(area.top, area.bottom - size.height))
+    fun whole(x: Int, y: Int): IntOffset? =
+        if (x >= area.left && y >= area.top && x + size.width <= area.right && y + size.height <= area.bottom) IntOffset(x, y) else null
     fun on(side: MenuSide): IntOffset? =
         when (side) {
             MenuSide.Below -> if (anchor.bottom + size.height <= area.bottom) IntOffset(slideX(anchor.left), maxOf(anchor.bottom, area.top)) else null
             MenuSide.Above -> if (anchor.top - size.height >= area.top) IntOffset(slideX(anchor.left), minOf(anchor.top - size.height, area.bottom - size.height)) else null
             MenuSide.Right -> if (anchor.right + size.width <= area.right) IntOffset(maxOf(anchor.right, area.left), slideY(anchor.top)) else null
             MenuSide.Left -> if (anchor.left - size.width >= area.left) IntOffset(minOf(anchor.left - size.width, area.right - size.width), slideY(anchor.top)) else null
+            // A pop-up's four spots hold it whole where they stand, unslid — sliding is only the fallback below.
+            MenuSide.LeftTop -> whole(anchor.left - size.width, anchor.top)
+            MenuSide.AboveEnd -> whole(anchor.right - size.width, anchor.top - size.height)
+            MenuSide.BelowEnd -> whole(anchor.right - size.width, anchor.bottom)
+            MenuSide.RightTop -> whole(anchor.right, anchor.top)
         }
     for (side in sides) on(side)?.let { return it }
     // No side holds it whole: the side with the most room for its size, the menu pushed back onto the screen.
+    // A pop-up's side is weighed on both axes: the room off the anchor for its depth, and the screen along the side for
+    // its length (it may slide along that side, never off the anchor).
+    fun fit(room: Int, need: Int) = minOf(1f, room.toFloat() / need.coerceAtLeast(1))
     val room = sides.maxByOrNull { side ->
         when (side) {
             MenuSide.Below -> (area.bottom - anchor.bottom).toFloat() / size.height.coerceAtLeast(1)
             MenuSide.Above -> (anchor.top - area.top).toFloat() / size.height.coerceAtLeast(1)
             MenuSide.Right -> (area.right - anchor.right).toFloat() / size.width.coerceAtLeast(1)
             MenuSide.Left -> (anchor.left - area.left).toFloat() / size.width.coerceAtLeast(1)
+            MenuSide.BelowEnd -> fit(area.bottom - anchor.bottom, size.height) * fit(area.width, size.width)
+            MenuSide.AboveEnd -> fit(anchor.top - area.top, size.height) * fit(area.width, size.width)
+            MenuSide.RightTop -> fit(area.right - anchor.right, size.width) * fit(area.height, size.height)
+            MenuSide.LeftTop -> fit(anchor.left - area.left, size.width) * fit(area.height, size.height)
         }
     } ?: MenuSide.Below
+    // Along the side it slides as little as it must from its spot: the anchor at the top of a vertical side, at the
+    // right end of a horizontal one.
     return when (room) {
         MenuSide.Below -> IntOffset(slideX(anchor.left), slideY(anchor.bottom))
         MenuSide.Above -> IntOffset(slideX(anchor.left), slideY(anchor.top - size.height))
         MenuSide.Right -> IntOffset(slideX(anchor.right), slideY(anchor.top))
         MenuSide.Left -> IntOffset(slideX(anchor.left - size.width), slideY(anchor.top))
+        MenuSide.BelowEnd -> IntOffset(slideX(anchor.right - size.width), slideY(anchor.bottom))
+        MenuSide.AboveEnd -> IntOffset(slideX(anchor.right - size.width), slideY(anchor.top - size.height))
+        MenuSide.RightTop -> IntOffset(slideX(anchor.right), slideY(anchor.top))
+        MenuSide.LeftTop -> IntOffset(slideX(anchor.left - size.width), slideY(anchor.top))
     }
 }
 
@@ -66,7 +86,13 @@ internal fun keepsSpot(current: IntOffset, size: IntSize, anchor: IntRect, area:
 
 /** A side of its anchor a menu opens on ([menuSpot]), tried in the order a menu is given. */
 enum class MenuSide {
-    Below, Above, Right, Left;
+    Below, Above, Right, Left,
+
+    /**
+     * A pop-up's four spots (user rule 2026-11-15, [POPUP]): named by the pop-up's side stuck to the anchor and where on
+     * that side the anchor is. Each holds the pop-up whole where it stands or not at all — no slide before the fallback.
+     */
+    LeftTop, AboveEnd, BelowEnd, RightTop;
 
     companion object {
         /** Every menu's (user rule 2026-10-14): below, then above, then at the right, then at the left. */
@@ -79,12 +105,16 @@ enum class MenuSide {
         val SUBMENU: List<MenuSide> = listOf(Left, Right, Below, Above)
 
         /**
-         * User rule 2026-11-15, a pop-up opened from a field or a button (a click, a hover, a key — not a right-click):
-         * *"A pop-up window opened from a field/button must adjust its position on four choices"*, in the order *"left
-         * then bottom then top then right"* (the same day, superseding right, left, bottom, top). A right-click's menu
-         * keeps [DEFAULT]; a call site that names its sides ([SUBMENU]) keeps them.
+         * User rule 2026-11-15 (second of the day), a pop-up opened from a field or a button (a click, a hover, a key —
+         * not a right-click): *"First it checks if there is enough space when choosing the right side to the top, then
+         * bottom side to the right, then top side to the right, then left side to the top."* The pop-up's right side
+         * on the anchor, the anchor at its top (at the anchor's left, hanging down); its bottom side, the anchor at its
+         * right end (above, reaching left); its top side, the same (below, reaching left); its left side, the anchor at
+         * its top (at the anchor's right). Supersedes *"left then bottom then top then right"* of the same day. Where
+         * none holds it whole, the side with the most room on both axes, slid along it. A right-click's menu keeps
+         * [DEFAULT]; a call site that names its sides ([SUBMENU]) keeps them.
          */
-        val POPUP: List<MenuSide> = listOf(Left, Below, Above, Right)
+        val POPUP: List<MenuSide> = listOf(LeftTop, AboveEnd, BelowEnd, RightTop)
     }
 }
 

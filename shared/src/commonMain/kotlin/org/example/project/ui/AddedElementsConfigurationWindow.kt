@@ -357,7 +357,10 @@ internal fun AddedActionsSection(
             highlighted = config.actionSearch,
             noneListed = "No action matches.",
             reveal = reveal,
-            modifier = Modifier.fillMaxWidth().weight(1f).keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH),
+            // Anomaly 2026-11-15 (*"shift+scrolls, so it horizontally scrolls, but not enough to show the scrollbar"*): no
+            // cut of its own around the list. The Search window it is cuts its list itself, and scrolls that cut
+            // sideways ([SideCut]); a second cut here hid the rest, the scrollbar included, out of the scroll's reach.
+            modifier = Modifier.fillMaxWidth().weight(1f),
         )
     }
     }

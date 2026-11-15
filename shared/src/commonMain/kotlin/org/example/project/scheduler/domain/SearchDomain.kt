@@ -1468,6 +1468,21 @@ object SearchDomain {
         /** The search bar's filters ([matchCase], [wholeWord], [regex]) as a find bar holds them. */
         val queryOptions: TaskTreeSearch.Options get() = TaskTreeSearch.Options(matchCase, wholeWord, regex)
 
+        /**
+         * Anomaly 2026-11-15 (*"Root of a tree to yes, and the search result list of the original window shows elements
+         * that are not task. Fix those kinds of errors all around the app"*): **a filter of one type, on, keeps the
+         * elements of that type alone** — the types of every such filter that is on, or null where none is ([isOn],
+         * [Setting.section]). Until that day another type's elements passed it untouched. A "creation" row is no
+         * element and stays. Not while the calendar's instant is a filter ([calendarAt], [calendarAddAt]): that one
+         * answers for every type, and the calendar's "edit…" sets the task's and the period's box bounds beside it
+         * ([calendarAtConfig]) while the alarms, timers and reminders there stay listed.
+         */
+        val onlyKinds: Set<Kind>?
+            get() = if (calendarAt != null || calendarAddAt != null) null else Setting.entries
+                .filter { setting -> setting.section != null && roleOf(setting) == SettingRole.Filter && isOn(setting) }
+                .mapNotNullTo(HashSet()) { it.section }
+                .takeIf { it.isNotEmpty() }
+
         /** How many filters are set to something other than "any" — the Search window's button shows it. */
         val activeCount: Int
             // A filter of the three Claude kinds is one filter, listed once per kind.
@@ -1906,6 +1921,23 @@ object SearchDomain {
      * presentation/children switches, but not the search text or the selected types: those describe the input and
      * scope of the window rather than an enabled result-list behavior.
      */
+    /**
+     * The info bubble of a filter of one type or a few (anomaly 2026-11-15: *"add info bubble if necessary to clear
+     * ambiguity"*): set, it keeps those types' elements alone ([Filters.onlyKinds]). Null for a configuration of the
+     * whole search.
+     */
+    fun filterHint(settings: List<Setting>): String? {
+        if (settings.any { roleOf(it) != SettingRole.Filter }) return null
+        val kinds = settings.mapNotNull { it.section }.distinct()
+        if (kinds.isEmpty()) return null
+        val label = settings.first().label
+        val what = when (kinds.size) {
+            1 -> "the ${kinds[0].plural}"
+            else -> "the " + kinds.dropLast(1).joinToString(", ") { it.plural } + " and the " + kinds.last().plural
+        }
+        return "Set, \"$label\" lists only $what it holds for: no element of another type."
+    }
+
     fun activeSettings(config: Config?): List<Setting> {
         config ?: return emptyList()
         val filters = Setting.entries.filter { config.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES }
@@ -3282,6 +3314,11 @@ object SearchDomain {
                         else -> rows.filter { matchesWith(it, query, match, claudeLogs) }
                     }
                 }
+                .let { rows ->
+                    // Anomaly 2026-11-15: a filter of a type keeps that type's elements alone.
+                    val only = filters.onlyKinds ?: return@let rows
+                    rows.filter { it.kind in only || it.kind == Kind.Creation }
+                }
                 .filter { passes(state, it, filters, calendar) }
                 .let { rows ->
                     // User rule 2026-11-12: no parent of the checked kinds — every element's parents read once.
@@ -3475,7 +3512,10 @@ object SearchDomain {
             }
     }
 
-    /** Whether [result] passes its own kind's [filters]; another kind's filters never touch it. */
+    /**
+     * Whether [result] passes its own kind's [filters]. Another kind's filters do not read it — they keep it out
+     * altogether, before this ([Filters.onlyKinds]).
+     */
     private fun passes(state: SchedulerState, result: Result, filters: Filters, calendar: CalendarBoxes?): Boolean {
         fun tri(value: Tri, actual: Boolean) = value == Tri.Any || (value == Tri.Yes) == actual
         return when (result) {

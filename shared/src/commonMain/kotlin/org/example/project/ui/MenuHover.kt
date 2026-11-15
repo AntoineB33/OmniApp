@@ -81,12 +81,16 @@ class MenuHoverTracker(
      * descendants** — a click or a right-click *"on anything in the app than the currently focused window and its
      * descendant ones"*. Pinned, it and every pop-up it is a branch of disappear; not pinned, nothing more than before
      * (its own menu leaves, its ancestors stay). A walk through the positions that is bringing the keyboard to one of
-     * its ancestors ([takeKeyboard]) closes what stands below that ancestor alone.
+     * its ancestors ([takeKeyboard]) closes what stands below that ancestor alone — and so does the keyboard going to
+     * an ancestor's own window ([goneTo] true of that ancestor's [windows]): anomaly 2026-11-15, *"I go to down arrow
+     * then click on 'task', but instead of pinning the two pop-up window, it closes the pop-up window"* — the press on
+     * the category's row pinned the row's branch, and the keyboard leaving the branch's pop-up for the row's closed
+     * every pop-up up to the tree's root. The row's click opens the branch again, pinned.
      */
-    fun windowLeft() {
+    fun windowLeft(goneTo: ((Set<Any>) -> Boolean)? = null) {
         if (focused === this) focused = null
         if (!pinned) return
-        val target = walkingTo
+        val target = walkingTo ?: goneTo?.let { test -> generateSequence(parent) { it.parent }.firstOrNull { test(it.windows) } }
         var at: MenuHoverTracker? = this
         while (at != null && at !== target) {
             val above = at.parent

@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pop-up spots re-ordered; a category's click pins; a type's filter keeps its type alone; selection per window; selected-only rows greyed — 2026-11-15
+
+User anomalies 1–4 and two rules. **Pop-up placement**: *"right side to the top, then bottom side to the right, then top
+side to the right, then left side to the top"* — at the field's left hanging down, above reaching left, below reaching
+left, at its right (`MenuSide.POPUP` = `LeftTop, AboveEnd, BelowEnd, RightTop`), each whole and unslid or passed over;
+where none holds it, the side with the most room on both axes, slid along it (supersedes left, below, above, right).
+**▾ > a category's click** closed every pop-up: the press pinned the row's branch, and the keyboard going to the tree's
+window read as leaving the tree (`MenuHoverTracker.windowLeft(goneTo)` now stops at the ancestor whose window it went
+to). **A filter of one type keeps that type's elements alone** (`Filters.onlyKinds`; until then other types passed it
+untouched), except while the calendar's instant filters; its label has an info bubble (`SearchDomain.filterHint`).
+**Shift+wheel in the actions section** reached its scrollbar no more: a second cut around the section's Search window
+removed. **Selected rows that stayed selected**: an outside-press part is in its own window (`OutsidePressEditor.parts`
+by root), since a pop-up is a window of its own. **Rows added only by being selected** — and actions on them alone —
+are drawn at half opacity (`LocalNotAdded`). No migration. Deploy: client apps.
+
 ### Menus are never always on top; a pinned pop-up survives another application; the outside-window adjustments taken back — 2026-11-15
 
 User: *"The problem was that pop-up windows appeared above the pip. Actually, instead of doing those position and size

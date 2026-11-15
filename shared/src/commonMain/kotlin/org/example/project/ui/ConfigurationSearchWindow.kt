@@ -242,10 +242,10 @@ fun ConfigurationSearchWindow(
                         if (collapsed) continue
                         // What every kind of the group has under one name: one field, written to all of them.
                         for (family in group.shared) {
-                            SettingRow(family.first().label) { SharedSettingEditor(family, config, changed(family), onPickOnCalendar, claudeLogs) }
+                            SettingRow(family.first().label, hint = SearchDomain.filterHint(family)) { SharedSettingEditor(family, config, changed(family), onPickOnCalendar, claudeLogs) }
                         }
                         for (setting in group.settings) {
-                            SettingRow(setting.label) { SettingEditor(state, setting, config, openedConfig, changed(listOf(setting)), windows, onPickOnCalendar, claudeLogs) }
+                            SettingRow(setting.label, hint = SearchDomain.filterHint(listOf(setting))) { SettingEditor(state, setting, config, openedConfig, changed(listOf(setting)), windows, onPickOnCalendar, claudeLogs) }
                         }
                     }
                 }
@@ -343,17 +343,24 @@ internal fun SectionTitle(text: String) {
 
 /** One setting: its name, on ONE line, then its control — a row one task cell tall unless the control is taller. */
 @Composable
-internal fun SettingRow(label: String, labelWidth: androidx.compose.ui.unit.Dp = 130.dp, editor: @Composable () -> Unit) {
+internal fun SettingRow(
+    label: String,
+    labelWidth: androidx.compose.ui.unit.Dp = 130.dp,
+    /** What the label's info bubble says ([SearchDomain.filterHint]); none where null. */
+    hint: String? = null,
+    editor: @Composable () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().heightIn(min = TASK_ROW_MIN_HEIGHT),
     ) {
-        Text(
-            text = searchHighlighted(label),
-            style = MaterialTheme.typography.bodyMedium,
-            // User rule 2026-11-04: wrapped in its column, never cut by "…" ("Only this page's types").
-            modifier = Modifier.width(labelWidth).padding(end = 6.dp),
-        )
+        InfoHint(text = hint, modifier = Modifier.width(labelWidth).padding(end = 6.dp)) {
+            Text(
+                text = searchHighlighted(label),
+                style = MaterialTheme.typography.bodyMedium,
+                // User rule 2026-11-04: wrapped in its column, never cut by "…" ("Only this page's types").
+            )
+        }
         Box(Modifier.weight(1f)) { editor() }
     }
 }

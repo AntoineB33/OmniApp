@@ -31,6 +31,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 
@@ -103,9 +104,9 @@ class TransientMenuHost {
      * does every edit whose field [windowPosition] (in the window; null = unknown) is not in; the press itself is
      * neither consumed nor altered.
      */
-    fun onPress(windowPosition: Offset? = null) {
+    fun onPress(windowPosition: Offset? = null, root: Any? = null) {
         for ((key, editor) in editors.entries.toList()) {
-            if (windowPosition != null && editor.first.contains(windowPosition)) continue
+            if (windowPosition != null && editor.first.contains(root, windowPosition)) continue
             editors.remove(key)
             editor.second()
         }
@@ -116,7 +117,18 @@ class TransientMenuHost {
      * A press in a pop-up of its own layer, which the root observer never sees ([dismissesMenusOnPress]): the menus
      * close, and no edit — the pop-up is a part of the edit it was opened from (the cell's "▾"), not outside it.
      */
-    fun onPressInPopup() = dismissMenus()
+    fun onPressInPopup(windowPosition: Offset? = null, root: Any? = null) {
+        // Anomaly 2026-11-15 (*"the selected rows sometimes stay selected even when clicking elsewhere"*): an edit drawn
+        // in THAT pop-up's window (a Search window's selected rows there) leaves on a press elsewhere in the same window.
+        if (windowPosition != null && root != null) {
+            for ((key, editor) in editors.entries.toList()) {
+                if (!editor.first.hasPartIn(root) || editor.first.contains(root, windowPosition)) continue
+                editors.remove(key)
+                editor.second()
+            }
+        }
+        dismissMenus()
+    }
 
     private fun dismissMenus() {
         if (entries.isEmpty()) return
@@ -148,7 +160,8 @@ fun Modifier.transientMenuDismissRoot(host: TransientMenuHost): Modifier {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
                     if (event.type != PointerEventType.Press) continue
                     val at = event.changes.firstOrNull()?.position
-                    host.onPress(at?.let { position -> coordinates[0]?.takeIf { it.isAttached }?.localToWindow(position) })
+                    val here = coordinates[0]?.takeIf { it.isAttached }
+                    host.onPress(at?.let { position -> here?.localToWindow(position) }, here?.findRootCoordinates())
                 }
             }
         }
@@ -175,9 +188,18 @@ fun Modifier.leaveOnOutsidePress(active: Boolean, onLeave: () -> Unit): Modifier
  * root observer at all.
  */
 class OutsidePressEditor internal constructor() {
-    internal val parts = LinkedHashMap<Any, Rect>()
+    /**
+     * Each part's window (its root's coordinates) and bounds in it. Anomaly 2026-11-15: since every pop-up is a window
+     * of its own (2026-11-13), a part drawn in a pop-up has bounds in THAT window — read against a press in the app's
+     * window they matched where nothing of the edit stood, and the selected rows stayed selected.
+     */
+    internal val parts = LinkedHashMap<Any, Pair<Any, Rect>>()
 
-    internal fun contains(windowPosition: Offset): Boolean = parts.values.any { it.contains(windowPosition) }
+    /** Whether [windowPosition], in the window of [root] (null: any window), is in a part. */
+    internal fun contains(root: Any?, windowPosition: Offset): Boolean =
+        parts.values.any { (at, bounds) -> (root == null || at === root) && bounds.contains(windowPosition) }
+
+    internal fun hasPartIn(root: Any): Boolean = parts.values.any { it.first === root }
 }
 
 /** [leaveOnOutsidePress] for an edit drawn in more than one place: mark each place with [outsidePressPart]. */
@@ -203,14 +225,20 @@ fun rememberOutsidePressEditor(active: Boolean, onLeave: () -> Unit): OutsidePre
 @Composable
 fun Modifier.dismissesMenusOnPress(): Modifier {
     val host = LocalTransientMenuHost.current ?: return this
-    return this.pointerInput(host) {
-        awaitPointerEventScope {
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                if (event.type == PointerEventType.Press) host.onPressInPopup()
+    val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    return this
+        .onGloballyPositioned { coordinates[0] = it }
+        .pointerInput(host) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    if (event.type != PointerEventType.Press) continue
+                    val here = coordinates[0]?.takeIf { it.isAttached }
+                    val at = event.changes.firstOrNull()?.position?.let { here?.localToWindow(it) }
+                    host.onPressInPopup(at, here?.findRootCoordinates())
+                }
             }
         }
-    }
 }
 
 /** One place [editor] counts as inside — see [OutsidePressEditor]. */
@@ -218,7 +246,7 @@ fun Modifier.dismissesMenusOnPress(): Modifier {
 fun Modifier.outsidePressPart(editor: OutsidePressEditor): Modifier {
     val key = remember { Any() }
     DisposableEffect(editor, key) { onDispose { editor.parts.remove(key) } }
-    return this.onGloballyPositioned { editor.parts[key] = it.boundsInWindow() }
+    return this.onGloballyPositioned { editor.parts[key] = it.findRootCoordinates() to it.boundsInWindow() }
 }
 
 /**

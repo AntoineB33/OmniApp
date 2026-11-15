@@ -279,9 +279,12 @@ class SearchCalendarFilterTest {
         // A layer band (read off the lock history, not in the state) is there too, as its kind.
         val withLayer = SearchDomain.calendarElementsAt(s, at, tz) { instant -> if (instant == at) setOf(PeriodKinds.NO_PHONE_UNLOCKED) else emptySet() }
         assertTrue("RestrictivePeriod/" + PeriodKinds.NO_PHONE_UNLOCKED in withLayer)
-        // Off: everything again.
+        // Off, the box bounds still set: those are a task's and a period's filters, which keep every other type out
+        // (anomaly 2026-11-15, [SearchDomain.Filters.onlyKinds]); cleared too, everything again.
         val off = config.filters.copy(calendarAtOn = false)
-        assertTrue("Alarm/alarm-1" in SearchDomain.results(s, SearchDomain.CALENDAR_AT_KINDS, "", filters = off, timeZone = tz).map(SearchDomain::keyOf))
+        assertFalse("Alarm/alarm-1" in SearchDomain.results(s, SearchDomain.CALENDAR_AT_KINDS, "", filters = off, timeZone = tz).map(SearchDomain::keyOf))
+        val cleared = off.copy(taskBoxesFrom = null, taskBoxesUntil = null, periodBoxesFrom = null, periodBoxesUntil = null)
+        assertTrue("Alarm/alarm-1" in SearchDomain.results(s, SearchDomain.CALENDAR_AT_KINDS, "", filters = cleared, timeZone = tz).map(SearchDomain::keyOf))
         assertFalse(SearchDomain.Config.decode("""{"kinds":["Task"]}""")!!.filters.calendarAtOn)
     }
 }

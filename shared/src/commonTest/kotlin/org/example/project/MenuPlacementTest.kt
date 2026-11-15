@@ -82,27 +82,31 @@ class MenuPlacementTest {
     }
 
     /**
-     * User rule 2026-11-15: *"A pop-up window opened from a field/button must adjust its position on four choices"*, in
-     * the order *"left then bottom then top then right"*.
+     * User rule 2026-11-15 (second of the day): *"right side to the top, then bottom side to the right, then top side to
+     * the right, then left side to the top"* — each spot holds the pop-up whole, unslid, or is passed over.
      */
     @Test
-    fun a_pop_up_of_a_field_opens_at_its_left_else_below_else_above_else_at_its_right() {
+    fun a_pop_up_of_a_field_opens_at_its_left_else_above_else_below_else_at_its_right() {
         val popup = MenuSide.POPUP
-        assertEquals(IntOffset(250, 300), menuSpot(IntRect(400, 300, 500, 330), menu, screen, popup), "at its left, tops aligned")
-        assertEquals(IntOffset(50, 330), menuSpot(IntRect(50, 300, 150, 330), menu, screen, popup), "no room at the left: below")
-        assertEquals(IntOffset(0, 300), menuSpot(IntRect(0, 600, 1000, 630), menu, screen, popup), "nor below: above")
-        val short = IntRect(0, 0, 1000, 400)
-        assertEquals(IntOffset(150, 100), menuSpot(IntRect(50, 150, 150, 180), menu, short, popup), "nor above: at its right")
+        val field = IntRect(400, 400, 500, 430)
+        assertEquals(IntOffset(250, 400), menuSpot(field, menu, screen, popup), "at its left, hanging from its top")
+        // Too low to hang down at the left: above, its bottom-right corner on the field's top-right.
+        assertEquals(IntOffset(350, 300), menuSpot(IntRect(400, 600, 500, 630), menu, screen, popup), "above, reaching left")
+        // No room at the left nor above: below, reaching left.
+        assertEquals(IntOffset(0, 130), menuSpot(IntRect(50, 100, 150, 130), menu, screen, popup), "below, reaching left")
+        // A field at the screen's left edge, its right end too short for below/above: at its right.
+        assertEquals(IntOffset(100, 100), menuSpot(IntRect(0, 100, 100, 130), menu, IntRect(0, 0, 1000, 400), popup), "at its right")
     }
 
-    /** No side holds it whole: the side with the most room for its size, pushed onto the screen — never off it. */
+    /** No spot holds it whole: the side with the most room on both axes, slid along it — never off the screen. */
     @Test
     fun where_no_side_holds_it_it_takes_the_side_with_the_most_room() {
         val tall = IntSize(150, 700)
-        // A wide field across the screen's middle: 270 above, 470 below — below, pushed up to stay whole.
-        val spot = menuSpot(IntRect(0, 300, 1000, 330), tall, screen, MenuSide.POPUP)
-        assertEquals(IntOffset(0, 100), spot)
-        // Near the bottom, above has the more room: placed there, held on the screen's top.
-        assertEquals(IntOffset(0, 0), menuSpot(IntRect(0, 700, 1000, 730), tall, screen, MenuSide.POPUP))
+        // A field at the screen's middle: neither left nor right holds 700 hanging from y 300; above and below have
+        // less room than the side columns, which hold the whole width — at the left, slid up as little as it must.
+        assertEquals(IntOffset(350, 100), menuSpot(IntRect(500, 300, 600, 330), tall, screen, MenuSide.POPUP))
+        // A field across the whole width: only above and below; below has the more room, slid up to stay whole.
+        assertEquals(IntOffset(850, 100), menuSpot(IntRect(0, 300, 1000, 330), tall, screen, MenuSide.POPUP))
+        assertEquals(IntOffset(850, 0), menuSpot(IntRect(0, 700, 1000, 730), tall, screen, MenuSide.POPUP))
     }
 }

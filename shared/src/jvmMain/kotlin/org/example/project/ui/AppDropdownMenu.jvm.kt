@@ -379,7 +379,10 @@ private class MenuSession(
                     override fun windowLostFocus(event: WindowEvent) {
                         val inside = generateSequence(event.oppositeWindow) { it.owner }.any { it in tracker.windows }
                         // Gone to another application, pinned: it stays (user rule 2026-11-15, [pinnedAway]).
-                        if (!inside && !(event.oppositeWindow == null && tracker.pinned)) tracker.windowLeft()
+                        // Gone to a pop-up this one hangs from: what is below that one closes, it stays.
+                        if (!inside && !(event.oppositeWindow == null && tracker.pinned)) {
+                            tracker.windowLeft { windows -> generateSequence(event.oppositeWindow) { it.owner }.any { it in windows } }
+                        }
                     }
                 }
                 tracker.windows += window

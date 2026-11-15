@@ -192,6 +192,18 @@ class MenuHoverTrackerTest {
         assertEquals(0 to 1, treeLeft to branchLeft)
         assertTrue(tree.pinned)
         tree.unpin()
+        // Anomaly 2026-11-15: a press on the category's row (in the tree's pop-up) pinned the branch; the keyboard going
+        // from the branch's window to the tree's closed the tree too. Gone to an ancestor's window: that one stays.
+        treeLeft = 0
+        branchLeft = 0
+        val treeWindow = Any()
+        tree.windows += treeWindow
+        branch.windowFocused()
+        branch.pin()
+        branch.windowLeft { treeWindow in it }
+        assertEquals(0 to 1, treeLeft to branchLeft)
+        assertTrue(tree.pinned, "the tree pinned by the same press")
+        tree.unpin()
     }
 
     /**

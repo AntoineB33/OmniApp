@@ -701,7 +701,7 @@ class SearchWindowTest {
     }
 
     @Test
-    fun the_filters_narrow_their_own_kind_and_nothing_else() {
+    fun the_filters_narrow_their_own_kind_and_keep_the_others_out() {
         val s =
             SchedulerState.empty().copy(
                 alarms = listOf(
@@ -722,9 +722,9 @@ class SearchWindowTest {
             SearchDomain.results(s, all, "", { emptyMap() }, filters).filterNot { it.kind == SearchDomain.Kind.Creation }.map { it.name }.toSet()
 
         assertEquals(setOf("Weekday", "Off", "Idle", "Running", "Once", "Weekly"), names(SearchDomain.Filters()))
-        // An alarm filter removes alarms only — the timers and reminders are untouched.
+        // Anomaly 2026-11-15: an alarm filter keeps the alarms it holds for, and nothing of another type.
         assertEquals(
-            setOf("Weekday", "Idle", "Running", "Once", "Weekly"),
+            setOf("Weekday"),
             names(SearchDomain.Filters(alarmState = SearchDomain.AlarmState.On)),
         )
         // "Rings on Monday": the Monday-only alarm; the off alarm rings every day, Monday included.

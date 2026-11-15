@@ -210,6 +210,27 @@ class ElementTreeTest {
         assertFalse(taskKey(s, "One") in SearchDomain.results(linked, setOf(Kind.Task), "", filters = SearchDomain.Filters(noParentOfKinds = setOf(Kind.Chrono))).map(SearchDomain::keyOf))
     }
 
+    /**
+     * Anomaly 2026-11-15: *"Root of a tree to yes, and the search result list of the original window shows elements that
+     * are not task"* — a filter of one type keeps that type's elements alone ([SearchDomain.Filters.onlyKinds]).
+     */
+    @Test
+    fun a_filter_of_one_type_keeps_that_types_elements_alone() {
+        val category = Category(CategoryId("health"), "Health")
+        val s = withTasks("One").copy(categories = listOf(category))
+        val kinds = setOf(Kind.Task, Kind.Category)
+        fun listed(filters: SearchDomain.Filters) =
+            SearchDomain.results(s, kinds, "", filters = filters).filter { it.kind != Kind.Creation }.map { it.kind }.toSet()
+        assertEquals(kinds, listed(SearchDomain.Filters()), "no filter: both types")
+        assertEquals(setOf(Kind.Task), listed(SearchDomain.Filters(taskTreeRoot = SearchDomain.Tri.Yes)))
+        assertEquals(setOf(Kind.Task), listed(SearchDomain.Filters(taskTreeRoot = SearchDomain.Tri.No)).ifEmpty { setOf(Kind.Task) })
+        assertEquals(setOf(Kind.Category), listed(SearchDomain.Filters(categoryHasRules = SearchDomain.Tri.No)))
+        // Two types' filters on: each type's elements that pass their own.
+        assertEquals(kinds, listed(SearchDomain.Filters(taskTreeRoot = SearchDomain.Tri.Yes, categoryHasRules = SearchDomain.Tri.No)))
+        assertTrue(SearchDomain.filterHint(listOf(SearchDomain.Setting.TaskTreeRoot))!!.contains("only the tasks"))
+        assertEquals(null, SearchDomain.filterHint(listOf(SearchDomain.Setting.MatchCase)))
+    }
+
     /** User rule 2026-11-14, the use case *"display all the root cells of every tree"*: the task filter "Root of a tree". */
     @Test
     fun the_roots_of_the_trees_are_found_by_the_task_filter() {
