@@ -422,6 +422,26 @@ means.
     A tree's own pop-up comes back showing no category: each category it showed is a position of its own.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
     (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree.
+  - **A pop-up opened from a field or a button opens at its right, else its left, else below, else above**
+    (user rule 2026-11-15: *"A pop-up window opened from a field/button must adjust its position on four choices (right,
+    left, bottom, top), depending on the available space, then on its size, when the pop-up appears but also as the app
+    gets resized"*; `MenuSide.POPUP`). Told by the press that opened it (`RightPresses.justPressed`, an AWT listener that
+    hears every press before any component): a right-click's menu keeps below, above, right, left; a click, a hover or a
+    key opens a pop-up; a call site that names its own sides (`MenuSide.SUBMENU`) keeps them. **Where no side holds it
+    whole, it takes the side with the most room for its size**, pushed onto the screen — no longer below over its anchor.
+  - **The window a menu hangs from moving or changing size places it again, afresh** (same rule, `MenuSession.ownerMoves`):
+    its anchor is said in that window, so a move alone reported nothing and the menu stayed behind.
+  - **A menu keeps off Firefox's picture-in-picture** (user rule 2026-11-15: *"I'd like the pop-up windows to avoid hiding
+    the pip as the user moves the app or the pip"*; `PictureInPictureWindows`, `menuSpot`'s `avoid`). Windows only: a
+    visible, always-on-top window of `firefox.exe` of a video's size. On a side, a spot that covers it slides along the
+    side past it; a side with no clear spot is passed over; where no side is clear, the anchor comes first. It is asked
+    as a menu is placed, and its moves are HEARD (a WinEvent hook on Firefox's process, on a thread of its own, only while
+    a menu is open and a video stands) — never polled. A menu that the video moves onto is placed again (`keepsSpot`).
+  - **A right-click outside an open right-click menu that leaves it open opens it AFRESH** (user rule 2026-11-15:
+    *"Right-click must open the right-click menu even if a right-click menu was already open."*; `HangingMenu`, keyed on
+    `RightPresses.count`): the same row's again, another row sharing the one menu, a row of the pop-up it hangs from — a
+    new session, at the new pointer. It stood where the first right-click had put it. A right-click inside the menu or a
+    menu opened from it is the menu's own.
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
 - **A right-click on a window's HEAD opens its menu, at the pointer** (user rule 2026-10-15: *"The user can modify
   the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove from
@@ -459,6 +479,12 @@ means.
 
 ### Search bars
 
+- **A search bar keeps its own text and caret** (anomaly 2026-11-15, *"when typing “paren” in the search bar it writes
+  “preat”"*, the actions section of a "List of parents"; `EchoedText`, `EchoedTextTest`). A Search window drawn in a layer
+  (`FieldSearchPopupLayer`, given its request by a `SideEffect`) hears what its bar typed a frame late, and a field shown
+  that stale text set the caret back. What the bar typed, and what it held as the typing began, are echoes and ignored;
+  any other text from its owner (the cross, Escape's revert, a configuration put back) replaces it. `SearchBar` is the
+  one place: a new bar is one.
 - **Every search bar has a ✕ at its right end, which empties it** (user rule 2026-10-11; `SearchBarCross`, the
   field's `trailingIcon`): the Search window's bar, "Search a configuration" in both configuration windows, the
   actions section's "Search an action", the notification list's "Filter" and the task picker's "Find a task". Always

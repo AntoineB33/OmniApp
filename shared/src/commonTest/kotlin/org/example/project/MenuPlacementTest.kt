@@ -80,4 +80,50 @@ class MenuPlacementTest {
         assertFalse(keepsSpot(shown, IntSize(200, 700), row, screen), "off the screen's bottom: placed again")
         assertFalse(keepsSpot(shown, IntSize(250, 300), row, screen), "over its anchor: placed again")
     }
+
+    /**
+     * User rule 2026-11-15: *"A pop-up window opened from a field/button must adjust its position on four choices (right,
+     * left, bottom, top), depending on the available space, then on its size"*.
+     */
+    @Test
+    fun a_pop_up_of_a_field_opens_at_its_right_else_left_else_below_else_above() {
+        val popup = MenuSide.POPUP
+        val field = IntRect(400, 300, 500, 330)
+        assertEquals(IntOffset(500, 300), menuSpot(field, menu, screen, popup), "at its right, tops aligned")
+        assertEquals(IntOffset(750, 300), menuSpot(IntRect(900, 300, 1000, 330), menu, screen, popup), "no room at the right: at its left")
+        assertEquals(IntOffset(0, 330), menuSpot(IntRect(0, 300, 1000, 330), menu, screen, popup), "no room at either side: below")
+        assertEquals(IntOffset(0, 300), menuSpot(IntRect(0, 600, 1000, 630), menu, screen, popup), "nor below: above")
+    }
+
+    /** No side holds it whole: the side with the most room for its size, pushed onto the screen — never off it. */
+    @Test
+    fun where_no_side_holds_it_it_takes_the_side_with_the_most_room() {
+        val tall = IntSize(150, 700)
+        // A wide field across the screen's middle: 270 above, 470 below — below, pushed up to stay whole.
+        val spot = menuSpot(IntRect(0, 300, 1000, 330), tall, screen, MenuSide.POPUP)
+        assertEquals(IntOffset(0, 100), spot)
+        // Near the bottom, above has the more room: placed there, held on the screen's top.
+        assertEquals(IntOffset(0, 0), menuSpot(IntRect(0, 700, 1000, 730), tall, screen, MenuSide.POPUP))
+    }
+
+    /**
+     * User rule 2026-11-15: *"I'd like the pop-up windows to avoid hiding the pip as the user moves the app or the pip."*
+     * A spot that covers the picture-in-picture slides along its side past it; a side with no clear spot is passed over;
+     * where no side is clear, the anchor comes first.
+     */
+    @Test
+    fun a_menu_keeps_off_the_picture_in_picture() {
+        val field = IntRect(100, 100, 200, 130)
+        // Below the field, the video stands where the menu would: slid right, past it.
+        val pip = IntRect(50, 200, 300, 400)
+        assertEquals(IntOffset(300, 130), menuSpot(field, menu, screen, MenuSide.DEFAULT, listOf(pip)))
+        // A video across the whole width below: no clear spot below, nor above (no room) — at the right, slid down past it.
+        val band = IntRect(0, 150, 1000, 400)
+        assertEquals(IntOffset(200, 400), menuSpot(field, menu, screen, MenuSide.DEFAULT, listOf(band)))
+        // Nothing clear anywhere: placed as if there were no video.
+        val all = IntRect(0, 0, 1000, 800)
+        assertEquals(menuSpot(field, menu, screen), menuSpot(field, menu, screen, MenuSide.DEFAULT, listOf(all)))
+        // A menu shown where the video has come is placed again.
+        assertFalse(keepsSpot(IntOffset(100, 130), menu, field, screen, listOf(pip)))
+    }
 }

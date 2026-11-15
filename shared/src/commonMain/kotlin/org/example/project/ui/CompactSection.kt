@@ -447,16 +447,82 @@ internal fun SearchBar(
     cross: Boolean = true,
     escapeReverts: Boolean = true,
 ) {
+    // Anomaly 2026-11-15 (*"when typing “paren” in the search bar it writes “preat” or “prenta”"*, the actions section
+    // of a "List of parents"): the text a bar is given comes back from its owner a frame or more after the keystroke
+    // there, and a field shown the stale text puts the caret back before the next key lands. The bar keeps its own
+    // text and caret, and only an owner's text that is none of what it just typed replaces them ([EchoedText]).
+    val field = androidx.compose.runtime.remember { EchoedText(text) }
+    field.ownerHolds(text)
+    // The cross and Escape's revert set the bar's own text too: an owner that answers late shows them at once.
+    val put = { next: String ->
+        field.typed(androidx.compose.ui.text.input.TextFieldValue(next, androidx.compose.ui.text.TextRange(next.length)))
+        onTextChange(next)
+    }
     CompactFields {
         OutlinedTextField(
-            value = text,
-            onValueChange = onTextChange,
+            value = field.value,
+            onValueChange = { if (field.typed(it)) onTextChange(it.text) },
             singleLine = true,
             label = { androidx.compose.material3.Text(label) },
             placeholder = placeholder?.let { hint -> { androidx.compose.material3.Text(hint) } },
-            trailingIcon = if (cross) ({ SearchBarCross(text) { onTextChange("") } }) else null,
-            modifier = if (escapeReverts) modifier.revertsOnEscape(text, onTextChange) else modifier,
+            trailingIcon = if (cross) ({ SearchBarCross(field.value.text) { put("") } }) else null,
+            modifier = if (escapeReverts) modifier.revertsOnEscape(field.value.text, put) else modifier,
         )
+    }
+}
+
+/**
+ * **A search bar's own text and caret**, against an owner that answers late ([SearchBar]). Anomaly 2026-11-15: in a
+ * Search window drawn inside another (the "List of parents" of the actions section), what the bar typed reaches its
+ * owner and comes back a frame or more later. A field shown that stale text took it as a new value and set the caret
+ * back, and each next key landed in the wrong place — "paren" came out "preat", and Ctrl+A then typing again
+ * "prentarenta". So what the bar typed is kept as sent ([typed]) and the owner's text read back ([ownerHolds]) is
+ * one of three things:
+ *  - the field's own text: the owner has caught up;
+ *  - a text the field typed and sent, or held as the typing began: a late echo, ignored (the ones before it will not
+ *    come back any more);
+ *  - anything else — the cross, Escape's revert, a configuration put back: it replaces the field, the caret at its end.
+ */
+internal class EchoedText(initial: String) {
+    var value: androidx.compose.ui.text.input.TextFieldValue by androidx.compose.runtime.mutableStateOf(
+        androidx.compose.ui.text.input.TextFieldValue(initial, androidx.compose.ui.text.TextRange(initial.length)),
+    )
+        private set
+
+    /** What was typed and sent, oldest first, not yet seen back from the owner. */
+    private val sent = ArrayDeque<String>()
+
+    /** The field changed [next]; true when its TEXT did (a caret moved alone is the field's own business). */
+    fun typed(next: androidx.compose.ui.text.input.TextFieldValue): Boolean {
+        val changed = next.text != value.text
+        // The owner, not caught up yet, still holds what the field held before this typing began: no news either.
+        if (changed && sent.isEmpty()) sent.addLast(value.text)
+        value = next
+        if (changed) {
+            sent.addLast(next.text)
+            while (sent.size > MAX_UNECHOED) sent.removeFirst()
+        }
+        return changed
+    }
+
+    /** The owner's text, read at each composition. */
+    fun ownerHolds(text: String) {
+        if (text == value.text) {
+            sent.clear()
+            return
+        }
+        val echo = sent.indexOf(text)
+        if (echo >= 0) {
+            repeat(echo) { sent.removeFirst() }
+            return
+        }
+        sent.clear()
+        value = androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(text.length))
+    }
+
+    private companion object {
+        /** More keys than anyone types ahead of a frame: past this, the oldest are forgotten. */
+        const val MAX_UNECHOED = 256
     }
 }
 

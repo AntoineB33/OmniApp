@@ -3349,7 +3349,9 @@ private fun ItemResultRow(
     val currentOnSecondarySelect by rememberUpdatedState(onSecondarySelect)
     val currentOnDoubleClick by rememberUpdatedState(onDoubleClick)
     Box(
-        modifier = resultRowModifier(selected, inSelection)
+        // User rule 2026-11-15: a row under an open one has its RECTANGLE moved right, not only what is in it —
+        // the indent stands outside the row's background and selection outline, as a task cell's does.
+        modifier = Modifier.padding(start = ACTION_ROW_INDENT * depth).then(resultRowModifier(selected, inSelection))
             .then(if (enabled) Modifier else Modifier.alpha(0.38f))
             .then(onSecondaryRelease?.let { Modifier.pickOnSecondaryRelease(item.id, it) } ?: Modifier)
             .resultRowGestures(
@@ -3364,7 +3366,7 @@ private fun ItemResultRow(
         contentAlignment = Alignment.CenterStart,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = ACTION_ROW_INDENT * depth),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -3466,11 +3468,14 @@ private fun ElementChildren(
             LaunchedEffect(isMain) { if (isMain) runCatching { bringIntoView.bringIntoView() } }
             Box(Modifier.outsidePressPart(selection.editor).bringIntoViewRequester(bringIntoView)) {
             Row(
-                modifier = resultRowModifier(
-                    selected = rowKey in selection.selected && isMain,
-                    inSelection = rowKey in selection.selected && !isMain,
+                // User rule 2026-11-15: the indent moves the row's rectangle, its background and selection outline
+                // included — outside [resultRowModifier], as a task cell's indent stands outside its background.
+                modifier = indent.then(
+                    resultRowModifier(
+                        selected = rowKey in selection.selected && isMain,
+                        inSelection = rowKey in selection.selected && !isMain,
+                    ),
                 )
-                    .then(indent)
                     .recordPressModifiers(selection.pressModifiers)
                     .resultRowGestures(
                         rowKey,
@@ -3508,9 +3513,10 @@ private fun ElementChildren(
     }
     // User rule 2026-11-02: the blank field ends the list of children, as a task's sub-tree ends on its placeholder. It is
     // a ROW of that list, drawn as its siblings are: their full-width box, nothing in it (anomaly 2026-11-03: a box of its
-    // own inside the indent stood one level deeper, so it read as the last child's, which was not expanded).
+    // own inside the indent stood one level deeper, so it read as the last child's, which was not expanded). Since its
+    // siblings' rectangles stand at the indent (user rule 2026-11-15), so does its own.
     Box(
-        modifier = resultRowModifier(selected = false)
+        modifier = indent.then(resultRowModifier(selected = false))
             .resultRowGestures(surface + parent + "/blank", onSelect = {}, onSecondarySelect = {}, onOpen = { openers.onOpenChildSearch(parent) }, onOpenMenu = {}),
     )
 }

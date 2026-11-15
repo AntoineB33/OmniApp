@@ -20,7 +20,10 @@ second copy of it on a kind of element.
 - **Every row of the Search window but a "creation" row has an arrow** (`ElementChildren`, a task's row keeps `SearchSubtree`,
   whose blank cell is typed into). Under it stand the element's children, each with its arrow and a ✕ taking it out of this
   parent, then a blank field. **A double-click on the blank field opens a Search window coming from the element**
-  (`SearchRowOpeners.onOpenChildSearch`, `Config.elementSource`), linked to the window it was asked from. "Add a parent" has an
+  (`SearchRowOpeners.onOpenChildSearch`, `Config.elementSource`), linked to the window it was asked from. **A child row's
+  RECTANGLE stands at its indent** — its background and selection outline, the blank field's too — not only what is in it
+  (user rule 2026-11-15), as a task cell's indent stands outside its background; the actions section's rows under a group
+  likewise (`ItemResultRow`'s `depth`). "Add a parent" has an
   element selector and, beside it, a button adding that element. The open rows are kept with the window's sections
   (`SearchSplits.expandedElements`), by surface and path.
 - **That window starts with its parent excluded** (`Filters.excludedElements`). "Excluded elements" and "Included elements"

@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pop-ups: right-click reopens, four sides for a field's pop-up, follow the app, keep off the picture-in-picture; search bars; indented rows — 2026-11-15
+
+User rules the same day. **A right-click outside an open right-click menu that leaves it open opens it afresh** at the
+new pointer (`RightPresses`, `HangingMenu`). **A pop-up opened from a field or a button** (a click, a hover, a key — not a
+right-click) tries its right, left, below, above (`MenuSide.POPUP`); where no side holds a menu whole it takes the side
+with the most room. **The window a menu hangs from moving or resizing places it again.** **On Windows a menu keeps off
+Firefox's picture-in-picture** (`PictureInPictureWindows`: found through `user32`, its moves heard by a WinEvent hook
+while a menu is open — no poll). Anomaly: typing "paren" in the actions section's bar of a "List of parents" wrote
+"preat" — the pop-up's request is published by a `SideEffect`, so the bar saw its text a frame late; every `SearchBar`
+now keeps its own text and caret (`EchoedText`). A row under an open element or group in a Search window has its
+rectangle — background, selection outline — indented, not only its content (`ElementChildren`, `ItemResultRow`), as a
+task cell's. No migration. Deploy: client apps.
+
 ### An element added from a "list of parents" is in its added elements; a selected row is in the added elements — 2026-11-15
 
 Anomaly: *"in Parents > list of parents, I right-click on the parent, select 'add', then … 'show the added elements',

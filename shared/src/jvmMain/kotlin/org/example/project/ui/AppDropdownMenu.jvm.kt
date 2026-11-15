@@ -18,6 +18,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.currentCompositeKeyHash
 import androidx.compose.runtime.currentCompositionLocalContext
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -158,7 +160,22 @@ private fun HangingMenu(
     // The same menu, wherever it is opened from (every row of a list): what its last size is remembered under.
     val site = currentCompositeKeyHash
     val sides = LocalMenuSides.current
-    val session = remember(owner) { MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals, sides) }
+    // User rule 2026-11-15: *"Right-click must open the right-click menu even if a right-click menu was already open."*
+    // A right-click outside an open menu that leaves it open — the same row's again, another row whose menu is the
+    // same one, a row of the pop-up it hangs from — opens it AFRESH: a new session, at the new pointer. Before, the
+    // menu stood on where the first right-click had put it, as if the second had done nothing.
+    val rightPress = RightPresses.count
+    val opening = remember(owner) { intArrayOf(rightPress, 0) }
+    val openedOnRight = remember(owner) { RightPresses.justPressed() }
+    val current = remember(owner) { arrayOfNulls<MenuSession>(1) }
+    if (openedOnRight && rightPress != opening[0]) {
+        opening[0] = rightPress
+        if (current[0]?.contains(RightPresses.window) != true) opening[1]++
+    }
+    val generation = opening[1]
+    val session = remember(owner, generation) {
+        MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals, sides, openedOnRight).also { current[0] = it }
+    }
     DisposableEffect(session) { onDispose { session.close() } }
     // The pointer is read ONCE, as the menu opens — where the right-click was. Read at every layout of the anchor (a
     // row's hover, a scroll, a recomposition of the list), it sent the open menu after the hand moving to it (anomaly
@@ -166,6 +183,8 @@ private fun HangingMenu(
     val pointer = remember(session) { if (atPointer) pointerIn(owner) else null }
     // What the menu hangs from: the layout it is declared in, exactly as material's menu reads it (`Popup`: a node of
     // no size, there only while the menu is open, that reports its parent's place in the window).
+    // Keyed on the session: a menu opened afresh (a second right-click) is a new node, whose place is reported again.
+    androidx.compose.runtime.key(session) {
     Layout(
         content = {},
         modifier = Modifier.onGloballyPositioned { own ->
@@ -182,6 +201,7 @@ private fun HangingMenu(
             }
         },
     ) { _, _ -> layout(0, 0) {} }
+    }
 }
 
 /**
@@ -202,8 +222,37 @@ private class MenuSession(
     private val content: State<@Composable ColumnScope.() -> Unit>,
     private val locals: State<CompositionLocalContext>,
     /** The sides of its anchor the menu tries, in order ([LocalMenuSides]). */
-    private val sides: List<MenuSide> = MenuSide.DEFAULT,
+    callSides: List<MenuSide> = MenuSide.DEFAULT,
+    /** Opened by a right-click ([RightPresses]): a right-click's menu, not a pop-up of a field or a button. */
+    openedOnRight: Boolean = true,
 ) {
+    /**
+     * User rule 2026-11-15: a pop-up opened from a field or a button tries the right, the left, below, above
+     * ([MenuSide.POPUP]); a right-click's menu keeps below, above, right, left (2026-10-14). Told by the press that
+     * opened it, not by the call site: a call site naming its own sides ([MenuSide.SUBMENU]) keeps them.
+     */
+    private val sides: List<MenuSide> = if (callSides == MenuSide.DEFAULT && !openedOnRight) MenuSide.POPUP else callSides
+
+    /** Whether [window] is this menu's, or a menu opened from it. */
+    fun contains(window: AwtWindow?): Boolean = ours(window)
+
+    /**
+     * User rule 2026-11-15: *"as the app gets resized"* and *"as the user moves the app"* — the window the menu hangs
+     * from moving or changing size places it again, afresh: its anchor went with it. (A resize lays the anchor out
+     * again too, which reports it; a move alone does not, the anchor being said in the window.)
+     */
+    private val ownerMoves = object : java.awt.event.ComponentAdapter() {
+        override fun componentMoved(event: java.awt.event.ComponentEvent) = placeAfresh()
+        override fun componentResized(event: java.awt.event.ComponentEvent) = placeAfresh()
+    }
+
+    /** Stops hearing the picture-in-picture move ([PictureInPictureWindows.onMoved]). */
+    private var stopPip: (() -> Unit)? = null
+
+    private fun placeAfresh() {
+        if (closed || dialog == null) return
+        place()
+    }
     private var anchor: Rect? = null
     private var offsetPx = Offset.Zero
     private var dialog: ComposeDialog? = null
@@ -340,6 +389,9 @@ private class MenuSession(
         // a press in ANOTHER application is seen here, as the window the menu hangs from losing the foreground — or,
         // for a menu that holds the keyboard, as the menu losing it.
         owner.addWindowListener(ownerListener)
+        owner.addComponentListener(ownerMoves)
+        // The picture-in-picture moving onto the menu, or off the side it had to avoid, places it again.
+        stopPip = PictureInPictureWindows.onMoved { placeAfresh() }
         window.addWindowFocusListener(focusListener)
         if (focusable) {
             KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("activeWindow", activeListener)
@@ -382,6 +434,9 @@ private class MenuSession(
         val window = dialog ?: return
         dialog = null
         owner.removeWindowListener(ownerListener)
+        owner.removeComponentListener(ownerMoves)
+        stopPip?.invoke()
+        stopPip = null
         window.removeWindowFocusListener(focusListener)
         KeyboardFocusManager.getCurrentKeyboardFocusManager().removePropertyChangeListener("activeWindow", activeListener)
         KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(keyDispatcher)
@@ -488,7 +543,10 @@ internal object MenuWindows {
 }
 
 /** What the desktop's `main` calls once its window is up: see [MenuWindows.warm]. */
-fun warmMenuWindows(owner: AwtWindow) = MenuWindows.warm(owner)
+fun warmMenuWindows(owner: AwtWindow) {
+    RightPresses.install()
+    MenuWindows.warm(owner)
+}
 
 /**
  * **A text field's own right-click menu** (cut, copy, paste, select all) as a window of its own too — Compose draws
@@ -519,6 +577,54 @@ object OwnWindowContextMenuRepresentation : androidx.compose.foundation.ContextM
             }
         }
     }
+}
+
+/**
+ * **The right-clicks of the app, as AWT sees them** — before any of its components handles one, so a menu composed after
+ * the press can tell a right-click came ([count]) and where ([window]), and a menu as it opens whether a right-click
+ * opened it ([justPressed]). Decided per input event (`docs/PLATFORMS.md`): the button of the press itself.
+ */
+internal object RightPresses {
+    /** How many right presses the app has heard: read in composition, so a new one recomposes the open menus. */
+    var count: Int by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+
+    /** The window the last right press landed in. */
+    var window: AwtWindow? = null
+        private set
+
+    /** Whether the last press of any button was the right one. */
+    private var lastWasRight: Boolean = false
+
+    /** When the last right press was heard ([System.nanoTime]). */
+    private var lastRightAt: Long = 0L
+
+    /**
+     * Whether a menu opening now was opened by a right-click: the last press was the right button's, and a moment ago — a
+     * right-click's menu opens a frame or two after it, where a pop-up opened by a hover long after one is not its menu.
+     */
+    fun justPressed(): Boolean = lastWasRight && System.nanoTime() - lastRightAt < RIGHT_CLICK_OPENS_WITHIN_NANOS
+
+    init {
+        runCatching {
+            java.awt.Toolkit.getDefaultToolkit().addAWTEventListener({ event ->
+                if (event is java.awt.event.MouseEvent && event.id == java.awt.event.MouseEvent.MOUSE_PRESSED) {
+                    lastWasRight = javax.swing.SwingUtilities.isRightMouseButton(event)
+                    if (lastWasRight) {
+                        val source = event.component
+                        window = source as? AwtWindow ?: source?.let { javax.swing.SwingUtilities.getWindowAncestor(it) }
+                        lastRightAt = System.nanoTime()
+                        count++
+                    }
+                }
+            }, java.awt.AWTEvent.MOUSE_EVENT_MASK)
+        }
+    }
+
+    /** Installs the listener ahead of the first menu: the press that opens it must already be heard. */
+    fun install() = Unit
+
+    private const val RIGHT_CLICK_OPENS_WITHIN_NANOS = 750_000_000L
 }
 
 /** Where the pointer is, in pixels of [owner]'s content — what an anchor is said in. Null where it cannot be asked. */
@@ -559,7 +665,9 @@ private fun menuPlacement(
     val area = workAreaAt(ScreenPoint(on.left, on.top)) ?: workAreaAt(ScreenPoint(origin.x, origin.y))
         ?: return keeping ?: Point(on.left, on.bottom)
     val screen = IntRect(area.x, area.y, area.x + area.width, area.y + area.height)
-    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, screen)) return keeping
-    val spot = menuSpot(on, IntSize(size.width, size.height), screen, sides)
+    // User rule 2026-11-15: the other applications' windows it keeps off — Firefox's picture-in-picture.
+    val avoid = PictureInPictureWindows.bounds().map { IntRect(it.x, it.y, it.x + it.width, it.y + it.height) }
+    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, screen, avoid)) return keeping
+    val spot = menuSpot(on, IntSize(size.width, size.height), screen, sides, avoid)
     return Point(spot.x, spot.y)
 }
