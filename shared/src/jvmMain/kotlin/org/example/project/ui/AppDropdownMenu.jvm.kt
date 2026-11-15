@@ -251,6 +251,8 @@ private class MenuSession(
             heldByHand = true
             dragFrom = window.location
             dragPointerFrom = java.awt.MouseInfo.getPointerInfo()?.location
+            // It is its window now: out of sight, it keeps the pointer (the button is held in it) to finish the drag.
+            window.location = Point(-32000, -32000)
         }
 
         override fun drag() {
@@ -318,7 +320,8 @@ private class MenuSession(
     private var pressesAtOpen = 0L
 
     private fun settling(to: AwtWindow?): Boolean =
-        to != null && RightPresses.presses == pressesAtOpen && System.nanoTime() - openedAt < SETTLE_NANOS
+        // Dragged by its head, it is a window of the app being placed: nothing closes it until the drag ends.
+        heldByHand || (to != null && RightPresses.presses == pressesAtOpen && System.nanoTime() - openedAt < SETTLE_NANOS)
 
     private val ownerListener = object : WindowAdapter() {
         override fun windowDeactivated(event: WindowEvent) {
@@ -350,11 +353,9 @@ private class MenuSession(
             val active = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
             // Another application active: a pinned pop-up stays ([pinnedAway]).
             if (pinnedAway(active)) return@invokeLater
-            // The keyboard settling as it opens ([settling]): the menu takes it back.
-            if (!ours(active) && settling(active)) {
-                if (focusable) dialog?.let { window -> window.toFront(); window.requestFocus() }
-                return@invokeLater
-            }
+            // The keyboard settling as it opens ([settling]): nothing to close. Never taken back: two pop-ups that did took it
+            // from each other without end (anomaly 2026-11-15, *"a window that blinks continuously"*).
+            if (!ours(active) && settling(active)) return@invokeLater
             if (!ours(active)) {
                 // Back in the app by a press on another of its windows — which no loss of the keyboard told the pop-up,
                 // having lost it to the other application: it closes as a press elsewhere in the app closes it.
@@ -443,7 +444,7 @@ private class MenuSession(
                         val inside = generateSequence(event.oppositeWindow) { it.owner }.any { it in tracker.windows }
                         // Gone to another application, pinned: it stays (user rule 2026-11-15, [pinnedAway]).
                         // Gone to a pop-up this one hangs from: what is below that one closes, it stays.
-                        if (!inside && !(event.oppositeWindow == null && tracker.pinned)) {
+                        if (!inside && !(event.oppositeWindow == null && tracker.pinned) && !heldByHand) {
                             tracker.windowLeft { windows -> generateSequence(event.oppositeWindow) { it.owner }.any { it in windows } }
                         }
                     }
@@ -495,8 +496,12 @@ private class MenuSession(
             val fitted = Dimension(ceil(wanted.width / scale).toInt().coerceAtLeast(1), ceil(wanted.height / scale).toInt().coerceAtLeast(1))
             MenuWindows.lastSize[site] = fitted
             size = fitted
-            // Shown already: it stays where it is if it can ([keepsSpot]) — a menu never moves under the eye.
-            val shownAt = window.location.takeIf { window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN }
+            // Shown already: it stays where it is if it can ([keepsSpot]) — a menu never moves under the eye. Not while it
+            // settles: a pop-up fitted to its content in its first moments (the ▾ tree) is placed for the size it ends
+            // at, never left where its first size put it (anomaly 2026-11-15: *"appear too far to the top"*).
+            val shownAt = window.location.takeIf {
+                window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN && System.nanoTime() - openedAt >= SETTLE_NANOS
+            }
             if (window.size != fitted) window.size = fitted
             place(keeping = shownAt)
         }

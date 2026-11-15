@@ -2399,12 +2399,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             how: org.example.project.ui.DetachedAs,
             title: String,
             name: String?,
-        ) {
+        ): org.example.project.ui.DetachedDrag {
             val size = Size(
                 bounds.width.coerceAtLeast(org.example.project.ui.MIN_WINDOW_WIDTH_PX),
                 bounds.height.coerceAtLeast(org.example.project.ui.MIN_WINDOW_HEIGHT_PX),
             )
-            windowFrames.placeAt(id, bounds.topLeft, size) { frame ->
+            val dragged = how == org.example.project.ui.DetachedAs.Moved
+            // Placed by its frame against its own container ([org.example.project.ui.WindowFrameState.placeTopLeftAt]);
+            // its geometry kept at once for a button, at the drag's end for a drag.
+            windowFrames.placeAt(id, bounds.topLeft, size, commit = !dragged) { frame ->
                 when (how) {
                     org.example.project.ui.DetachedAs.FillWidth -> frame.setFillWidth(true)
                     org.example.project.ui.DetachedAs.FillHeight -> frame.setFillHeight(true)
@@ -2418,11 +2421,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (how == org.example.project.ui.DetachedAs.AddedToMenu) {
                 menuButtonsLater[0]?.takeIf { it.canAdd(id) }?.add(id, name ?: title, id)
             }
-            windowFrames.area?.let { area ->
-                val offset = org.example.project.ui.frameOffsetAt(bounds.topLeft, size, area)
-                updatePlacementById(id) { it.copy(x = offset.x, y = offset.y, width = size.width, height = size.height, visible = true) }
-            }
             if (how == org.example.project.ui.DetachedAs.Duplicated) duplicateWindow(kind, id)
+            // The rest of the drag carries the window ([org.example.project.ui.DetachedDrag]).
+            var topLeft = bounds.topLeft
+            return org.example.project.ui.DetachedDrag(
+                moveBy = { delta ->
+                    topLeft += delta
+                    windowFrames.placeAt(id, topLeft, size, commit = false)
+                },
+                done = { if (dragged) windowFrames.placeAt(id, topLeft, size, commit = true) },
+            )
         }
         val detachPopup = rememberUpdatedState { searchId: String, bounds: Rect, how: org.example.project.ui.DetachedAs, name: String? ->
             val id = openConfigurationsOf(FloatingWindow.ConfigSearch, searchId)

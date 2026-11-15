@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A dragged pop-up is a window at once; no jump; no blinking pop-ups — 2026-11-15
+
+User anomalies. A pop-up's head drag now makes it its window as the drag starts (in the window bar at once), the rest
+of the drag carrying the window (`DetachedDrag`); the pop-up steps out of sight until the release. The window no longer
+jumps on release: a top-left is read against the window's own container by its frame (`placeTopLeftAt`), not the
+last laid-out window's. Hover pop-ups no longer blink: a menu settling never takes the keyboard back (two did, from each
+other), a pop-up resized in its first 600 ms is placed afresh, and the ▾ tree's height fit has a 2 px dead band. No
+migration. Deploy: client apps.
+
 ### One window surface for every Search pop-up; menus act on the release; a menu survives its first focus settling — 2026-11-15
 
 Anomalies 5 (again), 7 and 8. **5**: a Search window drawn as a pop-up wears the window frame's surface

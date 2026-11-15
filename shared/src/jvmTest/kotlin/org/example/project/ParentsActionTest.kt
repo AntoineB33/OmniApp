@@ -91,8 +91,11 @@ class ParentsActionTest {
         val detached = ArrayList<Pair<SearchDomain.Config, org.example.project.ui.DetachedAs>>()
         val detacher = org.example.project.ui.PopupDetacher(
             canDetach = { false },
-            detach = { _, _, _, _ -> },
-            detachSearch = { config, _, how, _ -> detached += config to how },
+            detach = { _, _, _, _ -> org.example.project.ui.DetachedDrag({}, {}) },
+            detachSearch = { config, _, how, _ ->
+                detached += config to how
+                org.example.project.ui.DetachedDrag({}, {})
+            },
         )
         val scene = onEdt {
             ImageComposeScene(1400, 900, density = Density(1f)) {

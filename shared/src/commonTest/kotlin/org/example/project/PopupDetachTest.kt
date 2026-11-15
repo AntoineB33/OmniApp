@@ -27,4 +27,24 @@ class PopupDetachTest {
         val restingTop = area.top + (area.height - size.height) / 2f
         assertEquals(Offset(900f, 500f), Offset(restingLeft + frame.offset.x, restingTop + frame.offset.y))
     }
+
+    /**
+     * Anomaly 2026-11-15 (*"it jumps away from where I placed it"*): a window asked to stand at a top-left reads it
+     * against ITS OWN container, known from its layout — or, not laid out yet, at its next one.
+     */
+    @Test
+    fun a_window_asked_a_top_left_stands_there_in_its_own_container() {
+        val frame = WindowFrameState("Search#3", Offset(40f, 40f), Size(300f, 400f))
+        frame.placeTopLeftAt(Offset(900f, 500f))
+        assertEquals(Offset(40f, 40f), frame.offset, "its container unknown: nothing yet")
+        val container = Rect(200f, 40f, 1200f, 840f)
+        frame.parentInWindow = container
+        frame.pendingTopLeft?.let(frame::placeTopLeftAt)
+        val left = container.left + (container.width - 300f) / 2f + frame.offset.x
+        val top = container.top + (container.height - 400f) / 2f + frame.offset.y
+        assertEquals(Offset(900f, 500f), Offset(left, top), "laid out: where it was asked")
+        // The drag goes on: asked again, it follows at once.
+        frame.placeTopLeftAt(Offset(950f, 520f))
+        assertEquals(Offset(950f, 520f), Offset(container.left + (container.width - 300f) / 2f + frame.offset.x, container.top + (container.height - 400f) / 2f + frame.offset.y))
+    }
 }

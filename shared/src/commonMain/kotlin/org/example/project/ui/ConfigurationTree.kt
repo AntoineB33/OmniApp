@@ -156,6 +156,9 @@ internal fun ConfigurationTreeArrow(
     // configurations window when dragged by its head ([PopupDetacher]); a tree in a pop-up's bar is of another search.
     val detacher = LocalPopupDetacher.current
     val detachOwner = LocalArrowOwner.current?.takeIf { outer == null && detacher?.canDetach(it) == true }
+    // The window a head's drag made, carried by the rest of the drag: kept across the recompositions the drag causes
+    // (its children closing), which make a new head each time.
+    val dragging = remember { arrayOfNulls<DetachedDrag>(1) }
     fun windowHead(onDragStart: () -> Unit, closeSelf: () -> Unit, control: PopupWindowControl?): PopupWindowHead? {
         val owner = detachOwner ?: return null
         val detach = detacher ?: return null
@@ -164,11 +167,20 @@ internal fun ConfigurationTreeArrow(
         val bounds = { control.boundsInApp() }
         return PopupWindowHead(
             windowId = "ConfigSearch",
-            onDragStart = {
+            // The drag makes it its window at once, where it stands; the pop-up's own window steps out of sight and
+            // only finishes the drag (anomaly 2026-11-15).
+            onDragStart = { name ->
+                val at = bounds()
                 onDragStart()
                 control.startDrag()
+                dragging[0] = at?.let { detach.detach(owner, it, DetachedAs.Moved, name) }
             },
-            onDrag = { control.drag() },
+            onDrag = { delta -> dragging[0]?.moveBy?.invoke(delta) },
+            onDragEnd = {
+                dragging[0]?.done?.invoke()
+                dragging[0] = null
+                closeSelf()
+            },
         ) { how, name ->
             // Where it stands, read before it closes; then the pop-up gone, the window in its place.
             val at = bounds()
@@ -378,7 +390,8 @@ private fun TreeColumn(
                     val placeable = measurable.measure(constraints)
                     if (constraints.hasBoundedHeight) {
                         val delta = if (placeable.height < constraints.maxHeight) placeable.height - constraints.maxHeight else scroll.maxValue
-                        if (delta != 0) onFit(delta)
+                        // A couple of px is no change: two heights a rounding apart must not take turns.
+                        if (kotlin.math.abs(delta) > FIT_DEAD_BAND_PX) onFit(delta)
                     }
                     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                 },
@@ -669,6 +682,9 @@ private fun AddableTreeRow(id: String, content: @Composable () -> Unit) {
         )
     }
 }
+
+/** How far a tree pop-up's height may be off its tree's before it is fitted again ([TreeColumn]'s `onFit`). */
+private const val FIT_DEAD_BAND_PX = 2
 
 /** The height a tree pop-up first opens at, before it is fitted to its tree ([TreeSearchWindow]). */
 private val TREE_POPUP_FIRST_HEIGHT = 360.dp

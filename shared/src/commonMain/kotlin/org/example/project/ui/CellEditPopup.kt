@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -501,9 +502,9 @@ private fun FieldSearchPopup(
     closeAbove: () -> Unit,
 ) {
     var origin by remember { mutableStateOf(Offset.Zero) }
-    // Where the hand dragged it by its head, from where its field puts it.
-    var dragged by remember { mutableStateOf(Offset.Zero) }
     var shownAt by remember { mutableStateOf<Rect?>(null) }
+    // Its head dragged: it is its window already ([DetachedDrag]), and stays only to finish the drag, unseen.
+    var drag by remember { mutableStateOf<DetachedDrag?>(null) }
     val latestRequest by androidx.compose.runtime.rememberUpdatedState(request)
     val latestCloseAbove by androidx.compose.runtime.rememberUpdatedState(closeAbove)
     val picks = request.embedded.picker != null
@@ -511,8 +512,16 @@ private fun FieldSearchPopup(
         if (detacher == null || picks) null
         else PopupWindowHead(
             windowId = "Search",
-            onDragStart = { latestCloseAbove() },
-            onDrag = { dragged += it },
+            onDragStart = { name ->
+                latestCloseAbove()
+                drag = shownAt?.let { at -> detacher.detachSearch(latestRequest.embedded.config, at, DetachedAs.Moved, name) }
+            },
+            onDrag = { delta -> drag?.moveBy?.invoke(delta) },
+            onDragEnd = {
+                drag?.done?.invoke()
+                drag = null
+                latestRequest.onClose()
+            },
             detach = { how, name ->
                 val at = shownAt
                 val asked = latestRequest
@@ -526,6 +535,7 @@ private fun FieldSearchPopup(
             androidx.compose.foundation.layout.Box(
                 modifier = regions
                     .fold(Modifier as Modifier) { chain, region -> chain.outsidePressPart(region) }
+                    .then(if (drag != null) Modifier.alpha(0f) else Modifier)
                     .onGloballyPositioned { shownAt = it.boundsInWindow() }
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
@@ -555,7 +565,7 @@ private fun FieldSearchPopup(
         }
         val placeable = measurables.single().measure(Constraints.fixed(bounds?.width ?: width, bounds?.height ?: height))
         layout(constraints.maxWidth, constraints.maxHeight) {
-            if (bounds != null) placeable.place(bounds.topLeft + IntOffset(dragged.x.roundToInt(), dragged.y.roundToInt()))
+            if (bounds != null) placeable.place(bounds.topLeft)
         }
     }
 }

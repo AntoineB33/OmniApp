@@ -214,6 +214,33 @@ class WindowFrameState(
     val maximized: Boolean get() = fill == WindowFill.Both
 
     /**
+     * Anomaly 2026-11-15 (*"it jumps away from where I placed it"*): the container the window is centred in, as its last
+     * layout found it (the app window's px) — what a top-left asked of it ([placeTopLeftAt]) is read against. It was
+     * read against whatever window had last been laid out, in a container that need not be this one's.
+     */
+    internal var parentInWindow: Rect? = null
+
+    /** A top-left asked before the container was known: taken at the next layout. */
+    internal var pendingTopLeft: Offset? = null
+
+    /** The geometry to be kept once [pendingTopLeft] is taken. */
+    internal var commitWhenPlaced: Boolean = false
+
+    /** Its top-left put at [topLeft] (the app window's px): now if its container is known, else at its next layout. */
+    fun placeTopLeftAt(topLeft: Offset) {
+        val parent = parentInWindow
+        if (parent == null) {
+            pendingTopLeft = topLeft
+            return
+        }
+        pendingTopLeft = null
+        val target = frameOffsetAt(topLeft, size, parent)
+        half = null
+        offset = target
+        normalOffset = target
+    }
+
+    /**
      * The offset actually applied. A filled axis is pinned to the container, so the drag offset on that
      * axis is not applied — but it is not *forgotten* either, which is what lets un-filling restore it.
      */
@@ -508,14 +535,25 @@ class WindowFrameHost {
 
     /**
      * The window [id] put at [topLeft] (the app window's pixels) at [size], then [then] done to it — at once if it is up,
-     * else as its frame is made. A pop-up becoming a window ([PopupDetacher]): it opens where the pop-up stood.
+     * else as its frame is made. A pop-up becoming a window ([PopupDetacher]): it opens where the pop-up stood, and follows
+     * the hand while the drag that made it goes on. The top-left is read against the window's OWN container, by the frame
+     * ([WindowFrameState.placeTopLeftAt]); [commit] keeps the geometry once placed (the end of a drag, a button).
      */
-    fun placeAt(id: String, topLeft: androidx.compose.ui.geometry.Offset, size: androidx.compose.ui.geometry.Size, then: (WindowFrameState) -> Unit = {}) {
+    fun placeAt(
+        id: String,
+        topLeft: androidx.compose.ui.geometry.Offset,
+        size: androidx.compose.ui.geometry.Size,
+        commit: Boolean = true,
+        then: (WindowFrameState) -> Unit = {},
+    ) {
         val apply = { frame: WindowFrameState ->
-            val within = area
-            val offset = if (within != null) frameOffsetAt(topLeft, size, within) else frame.offset
-            frame.applyLayout(offset, size, WindowFill.None, minimized = false)
+            frame.applyLayout(frame.offset, size, WindowFill.None, minimized = false)
+            frame.placeTopLeftAt(topLeft)
             then(frame)
+            if (commit) {
+                if (frame.pendingTopLeft == null) entries.firstOrNull { it.id == id }?.commit?.invoke()
+                else frame.commitWhenPlaced = true
+            }
         }
         val frame = entries.firstOrNull { it.id == id }?.state
         if (frame != null) apply(frame) else pendingLayouts[id] = apply
@@ -545,6 +583,9 @@ class WindowFrameHost {
 
         /** Observable for the reason [title] is: a per-object window moves on to another object while it stands. */
         var menuKey: String? by mutableStateOf(menuKey)
+
+        /** What keeps the window's geometry, as the end of a drag does ([placeAt]). */
+        var commit: (() -> Unit)? = null
 
         /**
          * What the reduce bar's chip reads. Observable and mutable rather than a `val` re-registered on
@@ -1524,11 +1565,16 @@ fun AppWindowFrame(
     val menuKey = instance?.menuKey ?: state.id.takeIf { id -> menuButtons?.canAdd?.invoke(id) == true }
     val latestClose by rememberUpdatedState(onClose)
     val latestTitle by rememberUpdatedState(title)
+    // What keeps the geometry, given to the registration ([WindowFrameHost.Registration.commit]); set below.
+    val commitRef = remember(state.id) { arrayOfNulls<() -> Unit>(1) }
     DisposableEffect(host, state.id, claimsKeyboard) {
         val atBack =
             host?.register(
                 WindowFrameHost.Registration(state.id, latestTitle, state, claimsKeyboard, menuKey) { latestClose() }
-                    .also { it.colorKind = colorKind },
+                    .also {
+                        it.colorKind = colorKind
+                        it.commit = { commitRef[0]?.invoke() }
+                    },
             ) == true
         // A window that answers keystrokes takes the keyboard the moment it OPENS — the press that opened
         // it landed in the tree, so nothing else would hand it over, and PRD §4's "type a letter to rename"
@@ -1576,6 +1622,7 @@ fun AppWindowFrame(
     val widthDp = with(density) { state.size.width.takeIf { it > 0f }?.toDp() } ?: defaultWidth
     val heightDp = with(density) { state.size.height.takeIf { it > 0f }?.toDp() } ?: defaultHeight
     val commit = { onGeometryChange(state.offset, state.size) }
+    commitRef[0] = commit
 
     Box(
         modifier = Modifier
@@ -1607,7 +1654,19 @@ fun AppWindowFrame(
             // Measure the window and the content area around it, so a window can never be left with its
             // head — and its five buttons — off the top or the bottom of the app.
             .onGloballyPositioned { coordinates ->
-                coordinates.parentLayoutCoordinates?.let { host?.area = it.boundsInWindow() }
+                coordinates.parentLayoutCoordinates?.let {
+                    val parent = it.boundsInWindow()
+                    host?.area = parent
+                    state.parentInWindow = parent
+                }
+                // A top-left asked before the container was known ([WindowFrameHost.placeAt]): taken now, then kept.
+                state.pendingTopLeft?.let { topLeft ->
+                    state.placeTopLeftAt(topLeft)
+                    if (state.commitWhenPlaced) {
+                        state.commitWhenPlaced = false
+                        commit()
+                    }
+                }
                 // A window the app holds in a half of the content area is fitted to the area as it is NOW — it grows
                 // with the maximize at launch, the window bar coming and going — and the place it is fitted to is kept
                 // as its geometry. Its height was just set, so this pass's measure is stale: the clamp waits for the next.
@@ -1936,9 +1995,11 @@ internal fun PopupWindowHeadBar(title: String, window: PopupWindowHead?, onClose
             override val fillsWidth get() = false
             override val fillsHeight get() = false
             override val maximized get() = false
-            override fun dragStart(pointer: Offset, headWidth: Float) = window.onDragStart()
+            // The drag makes it its window at once (anomaly 2026-11-15: *"it should immediately get a tab"*), which the
+            // rest of the drag carries; let go, the pop-up is gone.
+            override fun dragStart(pointer: Offset, headWidth: Float) = window.onDragStart(named)
             override fun drag(delta: Offset) = window.onDrag(delta)
-            override fun dragEnd() = window.detach(DetachedAs.Moved, named)
+            override fun dragEnd() = window.onDragEnd()
             override fun toggleFillWidth() = window.detach(DetachedAs.FillWidth, named)
             override fun toggleFillHeight() = window.detach(DetachedAs.FillHeight, named)
             override fun minimize() = window.detach(DetachedAs.Reduced, named)

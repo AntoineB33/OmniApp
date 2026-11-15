@@ -41,9 +41,16 @@ enum class DetachedAs { Moved, Duplicated, FillWidth, FillHeight, Reduced, Maxim
  */
 class PopupDetacher(
     val canDetach: (searchId: String) -> Boolean,
-    val detach: (searchId: String, bounds: Rect, how: DetachedAs, name: String?) -> Unit,
-    val detachSearch: (config: org.example.project.scheduler.domain.SearchDomain.Config, bounds: Rect, how: DetachedAs, name: String?) -> Unit,
+    val detach: (searchId: String, bounds: Rect, how: DetachedAs, name: String?) -> DetachedDrag,
+    val detachSearch: (config: org.example.project.scheduler.domain.SearchDomain.Config, bounds: Rect, how: DetachedAs, name: String?) -> DetachedDrag,
 )
+
+/**
+ * The window a pop-up became as its head's drag started ([DetachedAs.Moved]): the rest of the drag moves it
+ * ([moveBy], the pointer's move in px), and [done] keeps where it was let go. Anomaly 2026-11-15: *"when I dragged a
+ * window that previously had no tab …, it should immediately get a tab. Right now, it waits that I release the click"*.
+ */
+class DetachedDrag(val moveBy: (Offset) -> Unit, val done: () -> Unit)
 
 val LocalPopupDetacher = compositionLocalOf<PopupDetacher?> { null }
 

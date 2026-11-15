@@ -482,6 +482,20 @@ means.
     Not a picker's ("Add a parent"): its rows pick for its field. The window it becomes opens whole, **its search bar
     shown** even where the pop-up's bar was its field (user rule 2026-11-15). **Where the search bar is what opened the pop-up** (a
     field's pop-up, a cell's picker), its background menu has no "Hide the search bar" (user rule 2026-11-15).
+  - **A pop-up's head dragged makes it its window AT ONCE, and the drag carries that window** (anomaly 2026-11-15:
+    *"when I dragged a window that previously had no tab in the [window bar], it should immediately get a tab. Right
+    now, it waits that I release the click, and it jumps away from where I placed it"*; `PopupWindowHead.onDragStart`,
+    `DetachedDrag`). The window opens where the pop-up stood, in the window bar; the pop-up steps out of sight (its OS
+    window off screen, a field's pop-up transparent) and only finishes the drag, each move placing the window; let go,
+    its geometry is kept and the pop-up closes. Nothing closes a pop-up while its head is dragged
+    (`MenuSession.settling`). **A top-left asked of a window is read against ITS OWN container**
+    (`WindowFrameState.placeTopLeftAt`, `WindowFrameHost.placeAt`), by the frame at its layout — it was read against
+    whatever window was laid out last, whose container need not be the same, and the window jumped.
+  - **A pop-up fitted to its content in its first moments is placed for the size it ends at** (anomaly 2026-11-15:
+    *"some elements when hovered over open a window that blinks continuously or appear too far to the top"*): while it
+    settles (600 ms), a new size places it afresh, not where its first size put it; the ▾ tree's height fit ignores a
+    change of 2 px or less; and a menu never takes the keyboard back as it settles — two pop-ups did, from each other,
+    without end.
   - **A Search window drawn as a pop-up wears a window's surface, its head at the top edge** (anomaly 2026-11-15: *"only
     a colored band inside the window with a margin"*; `WindowSurface`, `LocalPopupChrome`): ONE surface for a window
     frame and every Search pop-up — a field's, a cell's Edit Mode (its rename / switch task inside, under the head),
@@ -496,8 +510,7 @@ means.
   - **The keyboard settling as a menu opens never closes it** (anomaly 2026-11-15, 8: *"Sometimes, even when there is no
     right-click menu open it needs a second right-click to open the menu"*; `MenuSession.settling`): for 600 ms after
     it opens, the menu losing the keyboard or the active window to a window of the app, with no press since, leaves it
-    open (and a menu that holds the keyboard takes it back). Windows activating the app's window for the right press
-    could land after the menu took the keyboard.
+    open. Windows activating the app's window for the right press could land after the menu took the keyboard.
   - **A field's pop-up carries the composition locals of where its field stands** (anomaly 2026-11-15: *"I select
     'show the actions' …, find the list of parents field, click it, but it doesn't open a window, even though it should
     use the same code as the first list of parents field"*; `FieldSearchPopupRequest.locals`), as a desktop menu does:

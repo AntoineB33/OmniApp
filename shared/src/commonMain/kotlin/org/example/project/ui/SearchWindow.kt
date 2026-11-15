@@ -2337,9 +2337,13 @@ internal fun SearchPopupHead(title: String, onClose: () -> Unit, window: PopupWi
 class PopupWindowHead(
     /** The frame id of the window it becomes, or of its kind ("Search", "ConfigSearch"): the head's colour is that one's. */
     val windowId: String,
-    val onDragStart: () -> Unit,
+    /** The head's drag starts: the pop-up hides, its children close, and it is its window at once (named as said). */
+    val onDragStart: (String?) -> Unit,
+    /** The pointer's move: the window follows it. */
     val onDrag: (androidx.compose.ui.geometry.Offset) -> Unit,
-    /** Made the window, then as asked; named as its head's "Rename" said, if it did. */
+    /** Let go: the window kept where it is, the pop-up gone. */
+    val onDragEnd: () -> Unit,
+    /** A head button: made the window, then as asked; named as its head's "Rename" said, if it did. */
     val detach: (DetachedAs, String?) -> Unit,
 )
 
