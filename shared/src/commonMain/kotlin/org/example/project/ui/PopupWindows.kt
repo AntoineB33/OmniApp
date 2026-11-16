@@ -89,6 +89,31 @@ class TransientMenuHost {
         editors[key] = editor to onLeave
     }
 
+    /** The app window's root ([transientMenuDismissRoot]): a root other than it is a pop-up's own window. */
+    internal var appRoot: Any? = null
+
+    /**
+     * Anomaly 2026-11-16 (*"there should not be two rows selected in two different windows"*): **rows selected in a pop-up's
+     * window take the selection from the rows of every other window** — at the moment they are selected, which for a
+     * drop-down or a row's menu is the moment it opens on its first row. A row selection ([OutsidePressEditor.rowSelection])
+     * in the app's window takes nothing: the sections of one window keep their own rule (`LocalSectionTakesSelection`).
+     * The rows that yield are told so ([OutsidePressEditor.onYield]): a menu opened on them still acts on them.
+     */
+    internal fun takeRowSelection(taker: OutsidePressEditor, root: Any) {
+        val app = appRoot ?: return
+        if (root === app) return
+        yieldRowSelections(root, except = taker)
+    }
+
+    private fun yieldRowSelections(root: Any, except: OutsidePressEditor? = null) {
+        for ((key, editor) in editors.entries.toList()) {
+            val held = editor.first
+            if (held === except || !held.rowSelection || held.hasPartIn(root)) continue
+            editors.remove(key)
+            (held.onYield ?: editor.second)()
+        }
+    }
+
     fun closeEditor(key: Any) {
         editors.remove(key)
     }
@@ -126,6 +151,9 @@ class TransientMenuHost {
                 editors.remove(key)
                 editor.second()
             }
+            // Anomaly 2026-11-16 (*"click on the window that opens, the task element isn't deselected"*): a press in a
+            // pop-up is a press somewhere else for the rows selected in another window ([takeRowSelection]).
+            yieldRowSelections(root)
         }
         dismissMenus()
     }
@@ -153,7 +181,10 @@ fun Modifier.transientMenuDismissRoot(host: TransientMenuHost): Modifier {
     // Where the observer stands, so a press can be told in window coordinates — what an editor's bounds are in.
     val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
     return this
-        .onGloballyPositioned { coordinates[0] = it }
+        .onGloballyPositioned {
+            coordinates[0] = it
+            host.appRoot = it.findRootCoordinates()
+        }
         .pointerInput(host) {
             awaitPointerEventScope {
                 while (true) {
@@ -176,7 +207,7 @@ fun Modifier.transientMenuDismissRoot(host: TransientMenuHost): Modifier {
  */
 @Composable
 fun Modifier.leaveOnOutsidePress(active: Boolean, onLeave: () -> Unit): Modifier {
-    val editor = rememberOutsidePressEditor(active, onLeave)
+    val editor = rememberOutsidePressEditor(active, onLeave = onLeave)
     return this.outsidePressPart(editor)
 }
 
@@ -200,17 +231,42 @@ class OutsidePressEditor internal constructor() {
         parts.values.any { (at, bounds) -> (root == null || at === root) && bounds.contains(windowPosition) }
 
     internal fun hasPartIn(root: Any): Boolean = parts.values.any { it.first === root }
+
+    /** A selection of rows, which a pop-up's selected rows take ([TransientMenuHost.takeRowSelection]). */
+    internal var rowSelection: Boolean = false
+
+    /** What the rows do when a pop-up takes their selection; null: as on a press outside. */
+    internal var onYield: (() -> Unit)? = null
+
+    /** Whether it is on, and whether its selection was claimed from the other windows since it came on. */
+    internal var active: Boolean = false
+    internal var claimed: Boolean = false
 }
 
 /** [leaveOnOutsidePress] for an edit drawn in more than one place: mark each place with [outsidePressPart]. */
 @Composable
-fun rememberOutsidePressEditor(active: Boolean, onLeave: () -> Unit): OutsidePressEditor {
+fun rememberOutsidePressEditor(
+    active: Boolean,
+    /** A selection of rows: one in a pop-up's window takes the others' ([TransientMenuHost.takeRowSelection]). */
+    rowSelection: Boolean = false,
+    /** What a row selection does when a pop-up takes it; null: [onLeave]. */
+    onYield: (() -> Unit)? = null,
+    onLeave: () -> Unit,
+): OutsidePressEditor {
     val host = LocalTransientMenuHost.current
     val editor = remember { OutsidePressEditor() }
     val latestLeave by rememberUpdatedState(onLeave)
+    val latestYield by rememberUpdatedState(onYield)
+    editor.rowSelection = rowSelection
+    editor.onYield = if (onYield == null) null else { { latestYield?.invoke() } }
     DisposableEffect(host, editor, active) {
+        editor.active = active
+        editor.claimed = false
         if (active) host?.openEditor(editor, editor) { latestLeave() }
-        onDispose { host?.closeEditor(editor) }
+        onDispose {
+            editor.active = false
+            host?.closeEditor(editor)
+        }
     }
     return editor
 }
@@ -252,8 +308,17 @@ val LocalEnclosingEdits = androidx.compose.runtime.compositionLocalOf<List<Outsi
 @Composable
 fun Modifier.outsidePressPart(editor: OutsidePressEditor): Modifier {
     val key = remember { Any() }
+    val host = LocalTransientMenuHost.current
     DisposableEffect(editor, key) { onDispose { editor.parts.remove(key) } }
-    return this.onGloballyPositioned { editor.parts[key] = it.findRootCoordinates() to it.boundsInWindow() }
+    return this.onGloballyPositioned {
+        val root = it.findRootCoordinates()
+        editor.parts[key] = root to it.boundsInWindow()
+        // Rows selected in a pop-up's window: the other windows' rows are not any more (anomaly 2026-11-16).
+        if (editor.rowSelection && editor.active && !editor.claimed) {
+            editor.claimed = true
+            host?.takeRowSelection(editor, root)
+        }
+    }
 }
 
 /**

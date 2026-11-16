@@ -3069,19 +3069,15 @@ object SearchDomain {
     )
 
     /**
-     * The live tree's root segment: the active tree's name, else the root task's own title. Never blank —
-     * a path that starts with nothing reads as a path that starts with its second segment.
+     * The live tree's root segment: **the root task's own title**, as its element is named — a path is the titles of the
+     * task's parents, and the parent of a task at the top is the global root (anomaly 2026-11-16: *"it says
+     * 'tree-2026-10-20 / Very Short Term'. However, when I go to the list of parents of 'Very Short Term', it is not a task
+     * element named 'tree-2026-10-20', but one named 'root'"*). It was the active tree's name, then (user rule 2026-11-13)
+     * the top task's tree name: neither is an element above the task. Never blank — a path that starts with nothing reads
+     * as a path that starts with its second segment.
      */
     private fun liveRootLabel(state: SchedulerState): String =
-        state.activeTaskTree?.title?.takeIf { it.isNotBlank() }
-            ?: state.tasks[WellKnownIds.ROOT_TASK]?.title?.takeIf { it.isNotBlank() }
-            ?: "root"
-
-    /**
-     * User rule 2026-11-13: **the first segment of a path through [top]**, a task standing directly under the global root
-     * — the name of the tree it is the root of ([Task.treeName]), else [fallback] (the tree's own label, as before).
-     */
-    private fun treeLabel(top: Task, fallback: String): String = top.treeName.ifBlank { fallback }
+        state.tasks[WellKnownIds.ROOT_TASK]?.title?.takeIf { it.isNotBlank() } ?: "root"
 
     private fun sources(state: SchedulerState): List<TreeSource> = buildList {
         add(TreeSource(state.cells, state.lists, state.tasks, state.rootListId, liveRootLabel(state)))
@@ -3111,8 +3107,7 @@ object SearchDomain {
                     val taskId = source.cells[cellId]?.taskId ?: continue
                     val task = source.tasks[taskId] ?: continue
                     if (task.title.isEmpty()) continue
-                    // At the top: the path begins with the tree's name (user rule 2026-11-13).
-                    val at = if (listId == source.rootListId) listOf(treeLabel(task, source.rootLabel)) else prefix
+                    val at = prefix
                     if (!SchedulerDomain.isRootTask(taskId) && taskId !in shortest) shortest[taskId] = at
                     val childListId = task.childListId ?: continue
                     if (visited.add(childListId)) next.add(childListId to at + task.title)
@@ -3170,8 +3165,7 @@ object SearchDomain {
                         val taskId = source.cells[cellId]?.taskId ?: continue
                         val task = source.tasks[taskId] ?: continue
                         if (task.title.isEmpty()) continue
-                        // At the top: the path begins with the tree's name (user rule 2026-11-13).
-                        val at = if (listId == source.rootListId) listOf(treeLabel(task, source.rootLabel)) else prefix
+                        val at = prefix
                         if (!SchedulerDomain.isRootTask(taskId)) {
                             val paths = found.getOrPut(taskId) { mutableListOf() }
                             if (paths.size < MAX_PATHS_PER_TASK && at !in paths) paths.add(at)
@@ -3198,7 +3192,8 @@ object SearchDomain {
      */
     fun occurrenceAtPath(state: SchedulerState, taskId: TaskId, path: List<String>): SchedulerDomain.TaskOccurrence? {
         val first = path.firstOrNull() ?: return null
-        val live = liveRootLabel(state)
+        // The first segment names the root the path runs from: a stored tree's name is not the live root's title.
+        if (first != liveRootLabel(state)) return null
         val titles = path.drop(1)
         val seen = HashSet<Pair<CellListId, Int>>()
         fun walk(listId: CellListId, depth: Int, ancestors: List<CellId>): SchedulerDomain.TaskOccurrence? {
@@ -3206,8 +3201,6 @@ object SearchDomain {
             val list = state.lists[listId] ?: return null
             for (cellId in list.cellIds) {
                 val cellTaskId = state.cells[cellId]?.taskId ?: continue
-                // The first segment names the tree the path runs through: its top task's tree name, else the live label.
-                if (depth == 0 && state.tasks[cellTaskId]?.let { treeLabel(it, live) } != first) continue
                 if (depth == titles.size) {
                     if (cellTaskId == taskId && SchedulerDomain.isSelectableCell(state, cellId)) {
                         return SchedulerDomain.TaskOccurrence(cellId, ancestors)

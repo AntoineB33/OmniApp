@@ -189,6 +189,48 @@ class TransientMenuHostTest {
         assertEquals(2, left, "a press elsewhere in its own pop-up")
     }
 
+    /**
+     * Anomaly 2026-11-16 (*"select a task element, click on the down arrow of its path element, and click on the window
+     * that opens, the task element isn't deselected … there should not be two rows selected in two different windows"*):
+     * rows selected in a pop-up's window take the selection of every other window's rows, as does a press in a pop-up;
+     * rows selected in the app's window take nothing (its sections keep their own rule), nor does an edit that is no row
+     * selection.
+     */
+    @Test
+    fun `rows selected in a pop-up take the selection of the other windows' rows`() {
+        val host = TransientMenuHost()
+        host.appRoot = WINDOW
+        val popup = Any()
+        val bounds = androidx.compose.ui.geometry.Rect(0f, 0f, 200f, 100f)
+        var yielded = 0
+        var left = 0
+        var editLeft = 0
+        val rows = OutsidePressEditor().apply {
+            parts[Any()] = WINDOW to bounds
+            rowSelection = true
+            onYield = { yielded++ }
+        }
+        host.openEditor(rows, rows) { left++ }
+        val edit = OutsidePressEditor().apply { parts[Any()] = WINDOW to bounds }
+        host.openEditor(edit, edit) { editLeft++ }
+        // A section of the same window selecting its rows takes nothing.
+        val section = OutsidePressEditor().apply { parts[Any()] = WINDOW to bounds; rowSelection = true }
+        host.takeRowSelection(section, WINDOW)
+        assertEquals(0, yielded)
+        // A menu opening on its first row selected.
+        val menu = OutsidePressEditor().apply { parts[Any()] = popup to bounds; rowSelection = true }
+        host.openEditor(menu, menu) {}
+        host.takeRowSelection(menu, popup)
+        assertEquals(1, yielded, "the window's rows yield to the pop-up's")
+        assertEquals(0, left, "told as a yield, so the menu still acts on them")
+        assertEquals(0, editLeft, "an edit is no row selection: the pop-up stands inside it")
+        // Rows selected again, then a press in a pop-up whose rows are not selected.
+        host.openEditor(rows, rows) { left++ }
+        host.onPressInPopup(androidx.compose.ui.geometry.Offset(50f, 50f), popup)
+        assertEquals(2, yielded, "a press in a pop-up is a press elsewhere for the rows of another window")
+        assertEquals(0, editLeft)
+    }
+
     @Test
     fun `an edit whose parts are not laid out yet leaves on any press`() {
         // No bounds known is not "inside": the old single-rect form left on a null rect, and so does this.

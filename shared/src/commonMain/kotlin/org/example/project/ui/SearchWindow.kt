@@ -587,7 +587,7 @@ fun SearchWindow(
     // Anomaly 2026-11-05: the children under an element's arrow are selected as the rows are ([ElementChildSelection]),
     // on either surface; a press on anything else leaves none selected.
     val childSelection = remember { ElementChildSelection() }
-    childSelection.editor = rememberOutsidePressEditor(active = childSelection.selected.isNotEmpty()) { childSelection.clear() }
+    childSelection.editor = rememberOutsidePressEditor(active = childSelection.selected.isNotEmpty(), rowSelection = true) { childSelection.clear() }
     val elementCategories = remember(state.elementLinks, state.categories) { ElementTree.categoryTitles(state) }
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
     // Anomaly 2026-10-07 ("I click on a task cell in the sub-tree, then on the root task cell: both are selected"):
@@ -602,7 +602,7 @@ fun SearchWindow(
     var selectionSurface by surfaceState
     // The "Children" action's sub-tree holding the keyboard (user rule 2026-11-12), apart from the rows' own.
     var actionsSubtreeFocus by remember { mutableStateOf<TaskId?>(null) }
-    // The pinned parent row of the result list ([pinnedItemIndex]): the list's top in the window, which an expanded
+    // The pinned parent row of the result list ([pinnedChain]): the list's top in the window, which an expanded
     // row's sub-tree reckons its own pinned row from, and the row whose sub-tree is pinning a deeper parent there.
     var resultListTop by remember { mutableStateOf<Float?>(null) }
     var resultNestedPin by remember { mutableStateOf<TaskId?>(null) }
@@ -717,6 +717,8 @@ fun SearchWindow(
     // Anomaly 2026-11-03 (*"When the user clicks elsewhere, the selected element should stop being selected."*): a press
     // anywhere but on a row of the list (its own menus included) leaves no row selected, until a row is selected again.
     var deselected by remember { mutableStateOf(false) }
+    // The rows selected when a pop-up took the selection ([resultRows]), which the menu it is acts on until a row is pressed.
+    var heldForMenu by remember { mutableStateOf<List<String>>(emptyList()) }
     // Where a Shift+click's range starts ([ClickSelection]): the last row clicked, or moved to with the keys.
     var selectionAnchor by remember { mutableStateOf<String?>(null) }
     // The row this window selected itself, last ([select]): the selected row coming back as that one is no history move.
@@ -883,6 +885,7 @@ fun SearchWindow(
         select(index)
         subtreeFocusOwner = null
         selectionSurface = null
+        heldForMenu = emptyList()
         runCatching { listFocus.requestFocus() }
     }
     // Back in the search bar: a rename left open is committed, as it is when a tree cell is left.
@@ -904,11 +907,6 @@ fun SearchWindow(
     // drop-down's list, the left-side menu and a picker keep theirs: it is the one Enter takes.
     val unselectedUntilChosen = embedded && !userSelected && options == null && menuList == null && picker == null
     val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null && rowsSelectable && !deselected && !unselectedUntilChosen
-    // The rows of the list: a press outside every one of them takes the selection away (the app's one observer).
-    val resultRows = rememberOutsidePressEditor(active = hasSelection) {
-        deselected = true
-        multiSelection = null
-    }
     // User rule 2026-11-03: the rows are added from the row menu's "add" alone, on the SELECTED rows — Ctrl+A selects them
     // all. The check boxes, "Select all" and "Add" were the same thing a second way.
     // The selected rows, in the list's order: the Ctrl/Shift multi-selection, else the selected row; none while the
@@ -920,6 +918,24 @@ fun SearchWindow(
             multiSelection?.let { picked -> resultKeys.filter { it in picked } } ?: listOfNotNull(resultKeys.getOrNull(selected))
         }
     val latestSelectedShown by rememberUpdatedState(selectedShown)
+    /** The rows a menu acts on: the selected ones, else those selected when a pop-up took the selection ([heldForMenu]). */
+    val menuRows = { latestSelectedShown.ifEmpty { heldForMenu } }
+    // The rows of the list: a press outside every one of them takes the selection away (the app's one observer).
+    // Anomaly 2026-11-16: a pop-up whose rows are selected (a row's menu, its list of paths) takes the selection — two
+    // windows never show one each — and what the menu acts on is what was selected when it opened ([heldForMenu]).
+    val resultRows = rememberOutsidePressEditor(
+        active = hasSelection,
+        rowSelection = true,
+        onYield = {
+            heldForMenu = latestSelectedShown
+            deselected = true
+            multiSelection = null
+        },
+    ) {
+        heldForMenu = emptyList()
+        deselected = true
+        multiSelection = null
+    }
     /**
      * User rule 2026-11-15: *"Every selected row must appear in the added elements list. If a row is not selected anymore
      * and the user didn't right-click it and select add or add and remove others, then it is removed from the added
@@ -980,7 +996,7 @@ fun SearchWindow(
      * The row menu's "add": every SELECTED row into the added elements, in the list's order (not the checked ones);
      * [replacing] is its "add and remove the others" (user rule 2026-10-01).
      */
-    fun addSelected(replacing: Boolean = false) = addKeys(latestSelectedShown, replacing)
+    fun addSelected(replacing: Boolean = false) = addKeys(menuRows(), replacing)
     // A child selected: the result list's rows are not any more (the added list's leave on the press outside them).
     childSelection.onTake = { rowKey ->
         deselected = true
@@ -1012,7 +1028,7 @@ fun SearchWindow(
      */
     fun addedMenu(row: SearchDomain.Result): List<MenuAction>? {
         val given = addedList ?: return null
-        val picked = latestSelectedShown.toSet().ifEmpty { setOf(resultKey(row)) }
+        val picked = menuRows().toSet().ifEmpty { setOf(resultKey(row)) }
         return listOfNotNull(
             MenuAction(if (picked.size == 1) "remove" else "remove ${picked.size}") { given.onRemove(picked) },
             // Nothing to offer once the selection is all the list holds.
@@ -1353,9 +1369,29 @@ fun SearchWindow(
                     val rowInSelection = { index: Int ->
                         index != selected && !otherSurfaceShows && resultKeys.getOrNull(index)?.let { it in selectedShown } == true
                     }
-                    // The pinned parent row ([pinnedItemIndex]): which item, and the sub-tree that pins a deeper one.
+                    // The pinned parent row ([pinnedChain]): which item, and the sub-tree that pins a deeper one.
                     val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
-                    val pinnedIndex by remember(listState, bandPx) { derivedStateOf { pinnedItemIndex(listState, bandPx) } }
+                    // Anomaly 2026-11-16 (*"'Task: chalazion' expanded … When I scroll down on the children, 'Task:
+                    // chalazion' gets hidden at the top. The correct logic however is used with the child 'Parents'"*):
+                    // the pinned rows are a CHAIN ([pinnedChain]) — every open row above the one at the top (an action
+                    // group over its actions), then the open row whose own content is being scrolled through — one rule
+                    // for the task rows and the actions section's, stacked one row height each.
+                    val pinned by remember(listState, bandPx, results, actionRows) {
+                        derivedStateOf {
+                            val info = listState.layoutInfo
+                            pinnedChain(
+                                info.visibleItemsInfo.map { PinItem(it.index, it.offset, it.size) }, info.viewportStartOffset, bandPx,
+                                depthOf = { i -> actionRows?.byKey?.get((results.getOrNull(i) as? SearchDomain.ItemResult)?.id)?.depth },
+                                pinnable = { i ->
+                                    when (val row = results.getOrNull(i)) {
+                                        is SearchDomain.TaskResult -> row.taskId in expandedTasks && row.taskId != resultNestedPin
+                                        is SearchDomain.ItemResult -> actionRows?.byKey?.get(row.id)?.let { it.open && it.action != null } == true
+                                        else -> false
+                                    }
+                                },
+                            )
+                        }
+                    }
                     val pinScope = rememberCoroutineScope()
                     val resultKindWidth = rememberKindSectionWidth(results)
                     // A task row, for the list and for its pinned copy ([headOnly]): one drawing, so the two cannot
@@ -1679,73 +1715,54 @@ fun SearchWindow(
                             }
                         }
                     }
-                    // Drawn after the list so it covers the rows scrolled under it; opaque, one row tall.
-                    val pinnedTask =
-                        pinnedIndex?.let { index ->
-                            (results.getOrNull(index) as? SearchDomain.TaskResult)
-                                ?.takeIf { it.taskId in expandedTasks && it.taskId != resultNestedPin }
-                                ?.let { index to it }
-                        }
-                    if (pinnedTask != null) {
+                    // Drawn after the list so they cover the rows scrolled under them; opaque, one row tall each, the
+                    // outermost first. User rule 2026-11-12, the actions section: **the title of what is shown stays in
+                    // view**. Pressed, a pinned row keeps its place: what it hid goes, and the list scrolls back to it.
+                    for ((slot, index) in pinned.withIndex()) {
+                        val row = results.getOrNull(index) ?: continue
+                        val action = (row as? SearchDomain.ItemResult)?.let { actionRows?.byKey?.get(it.id) }
+                        if (row !is SearchDomain.TaskResult && action == null) continue
                         Box(
                             Modifier
                                 .align(Alignment.TopStart)
+                                .offset(y = RESULT_ROW_HEIGHT * slot)
                                 .fillMaxWidth()
                                 .padding(end = 12.dp)
                                 .height(RESULT_ROW_HEIGHT)
                                 .clipToBounds()
                                 .background(MaterialTheme.colorScheme.surface),
                         ) {
-                            taskRow(pinnedTask.first, pinnedTask.second, true)
-                        }
-                    }
-                    // User rule 2026-11-12, the actions section: **the title of what is shown stays in view** — the open
-                    // action whose controls are being scrolled through, its row drawn again over the top of the list.
-                    // Pressed, it keeps its place: what it hid goes, and the list scrolls back to the row.
-                    val pinnedAction =
-                        pinnedIndex?.let { index ->
-                            (results.getOrNull(index) as? SearchDomain.ItemResult)?.let { row ->
-                                actionRows?.byKey?.get(row.id)?.takeIf { it.open && it.action != null }?.let { Triple(index, row, it) }
+                            if (row is SearchDomain.TaskResult) {
+                                taskRow(index, row, true)
+                            } else if (action != null && actionRows != null && row is SearchDomain.ItemResult) {
+                                ItemResultRow(
+                                    kindWidth = resultKindWidth,
+                                    item = row,
+                                    categories = emptyList(),
+                                    expanded = true,
+                                    onToggleExpand = {
+                                        actionRows.onToggle(action.id)
+                                        pinScope.launch { listState.scrollToItem(index) }
+                                    },
+                                    query = query,
+                                    selected = rowSelected(index),
+                                    inSelection = rowInSelection(index),
+                                    onSelect = {
+                                        select(index)
+                                        pinScope.launch { listState.animateScrollToItem(index) }
+                                    },
+                                    onSecondarySelect = { select(index) },
+                                    onOpen = {},
+                                    onDoubleClick = {
+                                        actionRows.onToggle(action.id)
+                                        pinScope.launch { listState.scrollToItem(index) }
+                                    },
+                                    onAdd = {},
+                                    onAddReplacing = {},
+                                    hasMenu = false,
+                                    depth = action.depth,
+                                )
                             }
-                        }
-                    if (pinnedAction != null && actionRows != null) {
-                        val (index, row, action) = pinnedAction
-                        Box(
-                            Modifier
-                                .align(Alignment.TopStart)
-                                .fillMaxWidth()
-                                .padding(end = 12.dp)
-                                .height(RESULT_ROW_HEIGHT)
-                                .clipToBounds()
-                                .background(MaterialTheme.colorScheme.surface),
-                        ) {
-                            ItemResultRow(
-                                kindWidth = resultKindWidth,
-                                item = row,
-                                categories = emptyList(),
-                                expanded = true,
-                                onToggleExpand = {
-                                    actionRows.onToggle(action.id)
-                                    pinScope.launch { listState.scrollToItem(index) }
-                                },
-                                query = query,
-                                selected = rowSelected(index),
-                                inSelection = rowInSelection(index),
-                                onSelect = {
-                                    select(index)
-                                    pinScope.launch { listState.animateScrollToItem(index) }
-                                },
-                                onSecondarySelect = { select(index) },
-                                onOpen = {},
-                                onDoubleClick = {
-                                    actionRows.onToggle(action.id)
-                                    pinScope.launch { listState.scrollToItem(index) }
-                                },
-                                onAdd = {},
-                                onAddReplacing = {},
-                                hasMenu = false,
-                                depth = action.depth,
-                            )
                         }
                     }
                 }
@@ -2984,7 +3001,7 @@ private fun SearchTaskRow(
     onSubtreeFocus: (Boolean) -> Unit,
     /** Whether this row's sub-tree is the surface showing the cells' selection (the window's `selectionSurface`). */
     subtreeShowsSelection: Boolean = true,
-    /** The list's PINNED copy of this row ([pinnedItemIndex]): the head alone, its sub-tree is under the real one. */
+    /** The list's PINNED copy of this row ([pinnedChain]): the head alone, its sub-tree is under the real one. */
     headOnly: Boolean = false,
     /** The list's kind section's width ([rememberKindSectionWidth]). */
     kindWidth: Dp = KIND_SECTION_WIDTH,
@@ -3152,11 +3169,50 @@ private fun SearchTaskRow(
  * the caller draws its head there — unless its sub-tree is pinning a deeper parent in that same band, which is the
  * direct parent of what shows and so the one the rule names.
  */
-private fun pinnedItemIndex(listState: LazyListState, bandPx: Float): Int? {
-    val info = listState.layoutInfo
-    val top = info.viewportStartOffset
-    val below = info.visibleItemsInfo.firstOrNull { it.offset + it.size > top + bandPx + 0.5f } ?: return null
-    return below.index.takeIf { below.offset < top }
+internal class PinItem(val index: Int, val offset: Int, val size: Int)
+
+/**
+ * The rows pinned over the top of a list, outermost first, each one [band] tall from [top]: **every open row above the
+ * row at the top** whose own row is out of full view — the rows of a list nested by [depthOf] (an action group over its
+ * actions, a group inside one; null: a row of no nesting) — **then that row itself** when it is [pinnable] (open, with
+ * its content under it in the same item) and its head is hidden while its content is not over. Anomaly 2026-11-16: the
+ * second alone was pinned, so an open group scrolled away while an open action ("Parents") stayed. Reckoned again with
+ * the room the pins take until it holds, at most a few times.
+ */
+internal fun pinnedChain(
+    items: List<PinItem>,
+    top: Int,
+    band: Float,
+    depthOf: (Int) -> Int?,
+    pinnable: (Int) -> Boolean,
+): List<Int> {
+    var chain = emptyList<Int>()
+    repeat(4) {
+        val edge = top + chain.size * band
+        val below = items.firstOrNull { it.offset + it.size > edge + band + 0.5f } ?: return chain
+        val next = ArrayList<Int>()
+        depthOf(below.index)?.let { start ->
+            val ancestors = ArrayList<Int>()
+            var depth = start
+            var i = below.index - 1
+            while (i >= 0 && depth > 0) {
+                val d = depthOf(i)
+                if (d != null && d < depth) {
+                    ancestors += i
+                    depth = d
+                }
+                i--
+            }
+            for (a in ancestors.asReversed()) {
+                val at = items.firstOrNull { it.index == a }
+                if (at == null || at.offset < top + next.size * band) next += a
+            }
+        }
+        if (below.offset < top + next.size * band && pinnable(below.index)) next += below.index
+        if (next == chain) return chain
+        chain = next
+    }
+    return chain
 }
 
 /**

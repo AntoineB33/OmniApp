@@ -744,8 +744,11 @@ suggestions before it was ever entered.
   none of them. Not "Has no parent of the types: task", which finds the global root alone — a tree's root has it as its
   task parent (user rule 2026-11-13). The global root is a search row where it can be what is asked: "Has no parent of the types: task" and a list of
   parents (`Filters.parentsOf`), where every tree's root lists it (anomaly 2026-11-14). Local view state: stored `taskTreeRoot`, absent = any.
-- **A path is the titles from the root down to the PARENT**, and its first segment is the **tree's name** (the
-  active tree's, else the root task's title). The task's own title is the row's first section; repeating it
+- **A path is the titles from the root down to the PARENT**, each segment the title of a parent element
+  (`ElementTree.parentsOf`), so its first segment is the **global root task's own title** (anomaly 2026-11-16: the
+  path read "tree-2026-10-20 / Very Short Term" while the parent of "Very Short Term" is the task "root"; it began
+  with the active tree's name, then with the top task's tree name, user rule 2026-11-13 — neither an element above
+  the task). A task only a stored tree holds begins with that tree's name: no live element stands above it. The task's own title is the row's first section; repeating it
   would spend the width the two sections fight over.
 - **`Task.lastTreePath` is AUTHORITATIVE** — once the cells are gone nothing can recompute it (the history is
   capped) — so it is persisted and synced with the task. It holds **titles, not ids**: the ancestors are

@@ -62,21 +62,28 @@ class TreeNameTest {
         assertEquals("", named.tasks.values.first { it.title == "Child" }.treeName)
     }
 
-    /** User rule 2026-11-13: the paths begin with the name of the tree they run through. */
+    /**
+     * Anomaly 2026-11-16 (*"it says 'tree-2026-10-20 / Very Short Term'. However, when I go to the list of parents of 'Very
+     * Short Term', it is not a task element named 'tree-2026-10-20', but one named 'root'"*): **a path is its parents'
+     * titles** — the first segment the global root's, whatever the tree's name (it began with the tree's name, user rule
+     * 2026-11-13, and named no element above the task). The tree's name stays the top task's ([a_task_s_tree_name_names_its_root_s_tree]).
+     */
     @Test
-    fun a_path_begins_with_its_tree_s_name() {
+    fun a_path_is_its_parents_titles_whatever_the_tree_s_name() {
         val s = account()
         val top = s.tasks.values.first { it.title == "Top" }
         val child = s.tasks.values.first { it.title == "Child" }
-        val before = SearchDomain.shortestPathsInAnyTree(s).getValue(child.id)
-        assertEquals("Top", before.last())
         val named = r(s, SchedulerIntent.SetTreeName(listOf(top.id), "Health"))
-        assertEquals(listOf("Health", "Top"), SearchDomain.shortestPathsInAnyTree(named).getValue(child.id))
-        assertEquals(listOf("Health"), SearchDomain.shortestPathsInAnyTree(named).getValue(top.id))
-        assertEquals(listOf(listOf("Health", "Top")), SearchDomain.allPathsInAnyTree(named).getValue(child.id))
-        // "Go to task tree" from that path finds the cell.
-        assertTrue(SearchDomain.occurrenceAtPath(named, child.id, listOf("Health", "Top")) != null)
-        assertTrue(SearchDomain.occurrenceAtPath(named, child.id, listOf("Other", "Top")) == null)
+        val root = named.tasks.getValue(WellKnownIds.ROOT_TASK).title
+        assertEquals(listOf(root, "Top"), SearchDomain.shortestPathsInAnyTree(named).getValue(child.id))
+        assertEquals(listOf(root), SearchDomain.shortestPathsInAnyTree(named).getValue(top.id))
+        assertEquals(listOf(listOf(root, "Top")), SearchDomain.allPathsInAnyTree(named).getValue(child.id))
+        // Each segment is the title of a parent element, one level up each time.
+        assertEquals(listOf(SearchDomain.taskKey(top.id)), ElementTree.parentsOf(named, SearchDomain.taskKey(child.id)))
+        assertEquals(listOf(SearchDomain.taskKey(WellKnownIds.ROOT_TASK)), ElementTree.parentsOf(named, SearchDomain.taskKey(top.id)))
+        // "Go to task tree" from that path finds the cell; a path from another root does not.
+        assertTrue(SearchDomain.occurrenceAtPath(named, child.id, listOf(root, "Top")) != null)
+        assertTrue(SearchDomain.occurrenceAtPath(named, child.id, listOf("Health", "Top")) == null)
     }
 
     @Test

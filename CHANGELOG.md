@@ -11,6 +11,28 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pinned open groups, one row selection across windows, a path is its parents' titles — 2026-11-16
+
+Three anomalies of one kind, a rule kept in one place and missed in another:
+
+- *"'Task: chalazion' expanded … When I scroll down on the children, 'Task: chalazion' gets hidden at the top. The
+  correct logic however is used with the child 'Parents'"*: only the open row whose content sat in its own item was
+  pinned. The pinned rows are now a chain (`pinnedChain`, `PinnedChainTest`): every open row above the row at the
+  top, then the open row being scrolled through, stacked, one rule for task rows and the actions section's.
+- *"Click on the down arrow of its path element, and click on the window that opens, the task element isn't
+  deselected … there should not be two rows selected in two different windows"*: a press in a pop-up ended only the
+  edits drawn in that pop-up. Rows selected in a pop-up's window (a menu opens on its first row) now take the
+  selection from every other window's rows, as a press in a pop-up does (`TransientMenuHost.takeRowSelection`,
+  `OutsidePressEditor.rowSelection`); a row's menu still acts on the rows selected when it opened (`heldForMenu`).
+  The sections of one window keep their own rule.
+- *"It says 'tree-2026-10-20 / Very Short Term'. However … the list of parents of 'Very Short Term' … is not a task
+  element named 'tree-2026-10-20', but one named 'root'"*: a live path's first segment is now the global root task's
+  title, each segment a parent element's. **Replaces user rule 2026-11-13** (the first segment was the top task's
+  tree name, before that the active tree's name); a task only a stored tree holds still begins with that tree's name
+  (`TreeNameTest.a_path_is_its_parents_titles_whatever_the_tree_s_name`). Stamped `lastTreePath`s keep what they hold.
+
+No migration. Deploy: client apps.
+
 ### The ▾ is a Search window like any: "tree order", its types and sorting obeyed — 2026-11-16
 
 Anomaly: *"In down arrow > down arrow, I don't see 'Currently on'"* — nothing was on, yet the ▾ listed what was wanted
