@@ -619,6 +619,11 @@ disagreeing about what colour a task is.
   reversing "the outline alone" — that existed only to keep a full-row tint visible, and there is none now).
   `SheetColors.selectedFill` / `mainSelectionFill`; `moveDragFill` is darker than both and wins while a cell
   is dragged. `SheetColors.selectionFill` (the blue) is the find bar's latching-toggle fill and nothing else.
+- **A ROW UNDER THE POINTER THAT IS NOT SELECTED WEARS A VERY LIGHT GREY** (user rule 2026-11-16, *"Add a very light
+  gray for rows I hover with the mouse that are not selected, and increase a little bit the gray level of selected
+  rows"*): `SheetColors.hoverFill`, lighter than both selection greys (darkened the same day), through ONE rule —
+  `hoverFill` / `hoverLook` in `ui/TaskSheetChrome.kt`, read by a tree cell's background and by `selectionLook` (every
+  Search window row). A selected, edited or dragged cell is never changed by a hover.
 - **THE THREE STATES ARE THREE DRAWINGS, and the ranking is one function**: `taskCellOutline` (in
   `ui/TaskSheetChrome.kt`, beside the colours) turns the three overlapping flags into one `TaskCellOutline`,
   and `fill`/`borderWidth`/`borderColor` draw it — sheet + 1 dp `grid` unselected, `selectedFill` for a cell

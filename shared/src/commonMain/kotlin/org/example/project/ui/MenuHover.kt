@@ -90,6 +90,7 @@ class MenuHoverTracker(
      */
     fun windowLeft(goneTo: ((Set<Any>) -> Boolean)? = null) {
         if (focused === this) focused = null
+        popupTrace("a pop-up's window left (pinned=$pinned, parent pinned=${parent?.pinned}, walking=${walkingTo != null})")
         if (!pinned) return
         val target = walkingTo ?: goneTo?.let { test -> generateSequence(parent) { it.parent }.firstOrNull { test(it.windows) } }
         var at: MenuHoverTracker? = this
@@ -149,6 +150,7 @@ class MenuHoverTracker(
         pending = scope.launch {
             delay(GRACE_MILLIS)
             if (inside.isEmpty() && !pinned) {
+                popupTrace("a hover pop-up: the pointer left every part of it")
                 onLeft()
             }
         }

@@ -12,8 +12,8 @@ import androidx.compose.ui.window.PopupProperties
  * (`docs/invariants/popups.md`): material's `DropdownMenu`, with its parameters and its anchoring (the menu hangs
  * from the layout it is declared in, moved by [offset]).
  *
- * On the desktop a menu is an OS window of its own, owned by the app's window (`AppDropdownMenu.jvm.kt`): it is not
- * bound by the app window's edges, and it stands above the app and under whatever stands above the app — user rule
+ * On the desktop a menu is an OS window of its own, owned by the app's window (`AppDropdownMenu.jvm.kt`): placed and sized
+ * inside the app window's edges (user rule 2026-11-16, *"No window must appear outside the app"*), and it stands above the app and under whatever stands above the app — user rule
  * 2026-11-15, *"I want the search windows to never appear above what is supposed to be above the app (like the
  * Firefox's picture-in-picture)"*, which took back the 2026-10-13 rule that menus be over it too. Everywhere else it
  * IS material's menu.

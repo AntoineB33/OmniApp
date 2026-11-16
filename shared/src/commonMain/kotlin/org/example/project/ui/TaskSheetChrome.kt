@@ -13,10 +13,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
@@ -46,10 +48,18 @@ internal object SheetColors {
      * two greys ([selectedFill], [mainSelectionFill]).
      */
     val selectionFill = Color(0xFFE8F0FE)
-    /** PRD §3: the background of a cell of the selection that is not the main one — the lighter grey. */
-    val selectedFill = Color(0xFFECEEF1)
-    /** PRD §3: the background of the main selection — the darker of the two greys. */
-    val mainSelectionFill = Color(0xFFDADDE2)
+    /**
+     * User rule 2026-11-16: *"a very light gray for rows I hover with the mouse that are not selected"* — lighter than
+     * both selection greys, so a hovered row never reads as selected ([hoverLook]).
+     */
+    val hoverFill = Color(0xFFF5F6F8)
+    /**
+     * PRD §3: the background of a cell of the selection that is not the main one — the lighter grey. Darkened a little
+     * 2026-11-16 (user rule: *"increase a little bit the gray level of selected rows"*), from `ECEEF1`.
+     */
+    val selectedFill = Color(0xFFE4E7EB)
+    /** PRD §3: the background of the main selection — the darker of the two greys. From `DADDE2` until 2026-11-16. */
+    val mainSelectionFill = Color(0xFFCFD3D9)
     val activeBorder = Color(0xFF1A73E8)
     /**
      * PRD §4: the outline of a cell **in Edit Mode**. Its own hue: Edit Mode is not a third degree of
@@ -318,3 +328,33 @@ internal class TaskSheetTitleBounds {
 /** Records the title column's band for [TaskSheetTitleBounds]. Put it on the title cell of a row. */
 internal fun Modifier.taskSheetTitleBounds(bounds: TaskSheetTitleBounds): Modifier =
     onGloballyPositioned { bounds.record(it) }
+
+/**
+ * User rule 2026-11-16: **a row under the pointer that is not selected wears [SheetColors.hoverFill]** — every list row of
+ * the app goes through here (a Search window's row by [selectionLook], a tree cell by [tracksHover] and its own
+ * background), so the hover grey is one rule. [rest] is the row's fill when not hovered; a selected row's fill is never
+ * changed by a hover.
+ */
+internal fun Modifier.hoverLook(rest: Color, selected: Boolean): Modifier =
+    composed {
+        val hovered = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+        this.tracksHover(hovered).background(hoverFill(rest, selected, hovered.value))
+    }
+
+/** The fill of a row at rest [rest]: the hover grey while [hovered] and not [selected] ([hoverLook]). */
+internal fun hoverFill(rest: Color, selected: Boolean, hovered: Boolean): Color =
+    if (hovered && !selected) SheetColors.hoverFill else rest
+
+/** Writes into [hovered] whether the pointer is over this element; consumes nothing. */
+internal fun Modifier.tracksHover(hovered: androidx.compose.runtime.MutableState<Boolean>): Modifier =
+    pointerInput(hovered) {
+        awaitPointerEventScope {
+            while (true) {
+                when (awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).type) {
+                    androidx.compose.ui.input.pointer.PointerEventType.Enter -> hovered.value = true
+                    androidx.compose.ui.input.pointer.PointerEventType.Exit -> hovered.value = false
+                    else -> Unit
+                }
+            }
+        }
+    }

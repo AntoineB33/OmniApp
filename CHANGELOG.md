@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pop-ups stay in the app and off their caller's list; rows fit what is shown; hover grey — 2026-11-16
+
+User: *"When I click on 'add a parent' field in a window with little width, I have to horizontally scroll to get to the
+down arrow"* — a narrow section lays its rows out at its least width (440 dp) and cuts them; a row ending in a control
+(a field's cross and ▾, a field and its button: the actions' fields, the tree name, the volume, the workplace paths,
+the alarm/timer label rows, the configuration windows' bars) now ends at the shown edge (`fitsShownWidth`). *"No window
+must appear outside the app"*: desktop menus and pop-ups are placed and sized inside the app's window (`appArea`),
+no longer the screen. *"When a row makes a window appear, it must never hide the list of rows the caller is in"*: a
+pop-up from a row stands off that list (`LocalCallerList`, `menuSpot`'s `list`; a field's window by `fieldPopupBounds`).
+Rows under the pointer, not selected, wear a very light grey; the selection greys are a little darker. Pop-ups a little
+narrower (field window 560 → 480 dp, ▾ tree leaves 520 → 490, its right sections 440 → 380, categories 200 → 190,
+drop-downs 320 → 290). **TEMPORARY**: the `[popup]` trace is back (`popupTrace`) for *"clicked on Parents and Children,
+and instead of pinning the children window … it removed the window that appeared from the down arrow"*, to remove once
+understood. No migration. Deploy: client apps.
+
 ### Every menu stays open after its entry is chosen — 2026-11-15
 
 User rule: *"Every menu stay open after you choose an entry."* `OptionSearchMenu` (every menu and drop-down) holds itself

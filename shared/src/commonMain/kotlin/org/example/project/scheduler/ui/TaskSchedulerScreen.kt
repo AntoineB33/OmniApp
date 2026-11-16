@@ -53,6 +53,7 @@ import org.example.project.scheduler.domain.CalendarLockDomain
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.VerticalDivider
 import org.example.project.ui.outsidePressPart
+import org.example.project.ui.tracksHover
 import org.example.project.ui.checkRangeShift
 import androidx.compose.material3.MaterialTheme
 import org.example.project.ui.OutlinedTextField
@@ -2830,6 +2831,7 @@ internal fun TaskRow(
     // PRD §3/§4: which of the three states the cell is in. The rule itself lives in [taskCellOutline] because
     // all three drawings of the tree render through this composable and none of them may answer it separately.
     val outline = taskCellOutline(isEditing, isMainSelection, isInSelectionRange)
+    val cellHovered = remember(cellId) { mutableStateOf(false) }
     val cellBackground =
         when {
             // PRD §3: a cell being drag-moved gets a grey background (not mirrored elsewhere).
@@ -2838,7 +2840,8 @@ internal fun TaskRow(
             // PRD §3: the selection is said in the BACKGROUND — a grey for a cell of the selection, a darker
             // one for the main selection (user rule 2026-10-01). The task's own colour is not a background
             // here at all: it is the swatch under the expand arrow, so no fill ever hides it.
-            else -> outline.fill
+            // User rule 2026-11-16: a cell under the pointer, not selected, the very light grey.
+            else -> org.example.project.ui.hoverFill(outline.fill, selected = outline != org.example.project.ui.TaskCellOutline.None, hovered = cellHovered.value)
         }
     // Edit Mode alone keeps an outline, in its own colour.
     val cellBorder = Modifier.border(outline.borderWidth, outline.borderColor)
@@ -3031,6 +3034,8 @@ internal fun TaskRow(
                     val top = coords.positionInWindow().y
                     onRowBounds(VisibleOccurrence(cellId, renderVia), top, top + coords.size.height)
                 }
+                // User rule 2026-11-16: hovered and not selected, the very light grey ([hoverFill]).
+                .tracksHover(cellHovered)
                 .background(cellBackground)
                 .then(cellBorder)
                 .then(selectionPointerModifier())

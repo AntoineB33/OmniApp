@@ -145,7 +145,7 @@ fun ConfigurationSearchWindow(
         ) {
             // --- The configuration ------------------------------------------------------------------
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().fitsShownWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

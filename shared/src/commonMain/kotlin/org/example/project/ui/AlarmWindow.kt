@@ -704,7 +704,7 @@ private fun AlarmRowEditor(
     settingsOnly: Boolean = false,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = row.enabled, onCheckedChange = { onRowChange(row.copy(enabled = it), null) })
             if (settingsOnly) {
                 Spacer(Modifier.width(8.dp))
@@ -963,7 +963,7 @@ private fun TimerRowEditor(
 
     // The row's lines — which [oneRow] lays side by side instead of one under the other.
     val lines: @Composable () -> Unit = {
-        if (!runOnly) Row(verticalAlignment = Alignment.CenterVertically) {
+        if (!runOnly) Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = row.durationText,
                 onValueChange = { onRowChange(row.copy(durationText = it), FIELD_DURATION) },
@@ -1202,7 +1202,7 @@ private fun ChronoRowEditor(
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = row.label,
                 onValueChange = { onRowChange(row.copy(label = it), FIELD_LABEL) },

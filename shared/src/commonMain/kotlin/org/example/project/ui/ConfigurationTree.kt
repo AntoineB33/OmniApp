@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.rememberScrollState
@@ -103,8 +105,9 @@ internal fun ConfigurationTreeArrow(
     }
     // The tracker, made below from [close]: what gives the keyboard back to the app's window.
     val tracker = remember { arrayOfNulls<MenuHoverTracker>(1) }
-    fun close() {
+    fun close(why: String = "its own window") {
         if (!open) return
+        popupTrace("▾ $arrowId closed by $why (pinned=${tracker[0]?.pinned})")
         open = false
         if (outer == null) keeper.stopWalk()
         // The keyboard goes back to the app's window (a pop-up opened from a pop-up gives it back to that one, which
@@ -114,7 +117,7 @@ internal fun ConfigurationTreeArrow(
     // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
     // An arrow inside a pop-up of the tree is one of that pop-up's descendants, it and its own pop-up (anomaly
     // 2026-11-11: its own tracker alone, the pointer on its pop-up was outside the tree, and the whole tree vanished).
-    val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { close() }
+    val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { close("its tracker (pointer or keyboard left)") }
     tracker[0] = hover
     LaunchedEffect(open) { if (!open) hover.unpin() }
     // Anomaly 2026-11-15 (*"I pinned the window …, I restart the app, and all the windows disappeared"*): left pinned, it
@@ -244,7 +247,7 @@ internal fun ConfigurationTreeArrow(
         ) {
         // A Search window: shown bare by its menu window, it wears a window's surface ([LocalBareMenu], [LocalPopupChrome]).
         androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
-        AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
+        AppDropdownMenu(expanded = open, onDismissRequest = { close("its menu window's dismissal") }, properties = PopupProperties(focusable = true)) {
         val control = LocalPopupWindowControl.current
         TreeSearchWindow(
             own, { own = it }, parts, { parts = it }, onClose = { close() },
@@ -417,9 +420,12 @@ private fun TreeColumn(
             if (kotlin.math.abs(delta) > FIT_DEAD_BAND_PX) latestFit(delta)
         }
     }
+    // User rule 2026-11-16: a category's pop-up never hides this column, the list its row is in ([LocalCallerList]).
+    val columnBounds = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
     Column(
         Modifier
             .reportsHover(LocalMenuHover.current)
+            .onGloballyPositioned { columnBounds[0] = it.boundsInWindow() }
             .width(treeColumnWidth(nodes))
             .then(
                 if (onFit == null) Modifier.heightIn(max = TREE_COLUMN_MAX_HEIGHT)
@@ -444,6 +450,7 @@ private fun TreeColumn(
                     // a hover pop-up of its own: it goes once the pointer has left its row, it and its descendants
                     // ([MenuHoverTracker], the grace being the crossing from the row to it), a branch of the tree's.
                     val branch = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
+                        popupTrace("category ${node.id}: closed, the pointer left it")
                         if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
                     }
                     // User rule 2026-11-11: the keyboard coming to it is a position of the app. Kept by the outermost
@@ -486,6 +493,7 @@ private fun TreeColumn(
                     }
                     val reveal = {
                         if (!revealing) {
+                            popupTrace("category ${node.id}: opened by a hover")
                             onPathChange(path.take(depth) + node.id)
                         }
                     }
@@ -509,6 +517,7 @@ private fun TreeColumn(
                                 // pop-up for this row's, [MenuHoverTracker.windowLeft]) after this was composed, so the
                                 // click opens it whatever [revealing] last said.
                                 .clickable {
+                                    popupTrace("category ${node.id}: clicked (revealing=$revealing)")
                                     onPathChange(path.take(depth) + node.id)
                                     branch.pin()
                                 }
@@ -520,6 +529,7 @@ private fun TreeColumn(
                         if (revealing) {
                             androidx.compose.runtime.CompositionLocalProvider(
                                 LocalMenuSides provides MenuSide.SUBMENU,
+                                LocalCallerList provides { columnBounds[0] },
                                 LocalMenuHover provides branch,
                                 // The arrow in this pop-up's bar opens a tree standing at this category.
                                 LocalBarPath provides branchPath,
@@ -529,6 +539,7 @@ private fun TreeColumn(
                                 AppDropdownMenu(
                                     expanded = true,
                                     onDismissRequest = {
+                                        popupTrace("category ${node.id}: closed, its window dismissed")
                                         if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
                                     },
                                     // The whole pop-up is the branch, its search field and padding included, wherever the
@@ -587,13 +598,14 @@ private fun TreeColumn(
     }
 }
 
-private val TREE_CATEGORY_COLUMN_WIDTH = 200.dp
+private val TREE_CATEGORY_COLUMN_WIDTH = 190.dp
 
 /** A configuration's label column in the tree: the longest label on one line ("history: Changed element types"). */
 internal val TREE_LABEL_WIDTH = 208.dp
 
 /** The room a configuration's row has in the tree: its label, and the widest control one has, on one line. */
-internal val TREE_LEAF_CONTENT_WIDTH = 520.dp
+// User rule 2026-11-16 (*"the pop-up windows are a little too wide"*): 520 until then.
+internal val TREE_LEAF_CONTENT_WIDTH = 490.dp
 
 /** A column's own side padding. */
 private val TREE_COLUMN_PADDING = 6.dp
@@ -658,6 +670,7 @@ private fun TreeSearchWindow(
     val fit = { delta: Int ->
         val next = (heightPx + delta).coerceIn(leastPx, mostPx)
         if (next != heightPx && kotlin.math.abs(next - beforeLastFit) > 0.5f) {
+            popupTrace("tree pop-up fitted ${heightPx.toInt()} -> ${next.toInt()}")
             beforeLastFit = heightPx
             heightPx = next
         }
@@ -740,7 +753,7 @@ private val TREE_POPUP_MIN_HEIGHT = 120.dp
 private val TREE_POPUP_MAX_HEIGHT = TREE_COLUMN_MAX_HEIGHT + 140.dp
 
 /** Its right sections shown: what it widens by, and the least height they need. */
-private val TREE_POPUP_RIGHT_WIDTH = 440.dp
+private val TREE_POPUP_RIGHT_WIDTH = 380.dp
 private val TREE_POPUP_RIGHT_MIN_HEIGHT = 420.dp
 
 /**

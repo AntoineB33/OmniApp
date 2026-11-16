@@ -109,4 +109,27 @@ class MenuPlacementTest {
         assertEquals(IntOffset(850, 100), menuSpot(IntRect(0, 300, 1000, 330), tall, screen, MenuSide.POPUP))
         assertEquals(IntOffset(850, 0), menuSpot(IntRect(0, 700, 1000, 730), tall, screen, MenuSide.POPUP))
     }
+
+    /**
+     * User rule 2026-11-16: *"When a row makes a window appear, it must never hide the list of rows the caller is in. The
+     * positions below and above are only possible when it doesn't hide."*
+     */
+    @Test
+    fun a_pop_up_of_a_row_never_hides_the_list_the_row_is_in() {
+        val popup = MenuSide.POPUP
+        val list = IntRect(300, 100, 700, 700)
+        val row = IntRect(320, 400, 680, 430)
+        // Room at the list's left: off its left edge, at the row's height — not at the row's left, over the list.
+        assertEquals(IntOffset(150, 400), menuSpot(row, menu, screen, popup, list), "off the list's left edge")
+        // No room at the left (the list starts at the edge), nor above or below it: off its right edge.
+        val wide = IntRect(0, 100, 700, 700)
+        assertEquals(IntOffset(700, 400), menuSpot(IntRect(20, 400, 680, 430), menu, screen, popup, wide), "off the list's right edge")
+        // A list across the whole width and short: below the LIST, not below the row.
+        val strip = IntRect(0, 100, 1000, 300)
+        val at = menuSpot(IntRect(20, 150, 980, 180), menu, screen, popup, strip)
+        assertTrue(at.y >= strip.bottom || at.y + menu.height <= strip.top, "above or below the list alone: $at")
+        // Shown where it hides the list, it is placed again.
+        assertFalse(keepsSpot(IntOffset(400, 430), menu, row, screen, list), "over the list: placed again")
+        assertTrue(keepsSpot(IntOffset(150, 400), menu, row, screen, list), "off the list: it stays")
+    }
 }

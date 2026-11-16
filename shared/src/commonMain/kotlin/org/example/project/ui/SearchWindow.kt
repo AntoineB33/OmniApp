@@ -35,6 +35,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -1306,10 +1307,16 @@ fun SearchWindow(
             // --- The result list --------------------------------------------------------------------
             // Narrowed, the list is cut — laid out at the sections' least width, never squeezed row by row.
             // The left-side menu's list is the menu's own items, at the menu's width ([MenuSearchRows]).
+            // User rule 2026-11-16: a pop-up opened from one of its rows stands off it ([LocalCallerList]), as shown.
+            val resultListBounds = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
+            androidx.compose.runtime.CompositionLocalProvider(LocalCallerList provides { resultListBounds[0] }) {
             Box(
                 Modifier.fillMaxWidth().weight(1f)
                     .then(if (menuList != null) Modifier else Modifier.keepsWidthAbove(COMPACT_SECTION_MIN_WIDTH, listCut))
-                    .onGloballyPositioned { resultListTop = it.positionInWindow().y },
+                    .onGloballyPositioned {
+                        resultListTop = it.positionInWindow().y
+                        resultListBounds[0] = it.boundsInWindow()
+                    },
             ) {
                 if (treeList != null) {
                     // A configuration of it right-clicked, "add": into this window's added elements.
@@ -1737,6 +1744,7 @@ fun SearchWindow(
                 // A list of integers has no end: its thumb is sized by the highest one that means something.
                 if (count > 0) ListScrollbar(listState, Modifier.align(Alignment.CenterEnd), openEnd = options?.integers?.let { it.highest + 1 })
             }
+            }
         }
 
         if (searchShown && rightShown) SectionSeparator(vertical = true, onDrag = dragLeftShare, onDragEnd = tellSplits)
@@ -2135,7 +2143,7 @@ internal val OPTION_HANDLERS =
     )
 
 /** The widest and tallest a drop-down's Search window is; it is as tall as its rows below that. */
-private val OPTION_MENU_WIDTH = 320.dp
+private val OPTION_MENU_WIDTH = 290.dp
 private val OPTION_MENU_MAX_HEIGHT = 420.dp
 private val OPTION_MENU_BAR_HEIGHT = 56.dp
 
@@ -2898,7 +2906,8 @@ internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false):
  */
 internal fun selectionLook(selected: Boolean, inSelection: Boolean): Modifier {
     val outline = taskCellOutline(isEditing = false, isMainSelection = selected, isInSelectionRange = inSelection)
-    return Modifier.background(outline.fill).border(outline.borderWidth, outline.borderColor)
+    // User rule 2026-11-16: hovered and not selected, the very light grey ([hoverLook]).
+    return Modifier.hoverLook(outline.fill, selected || inSelection).border(outline.borderWidth, outline.borderColor)
 }
 
 /** A menu item's key in the Search window's list (an [SearchDomain.ItemResult] of [SearchDomain.Kind.Option]), and back. */

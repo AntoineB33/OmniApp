@@ -35,6 +35,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -106,6 +110,45 @@ internal fun Modifier.keepsWidthAbove(min: Dp, cut: SideCut? = null): Modifier =
         cut?.measured(shown = shown, laidOut = placeable.width)
         layout(shown, placeable.height) { placeable.place(-(cut?.offset ?: 0), 0) }
     }
+
+/**
+ * Anomaly 2026-11-16 (*"When I click on 'add a parent' in a window with little width, I have to horizontally scroll to get
+ * to the down arrow, even though there is enough space on the right"*): **a row whose last part is a control — a field
+ * with its cross and ▾, a field and its button — ends at the edge of what is SHOWN**, not at the edge of what its section
+ * laid out ([keepsWidthAbove]: a narrow section lays its content out at its least width and cuts it). Its field narrows,
+ * which wraps no text, and the controls at its right stay in view. A row of text keeps the laid-out width: squeezed, it
+ * would wrap, and the section grow downwards (user rule 2026-10-06).
+ *
+ * What is shown is read off the layout: the parent's bounds in the window, which every cut above clips, against this
+ * row's own left — the row's width changes nothing of either, so it settles in one pass. Scrolled sideways
+ * ([SideCut]), the row follows the shown edge. Never narrower than [least].
+ */
+internal fun Modifier.fitsShownWidth(least: Dp = FITS_SHOWN_LEAST_WIDTH): Modifier =
+    composed {
+        val room = remember { androidx.compose.runtime.mutableIntStateOf(Int.MAX_VALUE) }
+        this
+            .then(
+                Modifier.onPlaced { coords ->
+                    val parent = coords.parentLayoutCoordinates ?: return@onPlaced
+                    val shown = parent.boundsInWindow()
+                    val next = if (shown.isEmpty) Int.MAX_VALUE else (shown.right - coords.positionInWindow().x).toInt()
+                    if (next != room.intValue) room.intValue = next
+                },
+            )
+            .layout { measurable, constraints ->
+                val at = room.intValue
+                val width =
+                    if (at == Int.MAX_VALUE || !constraints.hasBoundedWidth) constraints.maxWidth
+                    else at.coerceAtLeast(least.roundToPx()).coerceAtMost(constraints.maxWidth)
+                val placeable = measurable.measure(constraints.copy(minWidth = minOf(constraints.minWidth, width), maxWidth = width))
+                // Its room keeps the width it was given (a narrower size than asked is centred by the parent, which moved
+                // the row and so its own left); the row stands at its start.
+                layout(maxOf(placeable.width, constraints.minWidth), placeable.height) { placeable.place(0, 0) }
+            }
+    }
+
+/** The least a row fitted to what is shown ([fitsShownWidth]) narrows to: a field and its two controls still usable. */
+private val FITS_SHOWN_LEAST_WIDTH: Dp = 160.dp
 
 /** A line of explanation in a compact section: ONE line, cut where the section ends. */
 @Composable

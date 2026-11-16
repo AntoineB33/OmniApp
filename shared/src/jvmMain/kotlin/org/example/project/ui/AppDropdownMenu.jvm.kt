@@ -161,6 +161,8 @@ private fun HangingMenu(
     // The same menu, wherever it is opened from (every row of a list): what its last size is remembered under.
     val site = currentCompositeKeyHash
     val sides = LocalMenuSides.current
+    // User rule 2026-11-16: the list of rows the menu's caller is in, which a pop-up opened from a row must not hide.
+    val callerList = rememberUpdatedState(LocalCallerList.current)
     // User rule 2026-11-15: *"Right-click must open the right-click menu even if a right-click menu was already open."*
     // A right-click outside an open menu that leaves it open — the same row's again, another row whose menu is the
     // same one, a row of the pop-up it hangs from — opens it AFRESH: a new session, at the new pointer. Before, the
@@ -175,7 +177,7 @@ private fun HangingMenu(
     }
     val generation = opening[1]
     val session = remember(owner, generation) {
-        MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals, sides, openedOnRight).also { current[0] = it }
+        MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals, sides, openedOnRight, callerList).also { current[0] = it }
     }
     DisposableEffect(session) { onDispose { session.close() } }
     // The pointer is read ONCE, as the menu opens — where the right-click was. Read at every layout of the anchor (a
@@ -226,7 +228,16 @@ private class MenuSession(
     callSides: List<MenuSide> = MenuSide.DEFAULT,
     /** Opened by a right-click ([RightPresses]): a right-click's menu, not a pop-up of a field or a button. */
     openedOnRight: Boolean = true,
+    /** The list of rows its caller is in ([LocalCallerList]), in [owner]'s pixels. */
+    private val callerList: State<(() -> Rect?)?>? = null,
 ) {
+    /**
+     * User rule 2026-11-16: *"When a row makes a window appear, it must never hide the list of rows the caller is in."* A
+     * pop-up of a field or a button stands off the list; a right-click's menu is a question about one row, at the pointer.
+     */
+    private val avoidsList: Boolean = !openedOnRight
+    private fun listNow(): Rect? = if (avoidsList) callerList?.value?.invoke() else null
+
     /**
      * User rule 2026-11-15: a pop-up opened from a field or a button tries the right, the left, below, above
      * ([MenuSide.POPUP]); a right-click's menu keeps below, above, right, left (2026-10-14). Told by the press that
@@ -346,6 +357,7 @@ private class MenuSession(
     private val ownerListener = object : WindowAdapter() {
         override fun windowDeactivated(event: WindowEvent) {
             if (!ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
+                popupTrace("menu $site: dismissed, its owner deactivated for ${event.oppositeWindow?.javaClass?.simpleName}")
                 dismiss.value()
             }
         }
@@ -357,6 +369,7 @@ private class MenuSession(
         }
         override fun windowLostFocus(event: WindowEvent) {
             if (focusable && !ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
+                popupTrace("menu $site: dismissed, the keyboard went to ${event.oppositeWindow?.javaClass?.simpleName}")
                 dismiss.value()
             }
         }
@@ -386,6 +399,7 @@ private class MenuSession(
             if (!ours(active)) {
                 // Back in the app by a press on another of its windows — which no loss of the keyboard told the pop-up,
                 // having lost it to the other application: it closes as a press elsewhere in the app closes it.
+                popupTrace("menu $site: dismissed, ${active?.javaClass?.simpleName} became the active window")
                 if (hover?.pinned == true) hover?.windowLeft()
                 dismiss.value()
             }
@@ -432,6 +446,7 @@ private class MenuSession(
 
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     private fun open() {
+        popupTrace("menu $site: opened (focusable=$focusable)")
         val window = MenuWindows.take(owner)
         dialog = window
         openedAt = System.nanoTime()
@@ -472,6 +487,7 @@ private class MenuSession(
                         // Gone to another application, pinned: it stays (user rule 2026-11-15, [pinnedAway]).
                         // Gone to a pop-up this one hangs from: what is below that one closes, it stays.
                         if (!inside && !(event.oppositeWindow == null && tracker.pinned) && !heldByHand) {
+                            popupTrace("menu $site: its tracker left for ${event.oppositeWindow?.javaClass?.simpleName} (pinned=${tracker.pinned})")
                             tracker.windowLeft { windows -> generateSequence(event.oppositeWindow) { it.owner }.any { it in windows } }
                         }
                     }
@@ -493,6 +509,8 @@ private class MenuSession(
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalMenuWindow provides window,
                 LocalMenuSides provides MenuSide.DEFAULT,
+                // Its rows are in no list of the caller's: a list inside it says so itself.
+                LocalCallerList provides null,
                 LocalPopupWindowControl provides control,
             ) {
                 MenuSurface(owner, modifier.value, content.value, ::fit)
@@ -520,7 +538,12 @@ private class MenuSession(
         EventQueue.invokeLater {
             val window = dialog ?: return@invokeLater
             val scale = window.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
-            val fitted = Dimension(ceil(wanted.width / scale).toInt().coerceAtLeast(1), ceil(wanted.height / scale).toInt().coerceAtLeast(1))
+            // User rule 2026-11-16: no window outside the app — never larger than the app's window either.
+            val app = appArea(owner)
+            val fitted = Dimension(
+                ceil(wanted.width / scale).toInt().coerceAtLeast(1).let { if (app != null) it.coerceAtMost(app.width.coerceAtLeast(1)) else it },
+                ceil(wanted.height / scale).toInt().coerceAtLeast(1).let { if (app != null) it.coerceAtMost(app.height.coerceAtLeast(1)) else it },
+            )
             MenuWindows.lastSize[site] = fitted
             size = fitted
             // Shown already: it stays where it is if it can ([keepsSpot]) — a menu never moves under the eye. Not while it
@@ -540,15 +563,17 @@ private class MenuSession(
         if (size == null) return
         // Dragged by its head: where the hand left it ([control]).
         if (heldByHand && window.isShowing) return
-        val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping)
+        val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow())
         if (window.location != at) {
+            popupTrace("menu $site: moved ${window.location.x},${window.location.y} -> ${at.x},${at.y} (size ${size?.width}x${size?.height})")
             window.location = at
         }
     }
 
-    private fun location(): Point = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides)
+    private fun location(): Point = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow())
 
     fun close() {
+        popupTrace("menu $site: closed")
         closed = true
         val window = dialog ?: return
         dialog = null
@@ -770,11 +795,12 @@ private fun pointerIn(owner: AwtWindow): Offset? =
     }.getOrNull()
 
 /**
- * **Where a menu of [size] (AWT units) opens, on the screen**: beside its anchor — below, else above, else at the
- * right, else at the left, the first side the whole menu fits on, inside the work area of the screen the anchor is on
- * ([menuSpot], user rule 2026-10-14). [anchor] and [offsetPx] are pixels in [owner]'s content; the offset moves the
- * anchor (the window bar's menu: the bar, at the pointer's x). The menu is a window of its own, so the room it has is
- * the SCREEN's, not the app window's: under a field near the bottom of a small window it still opens below.
+ * **Where a menu of [size] (AWT units) opens, on the screen**: beside its anchor, the first of [sides] the whole menu fits
+ * on ([menuSpot], user rule 2026-10-14), off the [list] of rows its caller is in. [anchor], [list] and [offsetPx] are
+ * pixels in [owner]'s content; the offset moves the anchor (the window bar's menu: the bar, at the pointer's x).
+ *
+ * User rule 2026-11-16: *"No window must appear outside the app."* The room it has is the APP's window (its content, as
+ * shown on the screen's work area) — no longer the screen's, which the 2026-11-15 rule gave it.
  */
 private fun menuPlacement(
     owner: AwtWindow,
@@ -784,24 +810,43 @@ private fun menuPlacement(
     sides: List<MenuSide> = MenuSide.DEFAULT,
     /** Where the menu is shown, kept if it still may stand there ([keepsSpot]); null for a menu placed afresh. */
     keeping: Point? = null,
+    list: Rect? = null,
 ): Point {
     val pane = (owner as? RootPaneContainer)?.contentPane
     val origin = runCatching { (pane ?: owner).locationOnScreen }.getOrNull() ?: owner.location
     val scale = owner.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
     fun screen(px: Float) = (px / scale).roundToInt()
-    val on = IntRect(
-        left = origin.x + screen(anchor.left + offsetPx.x),
-        top = origin.y + screen(anchor.top + offsetPx.y),
-        right = origin.x + screen(anchor.right + offsetPx.x),
-        bottom = origin.y + screen(anchor.bottom + offsetPx.y),
+    fun onScreen(r: Rect, by: Offset) = IntRect(
+        left = origin.x + screen(r.left + by.x),
+        top = origin.y + screen(r.top + by.y),
+        right = origin.x + screen(r.right + by.x),
+        bottom = origin.y + screen(r.bottom + by.y),
     )
-    val area = workAreaAt(ScreenPoint(on.left, on.top)) ?: workAreaAt(ScreenPoint(origin.x, origin.y))
+    val on = onScreen(anchor, offsetPx)
+    val listOn = list?.let { onScreen(it, Offset.Zero) }
+    val area = appArea(owner)
+        ?: workAreaAt(ScreenPoint(on.left, on.top))?.let { IntRect(it.x, it.y, it.x + it.width, it.y + it.height) }
         ?: return keeping ?: Point(on.left, on.bottom)
-    val screen = IntRect(area.x, area.y, area.x + area.width, area.y + area.height)
-    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, screen)) return keeping
-    val spot = menuSpot(on, IntSize(size.width, size.height), screen, sides)
+    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn)) return keeping
+    val spot = menuSpot(on, IntSize(size.width, size.height), area, sides, listOn)
     return Point(spot.x, spot.y)
 }
+
+/**
+ * User rule 2026-11-16: **the room every menu and pop-up has — the app's window**, its content on the screen (the window
+ * at the root of the menus [owner] hangs from), cut to the work area of the screen it is on. Null where it cannot be read.
+ */
+private fun appArea(owner: AwtWindow): IntRect? = runCatching {
+    val app = generateSequence(owner) { it.owner }.last()
+    if (!app.isShowing) return@runCatching null
+    val pane = (app as? RootPaneContainer)?.contentPane ?: app
+    val at = pane.locationOnScreen
+    val own = IntRect(at.x, at.y, at.x + pane.width, at.y + pane.height)
+    val work = workAreaAt(ScreenPoint(own.left + own.width / 2, own.top + own.height / 2))
+    if (work == null) own
+    else IntRect(maxOf(own.left, work.x), maxOf(own.top, work.y), minOf(own.right, work.x + work.width), minOf(own.bottom, work.y + work.height))
+        .takeIf { it.width > 0 && it.height > 0 } ?: own
+}.getOrNull()
 
 /** How long after a menu opens the keyboard settling is not taken for the user going elsewhere ([MenuSession]). */
 private const val SETTLE_NANOS = 600_000_000L

@@ -52,7 +52,8 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.cellEditModeOptions
 
 /** The rectangle's size, or the room there is. Wide enough for a Search section ([COMPACT_SECTION_MIN_WIDTH]). */
-private val CELL_EDIT_POPUP_WIDTH = 560.dp
+// User rule 2026-11-16 (*"the pop-up windows are a little too wide"*): 560 until then.
+private val CELL_EDIT_POPUP_WIDTH = 480.dp
 private val CELL_EDIT_POPUP_HEIGHT = 440.dp
 
 /**
@@ -77,6 +78,21 @@ internal fun cellEditPopupBounds(anchor: Rect, popup: IntSize, room: IntSize): a
         below >= top -> androidx.compose.ui.unit.IntRect(x, bottom, x + width, room.height)
         else -> androidx.compose.ui.unit.IntRect(x, 0, x + width, top)
     }
+}
+
+/**
+ * User rule 2026-11-16: **where a field's window stands** ([FieldSearchPopup]) — *"When a row makes a window appear, it
+ * must never hide the list of rows the caller is in. The positions below and above are only possible when it doesn't
+ * hide."* The pop-ups' one placing ([menuSpot], [MenuSide.POPUP]) off the [list] the field is a row of, inside the app's
+ * content area ([room]); as tall as the room it is given where it holds whole nowhere.
+ */
+internal fun fieldPopupBounds(anchor: Rect, list: Rect?, popup: IntSize, room: IntSize): androidx.compose.ui.unit.IntRect {
+    fun Rect.int() = androidx.compose.ui.unit.IntRect(left.toInt(), top.toInt(), right.toInt(), bottom.toInt())
+    val area = androidx.compose.ui.unit.IntRect(0, 0, room.width, room.height)
+    val at = menuSpot(anchor.int(), popup, area, MenuSide.POPUP, list?.int())
+    val x = at.x.coerceIn(0, (room.width - popup.width).coerceAtLeast(0))
+    val y = at.y.coerceIn(0, room.height)
+    return androidx.compose.ui.unit.IntRect(x, y, x + popup.width.coerceAtMost(room.width), (y + popup.height).coerceAtMost(room.height))
 }
 
 /**
@@ -319,6 +335,8 @@ internal class FieldSearchPopupRequest(
     val locals: androidx.compose.runtime.CompositionLocalContext? = null,
     /** The edits the field stands inside ([LocalEnclosingEdits]): a press in the pop-up is a press in them too. */
     val enclosing: List<OutsidePressEditor> = emptyList(),
+    /** The list of rows the field is in ([LocalCallerList]), which its window must not hide (user rule 2026-11-16). */
+    val list: () -> Rect? = { null },
 )
 
 /**
@@ -429,7 +447,8 @@ internal fun PopupSearchField(
     // search windows"*): the very layout of the Search window's bar — the field named by its label (grey in the empty
     // field), its cross inside it, and the configurations arrow BESIDE it, outside the field.
     Row(
-        modifier = modifier.outsidePressPart(region).onGloballyPositioned { bounds = it.boundsInWindow() },
+        // Anomaly 2026-11-16: its cross and ▾ stay in view in a narrow section ([fitsShownWidth]).
+        modifier = modifier.fitsShownWidth().outsidePressPart(region).onGloballyPositioned { bounds = it.boundsInWindow() },
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -477,6 +496,7 @@ internal fun PopupSearchField(
         }
     }
     if (!open || search == null || host == null) return
+    val callerList = LocalCallerList.current
     val request =
         FieldSearchPopupRequest(
             anchor = { bounds },
@@ -489,6 +509,7 @@ internal fun PopupSearchField(
             onClose = close,
             locals = locals,
             enclosing = LocalEnclosingEdits.current,
+            list = callerList ?: { null },
         )
     val owner = remember { Any() }
     SideEffect { host.publish(owner, request) }
@@ -593,7 +614,10 @@ private fun FieldSearchPopup(
         val width = CELL_EDIT_POPUP_WIDTH.roundToPx().coerceAtMost(constraints.maxWidth)
         val height = CELL_EDIT_POPUP_HEIGHT.roundToPx().coerceAtMost(constraints.maxHeight)
         val bounds = request.anchor()?.let {
-            cellEditPopupBounds(it.translate(-origin), IntSize(width, height), IntSize(constraints.maxWidth, constraints.maxHeight))
+            fieldPopupBounds(
+                it.translate(-origin), request.list()?.translate(-origin), IntSize(width, height),
+                IntSize(constraints.maxWidth, constraints.maxHeight),
+            )
         }
         val placeable = measurables.single().measure(Constraints.fixed(bounds?.width ?: width, bounds?.height ?: height))
         layout(constraints.maxWidth, constraints.maxHeight) {

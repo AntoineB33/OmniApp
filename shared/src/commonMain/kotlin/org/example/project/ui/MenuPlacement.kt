@@ -18,19 +18,41 @@ import androidx.compose.ui.unit.IntSize
  *
  * Where no side has room for the whole menu, it goes on the side with the most room for its size (user rule
  * 2026-11-15: *"depending on the available space, then on its size"*), pushed back onto the screen.
+ *
+ * User rule 2026-11-16: *"When a row makes a window appear, it must never hide the list of rows the caller is in. The
+ * positions below and above are only possible when it doesn't hide."* Given the [list] the anchor is a row of (its shown
+ * bounds), a side at the left or the right stands off the LIST's edge, at the row's height; below or above, off the
+ * list's bottom or top. [area] is the app's window since the same day (*"No window must appear outside the app"*).
  */
 internal fun menuSpot(
     anchor: IntRect,
     size: IntSize,
     area: IntRect,
     sides: List<MenuSide> = MenuSide.DEFAULT,
+    list: IntRect? = null,
+): IntOffset {
+    fun anchorFor(side: MenuSide): IntRect = when {
+        list == null -> anchor
+        side == MenuSide.Left || side == MenuSide.Right || side == MenuSide.LeftTop || side == MenuSide.RightTop ->
+            IntRect(minOf(anchor.left, list.left), anchor.top, maxOf(anchor.right, list.right), anchor.bottom)
+        else -> IntRect(minOf(anchor.left, list.left), minOf(anchor.top, list.top), maxOf(anchor.right, list.right), maxOf(anchor.bottom, list.bottom))
+    }
+    return spotOff({ anchorFor(it) }, size, area, sides)
+}
+
+private fun spotOff(
+    anchorOf: (MenuSide) -> IntRect,
+    size: IntSize,
+    area: IntRect,
+    sides: List<MenuSide>,
 ): IntOffset {
     fun slideX(x: Int) = x.coerceIn(area.left, maxOf(area.left, area.right - size.width))
     fun slideY(y: Int) = y.coerceIn(area.top, maxOf(area.top, area.bottom - size.height))
     fun whole(x: Int, y: Int): IntOffset? =
         if (x >= area.left && y >= area.top && x + size.width <= area.right && y + size.height <= area.bottom) IntOffset(x, y) else null
-    fun on(side: MenuSide): IntOffset? =
-        when (side) {
+    fun on(side: MenuSide): IntOffset? {
+        val anchor = anchorOf(side)
+        return when (side) {
             MenuSide.Below -> if (anchor.bottom + size.height <= area.bottom) IntOffset(slideX(anchor.left), maxOf(anchor.bottom, area.top)) else null
             MenuSide.Above -> if (anchor.top - size.height >= area.top) IntOffset(slideX(anchor.left), minOf(anchor.top - size.height, area.bottom - size.height)) else null
             MenuSide.Right -> if (anchor.right + size.width <= area.right) IntOffset(maxOf(anchor.right, area.left), slideY(anchor.top)) else null
@@ -41,12 +63,14 @@ internal fun menuSpot(
             MenuSide.BelowEnd -> whole(anchor.right - size.width, anchor.bottom)
             MenuSide.RightTop -> whole(anchor.right, anchor.top)
         }
+    }
     for (side in sides) on(side)?.let { return it }
     // No side holds it whole: the side with the most room for its size, the menu pushed back onto the screen.
     // A pop-up's side is weighed on both axes: the room off the anchor for its depth, and the screen along the side for
     // its length (it may slide along that side, never off the anchor).
     fun fit(room: Int, need: Int) = minOf(1f, room.toFloat() / need.coerceAtLeast(1))
     val room = sides.maxByOrNull { side ->
+        val anchor = anchorOf(side)
         when (side) {
             MenuSide.Below -> (area.bottom - anchor.bottom).toFloat() / size.height.coerceAtLeast(1)
             MenuSide.Above -> (anchor.top - area.top).toFloat() / size.height.coerceAtLeast(1)
@@ -58,6 +82,7 @@ internal fun menuSpot(
             MenuSide.LeftTop -> fit(anchor.left - area.left, size.width) * fit(area.height, size.height)
         }
     } ?: MenuSide.Below
+    val anchor = anchorOf(room)
     // Along the side it slides as little as it must from its spot: the anchor at the top of a vertical side, at the
     // right end of a horizontal one.
     return when (room) {
@@ -78,10 +103,10 @@ internal fun menuSpot(
  * shrank its list: the field left the pointer, which was then over nothing, and the configurations tree vanished
  * ([MenuHoverTracker]). Where it no longer fits, or would cover its anchor, it is placed again ([menuSpot]).
  */
-internal fun keepsSpot(current: IntOffset, size: IntSize, anchor: IntRect, area: IntRect): Boolean {
+internal fun keepsSpot(current: IntOffset, size: IntSize, anchor: IntRect, area: IntRect, list: IntRect? = null): Boolean {
     val at = IntRect(current.x, current.y, current.x + size.width, current.y + size.height)
     val onScreen = at.left >= area.left && at.top >= area.top && at.right <= area.right && at.bottom <= area.bottom
-    return onScreen && !at.overlaps(anchor)
+    return onScreen && !at.overlaps(anchor) && (list == null || !at.overlaps(list))
 }
 
 /** A side of its anchor a menu opens on ([menuSpot]), tried in the order a menu is given. */
@@ -123,3 +148,10 @@ enum class MenuSide {
  * draws material's menu, material places it. A menu's own content is given back the default.
  */
 val LocalMenuSides = androidx.compose.runtime.compositionLocalOf { MenuSide.DEFAULT }
+
+/**
+ * User rule 2026-11-16: **the list of rows a pop-up's caller stands in**, in the window's pixels as shown (cut where its
+ * section cuts it) — what a pop-up opened from a row must not hide ([menuSpot]'s `list`). Given by a list (a Search
+ * window's result list, a column of the configurations tree); null outside one.
+ */
+val LocalCallerList = androidx.compose.runtime.compositionLocalOf<(() -> androidx.compose.ui.geometry.Rect?)?> { null }

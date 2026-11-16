@@ -146,7 +146,7 @@ fun AddedElementsConfigurationWindow(
         ) {
             // --- The configuration ------------------------------------------------------------------
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().fitsShownWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -945,7 +945,7 @@ private fun AddedActionBlocks(
             val roots = SearchDomain.treeRootsOf(added).mapNotNull { state.tasks[it] }
             val shared = roots.map { it.treeName }.distinct().singleOrNull()
             var draft by remember(shared) { mutableStateOf(shared.orEmpty()) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
@@ -1005,7 +1005,7 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.SoundVolume -> run {
             val enabled = SearchDomain.appSettingAdded(added, SearchDomain.AppSettingEntry.Sound)
             var draft by remember(state.soundVolume) { mutableStateOf(state.soundVolume.toFloat()) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.material3.Slider(
                     value = draft,
                     onValueChange = { draft = it },
@@ -2511,7 +2511,7 @@ private fun ElementParentsEditor(
                         canDrop = { parent -> children.any { tree.canUnlink(state, SearchDomain.keyOf(parent), it) } },
                     )
                 SearchDomain.ParentsChild.Add ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PopupSearchField(
                         placeholder = child.placeholder,
                         state = state,
@@ -2564,7 +2564,7 @@ private fun ElementParentEditor(
     val below = remember(children, state.elementLinks, state.lists, state.tasks) { children.associateWith { tree.descendantsOf(state, it) } }
     fun allowed(parent: String) = children.any { tree.canLink(state, parent, it, below.getValue(it)) }
     val options = remember(below, state.categories, state.periodKinds, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.taskTrees, state.workplaceSetups) { tree.pickable(state).filter { allowed(it.first) } }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.weight(1f)) {
             ElementChooser("search/element-add-parent", options) { run(SearchDomain.AddedCommand.ElementParent(it, on = true)) }
         }
@@ -2695,7 +2695,7 @@ private fun WorkplaceWindowsEditor(state: SchedulerState, added: List<SearchDoma
                     window.tabs.forEachIndexed { tabAt, path ->
                         fun replaced(tabs: List<String>) =
                             setup.windows.mapIndexed { i, w -> if (i == windowAt) w.copy(tabs = tabs) else w }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             androidx.compose.runtime.key(setup.id, windowAt, tabAt) {
                                 OutlinedTextField(
                                     value = path,

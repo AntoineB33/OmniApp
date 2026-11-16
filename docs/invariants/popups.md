@@ -332,6 +332,19 @@ means.
     column. This REPLACED the port of material's `DropdownMenuPositionProvider` (2026-10-13), whose fallback centred
     the menu on its anchor's top edge and hid the field. The global task picker (`TaskPickerOverlay`) opens by the
     same rule beside the pointer. Phones and the browser keep material's own menu and placement.
+  - **No menu or pop-up appears outside the app** (user rule 2026-11-16: *"No window must appear outside the app."*;
+    `appArea` in `AppDropdownMenu.jvm.kt`). The room `menuSpot` places in is the APP's window — the content of the
+    window at the root of the menus it hangs from, cut to the screen's work area — and the menu window is never sized
+    larger than it. This takes back "free of the app window's edges" above, for the edges only: a menu is still a window
+    of its own (its z-order, its keyboard). The global task picker alone stays at the pointer, on the screen.
+  - **A pop-up opened from a row never hides the list of rows its caller is in** (user rule 2026-11-16: *"When a row
+    makes a window appear, it must never hide the list of rows the caller is in. The positions below and above are only
+    possible when it doesn't hide."*; `LocalCallerList`, `menuSpot`'s `list`). A list gives its shown bounds — the
+    Search window's result list, a column of the ▾ tree — and a pop-up opened inside it (a field's or a button's, not a
+    right-click's: that one is a question about one row, at the pointer) stands off the LIST at the left or the right,
+    at the row's height; below or above the list, never below or above the row inside it. A shown pop-up that would
+    hide the list is placed again (`keepsSpot`). The same rule places a field's window drawn in the app
+    (`fieldPopupBounds`: "List of parents", "Add a parent"). A menu's own content is in no list of the caller's.
   - **In the Search window a ROW's right-click menu opens AT THE POINTER** (user rule 2026-10-13: *"for the
     elements in the result list of the Search window, the menu still appears at the left of the element instead of
     the mouse position"*; `AppDropdownMenu`'s `atPointer`, `LocalRowMenusAtPointer`, provided by `SearchWindow`).
