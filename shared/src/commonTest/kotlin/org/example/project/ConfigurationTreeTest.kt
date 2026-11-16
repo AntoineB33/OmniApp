@@ -10,7 +10,6 @@ import org.example.project.scheduler.domain.SearchDomain.ConfigurationLeaf
 import org.example.project.scheduler.domain.SearchDomain.ConfigurationNode
 import org.example.project.scheduler.domain.SearchDomain.Setting
 import org.example.project.scheduler.state.SchedulerState
-import org.example.project.ui.filterConfigurationNodes
 
 /**
  * User rule 2026-11-04: *"add a downward arrow at the right of the search bar. When hovering over it, it opens a pop-up
@@ -27,6 +26,7 @@ class ConfigurationTreeTest {
             when (node) {
                 is ConfigurationLeaf -> listOf(node.setting)
                 is ConfigurationCategory -> leavesOf(node.children)
+                is SearchDomain.ConfigurationOther -> emptyList()
             }
         }
 
@@ -45,6 +45,7 @@ class ConfigurationTreeTest {
                 when (node) {
                     is ConfigurationLeaf -> at.takeIf { node.setting == setting }
                     is ConfigurationCategory -> depth(node.children, at + 1)
+                    is SearchDomain.ConfigurationOther -> null
                 }
             }.minOrNull()
         return depth(tree.filter { it is ConfigurationCategory && !it.elsewhere() }, 0)
@@ -117,7 +118,7 @@ class ConfigurationTreeTest {
     @Test
     fun what_the_user_is_after_is_one_category_from_the_root() {
         val tree = SearchDomain.configurationTree(SearchDomain.pageDefaultConfig(""))
-        fun under(setting: Setting) = categoriesOf(tree).first { c -> c.id != "recent" && c.children.any { (it as? ConfigurationLeaf)?.setting == setting } }.label
+        fun under(setting: Setting) = categoriesOf(tree).first { c -> !c.elsewhere() && c.children.any { (it as? ConfigurationLeaf)?.setting == setting } }.label
         // "Display all the root cells of every tree": the task's own filter.
         assertEquals("task", under(Setting.TaskTreeRoot))
         // "Every element with no parent at all"; "the parents of these elements".
@@ -271,7 +272,7 @@ class ConfigurationTreeTest {
         // A window searching one kind alone still finds every configuration in its tree.
         val tree = SearchDomain.configurationTree(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task)))
         fun leaves(nodes: List<ConfigurationNode>): List<Setting> = nodes.flatMap {
-            when (it) { is ConfigurationLeaf -> listOf(it.setting); is ConfigurationCategory -> leaves(it.children) }
+            when (it) { is ConfigurationLeaf -> listOf(it.setting); is ConfigurationCategory -> leaves(it.children); is SearchDomain.ConfigurationOther -> emptyList() }
         }
         assertEquals(Setting.entries.toSet(), leaves(tree.filterConfigurationNodes("")).toSet())
         fun categories(nodes: List<ConfigurationNode>): List<ConfigurationCategory> =

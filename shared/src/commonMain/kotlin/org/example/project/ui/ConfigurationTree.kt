@@ -295,8 +295,8 @@ internal fun ConfigurationTreeArrow(
             arrowDepth = depth + 1,
         ) { onFit ->
             ConfigurationTreeColumns(
-                state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth,
-                relevant = relevant, onFit = onFit, queryFilters = own.filters, elsewhere = elsewhere,
+                state, config, openedConfig, onConfigChange, own, path, { path = it }, nowMillis, windows, claudeLogs, depth,
+                relevant = relevant, onFit = onFit, elsewhere = elsewhere,
             ) { which ->
                 close()
                 onPickOnCalendar(which)
@@ -328,7 +328,8 @@ private fun ConfigurationTreeColumns(
     config: SearchDomain.Config,
     openedConfig: SearchDomain.Config?,
     onConfigChange: (SearchDomain.Config) -> Unit,
-    query: String,
+    /** The pop-up's own search ([SearchDomain.CONFIGURATION_SEARCH] by default): what its list shows of the tree. */
+    search: SearchDomain.Config,
     /** The category revealing its children at each depth, by id. */
     path: List<String>,
     onPathChange: (List<String>) -> Unit,
@@ -340,8 +341,6 @@ private fun ConfigurationTreeColumns(
     relevant: List<SearchDomain.Setting> = emptyList(),
     /** Its pop-up fitted to it ([TreeColumn]'s). */
     onFit: ((Int) -> Unit)? = null,
-    /** How the pop-up's own search reads [query] ([filterConfigurationNodes]). */
-    queryFilters: SearchDomain.Filters = SearchDomain.Filters(),
     /** What the other ▾ trees did: "Recent › Elsewhere". */
     elsewhere: SearchDomain.Elsewhere = SearchDomain.Elsewhere(),
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
@@ -357,9 +356,12 @@ private fun ConfigurationTreeColumns(
         if (echo >= 0) repeat(echo + 1) { written.removeFirst() } else { written.clear(); shown = config }
     }
     // The whole configuration: the tree's first node is what is on now ([SearchDomain.activeSettings]).
-    val tree = remember(shown, query, queryFilters, openedConfig, relevant, elsewhere) {
-        // User rule 2026-11-13: what the window was opened on comes first ([SearchDomain.contextSettings]).
-        SearchDomain.configurationTree(shown, openedConfig, relevant, elsewhere).filterConfigurationNodes(query, queryFilters)
+    // User rule 2026-11-13: what the window was opened on comes first ([SearchDomain.contextSettings]).
+    val whole = remember(shown, openedConfig, relevant, elsewhere) { SearchDomain.configurationTree(shown, openedConfig, relevant, elsewhere) }
+    val treeRows = remember(whole) { SearchDomain.ConfigurationTreeRows(whole) }
+    // User rule 2026-11-16: what the pop-up lists is its own search's answer, the one funnel ([SearchDomain.results]).
+    val tree = remember(whole, search, state, windows, claudeLogs) {
+        SearchDomain.shownConfigurationNodes(state, whole, root = true, treeRows, search, windows, claudeLogs)
     }
     val leaf: @Composable (SearchDomain.ConfigurationLeaf) -> Unit = { node ->
         ConfigurationLeafRow(
@@ -374,12 +376,17 @@ private fun ConfigurationTreeColumns(
         )
     }
     HighlightsSearch("") {
+        androidx.compose.runtime.CompositionLocalProvider(LocalTreeRows provides treeRows) {
         TreeColumn(
             tree, 0, path, onPathChange, leaf,
             state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar, level, onFit,
         )
+        }
     }
 }
+
+/** The tree the pop-ups list ([SearchDomain.ConfigurationTreeRows]): what a category's pop-up searches its children in. */
+private val LocalTreeRows = androidx.compose.runtime.compositionLocalOf<SearchDomain.ConfigurationTreeRows?> { null }
 
 /**
  * User rule 2026-11-14: **one configuration as the ▾ tree draws it** — *"I want every element has rows with the same
@@ -407,58 +414,6 @@ internal fun ConfigurationLeafRow(
             SettingEditor(state, node.setting, config, openedConfig, onChange, windows, onPickOnCalendar, claudeLogs)
         }
     }
-}
-
-/**
- * What a search field of the tree leaves of it: a node whose label holds [query] with ALL it holds, and the ancestors of
- * one. Anomaly 2026-11-11 (*"Task Scheduler then timer, but the final Search window is empty"*): the leaves were also
- * cut to the kinds the Search window searches, while their categories stayed — empty — and a category found by its
- * own label kept only the children found too, none as often as not. User rule 2026-11-04: every configuration is in
- * the tree; nothing but the field narrows it, and a category is never shown empty.
- */
-internal fun List<SearchDomain.ConfigurationNode>.filterConfigurationNodes(
-    query: String,
-    /**
-     * User rule 2026-11-16: the field is a Search window's bar, read as its configuration says — "Where to search"
-     * ([SearchDomain.Filters.searchIn]: a node's id, name, description, buttons, and its children's) and "Matching".
-     */
-    filters: SearchDomain.Filters = SearchDomain.Filters(),
-): List<SearchDomain.ConfigurationNode> {
-    val needle = query.trim()
-    if (needle.isEmpty()) return this
-    val match = filters.queryOptions
-    fun answers(text: String) =
-        if (match == org.example.project.scheduler.domain.TaskTreeSearch.Options()) text.contains(needle, ignoreCase = true)
-        else SearchDomain.textAnswers(text, query, match)
-    fun texts(node: SearchDomain.ConfigurationNode, fields: Set<SearchDomain.SearchField>): List<String> =
-        buildList {
-            val id = when (node) {
-                is SearchDomain.ConfigurationLeaf -> node.setting.name
-                is SearchDomain.ConfigurationCategory -> SearchDomain.CONFIGURATION_NODE_PREFIX + node.id.removePrefix(SearchDomain.FLAT_NODE_PREFIX)
-            }
-            if (SearchDomain.SearchField.Id in fields) add(id.removePrefix(SearchDomain.CONFIGURATION_NODE_PREFIX))
-            if (SearchDomain.SearchField.Name in fields) add(node.label)
-            if (SearchDomain.SearchField.Description in fields) SearchDomain.configurationDescription(id)?.let(::add)
-            if (SearchDomain.SearchField.Buttons in fields && node is SearchDomain.ConfigurationLeaf) addAll(SearchDomain.settingButtonLabels(node.setting))
-        }
-    fun childrenAt(node: SearchDomain.ConfigurationNode, distance: Int): List<SearchDomain.ConfigurationNode> {
-        var level = listOf(node)
-        repeat(distance.coerceAtLeast(1)) { level = level.flatMap { (it as? SearchDomain.ConfigurationCategory)?.children.orEmpty() } }
-        return level
-    }
-    fun found(node: SearchDomain.ConfigurationNode) =
-        texts(node, filters.searchIn).any(::answers) ||
-            (filters.searchChildren && childrenAt(node, filters.childDistance).any { child -> texts(child, filters.childSearchIn).any(::answers) })
-    fun filter(nodes: List<SearchDomain.ConfigurationNode>): List<SearchDomain.ConfigurationNode> =
-        nodes.mapNotNull { node ->
-            when {
-                found(node) -> node
-                node is SearchDomain.ConfigurationCategory ->
-                    filter(node.children).takeIf { it.isNotEmpty() }?.let { node.copy(children = it) }
-                else -> null
-            }
-        }
-    return filter(this)
 }
 
 /** One level of the tree: its [nodes], and the pop-up of the one of them [path] says reveals its children. */
@@ -635,8 +590,11 @@ private fun TreeColumn(
                                     // Anomaly 2026-11-11 (*"the right-click menu doesn't appear on the background of the
                                     // 2nd headless search window"*): it is a Search window too, as the root's pop-up is.
                                     var parts by rememberKeptParts(branchId, CellEditPopupHost.PICKER_SPLITS)
-                                    val children = remember(node.children, own.query, own.filters) {
-                                        node.children.filterConfigurationNodes(own.query, own.filters)
+                                    // User rule 2026-11-16: its own search's answer over the category's children, the one funnel.
+                                    val treeRows = LocalTreeRows.current
+                                    val children = remember(node.children, own, treeRows, state, windows, claudeLogs) {
+                                        if (treeRows == null) node.children
+                                        else SearchDomain.shownConfigurationNodes(state, node.children, root = false, treeRows, own, windows, claudeLogs)
                                     }
                                     val closeThis = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) }
                                     val ownControl = LocalPopupWindowControl.current
@@ -664,6 +622,13 @@ private fun TreeColumn(
                                 }
                             }
                         }
+                    }
+                }
+                // A row of another type its own search checks too: drawn as its name, no control of its own.
+                is SearchDomain.ConfigurationOther -> {
+                    val around = LocalMenuHover.current
+                    Box(Modifier.onHoverEnter { if (path.size > depth && MenuHoverTracker.hoverActs(around)) onPathChange(path.take(depth)) }) {
+                        Text(node.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
                     }
                 }
                 is SearchDomain.ConfigurationLeaf -> {
@@ -926,7 +891,9 @@ class ArrowSearches(
      * drop-down's: its own, else what it opens with ([opened]; a ▾ window's by default).
      */
     fun of(root: String, relative: String, opened: SearchDomain.Config = SearchDomain.CONFIGURATION_SEARCH): SearchDomain.Config =
-        SearchDomain.Config.decode(read(root)[relative]) ?: opened
+        // Healed (2026-11-16): one stored before the ▾'s search sorted by the tree's order still follows its default sort,
+        // which is that order now ([SearchDomain.defaultSortsOf]).
+        SearchDomain.Config.decode(read(root)[relative])?.let(SearchDomain::withDefaultSort) ?: opened
 
     fun set(root: String, relative: String, config: SearchDomain.Config, opened: SearchDomain.Config = SearchDomain.CONFIGURATION_SEARCH) {
         val all = read(root)

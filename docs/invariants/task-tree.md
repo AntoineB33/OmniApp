@@ -1566,7 +1566,20 @@ suggestions before it was ever entered.
   one is no look; `isLookedIntoWorthy`: never "Recent", "Currently on", "Relevant here", a "Default for this"),
   each opening as itself, named by its path; then both, the last first. Read as the tree opens, never on a tick. What
   was looked into is local-only view state on the `OpenPopups` row (`PopupMemory.lookedInto`), bounded, never synced
-  and no History Unit: a hover is no edit. `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
+  and no History Unit: a hover is no edit.
+- **THE ▾ IS A SEARCH WINDOW LIKE ANY: ONE LOGIC, ONLY ITS DEFAULTS DIFFER** (user rule 2026-11-16, *"I want the same
+  logic everywhere, what changes are the default values in search configurations in some contexts"*;
+  `SearchDomain.shownConfigurationNodes`, `ConfigurationTreeRows`, `results`' `configurationRows`,
+  `ArrowSearchSameLogicTest`). What a pop-up of the tree lists is its own search's answer through `results` — its
+  types, bar, where to search, matching, filters and sorting all act on it — over the tree as the configurations' rows
+  (a category's pop-up: its children, a given list). The ▾'s defaults (`CONFIGURATION_SEARCH`): the search
+  configurations, sorted by **"tree order"** (`SortKey.TreeOrder`: each row's place in the tree it comes from, a
+  given list's own order; `defaultSortsOf` gives it to any search of the search configurations alone), its bar reading
+  names and children's names at **any** depth (`CHILD_DISTANCE_ANY`: a category found by what it holds). Another type
+  checked lists its rows too (`ConfigurationOther`). There is no second filter of the tree beside it (the field's
+  own filter, `filterConfigurationNodes`, is gone). **"On" is "not a plain Search window's default"** (`Config()`):
+  the types checked and the sorting count, so ▾ › ▾ › "Currently on" and "Default for this" say what fills and
+  orders the ▾. A ▾ search stored before reads its default sort, the tree's order (`ArrowSearches.of`). `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
   added later — goes by its category (`roleOf`). **Every type's "Sort by" is in "Sorting"** too, the order of every
   row first, then this page's types, then the others'; so a type with an order and no filter (option, integer,
   action…) has no node of its own. **A configuration standing among other types' says its type** ("tasks: Sort by",

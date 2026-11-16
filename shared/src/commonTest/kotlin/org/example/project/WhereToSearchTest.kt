@@ -13,7 +13,6 @@ import org.example.project.scheduler.domain.SearchDomain.SearchField
 import org.example.project.scheduler.domain.SearchDomain.Setting
 import org.example.project.scheduler.model.ChronoEntry
 import org.example.project.scheduler.state.SchedulerState
-import org.example.project.ui.filterConfigurationNodes
 
 /**
  * User rule 2026-11-16, the ▾ sketch: *"search > where to search > [] id, [] name, [] description, [] buttons,

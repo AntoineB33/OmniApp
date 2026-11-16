@@ -158,7 +158,8 @@ class ParentDistanceTest {
         // User rule 2026-11-16: what the list was opened on is its "Default for this".
         val first = SearchDomain.configurationTree(opened, opened).filterIsInstance<SearchDomain.ConfigurationCategory>().single { it.id == "default" }
         val settings = first.children.map { (it as SearchDomain.ConfigurationLeaf).setting }
-        assertEquals(listOf(Setting.ParentDistance, Setting.ParentsOf, Setting.DropButtons), settings)
+        // ...then what it lists, where not a plain Search window's (user rule 2026-11-16): every type.
+        assertEquals(listOf(Setting.ParentDistance, Setting.ParentsOf, Setting.DropButtons, Setting.Types), settings)
     }
 
     @Test

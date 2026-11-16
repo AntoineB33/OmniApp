@@ -429,7 +429,11 @@ internal fun SettingEditor(
         SearchDomain.Setting.ChildSearchInName, SearchDomain.Setting.ChildSearchInDescription, SearchDomain.Setting.ChildSearchInButtons,
         -> CompactSwitch(checked = f.searches(setting) == true, onCheckedChange = { filters(f.withSearches(setting, it)) })
         SearchDomain.Setting.ChildDistance ->
-            Choices((1..CHILD_DISTANCE_CHOICES).toList(), f.childDistance, { it.toString() }) { filters(f.copy(childDistance = it)) }
+            Choices(
+                listOf(SearchDomain.CHILD_DISTANCE_ANY) + (1..CHILD_DISTANCE_CHOICES),
+                f.childDistance,
+                { if (it == SearchDomain.CHILD_DISTANCE_ANY) "any" else it.toString() },
+            ) { filters(f.copy(childDistance = it)) }
         // User rule 2026-11-06: the bars hold regular expressions.
         SearchDomain.Setting.Regex ->
             CompactSwitch(checked = f.regex, onCheckedChange = { filters(f.copy(regex = it)) })

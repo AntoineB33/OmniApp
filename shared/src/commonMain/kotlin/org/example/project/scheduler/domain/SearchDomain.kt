@@ -687,6 +687,9 @@ object SearchDomain {
      */
     enum class SearchField { Id, Name, Description, Buttons }
 
+    /** [Filters.childDistance] for every level below a row: its children, theirs, and so on ("any"). */
+    const val CHILD_DISTANCE_ANY: Int = 0
+
     /** What the bars are matched against by default ([Filters.searchIn]): the name alone. */
     val DEFAULT_SEARCH_IN: Set<SearchField> = setOf(SearchField.Name)
 
@@ -1070,7 +1073,7 @@ object SearchDomain {
                         searchIn = stored.searchIn?.let { names -> SearchField.entries.filterTo(HashSet()) { it.name in names } } ?: DEFAULT_SEARCH_IN,
                         searchChildren = stored.searchChildren,
                         childSearchIn = stored.childSearchIn?.let { names -> SearchField.entries.filterTo(HashSet()) { it.name in names } } ?: DEFAULT_SEARCH_IN,
-                        childDistance = stored.childDistance.coerceAtLeast(1),
+                        childDistance = stored.childDistance.coerceAtLeast(CHILD_DISTANCE_ANY),
                         claudeProject = stored.claudeProject,
                         claudeFrom = stored.claudeFromMillis,
                         claudeUntil = stored.claudeUntilMillis,
@@ -1652,6 +1655,13 @@ object SearchDomain {
          * no value for it. The builds before had one per kind (`PromptDate`, `AnswerDate`, `ReasoningDate`), read as this.
          */
         Date(null, "date"),
+        /**
+         * User rule 2026-11-16 (*"I want the same logic everywhere, what changes are the default values in search
+         * configurations in some contexts"*): **the order the rows have in the tree they come from** — a given list's own
+         * order ([results]' `given`), the configurations tree's for the search configurations ([ConfigurationRows]). What
+         * the ▾'s own search sorts by ([CONFIGURATION_SEARCH]); a row from no tree has no value, and goes last.
+         */
+        TreeOrder(null, "tree order"),
     }
 
     /**
@@ -1660,7 +1670,7 @@ object SearchDomain {
      */
     fun sortKeysOf(kind: Kind?): List<SortKey> =
         if (kind == null) {
-            listOf(SortKey.Relevance, SortKey.Name, SortKey.Type, SortKey.CalendarBubble, SortKey.CreationFirst, SortKey.Date)
+            listOf(SortKey.Relevance, SortKey.Name, SortKey.Type, SortKey.CalendarBubble, SortKey.CreationFirst, SortKey.Date, SortKey.TreeOrder)
         } else {
             listOf(SortKey.Relevance, SortKey.Name) + SortKey.entries.filter { it.kind == kind }
         }
@@ -1684,6 +1694,9 @@ object SearchDomain {
     /** Relevance over the whole list — the order the window had before it could be sorted. */
     val DEFAULT_SORTS: List<SortMethod> = listOf(SortMethod(null, SortKey.Relevance))
 
+    /** The tree's order, then relevance — what a search of the search configurations sorts by ([defaultSortsOf]). */
+    val TREE_ORDER_SORTS: List<SortMethod> = listOf(SortMethod(null, SortKey.TreeOrder), SortMethod(null, SortKey.Relevance))
+
     /** The creation rows first, then relevance — what a one-kind search sorts by unless the user says otherwise. */
     val CREATION_FIRST_SORTS: List<SortMethod> = listOf(SortMethod(null, SortKey.CreationFirst), SortMethod(null, SortKey.Relevance))
 
@@ -1696,6 +1709,8 @@ object SearchDomain {
      * [claudeLogsConfig], or some of its kinds — sort by their date, newest first ([CLAUDE_SORTS]), on any page.
      */
     fun defaultSortsOf(config: Config): List<SortMethod>? {
+        // User rule 2026-11-16: the search configurations alone are in the tree's order, whatever the bar holds — the ▾'s.
+        if (config.searchedKinds == setOf(Kind.SearchConfiguration)) return TREE_ORDER_SORTS
         if (config.query.isNotBlank() || config.filters.activeCount > 0) return null
         if (config.searchedKinds.isNotEmpty() && config.searchedKinds.all { it in CLAUDE_KINDS }) return CLAUDE_SORTS
         val kind = config.searchedKinds.singleOrNull() ?: return null
@@ -2020,7 +2035,10 @@ object SearchDomain {
         config ?: return emptyList()
         val filters = Setting.entries.filter { config.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES } + whereSettingsOn(config.filters)
         val own = listOfNotNull(
-            Setting.SortResults.takeIf { !config.sortFollowsDefault && config.sorts.isNotEmpty() },
+            // User rule 2026-11-16 (*"If nothing is on … what is shown in down arrow is random, right?"*): what orders the
+            // list and what it lists are on wherever they are not a plain Search window's ([Config]'s defaults).
+            Setting.Types.takeIf { config.kinds != Config().kinds },
+            Setting.SortResults.takeIf { config.sorts.isNotEmpty() && config.sorts != DEFAULT_SORTS },
             Setting.CompletionList.takeIf { config.completion != null },
             Setting.ExpandResults.takeIf { config.actionsExpanded },
             Setting.SearchSortsOnly.takeIf { !config.actionSearchSortsOnly },
@@ -2043,7 +2061,12 @@ object SearchDomain {
             Setting.ParentDistance.takeIf { opened.filters.parentsOf.isNotEmpty() },
             Setting.DropButtons.takeIf { opened.dropButtons },
         )
-        return (relevant + first.take(1) + on + first.drop(1)).distinct()
+        // What it lists and in what order, where not a plain Search window's (user rule 2026-11-16): last.
+        val shape = listOfNotNull(
+            Setting.Types.takeIf { opened.kinds != Config().kinds },
+            Setting.SortResults.takeIf { opened.sorts.isNotEmpty() && opened.sorts != DEFAULT_SORTS },
+        )
+        return (relevant + first.take(1) + on + first.drop(1) + shape).distinct()
     }
 
     /**
@@ -2161,6 +2184,76 @@ object SearchDomain {
             Kind.SearchConfiguration -> "configurations"
             else -> kind.plural
         }
+
+    /**
+     * A row of the ▾'s list that is no search configuration — its own search checks other types too (user rule
+     * 2026-11-16: the ▾ is a Search window like any): drawn as a row of its kind, with no children in the tree.
+     */
+    data class ConfigurationOther(val result: Result) : ConfigurationNode {
+        override val label: String get() = result.name
+    }
+
+    /** The id of the [Kind.SearchConfiguration] row [node] is: a configuration's name, a category's node id. */
+    fun configurationRowId(node: ConfigurationNode): String =
+        when (node) {
+            is ConfigurationLeaf -> node.setting.name
+            is ConfigurationCategory -> CONFIGURATION_NODE_PREFIX + node.id
+            is ConfigurationOther -> keyOf(node.result)
+        }
+
+    /**
+     * User rule 2026-11-16: **a configurations tree as a Search window lists it** — every node a [Kind.SearchConfiguration]
+     * row named as the tree names it, and what a category holds its rows' children ([ConfigurationRows]).
+     */
+    class ConfigurationTreeRows(tree: List<ConfigurationNode>) {
+        private val byId = HashMap<String, ConfigurationNode>().also { index ->
+            fun walk(nodes: List<ConfigurationNode>) {
+                for (node in nodes) {
+                    val id = configurationRowId(node)
+                    if (id in index) continue
+                    index[id] = node
+                    if (node is ConfigurationCategory) walk(node.children)
+                }
+            }
+            walk(tree)
+        }
+
+        fun rowsOf(nodes: List<ConfigurationNode>): List<Result> =
+            nodes.filter { it !is ConfigurationOther }.map { ItemResult(Kind.SearchConfiguration, configurationRowId(it), it.label, "") }
+
+        /** The rows of [level] with what each holds: what [results] reads. */
+        fun of(level: List<ConfigurationNode>): ConfigurationRows =
+            ConfigurationRows(rowsOf(level)) { id -> (byId[id] as? ConfigurationCategory)?.children?.let(::rowsOf).orEmpty() }
+    }
+
+    /**
+     * User rule 2026-11-16 (*"I want the same logic everywhere, what changes are the default values in search
+     * configurations in some contexts"*): **what a pop-up of the ▾ tree lists** — the one [results], under the pop-up's own
+     * [search] (its types, bar, where to search, matching, filters, sorting: [CONFIGURATION_SEARCH] by default), over the
+     * configurations [level] lays out: the root's ([root]: the search configurations among every type it checks), or a
+     * category's children (a given list). Each search configuration row back as its node; another type's row as
+     * [ConfigurationOther].
+     */
+    fun shownConfigurationNodes(
+        state: SchedulerState,
+        level: List<ConfigurationNode>,
+        root: Boolean,
+        rows: ConfigurationTreeRows,
+        search: Config,
+        windows: List<WindowEntry> = emptyList(),
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+    ): List<ConfigurationNode> {
+        val tree = rows.of(level)
+        val found = results(
+            state, search.searchedKinds, search.query,
+            filters = search.filters, sorts = search.sorts, windows = windows, claudeLogs = claudeLogs,
+            match = search.filters.queryOptions, extraQueries = search.extraQueries, queryFormula = search.queryFormula,
+            given = if (root) null else tree.rows,
+            configurationRows = tree,
+        )
+        val byRow = level.associateBy(::configurationRowId)
+        return found.map { row -> (row as? ItemResult)?.takeIf { it.kind == Kind.SearchConfiguration }?.let { byRow[it.id] } ?: ConfigurationOther(row) }
+    }
 
     /** A category of configurations, which reveals [children] on hover. [id] is unique in the tree. */
     data class ConfigurationCategory(val id: String, override val label: String, val children: List<ConfigurationNode>) : ConfigurationNode
@@ -2443,7 +2536,7 @@ object SearchDomain {
             Setting.SearchInButtons -> "The bars are matched against the labels of what can be pressed on each row."
             Setting.SearchInChildren -> "A row is also found by its children: those at the parent distance below, by the parts checked here."
             Setting.ChildSearchInId -> "A row is found by its children's ids."
-            Setting.ChildDistance -> "How far below a row its children are read: 1, its direct children; 2, their children alone…"
+            Setting.ChildDistance -> "How far below a row its children are read: any, every level; 1, its direct children; 2, their children alone…"
             Setting.ChildSearchInName -> "A row is found by its children's names."
             Setting.ChildSearchInDescription -> "A row is found by its children's descriptions."
             Setting.ChildSearchInButtons -> "A row is found by the labels of what can be pressed on its children."
@@ -2536,13 +2629,10 @@ object SearchDomain {
     /** The search configuration children of the [Kind.SearchConfiguration] row [id], by id: a node's, in the tree's order; a leaf has none. */
     fun configurationChildIds(id: String): List<String> {
         if (!id.startsWith(CONFIGURATION_NODE_PREFIX)) return emptyList()
-        val node = configurationCategories().firstOrNull { it.id == id.removePrefix(CONFIGURATION_NODE_PREFIX) } ?: return emptyList()
-        return node.children.map {
-            when (it) {
-                is ConfigurationLeaf -> it.setting.name
-                is ConfigurationCategory -> CONFIGURATION_NODE_PREFIX + it.id
-            }
-        }
+        // A category of the root's flat list is that category again.
+        val own = id.removePrefix(CONFIGURATION_NODE_PREFIX).removePrefix(FLAT_NODE_PREFIX)
+        val node = configurationCategories().firstOrNull { it.id == own } ?: return emptyList()
+        return node.children.map(::configurationRowId)
     }
 
     /** The [Setting] an added [Kind.SearchConfiguration] row is, where it has no search configuration children; else null. */
@@ -2567,7 +2657,19 @@ object SearchDomain {
      * a search over search configurations, so its type is [Kind.SearchConfiguration] alone. Its search text is the
      * pop-up's search field; the arrow in that pop-up's bar opens the tree of THIS configuration, one level down.
      */
-    val CONFIGURATION_SEARCH: Config by lazy { Config(kinds = setOf(Kind.SearchConfiguration)) }
+    /**
+     * **The ▾'s own search** (user rule 2026-11-11; 2026-11-16: *"the same logic everywhere, what changes are the default
+     * values"*): a Search window like any, whose defaults are the search configurations, in the tree's order
+     * ([TREE_ORDER_SORTS]), its bar reading their names and their children's at any depth — so a category is found by what
+     * it holds ([CHILD_DISTANCE_ANY]).
+     */
+    val CONFIGURATION_SEARCH: Config by lazy {
+        Config(
+            kinds = setOf(Kind.SearchConfiguration),
+            sorts = TREE_ORDER_SORTS,
+            filters = Filters(searchChildren = true, childDistance = CHILD_DISTANCE_ANY),
+        )
+    }
 
     /** [next], what [previous] became by a change of [settings] at [nowMillis]: their change times written ([Config.settingsChangedAt]). */
     fun withChanged(previous: Config, next: Config, settings: Collection<Setting>, nowMillis: Long): Config =
@@ -3657,6 +3759,12 @@ object SearchDomain {
          * cannot answer its configuration differently. Null: the account is searched.
          */
         given: List<Result>? = null,
+        /**
+         * User rule 2026-11-16: **the search configurations as a tree lays them out** for the window it configures — its
+         * "Recent", "Currently on"… ([configurationTree]) — in place of the ones every window has ([itemResults]), with
+         * what each one holds ([ConfigurationRows.childrenOf]). Null: those every window has.
+         */
+        configurationRows: ConfigurationRows? = null,
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         // Several bars, or a regular expression: every row of the kinds is read, and the bars decide ([barsMatch]). One
@@ -3671,6 +3779,9 @@ object SearchDomain {
                 ?: Kind.entries
                 .filter { it in kinds }
                 .flatMap { kind ->
+                    if (kind == Kind.SearchConfiguration && configurationRows != null) {
+                        return@flatMap configurationRows.rows.filter { kindQuery.isBlank() || matchRank(it.name, kindQuery) != null }
+                    }
                     kindRows(
                         state, kind, kindQuery, allPaths, windows, schedulerRuns, claudeLogs, filters, timeZone,
                         // The global root is offered where it can be what is asked: what has no task parent, and the
@@ -3689,9 +3800,13 @@ object SearchDomain {
                             val children = HashMap<String, List<Result>>()
                             val childrenOf = { row: Result ->
                                 children.getOrPut(keyOf(row)) {
-                                    var level = listOf(keyOf(row))
-                                    repeat(filters.childDistance.coerceAtLeast(1)) { level = level.flatMap { ElementTree.childrenOf(state, it, claudeLogs) }.distinct() }
-                                    resolve(state, level, allPaths, windows, schedulerRuns, claudeLogs)
+                                    val tree = configurationRows?.takeIf { row.kind == Kind.SearchConfiguration }
+                                    if (tree != null) {
+                                        rowsBelow(listOf(row), filters.childDistance, ::keyOf) { tree.childrenOf((it as ItemResult).id) }
+                                    } else {
+                                        val keys = rowsBelow(listOf(keyOf(row)), filters.childDistance, { it }) { ElementTree.childrenOf(state, it, claudeLogs) }
+                                        resolve(state, keys, allPaths, windows, schedulerRuns, claudeLogs)
+                                    }
                                 }
                             }
                             val answers = { row: Result, bar: String -> fieldsMatch(row, bar, filters, childrenOf, claudeLogs) }
@@ -3763,7 +3878,9 @@ object SearchDomain {
                 // Stable: ties keep the kind order and each kind's own order.
                 .sortedBy { matchRank(it.name, query) ?: Int.MAX_VALUE }
         if (sorts == DEFAULT_SORTS) return base
-        val keys = SortValues(state, query)
+        // User rule 2026-11-16, "tree order": the place of each row in the tree it comes from.
+        val treeOrder = (given ?: configurationRows?.rows)?.withIndex()?.associate { (i, row) -> keyOf(row) to i }.orEmpty()
+        val keys = SortValues(state, query, treeOrder)
         var rows = base
         for (method in sorts.asReversed()) {
             val kind = method.kind
@@ -3847,7 +3964,7 @@ object SearchDomain {
      * per-kind counts — is computed at most once per [results], and only when a sort asks for it: none of it is
      * read under the default order.
      */
-    private class SortValues(private val state: SchedulerState, private val query: String) {
+    private class SortValues(private val state: SchedulerState, private val query: String, private val treeOrder: Map<String, Int> = emptyMap()) {
         private val priorities by lazy { SchedulerDomain.absoluteTaskPriorities(state) }
         private val carriers by lazy {
             state.tasks.values.flatMap { it.categoryIds }.groupingBy { it }.eachCount()
@@ -3869,6 +3986,7 @@ object SearchDomain {
                 SortKey.Type -> row.kind.ordinal
                 SortKey.CalendarBubble -> CalendarBubbleRank.of(row.kind, (row as? ItemResult)?.id)
                 SortKey.CreationFirst -> if (row.kind == Kind.Creation) 0 else 1
+                SortKey.TreeOrder -> treeOrder[keyOf(row)]
                 SortKey.TaskPriority -> (row as? TaskResult)?.let { priorities[it.taskId] }
                 SortKey.TaskPathLength -> (row as? TaskResult)?.takeIf { it.paths.isNotEmpty() }?.shownPath?.size
                 SortKey.TaskPathCount -> (row as? TaskResult)?.paths?.size
@@ -4362,6 +4480,32 @@ object SearchDomain {
     }
 
     /**
+     * What stands [distance] levels below [start] ([below] gives one level), each once, by [key]: exactly that level;
+     * [CHILD_DISTANCE_ANY], every level below, down to the bottom.
+     */
+    fun <T> rowsBelow(start: List<T>, distance: Int, key: (T) -> String, below: (T) -> List<T>): List<T> {
+        if (distance != CHILD_DISTANCE_ANY) {
+            var level = start
+            repeat(distance.coerceAtLeast(1)) { level = level.flatMap(below).distinctBy(key) }
+            return level
+        }
+        val seen = start.mapTo(HashSet(), key)
+        val out = ArrayList<T>()
+        var level = start
+        while (level.isNotEmpty()) {
+            level = level.flatMap(below).filter { seen.add(key(it)) }
+            out += level
+        }
+        return out
+    }
+
+    /**
+     * User rule 2026-11-16: **the search configurations a configurations tree lays out**, as a Search window lists them
+     * ([results]' `configurationRows`): its [rows] at one level, and what the row of id [childrenOf] holds.
+     */
+    class ConfigurationRows(val rows: List<Result>, val childrenOf: (String) -> List<Result>)
+
+    /**
      * The description of [row], as its info bubble says it; null where it has none. A search configuration's is its
      * [configurationDescription].
      */
@@ -4393,6 +4537,7 @@ object SearchDomain {
             Setting.TimerStateSetting, Setting.ChronoStateSetting -> labels(TimerState.entries) { it.label }
             Setting.ReminderRepeatsSetting -> labels(ReminderRepeats.entries) { it.label }
             Setting.WindowDuplicatesSetting -> labels(WindowDuplicates.entries) { it.label }
+            Setting.ChildDistance -> listOf("any", "1", "2", "3", "4", "5")
             Setting.AlarmDays -> listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su", "any day")
             Setting.TaskBoxesFrom, Setting.TaskBoxesUntil, Setting.PeriodBoxesFrom, Setting.PeriodBoxesUntil -> listOf("any", "Pick", "Now")
             Setting.CalendarAdd, Setting.CalendarAt -> listOf("Now")

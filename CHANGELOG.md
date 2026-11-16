@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The ▾ is a Search window like any: "tree order", its types and sorting obeyed — 2026-11-16
+
+Anomaly: *"In down arrow > down arrow, I don't see 'Currently on'"* — nothing was on, yet the ▾ listed what was wanted
+first: its order was hard-coded beside its configuration, which its sorting and types did not act on. User rule:
+*"I want the same logic everywhere, what changes are the default values in search configurations in some contexts."*
+The ▾'s list is now its own search's answer through `SearchDomain.results` (`shownConfigurationNodes`), the tree as
+the configurations' rows; its defaults (`CONFIGURATION_SEARCH`) are the search configurations, sorted by the new
+**"tree order"** (`SortKey.TreeOrder`), its bar reading children at the new **"any"** distance. "On" now means
+"not a plain Search window's default", types and sorting included, so ▾ › ▾ › "Currently on" and "Default for
+this" show them. The field's own tree filter (`filterConfigurationNodes`) is gone.
+
+No migration: a stored ▾ search reads its default sort, the tree's order (`ArrowSearches.of`, `ArrowSearchSameLogicTest`).
+Deploy: client apps.
+
 ### The ▾ tree: Recent › Here, Currently on, Default for this, Search › Matching, the flat list's categories — 2026-11-16
 
 User rule 2026-11-16: *"The search of a search configuration from the down arrow must be a very intuitive and easy
