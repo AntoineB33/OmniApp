@@ -928,9 +928,15 @@ suggestions before it was ever entered.
   list only when it would leave what is shown, by just enough to bring it to the nearer edge.
 - **A press anywhere but on a row takes the selection away**, in the result list and in the added elements (anomaly
   2026-11-03: *"When the user clicks elsewhere, the selected element should stop being selected."*). The rows are the
-  parts of one outside-press edit (`rememberOutsidePressEditor`); a row's own menu is a `Popup`, so it is inside. Until a
-  row is selected again, none is — not the first one the list otherwise falls back to (`deselected`). The task tree keeps
-  its own rule: there, only a press on another cell moves the selection.
+  parts of one outside-press edit (`rememberOutsidePressEditor`). Until a row is selected again, none is — not the first
+  one the list otherwise falls back to (`deselected`). The task tree keeps its own rule: there, only a press on another
+  cell moves the selection.
+- **Two windows never show a selection of rows each** (anomaly 2026-11-16: *"there should not be two rows selected in
+  two different windows"*; `TransientMenuHost.takeRowSelection`, `OutsidePressEditor.rowSelection`): rows selected in a
+  pop-up's own window — a row's menu or its list of paths opening on its first row — take the selection from every
+  other window's rows, and a press in a pop-up does too. A row's menu still acts on the rows selected when it opened
+  (`heldForMenu`): it was "inside" their selection until then. The sections of ONE window keep their rule
+  (`LocalSectionTakesSelection`), and so does the task tree.
 - **Every row the user selected is in the added elements while it is selected** (user rule 2026-11-15: *"Every selected
   row must appear in the added elements list. If a row is not selected anymore and the user didn't right-click it and
   select add or add and remove others, then it is removed from the added elements list."*; `SearchWindow`'s

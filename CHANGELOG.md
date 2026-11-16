@@ -33,6 +33,11 @@ Three anomalies of one kind, a rule kept in one place and missed in another:
 
 No migration. Deploy: client apps.
 
+Then an audit of the same kind of miss, same day: an element opened by its arrow (its children in its own row) pins as
+an open action does; the Life plan's nested steps pin by the same `pinnedChain`; `task-tree.md` no longer says a row's
+menu is "inside" the selection; the two unused menu-entry drawings (`MenuEntry`, `SelectAllMenuItem`), which went
+around `OptionSearchMenu`, are gone.
+
 ### The ▾ is a Search window like any: "tree order", its types and sorting obeyed — 2026-11-16
 
 Anomaly: *"In down arrow > down arrow, I don't see 'Currently on'"* — nothing was on, yet the ▾ listed what was wanted

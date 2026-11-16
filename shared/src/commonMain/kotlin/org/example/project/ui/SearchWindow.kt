@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -119,7 +118,7 @@ import org.example.project.scheduler.ui.TaskCellMenuActions
 import org.example.project.scheduler.ui.ADD_REPLACING_LABEL
 
 /** Every row of the result list has this one height, whatever it holds (PRD §7 *Search*). */
-private val RESULT_ROW_HEIGHT: Dp = 34.dp
+internal val RESULT_ROW_HEIGHT: Dp = 34.dp
 
 /** Every row's kind section is this one width, so the names line up whatever the kinds (fits "restrictive period"). */
 private val KIND_SECTION_WIDTH: Dp = 104.dp
@@ -1376,7 +1375,7 @@ fun SearchWindow(
                     // the pinned rows are a CHAIN ([pinnedChain]) — every open row above the one at the top (an action
                     // group over its actions), then the open row whose own content is being scrolled through — one rule
                     // for the task rows and the actions section's, stacked one row height each.
-                    val pinned by remember(listState, bandPx, results, actionRows) {
+                    val pinned by remember(listState, bandPx, results, actionRows, expandedElements) {
                         derivedStateOf {
                             val info = listState.layoutInfo
                             pinnedChain(
@@ -1385,7 +1384,10 @@ fun SearchWindow(
                                 pinnable = { i ->
                                     when (val row = results.getOrNull(i)) {
                                         is SearchDomain.TaskResult -> row.taskId in expandedTasks && row.taskId != resultNestedPin
-                                        is SearchDomain.ItemResult -> actionRows?.byKey?.get(row.id)?.let { it.open && it.action != null } == true
+                                        is SearchDomain.ItemResult ->
+                                            actionRows?.byKey?.get(row.id)?.let { it.open && it.action != null }
+                                                // An element opened by its arrow, its children under it (anomaly 2026-11-16, the same rule).
+                                                ?: (actionRows == null && RESULT_SURFACE + resultKey(row) in expandedElements)
                                         else -> false
                                     }
                                 },
@@ -1721,7 +1723,8 @@ fun SearchWindow(
                     for ((slot, index) in pinned.withIndex()) {
                         val row = results.getOrNull(index) ?: continue
                         val action = (row as? SearchDomain.ItemResult)?.let { actionRows?.byKey?.get(it.id) }
-                        if (row !is SearchDomain.TaskResult && action == null) continue
+                        val openElement = (row as? SearchDomain.ItemResult)?.takeIf { action == null }
+                        if (row !is SearchDomain.TaskResult && action == null && openElement == null) continue
                         Box(
                             Modifier
                                 .align(Alignment.TopStart)
@@ -1761,6 +1764,34 @@ fun SearchWindow(
                                     onAddReplacing = {},
                                     hasMenu = false,
                                     depth = action.depth,
+                                )
+                            } else if (openElement != null) {
+                                val elementKey = RESULT_SURFACE + resultKey(openElement)
+                                ItemResultRow(
+                                    kindWidth = resultKindWidth,
+                                    item = openElement,
+                                    categories = elementCategories[resultKey(openElement)].orEmpty(),
+                                    expanded = true,
+                                    onToggleExpand = {
+                                        toggleElement(elementKey)
+                                        pinScope.launch { listState.scrollToItem(index) }
+                                    },
+                                    query = query,
+                                    selected = rowSelected(index),
+                                    inSelection = rowInSelection(index),
+                                    onSelect = {
+                                        clickRow(index, pressModifiers.ctrl, pressModifiers.shift, keepIfSelected = false)
+                                        pinScope.launch { listState.animateScrollToItem(index) }
+                                    },
+                                    onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
+                                    onOpen = { openers.open(state, openElement) },
+                                    onDoubleClick = {
+                                        toggleElement(elementKey)
+                                        pinScope.launch { listState.scrollToItem(index) }
+                                    },
+                                    onAdd = { addSelected() },
+                                    onAddReplacing = { addSelected(replacing = true) },
+                                    hasMenu = false,
                                 )
                             }
                         }
@@ -2678,7 +2709,7 @@ internal fun KindsDropDown(name: String,
 
 /**
  * **The check-box drop-down**: a field whose face is [face] and which opens a list of [options], each with a check box
- * (headed by [SelectAllMenuItem]); ticking one leaves the menu open, so several can be ticked in turn, and Shift ticks a
+ * (headed by its "Select all" row, [SearchDomain.SELECT_ALL_OPTION]); ticking one leaves the menu open, so several can be ticked in turn, and Shift ticks a
  * range; a right-click on an option checks it alone and closes the list. The one drop-down of its kind — the search
  * kinds and the period edit window's period selector fields.
  */
@@ -2809,20 +2840,6 @@ internal fun <T> ChoiceDropDown(name: String,
             ),
         )
     }
-}
-
-/**
- * The first entry of every drop-down whose entries carry a check box: no box of its own, it reads **Select all**
- * until every box is checked and checks them all, then **Deselect all**, which unchecks them all. Driven by the
- * boxes rather than by its own last press, so it says the right thing whatever was ticked by hand in between.
- * The menu stays open, as it does for a box.
- */
-@Composable
-internal fun SelectAllMenuItem(allChecked: Boolean, onSelectAll: () -> Unit, onDeselectAll: () -> Unit) {
-    DropdownMenuItem(
-        text = { Text(if (allChecked) "Deselect all" else "Select all") },
-        onClick = { if (allChecked) onDeselectAll() else onSelectAll() },
-    )
 }
 
 /**
@@ -3305,11 +3322,6 @@ private fun SearchSubtree(
         colorSource = state,
         namingSource = state,
     )
-}
-
-@Composable
-private fun MenuEntry(label: String, enabled: Boolean = true, onClick: () -> Unit) {
-    DropdownMenuItem(text = { Text(label) }, enabled = enabled, onClick = onClick)
 }
 
 /** The most an expanded row's sub-tree takes of the list before it scrolls inside itself. */

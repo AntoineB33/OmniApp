@@ -1,5 +1,6 @@
 package org.example.project.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9,6 +10,8 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,13 +19,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +35,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -47,6 +53,7 @@ import org.example.project.scheduler.domain.LifePlanEntry
 import org.example.project.scheduler.domain.LifePlanSection
 import org.example.project.scheduler.domain.LifePlanStepRow
 import org.example.project.scheduler.domain.LifePlanView
+import kotlinx.coroutines.launch
 
 /** The window's frame id: [org.example.project.FloatingWindow]'s name for it. */
 const val LIFE_PLAN_WINDOW_ID: String = "LifePlan"
@@ -218,6 +225,42 @@ private fun ColumnScope.StepsSection(
                 )
             }
         }
+        // Anomaly 2026-11-16: an open step stays at the top while its sub-steps scroll under it, as an open row of the
+        // Search window does — the one rule ([pinnedChain]), each step's depth its nesting.
+        val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
+        val pinned by remember(list, bandPx, rows) {
+            derivedStateOf {
+                val info = list.layoutInfo
+                pinnedChain(
+                    info.visibleItemsInfo.map { PinItem(it.index, it.offset, it.size) }, info.viewportStartOffset, bandPx,
+                    depthOf = { rows.getOrNull(it)?.depth }, pinnable = { false },
+                )
+            }
+        }
+        val pinScope = rememberCoroutineScope()
+        for ((slot, index) in pinned.withIndex()) {
+            val row = rows.getOrNull(index) ?: continue
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .offset(y = RESULT_ROW_HEIGHT * slot)
+                    .fillMaxWidth()
+                    .padding(end = 12.dp)
+                    .height(RESULT_ROW_HEIGHT)
+                    .clipToBounds()
+                    .background(MaterialTheme.colorScheme.surface),
+            ) {
+                PinnedStepRow(
+                    row = row,
+                    onToggle = {
+                        val id = row.step.id
+                        onViewChange(view.copy(expanded = if (row.expanded) view.expanded - id else view.expanded + id))
+                        pinScope.launch { list.scrollToItem(index) }
+                    },
+                    onShow = { pinScope.launch { list.animateScrollToItem(index) } },
+                )
+            }
+        }
         ListScrollbar(list, Modifier.align(Alignment.CenterEnd))
     }
     TextButton(onClick = { add(null) }) { Text("+ New step") }
@@ -261,6 +304,26 @@ private fun StepRow(
         }
         RowButton("+", onAddChild)
         RowButton("🗑", onRemove)
+    }
+}
+
+/**
+ * A step's PINNED copy ([pinnedChain]): its arrow and its title, read only — the title is typed into on its row, one field
+ * a step. Pressed, the list scrolls back to the row.
+ */
+@Composable
+private fun PinnedStepRow(row: LifePlanStepRow, onToggle: () -> Unit, onShow: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = resultRowModifier(selected = false).padding(start = STEP_INDENT * row.depth).clickable(onClick = onShow),
+    ) {
+        TaskSheetExpandArrow(row.hasChildren, row.expanded, onToggle, MaterialTheme.colorScheme.primary)
+        Text(
+            text = row.step.text.ifEmpty { "Step" },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (row.step.text.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+        )
     }
 }
 

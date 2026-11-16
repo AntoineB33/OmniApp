@@ -53,6 +53,14 @@ class PinnedChainTest {
         assertEquals(emptyList(), chain(285))
     }
 
+    /** The Life plan's steps (anomaly 2026-11-16): a step inside a step inside a step, each open one above the top pinned. */
+    @Test
+    fun every_open_level_above_the_top_row_stacks() {
+        val depths = listOf(0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0)
+        val items = laid(List(depths.size) { 20 }, 75)
+        assertEquals(listOf(0, 1), pinnedChain(items, 0, band, depthOf = { depths.getOrNull(it) }, pinnable = { false }))
+    }
+
     @Test
     fun a_list_of_no_nesting_pins_its_open_row_alone() {
         val items = laid(listOf(20, 200, 20), 50)
