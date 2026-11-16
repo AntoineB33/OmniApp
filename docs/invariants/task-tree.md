@@ -1039,9 +1039,10 @@ suggestions before it was ever entered.
 - **THE CONFIGURATIONS A CONTEXT IS ABOUT COME FIRST IN THE ▾ TREE** (user rule 2026-11-13: *"the user should very
   easily see the search configuration element about the parent distance"*; `SearchDomain.contextSettings`,
   `configurationTree(config, opened)`). What the window was opened with says its context: the filters it set, and what
-  goes with them — the "List of parents" gets "Parent distance", "Parents of" and its drop buttons. They are the first rows of the
-  tree's first node, "Relevant here", before the configurations that are on now (2026-11-14); a window opened on
-  nothing with nothing on has no such node. Before them stands **what the window is about, on or off**, said by the
+  goes with them — the "List of parents" gets "Parent distance", "Parents of" and its drop buttons. Since 2026-11-16
+  they are the window's **"Default for this"** (its own node at the root, after "Recent", "Currently on" and "Relevant
+  here"), what is on now "Currently on"; a window opened on nothing has its page's default. **What the window is
+  about, on or off**, is "Relevant here", said by the
   code that draws it and never stored (`configurationTree`'s `relevant`; user rule 2026-11-14, *"this search
   configuration is something relevant for the left-side menu, so it should be accessible intuitively in the down arrow
   of the left-side menu"*): the left-side menu's is "Arrange by dragging" (`LATERAL_MENU_RELEVANT`).
@@ -1524,21 +1525,30 @@ suggestions before it was ever entered.
 - **THE ROOT OF THE ▾ TREE: WHAT THE USER IS AFTER IS ONE CATEGORY AWAY** (user rule 2026-11-14: *"it must be easy with
   a very intuitive navigation … directly have the children of 'task scheduler', and then an element called something
   like 'other feature pages'"*; `SearchDomain.configurationTree`, `TreeGroup`, `treeGroupOf`, `ConfigurationTreeTest`).
-  In order: **"Relevant here"** ("On for this list" until 2026-11-14: what the window is about, what it was opened on,
-  then every configuration that is on now —
-  `contextSettings`, `activeSettings`; no node where nothing is); **"Recently changed"** (every configuration, the last
-  changed first, `Config.settingsChangedAt`, local-only, no part of the search); **the groups of what is about every
-  row** — "Search text", "Types", "Sorting", "Parents and children", "Filters on every type", "Display" (there is no
-  "General": it was one list of twenty-five); **the types of the window's own page**, each holding its filters then
-  its order, with no page node above them; **"Other feature pages"**, each other page with its types under it; and
-  then **every configuration itself, after all the rows that open a pop-up** (user rule 2026-11-14: *"It allowed me
-  to directly get the search configuration I want by typing its name in the first pop-up"* — never take them out of
-  the root), each saying its type. Reset is one of those rows alone. `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
+  Since 2026-11-16 (*"The search of a search configuration from the down arrow must be a very intuitive and easy tree
+  navigation"*, a sketch), in order: **"Recent"** — "Here", what was changed in this window, the last first (none
+  while nothing was), then every configuration, the last changed first (`Config.settingsChangedAt`, local-only, no
+  part of the search); **"Currently on"** (`activeSettings`); **"Relevant here"**, what the window is about whatever
+  it holds (the code's `relevant`); **"Default for this"**, what the window was opened on (`contextSettings`; a
+  window opened on nothing, its page's default) — and **each group ends with its own "Default for this"**, the part of
+  it in that group (*"if somewhere in the app the search bar by default matches case, then in down arrow > search >
+  matching > default for this, the user can find matches case"*); none of these four where it would be empty; **the
+  groups of what is about every row** — "Search" (its "Matching" under it, `TreeSubNode`, `subNodeOf`), "Types",
+  "Sorting", "Parents and children", "Filters on every type", "Display" (there is no "General": it was one list of
+  twenty-five); **the types of the window's own page**, each holding its filters then its order, with no page node
+  above them; **"Other feature pages"**, each other page with its types under it; and then **the flat list, after
+  all the other rows** (user rule 2026-11-14: *"It allowed me to directly get the search configuration I want by
+  typing its name in the first pop-up"* — never take it out of the root): every category below the root named by its
+  path (*"including those that just redirect to children search configurations"*; id `all:` + its own, no row of the
+  search over configurations), then every configuration. **A configuration listed away from its own category says
+  the way to it** — "Recent", "Currently on", "Relevant here", "Default for this", the flat list — drawn small above
+  its name (`ConfigurationLeaf.pathed`, `homePathOf`: *"This search configuration will show in its row the path
+  search > where to search"*). Reset is one of those rows alone. `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
   added later — goes by its category (`roleOf`). **Every type's "Sort by" is in "Sorting"** too, the order of every
   row first, then this page's types, then the others'; so a type with an order and no filter (option, integer,
   action…) has no node of its own. **A configuration standing among other types' says its type** ("tasks: Sort by",
-  `ConfigurationLeaf.qualified`): no two rows of one pop-up read the same. Below the root, a
-  category holds categories or configurations, never both. The tree depends on the window's page and on nothing else
+  `ConfigurationLeaf.qualified`): no two rows of one pop-up read the same. A category may hold
+  categories and configurations both (since 2026-11-16: "Search" holds "Matching", its own, then "Default for this"). The tree depends on the window's page and on nothing else
   of what it searches — never cut to the types it searches (anomaly 2026-11-11). The rows of the search over search
   configurations are the nodes of every page's tree (`configurationCategories`). A ▾ pop-up kept under the retired
   "General" node (`▾/general` in `Config.inside`) is dropped when the configuration is read.

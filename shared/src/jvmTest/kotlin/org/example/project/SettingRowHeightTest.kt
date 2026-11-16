@@ -29,8 +29,11 @@ import org.example.project.ui.TREE_LEAF_CONTENT_WIDTH
  */
 class SettingRowHeightTest {
 
-    /** The height of every configuration's row under [config], each labelled as "Recently changed" labels it. */
-    private fun heights(config: SearchDomain.Config, width: Dp = TREE_LEAF_CONTENT_WIDTH): Map<Setting, Float> {
+    /**
+     * The height of every configuration's row under [config], each labelled as a group labels it — or, [pathed], as
+     * "Recent" and the root's flat list do: the way to its category above its name.
+     */
+    private fun heights(config: SearchDomain.Config, width: Dp = TREE_LEAF_CONTENT_WIDTH, pathed: Boolean = false): Map<Setting, Float> {
         val out = LinkedHashMap<Setting, Float>()
         val content: @Composable () -> Unit = {
             MaterialTheme {
@@ -38,7 +41,7 @@ class SettingRowHeightTest {
                     for (setting in Setting.entries) {
                         Box(Modifier.onGloballyPositioned { out[setting] = it.size.height.toFloat() }) {
                             ConfigurationLeafRow(
-                                SearchDomain.ConfigurationLeaf(setting, qualified = true), SchedulerState.empty(), config, null, {},
+                                SearchDomain.ConfigurationLeaf(setting, qualified = !pathed, pathed = pathed), SchedulerState.empty(), config, null, {},
                             )
                         }
                     }
@@ -59,6 +62,13 @@ class SettingRowHeightTest {
     @Test
     fun every_configuration_is_one_row_tall_as_it_opens() {
         val tall = heights(SearchDomain.Config()).filterValues { it != row }
+        assertEquals(emptyMap(), tall, "rows of another height than a task cell's ($row)")
+    }
+
+    /** User rule 2026-11-16: the path drawn above a configuration's name leaves its row a task cell tall. */
+    @Test
+    fun a_configuration_with_its_path_is_one_row_tall_too() {
+        val tall = heights(SearchDomain.Config(), pathed = true).filterValues { it != row }
         assertEquals(emptyMap(), tall, "rows of another height than a task cell's ($row)")
     }
 

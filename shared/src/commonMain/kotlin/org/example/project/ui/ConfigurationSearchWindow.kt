@@ -41,6 +41,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupProperties
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -348,6 +349,11 @@ internal fun SettingRow(
     labelWidth: androidx.compose.ui.unit.Dp = 130.dp,
     /** What the label's info bubble says ([SearchDomain.filterHint]); none where null. */
     hint: String? = null,
+    /**
+     * User rule 2026-11-16: the way to the configuration's own category ("Search › Matching"), drawn small above its
+     * name where it stands away from it ([SearchDomain.ConfigurationLeaf.path]); none where null.
+     */
+    path: String? = null,
     editor: @Composable () -> Unit,
 ) {
     Row(
@@ -355,11 +361,21 @@ internal fun SettingRow(
         modifier = Modifier.fillMaxWidth().heightIn(min = TASK_ROW_MIN_HEIGHT),
     ) {
         InfoHint(text = hint, modifier = Modifier.width(labelWidth).padding(end = 6.dp)) {
-            Text(
-                text = searchHighlighted(label),
-                style = MaterialTheme.typography.bodyMedium,
-                // User rule 2026-11-04: wrapped in its column, never cut by "…" ("Only this page's types").
-            )
+            androidx.compose.foundation.layout.Column {
+                // The two lines set tight, so the row stays a task cell tall (user rule 2026-11-14: rows of one height).
+                if (path != null) {
+                    Text(
+                        text = searchHighlighted(path),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = searchHighlighted(label),
+                    style = if (path == null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyMedium.copy(lineHeight = 16.sp),
+                    // User rule 2026-11-04: wrapped in its column, never cut by "…" ("Only this page's types").
+                )
+            }
         }
         Box(Modifier.weight(1f)) { editor() }
     }

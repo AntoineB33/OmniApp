@@ -36,11 +36,11 @@ class SearchConfigurationStatesTest {
 
     @Test
     fun theNodesOfTheTreeAreSearchConfigurationsOfTheFifthCategory() {
-        val recent = rows("Recently changed").single()
+        val recent = rows("Recent").single { it.name == "Recent" }
         assertEquals(SearchDomain.CONFIGURATION_NODE_PREFIX + "recent", recent.id)
         assertEquals("group", recent.detail)
         val groups = rows().filter { it.detail == "group" }.map { it.name }
-        assertTrue(groups.containsAll(listOf("Recently changed", "Sorting", "Other feature pages", "Task Scheduler", "Claude Code logs", "task", "prompt")), groups.toString())
+        assertTrue(groups.containsAll(listOf("Recent", "Search", "Matching", "Sorting", "Other feature pages", "Task Scheduler", "Claude Code logs", "task", "prompt")), groups.toString())
         // Every configuration that changes something is still a row, with one of the four.
         assertEquals(Setting.entries.size, rows().count { it.detail != "group" })
     }

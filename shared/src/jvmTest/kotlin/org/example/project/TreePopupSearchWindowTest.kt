@@ -107,12 +107,13 @@ class TreePopupSearchWindowTest {
             val barAt = ordered.withIndex().filter { it.value.first == "Search" }[1].index
             val arrow = ordered.drop(barAt).first { it.first == "▾" }.second
             press(arrow, secondary = false)
-            assertTrue(texts().any { it == "Recently changed" }, "the tree is open: ${texts()}")
+            assertTrue(texts().any { it == "Recent" }, "the tree is open: ${texts()}")
             // The pop-up's bar is the Search window's: its label, its cross, its ▾ — twice now: the window's and the pop-up's.
             assertTrue(texts().count { it == "Search" } >= 3, "the pop-up has a Search window's bar: ${texts()}")
             // A category right-clicked: "add".
             val category = "Sorting"
-            press(find(category), secondary = true)
+            // The first: the root's row (the flat list's configurations say "Sorting" too, as their path).
+            press(find(category, first = true), secondary = true)
             assertTrue(texts().any { it == "add" }, "a configuration's right-click adds it: ${texts()}")
             press(find("add"), secondary = false)
             assertTrue(texts().any { it == category }, "the pop-up stays: ${texts()}")

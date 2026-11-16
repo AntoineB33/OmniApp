@@ -31,9 +31,14 @@ class ConfigurationTreeTest {
         }
 
     private fun categoriesOf(nodes: List<ConfigurationNode>): List<ConfigurationCategory> =
-        nodes.filterIsInstance<ConfigurationCategory>().flatMap { listOf(it) + categoriesOf(it.children) }
+        nodes.filterIsInstance<ConfigurationCategory>().filterNot { it.id.startsWith(SearchDomain.FLAT_NODE_PREFIX) }
+            .flatMap { listOf(it) + categoriesOf(it.children) }
 
-    /** How many categories are hovered from the root to reach [setting], "Recently changed" and "Relevant here" left out. */
+    /** The nodes listing configurations away from their own place: "Recent", "Currently on", "Relevant here", "Default for this", the flat list. */
+    private fun ConfigurationCategory.elsewhere() =
+        id == "recent" || id == "context" || id == "on" || id == "default" || id.startsWith(SearchDomain.FLAT_NODE_PREFIX)
+
+    /** How many categories are hovered from the root to reach [setting], the nodes listing it away from its place left out. */
     private fun hoversTo(tree: List<ConfigurationNode>, setting: Setting): Int? {
         fun depth(nodes: List<ConfigurationNode>, at: Int): Int? =
             nodes.mapNotNull { node ->
@@ -42,7 +47,7 @@ class ConfigurationTreeTest {
                     is ConfigurationCategory -> depth(node.children, at + 1)
                 }
             }.minOrNull()
-        return depth(tree.filter { it is ConfigurationCategory && it.id != "recent" && it.id != "context" }, 0)
+        return depth(tree.filter { it is ConfigurationCategory && !it.elsewhere() }, 0)
     }
 
     @Test
@@ -53,6 +58,7 @@ class ConfigurationTreeTest {
             // so a name typed in the first pop-up's field leaves the configuration right there.
             val firstLeaf = tree.indexOfFirst { it is ConfigurationLeaf }
             assertTrue(firstLeaf > 0 && tree.take(firstLeaf).all { it is ConfigurationCategory }, "the rows that open a pop-up first")
+            assertTrue(tree.drop(firstLeaf).all { it is ConfigurationLeaf }, "the configurations last")
             val flat = tree.drop(firstLeaf).map { (it as ConfigurationLeaf).setting }
             assertEquals(Setting.entries.toSet(), flat.toSet(), page.label)
             assertEquals(Setting.entries.size, flat.size)
@@ -62,11 +68,16 @@ class ConfigurationTreeTest {
                 tree.filterConfigurationNodes(Setting.MatchCase.label).filterIsInstance<ConfigurationLeaf>().map { it.setting },
             )
             // ...and every one of them but Reset, a command, is under a category too, the two first left out.
-            assertEquals(Setting.entries.toSet() - Setting.ResetSearch, leavesOf(tree.take(firstLeaf).filterIsInstance<ConfigurationCategory>().filterNot { it.id == "recent" || it.id == "context" }).toSet(), page.label)
-            // A category holds categories or configurations, never both, and none is empty.
+            assertEquals(Setting.entries.toSet() - Setting.ResetSearch, leavesOf(tree.take(firstLeaf).filterIsInstance<ConfigurationCategory>().filterNot { it.elsewhere() }).toSet(), page.label)
+            // User rule 2026-11-16: every category below the root is in the flat list too, by its path.
+            val flatCategories = tree.filterIsInstance<ConfigurationCategory>().filter { it.id.startsWith(SearchDomain.FLAT_NODE_PREFIX) }
+            val below = tree.filterIsInstance<ConfigurationCategory>().filterNot { it.elsewhere() }.flatMap { categoriesOf(it.children) }
+                .filterNot { it.label == SearchDomain.DEFAULT_NODE_LABEL }
+            assertEquals(below.map { SearchDomain.FLAT_NODE_PREFIX + it.id }.toSet(), flatCategories.map { it.id }.toSet(), page.label)
+            assertEquals(tree.size, tree.map { it.label }.toSet().size, "no two rows of the root read the same")
+            // None is empty.
             for (node in categoriesOf(tree)) {
                 assertTrue(node.children.isNotEmpty(), node.label)
-                assertTrue(node.children.all { it is ConfigurationLeaf } || node.children.all { it is ConfigurationCategory }, node.label)
                 // No two rows of one pop-up read the same: a "Sort by" among other types' says its type.
                 assertEquals(node.children.size, node.children.map { it.label }.toSet().size, node.label)
             }
@@ -115,11 +126,16 @@ class ConfigurationTreeTest {
         // "Only the running timers"; "what is on the calendar on Monday"; "match the case"; "only tasks and alarms".
         assertEquals("timer", under(Setting.TimerStateSetting))
         assertEquals("Filters on every type", under(Setting.CalendarAt))
-        assertEquals("Search text", under(Setting.MatchCase))
+        assertEquals("Matching", under(Setting.MatchCase))
         assertEquals("Types", under(Setting.Types))
         for (setting in Setting.entries - Setting.ResetSearch) {
             val otherPage = setting.section != null && setting.section !in SearchDomain.FEATURE_PAGES.first().kinds
-            assertEquals(if (otherPage && !setting.sorts) 3 else 1, hoversTo(tree, setting), setting.name)
+            val expected = when {
+                otherPage && !setting.sorts -> 3
+                SearchDomain.subNodeOf(setting) != null -> 2
+                else -> 1
+            }
+            assertEquals(expected, hoversTo(tree, setting), setting.name)
         }
         // Every configuration about every row has a group, and a group is short enough to be read at a glance.
         for (setting in Setting.entries.filter { it.section == null && it != Setting.ResetSearch }) assertTrue(SearchDomain.treeGroupOf(setting) != null, setting.name)
@@ -128,13 +144,18 @@ class ConfigurationTreeTest {
         }
     }
 
-    /** What is on now is the first node, whatever the window was opened on. */
+    /** User rule 2026-11-16: what is on now is "Currently on", after "Recent", each saying the way to its place. */
     @Test
-    fun what_is_on_now_is_the_first_node() {
+    fun what_is_on_now_is_currently_on() {
         val config = SearchDomain.Config(filters = SearchDomain.Filters(taskTreeRoot = SearchDomain.Tri.Yes))
-        val first = SearchDomain.configurationTree(config).first() as ConfigurationCategory
-        assertEquals("context", first.id)
-        assertEquals(listOf("tasks: Root of a tree"), first.children.map { it.label })
+        val tree = SearchDomain.configurationTree(config)
+        assertEquals(listOf("recent", "on"), tree.take(2).map { (it as ConfigurationCategory).id })
+        val on = tree[1] as ConfigurationCategory
+        assertEquals("Currently on", on.label)
+        assertEquals(listOf("tasks › Root of a tree"), on.children.map { it.label })
+        assertEquals(listOf(listOf("tasks")), on.children.map { (it as ConfigurationLeaf).path })
+        // Nothing on: no such node.
+        assertTrue(SearchDomain.configurationTree(SearchDomain.Config()).none { it is ConfigurationCategory && it.id == "on" })
     }
 
     /** The pop-up of "General" is gone with its node (2026-11-14): what a window kept under it is dropped on load. */
@@ -150,11 +171,16 @@ class ConfigurationTreeTest {
         var config = SearchDomain.Config()
         config = SearchDomain.withChanged(config, config.copy(query = "a"), listOf(Setting.SearchText), 100)
         config = SearchDomain.withChanged(config, config.copy(filters = config.filters.copy(matchCase = true)), listOf(Setting.MatchCase), 200)
-        // "Match case" is on: what is on now stands before it ("Relevant here").
-        val first = SearchDomain.configurationTree(config)[1] as ConfigurationCategory
-        assertEquals("Recently changed", first.label)
+        val first = SearchDomain.configurationTree(config).first() as ConfigurationCategory
+        assertEquals("Recent", first.label)
         assertEquals("recent", (SearchDomain.configurationTree(SearchDomain.Config()).first() as ConfigurationCategory).id)
-        val order = first.children.map { (it as ConfigurationLeaf).setting }
+        // User rule 2026-11-16: "Here" — what was changed in this window, the last first, each with its path.
+        val here = first.children.first() as ConfigurationCategory
+        assertEquals("Here", here.label)
+        assertEquals(listOf("Search › Matching › Match case", "Search › Search text"), here.children.map { it.label })
+        // Nothing changed here: no "Here".
+        assertTrue((SearchDomain.configurationTree(SearchDomain.Config()).first() as ConfigurationCategory).children.none { it is ConfigurationCategory })
+        val order = first.children.drop(1).map { (it as ConfigurationLeaf).setting }
         assertEquals(listOf(Setting.MatchCase, Setting.SearchText), order.take(2))
         assertEquals(Setting.entries.toSet(), order.toSet(), "all of them")
         assertEquals(Setting.entries.filter { it != Setting.MatchCase && it != Setting.SearchText }, order.drop(2), "the others in their order")
@@ -162,18 +188,31 @@ class ConfigurationTreeTest {
         assertEquals(config, SearchDomain.withChanged(config, config, listOf(Setting.Types), 300))
     }
 
+    /**
+     * User rule 2026-11-16: *"if somewhere in the app the search bar by default matches case, then in down arrow > search
+     * > matching > default for this, the user can find matches case"* — what the window was opened on is its default:
+     * "Default for this" at the root, and in each group the part of it in that group.
+     */
     @Test
-    fun an_opened_context_starts_with_its_enabled_result_list_settings() {
-        val opened = SearchDomain.Config(
-            filters = SearchDomain.Filters(matchCase = true),
-            menuCustomizing = true,
-        )
-        val first = SearchDomain.configurationTree(opened, opened).first() as ConfigurationCategory
-        assertEquals("Relevant here", first.label)
-        assertEquals(
-            listOf(Setting.MatchCase, Setting.MenuCustomizing),
-            first.children.map { (it as ConfigurationLeaf).setting },
-        )
+    fun what_is_on_by_default_is_found_in_default_for_this() {
+        val opened = SearchDomain.Config(filters = SearchDomain.Filters(matchCase = true), menuCustomizing = true)
+        val tree = SearchDomain.configurationTree(opened.copy(menuCustomizing = false), opened)
+        val byDefault = tree.filterIsInstance<ConfigurationCategory>().single { it.id == "default" }
+        assertEquals(SearchDomain.DEFAULT_NODE_LABEL, byDefault.label)
+        assertEquals(listOf(Setting.MatchCase), byDefault.children.map { (it as ConfigurationLeaf).setting })
+        val search = tree.filterIsInstance<ConfigurationCategory>().single { it.id == SearchDomain.TreeGroup.Bar.id }
+        assertEquals("Search", search.label)
+        val matching = search.children.filterIsInstance<ConfigurationCategory>().single { it.label == "Matching" }
+        assertEquals(listOf("Match case", "Match whole word", "Use regular expression", SearchDomain.DEFAULT_NODE_LABEL), matching.children.map { it.label })
+        val matchingDefault = matching.children.last() as ConfigurationCategory
+        assertEquals(listOf(Setting.MatchCase), matchingDefault.children.map { (it as ConfigurationLeaf).setting })
+        // ...and in "Search" itself, last.
+        assertEquals(SearchDomain.DEFAULT_NODE_LABEL, search.children.last().label)
+        // A group none of whose configurations is on by default has none.
+        val sorting = tree.filterIsInstance<ConfigurationCategory>().single { it.id == SearchDomain.TreeGroup.Sorting.id }
+        assertTrue(sorting.children.none { it.label == SearchDomain.DEFAULT_NODE_LABEL })
+        // What is on now is "Currently on", not the default.
+        assertEquals(listOf(Setting.MatchCase), tree.filterIsInstance<ConfigurationCategory>().single { it.id == "on" }.children.map { (it as ConfigurationLeaf).setting })
     }
 
     /**
@@ -184,11 +223,12 @@ class ConfigurationTreeTest {
     @Test
     fun what_a_window_is_about_leads_relevant_here_even_off() {
         val menu = org.example.project.ui.LATERAL_MENU_SEARCH
-        val first = SearchDomain.configurationTree(menu, menu, org.example.project.ui.LATERAL_MENU_RELEVANT).first() as ConfigurationCategory
-        assertEquals("Relevant here", first.label)
-        assertEquals(Setting.MenuCustomizing, (first.children.first() as ConfigurationLeaf).setting)
+        val about = SearchDomain.configurationTree(menu, menu, org.example.project.ui.LATERAL_MENU_RELEVANT)
+            .filterIsInstance<ConfigurationCategory>().single { it.id == "context" }
+        assertEquals("Relevant here", about.label)
+        assertEquals(Setting.MenuCustomizing, (about.children.first() as ConfigurationLeaf).setting)
         assertEquals("Arrange by dragging", Setting.MenuCustomizing.label)
-        assertEquals("recent", (SearchDomain.configurationTree(menu, menu).first() as ConfigurationCategory).id)
+        assertTrue(SearchDomain.configurationTree(menu, menu).none { it is ConfigurationCategory && it.id == "context" })
     }
 
     @Test

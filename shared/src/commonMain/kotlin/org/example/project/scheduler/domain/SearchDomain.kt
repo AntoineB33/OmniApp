@@ -2021,10 +2021,32 @@ object SearchDomain {
      * configurations of other types ("Recently changed", "Sorting"): its label then begins with its type's name, or
      * twenty-eight rows would all read "Sort by".
      */
-    data class ConfigurationLeaf(val setting: Setting, val qualified: Boolean = false) : ConfigurationNode {
+    data class ConfigurationLeaf(
+        val setting: Setting,
+        val qualified: Boolean = false,
+        /**
+         * User rule 2026-11-16 (*"This search configuration will show in its row the path search > where to search"*):
+         * where a configuration stands away from its own category — "Recent", "Currently on", "Default for this", the
+         * root's flat list — its row says the way to that category ([homePathOf]); none where it stands in it.
+         */
+        val pathed: Boolean = false,
+    ) : ConfigurationNode {
+        /** The categories above the configuration's own place, root first: shown above its name where [pathed]. */
+        val path: List<String> get() = if (pathed) homePathOf(setting) else emptyList()
+
         override val label: String
-            get() = setting.section?.takeIf { qualified }?.let { treeNameOf(it) + ": " + setting.label } ?: setting.label
+            get() = when {
+                pathed -> (path + setting.label).joinToString(TREE_PATH_SEPARATOR)
+                qualified -> setting.section?.let { treeNameOf(it) + ": " + setting.label } ?: setting.label
+                else -> setting.label
+            }
+
+        /** Its name alone, the [path] drawn apart above it. */
+        val name: String get() = if (pathed) setting.label else label
     }
+
+    /** What stands between two categories of a path ([ConfigurationLeaf.path]). */
+    const val TREE_PATH_SEPARATOR: String = " › "
 
     /**
      * User rule 2026-11-14 (*"The width is too big"*): what a type is called before a configuration's name in the tree
@@ -2053,7 +2075,8 @@ object SearchDomain {
      * whom, the other filters, how a row is drawn. [treeGroupOf] is the one statement of where a configuration stands.
      */
     enum class TreeGroup(val id: String, val label: String) {
-        Bar("bar", "Search text"),
+        /** User rule 2026-11-16: "Search" — what the bar holds and how it is matched ([MATCHING_NODE]). */
+        Bar("bar", "Search"),
         Types("types", "Types"),
         Sorting("sort", "Sorting"),
         Parents("parents", "Parents and children"),
@@ -2088,30 +2111,36 @@ object SearchDomain {
 
     /**
      * User rule 2026-11-04: **the configurations tree** the arrow beside the Search window's bar opens; rethought
-     * 2026-11-14 (*"it must be easy with a very intuitive navigation"*, *"directly have the children of 'task
-     * scheduler', and then an element called something like 'other feature pages'"*). From the root:
+     * 2026-11-14 (*"it must be easy with a very intuitive navigation"*) and 2026-11-16 (*"The search of a search
+     * configuration from the down arrow must be a very intuitive and easy tree navigation"*, with a sketch). From the root:
      *
-     * 1. **"Relevant here"** — what the window is about ([relevant], on or off), what it was opened on
-     *    ([contextSettings]) and every configuration that is on now ([activeSettings]); none where nothing is.
-     * 2. **"Recently changed"** — every configuration, the last changed first ([Config.settingsChangedAt]).
-     * 3. The groups of what is about every row ([TreeGroup]); "Sorting" holds every type's order too.
-     * 4. **The types of the window's own page** ([Config.page]), each holding its filters and its order — one hover
+     * 1. **"Recent"** — "Here": what was changed in this window, the last first; then every configuration, the last
+     *    changed first ([Config.settingsChangedAt]). Each says its way to its own category ([ConfigurationLeaf.pathed]).
+     * 2. **"Currently on"** — what is on now ([activeSettings]); none while nothing is.
+     * 3. **"Relevant here"** — what the window is about whatever it holds ([relevant], on or off); none where nothing is.
+     * 4. **"Default for this"** — what is on by default in this window ([contextSettings] of what it was opened on), and
+     *    in each group the part of it in that group (user rule 2026-11-16: *"if somewhere in the app the search bar by
+     *    default matches case, then in down arrow > search > matching > default for this, the user can find match case"*).
+     * 5. The groups of what is about every row ([TreeGroup]) — "Search" first, its "Matching" under it; "Sorting" holds
+     *    every type's order too.
+     * 6. **The types of the window's own page** ([Config.page]), each holding its filters and its order — one hover
      *    from the root, no page node above them. A type with an order and no filter has no node: its order is in "Sorting".
-     * 5. **"Other feature pages"** — each other page, its types under it.
-     * 6. **Every configuration itself, after all the rows that open a pop-up** (user rule 2026-11-14: *"It allowed me
-     *    to directly get the search configuration I want by typing its name in the first pop-up"*) — each saying its
-     *    type, what is kept before how it is laid out. Typed in the root's field, a name leaves its configuration there.
+     * 7. **"Other feature pages"** — each other page, its types under it.
+     * 8. **The flat list**, after all the other rows (user rule 2026-11-14: *"It allowed me to directly get the search
+     *    configuration I want by typing its name in the first pop-up"*): every category below the root, named by its
+     *    path (user rule 2026-11-16: *"including those that just redirect to children search configurations"*), then every
+     *    configuration with its path, what is kept before how it is laid out.
      *
      * [relevant]: user rule 2026-11-14 (*"this search configuration is something relevant for the left-side menu, so it
      * should be accessible intuitively in the down arrow of the left-side menu"*) — the configurations the window is
-     * about whatever it holds, said by the code that draws it and never stored (the left-side menu: "Arrange by
-     * dragging"). They lead "Relevant here", on or off.
+     * about whatever it holds, said by the code that draws it and never stored (the left-side menu: "Arrange by dragging").
      *
      * Every configuration stands in it ([Setting.entries]), and a category is never empty. Nothing but a search field
      * narrows it — never the types the window searches (anomaly 2026-11-11).
      */
     fun configurationTree(config: Config, opened: Config? = null, relevant: List<Setting> = emptyList()): List<ConfigurationNode> {
         fun qualified(settings: List<Setting>) = settings.map { ConfigurationLeaf(it, qualified = true) }
+        fun pathed(settings: List<Setting>) = settings.map { ConfigurationLeaf(it, pathed = true) }
         fun typesOf(page: FeaturePage) =
             Kind.entries.filter { it in page.kinds }.mapNotNull { kind ->
                 // What is kept first, then how it is laid out.
@@ -2121,30 +2150,90 @@ object SearchDomain {
             }
         val own = FEATURE_PAGES.firstOrNull { it.id == config.page }
         val ownKinds = own?.kinds.orEmpty().toSet()
-        val active = (contextSettings(opened, relevant) + activeSettings(config)).distinct().takeIf { it.isNotEmpty() }
-            ?.let { ConfigurationCategory("context", RELEVANT_NODE_LABEL, qualified(it)) }
+        // What this window holds by default: what it was opened on, else what its page's Search button opens.
+        val defaultList = contextSettings(opened ?: pageDefaultConfig(config.page))
+        val defaults = defaultList.toSet()
+        // A group's "Default for this": what of [defaults] stands in it, under [id]; none where nothing does.
+        fun defaultsOf(id: String, settings: List<Setting>) =
+            settings.filter { it in defaults }.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("$id/default", DEFAULT_NODE_LABEL, qualified(it)) }
+        val changedHere = Setting.entries.filter { it in config.settingsChangedAt }.sortedByDescending { config.settingsChangedAt.getValue(it) }
         val recent = ConfigurationCategory(
-            "recent", "Recently changed",
-            qualified(Setting.entries.sortedByDescending { config.settingsChangedAt[it] ?: Long.MIN_VALUE }),
+            RECENT_NODE, "Recent",
+            listOfNotNull(changedHere.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("$RECENT_NODE/here", "Here", pathed(it)) }) +
+                pathed(Setting.entries.sortedByDescending { config.settingsChangedAt[it] ?: Long.MIN_VALUE }),
         )
+        val on = activeSettings(config).takeIf { it.isNotEmpty() }?.let { ConfigurationCategory(ON_NODE, "Currently on", pathed(it)) }
+        val about = relevant.distinct().takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("context", RELEVANT_NODE_LABEL, pathed(it)) }
+        val byDefault = defaultList.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("default", DEFAULT_NODE_LABEL, pathed(it)) }
         val groups = TreeGroup.entries.mapNotNull { group ->
             val settings = Setting.entries.filter { treeGroupOf(it) == group }
                 // The order of every row, then of this page's types, then of the others'.
                 .sortedBy { if (it.section == null) 0 else if (it.section in ownKinds) 1 else 2 }
-            settings.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory(group.id, group.label, qualified(it)) }
+            if (settings.isEmpty()) return@mapNotNull null
+            // Its sub-categories first ("Matching"), then its own configurations, then what of it is on by default.
+            val subs = TreeSubNode.entries.filter { it.group == group }.map { sub ->
+                val held = settings.filter { subNodeOf(it) == sub }
+                ConfigurationCategory(sub.id, sub.label, qualified(held) + listOfNotNull(defaultsOf(sub.id, held)))
+            }
+            ConfigurationCategory(
+                group.id, group.label,
+                subs + qualified(settings.filter { subNodeOf(it) == null }) + listOfNotNull(defaultsOf(group.id, settings)),
+            )
         }
         val others = FEATURE_PAGES.filter { it != own }
             .mapNotNull { page -> typesOf(page).takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("page/" + page.id, page.label, it) } }
             .takeIf { it.isNotEmpty() }
             ?.let { ConfigurationCategory(OTHER_PAGES_NODE, "Other feature pages", it) }
-        return listOfNotNull(active, recent) + groups + own?.let(::typesOf).orEmpty() + listOfNotNull(others) +
-            qualified(Setting.entries.sortedBy { it.sorts })
+        val structure = groups + own?.let(::typesOf).orEmpty() + listOfNotNull(others)
+        // Every category below the root, by its path: what only leads to other configurations is found by its name too.
+        fun nested(nodes: List<ConfigurationNode>, above: List<String>): List<ConfigurationCategory> =
+            nodes.filterIsInstance<ConfigurationCategory>().filterNot { it.label == DEFAULT_NODE_LABEL }.flatMap { node ->
+                val path = above + node.label
+                listOfNotNull(node.takeIf { above.isNotEmpty() }?.copy(id = FLAT_NODE_PREFIX + node.id, label = path.joinToString(TREE_PATH_SEPARATOR))) +
+                    nested(node.children, path)
+            }
+        return listOfNotNull(recent, on, about, byDefault) + structure + nested(structure, emptyList()) +
+            pathed(Setting.entries.sortedBy { it.sorts })
     }
 
+    /** User rule 2026-11-16: a category of a [TreeGroup]'s own, holding part of it ("Search › Matching"). */
+    enum class TreeSubNode(val group: TreeGroup, val id: String, val label: String) {
+        Matching(TreeGroup.Bar, "bar/matching", "Matching"),
+    }
+
+    /** The sub-category of its group [setting] stands in ([TreeSubNode]); null: right under the group. */
+    fun subNodeOf(setting: Setting): TreeSubNode? =
+        when (setting) {
+            Setting.MatchCase, Setting.WholeWord, Setting.Regex -> TreeSubNode.Matching
+            else -> null
+        }
+
     /**
-     * The tree's first node ([configurationTree]): what the window is about (its `relevant`), what it was opened on
-     * ([contextSettings]) and what is on now ([activeSettings]). "On for this list" until 2026-11-14, when the first
-     * of it could be off (*"something like 'relevant config'"*).
+     * The categories above [setting]'s own place in the tree, root first ([ConfigurationLeaf.path]): a type's own
+     * configuration under its type, any other under its group and sub-category; none for Reset, a row of the root alone.
+     */
+    fun homePathOf(setting: Setting): List<String> {
+        setting.section?.let { return listOf(treeNameOf(it)) }
+        val group = treeGroupOf(setting) ?: return emptyList()
+        return listOf(group.label) + listOfNotNull(subNodeOf(setting)?.label)
+    }
+
+    /** The id of the tree's first node ([configurationTree]). */
+    const val RECENT_NODE: String = "recent"
+
+    /** The id of "Currently on" ([configurationTree]). */
+    const val ON_NODE: String = "on"
+
+    /** What a category of the root's flat list wears before its own id ([configurationTree]): it is that category again. */
+    const val FLAT_NODE_PREFIX: String = "all:"
+
+    /** The node of what is on by default here, at the root and in each group ([configurationTree]). */
+    const val DEFAULT_NODE_LABEL: String = "Default for this"
+
+    /**
+     * The tree's "Relevant here" ([configurationTree]): what the window is about (its `relevant`), on or off. "On for
+     * this list" until 2026-11-14; until 2026-11-16 it held what the window was opened on and what is on now too, which
+     * "Default for this" and "Currently on" hold since.
      */
     const val RELEVANT_NODE_LABEL: String = "Relevant here"
 
@@ -2165,7 +2254,8 @@ object SearchDomain {
 
     private val CONFIGURATION_CATEGORIES: List<ConfigurationCategory> by lazy {
         fun walk(nodes: List<ConfigurationNode>): List<ConfigurationCategory> =
-            nodes.filterIsInstance<ConfigurationCategory>().flatMap { listOf(it) + walk(it.children) }
+            // A category of the root's flat list is one found elsewhere: no row of its own.
+            nodes.filterIsInstance<ConfigurationCategory>().filterNot { it.id.startsWith(FLAT_NODE_PREFIX) }.flatMap { listOf(it) + walk(it.children) }
         FEATURE_PAGES.flatMap { walk(configurationTree(Config(page = it.id))) }.distinctBy { it.id }
     }
 

@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The ▾ tree: Recent › Here, Currently on, Default for this, Search › Matching, the flat list's categories — 2026-11-16
+
+User rule 2026-11-16: *"The search of a search configuration from the down arrow must be a very intuitive and easy
+tree navigation"*, with a sketch. The root is now "Recent" (its "Here": what this window changed, the last first;
+then every configuration by its last change), "Currently on", "Relevant here" (what the window is about alone),
+"Default for this" (what it was opened on), the groups — "Search text" became **"Search"**, its "Matching" (match case,
+whole word, regular expression) under it — each ending with its own "Default for this", the page's types, "Other
+feature pages", then the flat list: every category below the root by its path, then every configuration. A
+configuration listed away from its category draws its path small above its name ("Search › Matching"). Still to come:
+"Where to search", the configurations' descriptions in their info bubbles, "Recent › Elsewhere".
+
+No migration (`Config` unchanged). Deploy: client apps.
+
 ### Parent distance is one level; the ▾ click pins; the root row's sub-tree — 2026-11-16
 
 Three anomalies reported in the focused Search window ("List of parents" of *chalazion*):

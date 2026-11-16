@@ -372,7 +372,10 @@ internal fun ConfigurationLeafRow(
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
 ) {
     CompactFields {
-        SettingRow(node.label, TREE_LABEL_WIDTH, hint = SearchDomain.filterHint(listOf(node.setting))) {
+        SettingRow(
+            node.name, TREE_LABEL_WIDTH, hint = SearchDomain.filterHint(listOf(node.setting)),
+            path = node.path.takeIf { it.isNotEmpty() }?.joinToString(SearchDomain.TREE_PATH_SEPARATOR),
+        ) {
             SettingEditor(state, node.setting, config, openedConfig, onChange, windows, onPickOnCalendar, claudeLogs)
         }
     }
@@ -521,7 +524,8 @@ private fun TreeColumn(
                     // A category's pop-up is a ▾ window too: its owner's id and the category.
                     val owner = LocalArrowOwner.current
                     val branchId = owner?.let { it + "/" + node.id }
-                    AddableTreeRow(SearchDomain.CONFIGURATION_NODE_PREFIX + node.id) {
+                    // A category of the root's flat list is that category again, and is added as it.
+                    AddableTreeRow(SearchDomain.CONFIGURATION_NODE_PREFIX + node.id.removePrefix(SearchDomain.FLAT_NODE_PREFIX)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
