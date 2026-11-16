@@ -681,6 +681,9 @@ private fun TreeColumn(
 
 private val TREE_CATEGORY_COLUMN_WIDTH = 190.dp
 
+/** A column of categories named by their path: the longest ("Other feature pages › Claude Code logs › reasoning chain") on one line. */
+private val TREE_PATH_CATEGORY_COLUMN_WIDTH = 380.dp
+
 /** A configuration's label column in the tree: the longest label on one line ("history: Changed element types"). */
 internal val TREE_LABEL_WIDTH = 208.dp
 
@@ -701,8 +704,13 @@ private val TREE_POPUP_PADDING = 8.dp
  * configuration needs, and its pop-up is as wide as its column** ([treePopupWidth]); one of categories alone stays narrow.
  */
 private fun treeColumnWidth(nodes: List<SearchDomain.ConfigurationNode>) =
-    (if (nodes.any { it is SearchDomain.ConfigurationLeaf }) TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 else TREE_CATEGORY_COLUMN_WIDTH) +
-        SCROLLBAR_ROOM
+    when {
+        nodes.any { it is SearchDomain.ConfigurationLeaf } -> TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2
+        // Anomaly 2026-11-16 (seen headlessly): categories named by their path ("Recent › Elsewhere › Looked into the
+        // children") wrapped in the narrow column, "Search › Where to / search › Children".
+        nodes.any { SearchDomain.TREE_PATH_SEPARATOR in it.label } -> TREE_PATH_CATEGORY_COLUMN_WIDTH
+        else -> TREE_CATEGORY_COLUMN_WIDTH
+    } + SCROLLBAR_ROOM
 
 /** The width of the pop-up holding a column of [nodes]: the column's, and what stands around it. */
 private fun treePopupWidth(nodes: List<SearchDomain.ConfigurationNode>) = treeColumnWidth(nodes) + TREE_POPUP_PADDING * 2
