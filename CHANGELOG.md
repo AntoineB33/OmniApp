@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A row selected in the actions section is the Search window's one selection — 2026-11-16
+
+User: *"there are two rows selected, one in the search result list, one in the action section"*. The section is a
+Search window of its own, and a press in it keeps the result rows selected (they are what its actions act on, user
+rule 2026-11-15) — so both drew a selection. The section now names itself on the window's selection surface as a
+sub-tree does (`LocalSectionTakesSelection`); the result rows stay selected but draw none until one is selected again.
+No migration. Deploy: client apps.
+
 ### A click on a category of the ▾ tree pins it instead of closing the tree — 2026-11-16
 
 User: *"clicked on Parents and Children, and instead of pinning the children window of 'Parents and Children', it removed

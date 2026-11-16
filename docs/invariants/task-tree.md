@@ -1372,7 +1372,11 @@ suggestions before it was ever entered.
   and on the focus, since a sub-tree that already holds the keyboard gains none); only that sub-tree is given the
   selection to draw (`showSelection`), the rows of its list draw none meanwhile, and a row selected — a press, the
   keyboard, a new question — takes it back. Sticky: a press in another window changes nothing. Drawing only: the
-  stored selections and their history units are untouched.
+  stored selections and their history units are untouched. **The actions section is a surface too** (anomaly
+  2026-11-16, *"two rows selected, one in the search result list, one in the action section"*;
+  `LocalSectionTakesSelection`, `OneSelectionInSearchWindowTest`): a row the user selects in it names `"section/"`,
+  and its "Children" sub-trees `"actions/<task>"`; the result rows then draw no selection, main or Ctrl/Shift — but
+  stay selected, so what they list in the added elements and the actions stays (user rule 2026-11-15).
 - **A task element of the ADDED list expands as a result row does** (user rule 2026-10-07): its expansion arrow
   (`TaskSheetExpandArrow`) and, expanded, the same `SearchSubtree` — the tree's own view over the task's sub-list.
   Which rows are expanded is kept with the window's sections (`SearchSplits.expandedResults`, `expandedAdded`, the

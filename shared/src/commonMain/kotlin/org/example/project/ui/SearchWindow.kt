@@ -724,6 +724,8 @@ fun SearchWindow(
     // Whether the selected row is one the user selected (a click, the keys), not the row the window starts a new question
     // at ([select]'s `record` false): only those join the added elements (user rule 2026-11-15, [selectionShowsAdded]).
     var userSelected by remember { mutableStateOf(false) }
+    // The actions section tells the window it is drawn in that the user selected one of its rows ([LocalSectionTakesSelection]).
+    val takeEnclosingSelection = if (actionRows != null) LocalSectionTakesSelection.current else null
     /**
      * Select the row at [index] — alone: the keys and every other way of selecting one row drop a multi-selection
      * ([clickRow] puts its own back). [record] false is the window's own reset, not a position the user took.
@@ -740,6 +742,7 @@ fun SearchWindow(
         selectionAnchor = key
         ownSelection = key
         userSelected = record
+        if (record && key != null) takeEnclosingSelection?.invoke()
         if (picker != null || embedded) {
             pickerSelectedKey = key
             return
@@ -1337,13 +1340,18 @@ fun SearchWindow(
                     )
                 } else {
                     // The list holds the keyboard once the user leaves the bar: the tree's keys, for its rows.
+                    // ONE surface of the window shows a selection: a sub-tree of the list, the actions section's rows or
+                    // its "Children" sub-trees holding it, the rows draw none (their selection is kept, undrawn).
+                    val otherSurfaceShows = selectionSurface?.let {
+                        it.startsWith(RESULT_SURFACE) || it.startsWith(SECTION_SURFACE) || it.startsWith(ACTIONS_SURFACE)
+                    } == true
                     val rowSelected = { index: Int ->
                         index == selected && !fieldFocused && subtreeFocusOwner == null && rowsSelectable && !deselected &&
-                            !unselectedUntilChosen && selectionSurface?.startsWith(RESULT_SURFACE) != true
+                            !unselectedUntilChosen && !otherSurfaceShows
                     }
                     // A row of the multi-selection other than the selected one: the tree's lighter selection grey.
                     val rowInSelection = { index: Int ->
-                        index != selected && resultKeys.getOrNull(index)?.let { it in selectedShown } == true
+                        index != selected && !otherSurfaceShows && resultKeys.getOrNull(index)?.let { it in selectedShown } == true
                     }
                     // The pinned parent row ([pinnedItemIndex]): which item, and the sub-tree that pins a deeper one.
                     val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
@@ -1789,6 +1797,8 @@ fun SearchWindow(
             if (!actionsRemoved) androidx.compose.runtime.CompositionLocalProvider(
                 LocalTaskChildren provides taskChildren,
                 LocalNotAdded provides notAdded,
+                // Its row selected, this window's rows show none (anomaly 2026-11-16).
+                LocalSectionTakesSelection provides { selectionSurface = SECTION_SURFACE },
                 // User rule 2026-11-12: the calendar element's lock on the notifications among these rows.
                 LocalSearchResults provides results,
             ) {
@@ -2435,6 +2445,15 @@ private const val RESULT_SURFACE: String = "result/"
 private const val ADDED_SURFACE: String = "added/"
 /** The "Children" action's sub-trees, by task ([SearchDomain.AddedAction.TaskChildren]). */
 private const val ACTIONS_SURFACE: String = "actions/"
+/** The actions section's own rows ([LocalSectionTakesSelection]). */
+private const val SECTION_SURFACE: String = "section/"
+
+/**
+ * Anomaly 2026-11-16 (*"two rows selected, one in the search result list, one in the action section"*): what the actions
+ * section — a Search window of its own — calls as the user selects one of its rows, so the window it is drawn in shows
+ * that selection alone. The window's selected rows stay what the actions act on (user rule 2026-11-15), undrawn.
+ */
+internal val LocalSectionTakesSelection = androidx.compose.runtime.compositionLocalOf<(() -> Unit)?> { null }
 
 /** The added elements' row menu: every other element off the list (never off the account). */
 private const val REMOVE_OTHERS_LABEL: String = "remove the others"
