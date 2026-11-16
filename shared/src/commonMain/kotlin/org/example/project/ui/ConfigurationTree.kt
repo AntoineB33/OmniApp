@@ -105,9 +105,8 @@ internal fun ConfigurationTreeArrow(
     }
     // The tracker, made below from [close]: what gives the keyboard back to the app's window.
     val tracker = remember { arrayOfNulls<MenuHoverTracker>(1) }
-    fun close(why: String = "its own window") {
+    fun close() {
         if (!open) return
-        popupTrace("▾ $arrowId closed by $why (pinned=${tracker[0]?.pinned})")
         open = false
         if (outer == null) keeper.stopWalk()
         // The keyboard goes back to the app's window (a pop-up opened from a pop-up gives it back to that one, which
@@ -117,7 +116,7 @@ internal fun ConfigurationTreeArrow(
     // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
     // An arrow inside a pop-up of the tree is one of that pop-up's descendants, it and its own pop-up (anomaly
     // 2026-11-11: its own tracker alone, the pointer on its pop-up was outside the tree, and the whole tree vanished).
-    val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { close("its tracker (pointer or keyboard left)") }
+    val hover = rememberMenuHoverTracker(parent = LocalMenuHover.current) { close() }
     tracker[0] = hover
     LaunchedEffect(open) { if (!open) hover.unpin() }
     // Anomaly 2026-11-15 (*"I pinned the window …, I restart the app, and all the windows disappeared"*): left pinned, it
@@ -251,7 +250,7 @@ internal fun ConfigurationTreeArrow(
         ) {
         // A Search window: shown bare by its menu window, it wears a window's surface ([LocalBareMenu], [LocalPopupChrome]).
         androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
-        AppDropdownMenu(expanded = open, onDismissRequest = { close("its menu window's dismissal") }, properties = PopupProperties(focusable = true)) {
+        AppDropdownMenu(expanded = open, onDismissRequest = { close() }, properties = PopupProperties(focusable = true)) {
         val control = LocalPopupWindowControl.current
         TreeSearchWindow(
             own, { own = it }, parts, { parts = it }, onClose = { close() },
@@ -454,7 +453,6 @@ private fun TreeColumn(
                     // a hover pop-up of its own: it goes once the pointer has left its row, it and its descendants
                     // ([MenuHoverTracker], the grace being the crossing from the row to it), a branch of the tree's.
                     val branch = rememberMenuHoverTracker(parent = LocalMenuHover.current) {
-                        popupTrace("category ${node.id}: closed, the pointer left it")
                         if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
                     }
                     // User rule 2026-11-11: the keyboard coming to it is a position of the app. Kept by the outermost
@@ -497,7 +495,6 @@ private fun TreeColumn(
                     }
                     val reveal = {
                         if (!revealing) {
-                            popupTrace("category ${node.id}: opened by a hover")
                             onPathChange(path.take(depth) + node.id)
                         }
                     }
@@ -521,7 +518,6 @@ private fun TreeColumn(
                                 // pop-up for this row's, [MenuHoverTracker.windowLeft]) after this was composed, so the
                                 // click opens it whatever [revealing] last said.
                                 .clickable {
-                                    popupTrace("category ${node.id}: clicked (revealing=$revealing)")
                                     onPathChange(path.take(depth) + node.id)
                                     branch.pin()
                                 }
@@ -543,7 +539,6 @@ private fun TreeColumn(
                                 AppDropdownMenu(
                                     expanded = true,
                                     onDismissRequest = {
-                                        popupTrace("category ${node.id}: closed, its window dismissed")
                                         if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth))
                                     },
                                     // The whole pop-up is the branch, its search field and padding included, wherever the
@@ -674,7 +669,6 @@ private fun TreeSearchWindow(
     val fit = { delta: Int ->
         val next = (heightPx + delta).coerceIn(leastPx, mostPx)
         if (next != heightPx && kotlin.math.abs(next - beforeLastFit) > 0.5f) {
-            popupTrace("tree pop-up fitted ${heightPx.toInt()} -> ${next.toInt()}")
             beforeLastFit = heightPx
             heightPx = next
         }

@@ -77,12 +77,3 @@ internal fun frameOffsetAt(topLeft: Offset, size: Size, area: Rect): Offset =
         topLeft.x - area.left - (area.width - size.width) / 2f,
         topLeft.y - area.top - (area.height - size.height) / 2f,
     )
-
-/**
- * TEMPORARY (anomaly 2026-11-16, *"I went to the down arrow next to 'list of parents', clicked on Parents and Children, and
- * instead of pinning the children window … it removed the window that appeared from the down arrow"*): the pop-ups'
- * events in `diagnostics.log` — a category opened, clicked or closed and why, a ▾ tree closed, a menu window shown,
- * moved, dismissed and by what. Desktop pop-ups are OS windows whose focus order no headless test reproduces
- * (`popup-walk-trace-diagnosis`). Remove once the anomaly is understood.
- */
-internal fun popupTrace(message: String) = org.example.project.scheduler.platform.Diagnostics.log("[popup] $message")

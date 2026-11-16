@@ -17,8 +17,8 @@ User: *"clicked on Parents and Children, and instead of pinning the children win
 the window that appeared from the down arrow"*. The `[popup]` trace showed it: the press made the tree's own window the
 active one, and the open category's menu, told of that change with no word of where the keyboard went
 (`MenuHoverTracker.windowLeft()` alone), closed every pop-up up to the root. The active-window path now says where, as
-the keyboard's loss already did (`MenuSession.gone`): only what stands below the window pressed in closes. The `[popup]`
-trace stays until the user confirms. No migration. Deploy: client apps.
+the keyboard's loss already did (`MenuSession.gone`): only what stands below the window pressed in closes. Confirmed
+by the user on the release; the `[popup]` trace is removed again. No migration. Deploy: client apps.
 
 ### Pop-ups stay in the app and off their caller's list; rows fit what is shown; hover grey — 2026-11-16
 
@@ -32,8 +32,8 @@ pop-up from a row stands off that list (`LocalCallerList`, `menuSpot`'s `list`; 
 Rows under the pointer, not selected, wear a very light grey; the selection greys are a little darker. Pop-ups a little
 narrower (field window 560 → 480 dp, ▾ tree leaves 520 → 490, its right sections 440 → 380, categories 200 → 190,
 drop-downs 320 → 290). **TEMPORARY**: the `[popup]` trace is back (`popupTrace`) for *"clicked on Parents and Children,
-and instead of pinning the children window … it removed the window that appeared from the down arrow"*, to remove once
-understood. No migration. Deploy: client apps.
+and instead of pinning the children window … it removed the window that appeared from the down arrow"* (found and
+fixed the same day, below; the trace removed again). No migration. Deploy: client apps.
 
 ### Every menu stays open after its entry is chosen — 2026-11-15
 

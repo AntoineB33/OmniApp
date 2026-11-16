@@ -357,7 +357,6 @@ private class MenuSession(
     private val ownerListener = object : WindowAdapter() {
         override fun windowDeactivated(event: WindowEvent) {
             if (!ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
-                popupTrace("menu $site: dismissed, its owner deactivated for ${event.oppositeWindow?.javaClass?.simpleName}")
                 dismiss.value()
             }
         }
@@ -369,7 +368,6 @@ private class MenuSession(
         }
         override fun windowLostFocus(event: WindowEvent) {
             if (focusable && !ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
-                popupTrace("menu $site: dismissed, the keyboard went to ${event.oppositeWindow?.javaClass?.simpleName}")
                 dismiss.value()
             }
         }
@@ -399,7 +397,6 @@ private class MenuSession(
             if (!ours(active)) {
                 // Back in the app by a press on another of its windows — which no loss of the keyboard told the pop-up,
                 // having lost it to the other application: it closes as a press elsewhere in the app closes it.
-                popupTrace("menu $site: dismissed, ${active?.javaClass?.simpleName} became the active window")
                 // Anomaly 2026-11-16 (*"clicked on Parents and Children, and instead of pinning the children window … it
                 // removed the window that appeared from the down arrow"*, the `[popup]` trace): the press on a row of the ▾
                 // tree made the tree's own window the active one. Told nothing of where the keyboard went, the pinned
@@ -457,7 +454,6 @@ private class MenuSession(
 
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     private fun open() {
-        popupTrace("menu $site: opened (focusable=$focusable)")
         val window = MenuWindows.take(owner)
         dialog = window
         openedAt = System.nanoTime()
@@ -498,7 +494,6 @@ private class MenuSession(
                         // Gone to another application, pinned: it stays (user rule 2026-11-15, [pinnedAway]).
                         // Gone to a pop-up this one hangs from: what is below that one closes, it stays.
                         if (!inside && !(event.oppositeWindow == null && tracker.pinned) && !heldByHand) {
-                            popupTrace("menu $site: its tracker left for ${event.oppositeWindow?.javaClass?.simpleName} (pinned=${tracker.pinned})")
                             tracker.windowLeft(gone(event.oppositeWindow))
                         }
                     }
@@ -576,7 +571,6 @@ private class MenuSession(
         if (heldByHand && window.isShowing) return
         val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow())
         if (window.location != at) {
-            popupTrace("menu $site: moved ${window.location.x},${window.location.y} -> ${at.x},${at.y} (size ${size?.width}x${size?.height})")
             window.location = at
         }
     }
@@ -584,7 +578,6 @@ private class MenuSession(
     private fun location(): Point = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow())
 
     fun close() {
-        popupTrace("menu $site: closed")
         closed = true
         val window = dialog ?: return
         dialog = null
