@@ -148,7 +148,7 @@ class ParentDistanceTest {
         assertEquals(SettingRole.Display, SearchDomain.roleOf(Setting.DropButtons))
         assertEquals(SettingRole.Children, SearchDomain.roleOf(Setting.ExpandResults))
         // A row of the search over search configurations says its category.
-        val row = SearchDomain.itemResults(SchedulerState.empty(), Kind.SearchConfiguration, "Parent distance").single()
+        val row = SearchDomain.itemResults(SchedulerState.empty(), Kind.SearchConfiguration, "Parent distance").single { it.name == "Parent distance" }
         assertEquals("general · filter", row.detail)
     }
 

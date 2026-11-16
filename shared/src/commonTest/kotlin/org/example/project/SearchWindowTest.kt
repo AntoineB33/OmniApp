@@ -825,6 +825,8 @@ class SearchWindowTest {
                 SearchDomain.Setting.MatchCase,
                 SearchDomain.Setting.WholeWord,
                 SearchDomain.Setting.Regex,
+                // User rule 2026-11-16: what of a row the bars read ("Where to search").
+            ) + SearchDomain.WHERE_SETTINGS + listOf(
                 SearchDomain.Setting.SearchBars,
                 SearchDomain.Setting.Types,
                 // User rule 2026-11-04: the page's types alone, beside the type selector.
