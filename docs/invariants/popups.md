@@ -345,6 +345,9 @@ means.
     at the row's height; below or above the list, never below or above the row inside it. A shown pop-up that would
     hide the list is placed again (`keepsSpot`). The same rule places a field's window drawn in the app
     (`fieldPopupBounds`: "List of parents", "Add a parent"). A menu's own content is in no list of the caller's.
+    **The ▾ configurations tree is the exception** (user rule 2026-11-16, *"Yes, next to the ▾"*): it hangs next to its
+    arrow even over the list (`ConfigurationTreeArrow` provides no list). Opened by a hover, it must be reached by the
+    pointer crossing straight onto it; off the list, it stood across the whole list from the arrow and closed first.
   - **In the Search window a ROW's right-click menu opens AT THE POINTER** (user rule 2026-10-13: *"for the
     elements in the result list of the Search window, the menu still appears at the left of the element instead of
     the mouse position"*; `AppDropdownMenu`'s `atPointer`, `LocalRowMenusAtPointer`, provided by `SearchWindow`).

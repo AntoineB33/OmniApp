@@ -237,6 +237,10 @@ internal fun ConfigurationTreeArrow(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
         androidx.compose.runtime.CompositionLocalProvider(
+            // User rule 2026-11-16 (*"Yes, next to the ▾"*): the tree hangs next to its arrow, even over the list the arrow
+            // stands in — opened by a hover, it must be reachable by the pointer crossing straight onto it. Placed off
+            // the list ([LocalCallerList]) it stood across the whole list from the arrow, and closed before it was reached.
+            LocalCallerList provides null,
             LocalMenuHover provides hover,
             LocalTreeKeeper provides keeper,
             LocalTreePrefix provides prefix,

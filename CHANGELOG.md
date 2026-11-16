@@ -19,7 +19,7 @@ down arrow"* — a narrow section lays its rows out at its least width (440 dp) 
 the alarm/timer label rows, the configuration windows' bars) now ends at the shown edge (`fitsShownWidth`). *"No window
 must appear outside the app"*: desktop menus and pop-ups are placed and sized inside the app's window (`appArea`),
 no longer the screen. *"When a row makes a window appear, it must never hide the list of rows the caller is in"*: a
-pop-up from a row stands off that list (`LocalCallerList`, `menuSpot`'s `list`; a field's window by `fieldPopupBounds`).
+pop-up from a row stands off that list (`LocalCallerList`, `menuSpot`'s `list`; a field's window by `fieldPopupBounds`). Not the ▾ configurations tree, which a hover opens: it stays next to its ▾ (*"Yes, next to the ▾"*).
 Rows under the pointer, not selected, wear a very light grey; the selection greys are a little darker. Pop-ups a little
 narrower (field window 560 → 480 dp, ▾ tree leaves 520 → 490, its right sections 440 → 380, categories 200 → 190,
 drop-downs 320 → 290). **TEMPORARY**: the `[popup]` trace is back (`popupTrace`) for *"clicked on Parents and Children,
