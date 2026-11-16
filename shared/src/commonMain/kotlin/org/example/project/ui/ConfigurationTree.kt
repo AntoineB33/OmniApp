@@ -167,6 +167,23 @@ internal fun ConfigurationTreeArrow(
             keeper.wanted = null
         }
     }
+    // User rule 2026-11-16, "Recent › Elsewhere": what the other ▾ trees did, read as the tree opens.
+    val owner = LocalArrowOwner.current
+    val registry = LocalArrowSearches.current
+    val elsewhere = remember(open) {
+        if (!open) SearchDomain.Elsewhere()
+        else SearchDomain.Elsewhere(
+            changed = SearchDomain.Elsewhere.changedIn(registry?.searchWindows?.invoke().orEmpty().filter { it.id != owner }.map { it.config }),
+            looked = memory?.lookedIntoElsewhere(arrowId).orEmpty(),
+        )
+    }
+    // ...and what this one looks into: a category it stays on ([LOOKED_INTO_DWELL_MS]), not one the pointer crosses.
+    LaunchedEffect(open, path) {
+        val node = path.lastOrNull()?.takeIf { open && SearchDomain.isLookedIntoWorthy(it) } ?: return@LaunchedEffect
+        val id = arrowId ?: return@LaunchedEffect
+        kotlinx.coroutines.delay(LOOKED_INTO_DWELL_MS)
+        memory?.lookedInto(id, node.removePrefix(SearchDomain.FLAT_NODE_PREFIX), nowMillis())
+    }
     // Opened by the hand: a fresh pop-up, a hover pop-up until a press pins it.
     fun openFresh() {
         keeper.stopWalk()
@@ -279,7 +296,7 @@ internal fun ConfigurationTreeArrow(
         ) { onFit ->
             ConfigurationTreeColumns(
                 state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth,
-                relevant = relevant, onFit = onFit, queryFilters = own.filters,
+                relevant = relevant, onFit = onFit, queryFilters = own.filters, elsewhere = elsewhere,
             ) { which ->
                 close()
                 onPickOnCalendar(which)
@@ -290,6 +307,12 @@ internal fun ConfigurationTreeArrow(
         }
     }
 }
+
+/**
+ * How long the tree stays on a category before it counts as looked into ("Recent › Elsewhere › Looked into the
+ * children"): a hover crossing it on the way elsewhere is no look.
+ */
+private const val LOOKED_INTO_DWELL_MS = 800L
 
 /** How deep the arrows go: each opens the configuration of the pop-up it stands in, which has its own arrow. */
 internal const val MAX_TREE_DEPTH = 3
@@ -319,6 +342,8 @@ private fun ConfigurationTreeColumns(
     onFit: ((Int) -> Unit)? = null,
     /** How the pop-up's own search reads [query] ([filterConfigurationNodes]). */
     queryFilters: SearchDomain.Filters = SearchDomain.Filters(),
+    /** What the other ▾ trees did: "Recent › Elsewhere". */
+    elsewhere: SearchDomain.Elsewhere = SearchDomain.Elsewhere(),
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
 ) {
     // The pop-ups are windows of their own: what they write reaches the Search window and comes back a frame or more
@@ -332,9 +357,9 @@ private fun ConfigurationTreeColumns(
         if (echo >= 0) repeat(echo + 1) { written.removeFirst() } else { written.clear(); shown = config }
     }
     // The whole configuration: the tree's first node is what is on now ([SearchDomain.activeSettings]).
-    val tree = remember(shown, query, queryFilters, openedConfig, relevant) {
+    val tree = remember(shown, query, queryFilters, openedConfig, relevant, elsewhere) {
         // User rule 2026-11-13: what the window was opened on comes first ([SearchDomain.contextSettings]).
-        SearchDomain.configurationTree(shown, openedConfig, relevant).filterConfigurationNodes(query, queryFilters)
+        SearchDomain.configurationTree(shown, openedConfig, relevant, elsewhere).filterConfigurationNodes(query, queryFilters)
     }
     val leaf: @Composable (SearchDomain.ConfigurationLeaf) -> Unit = { node ->
         ConfigurationLeafRow(
@@ -881,6 +906,12 @@ class ArrowSearches(
 ) {
     val open = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
     val embedded = androidx.compose.runtime.mutableStateMapOf<String, SearchDomain.SearchWindowState>()
+
+    /**
+     * Every Search window open or saved, by id (`App`'s, the "State in each window" action's list): what the other ▾
+     * trees changed, for "Recent › Elsewhere" ([SearchDomain.Elsewhere]). None until `App` says.
+     */
+    var searchWindows: () -> List<SearchDomain.SearchWindowState> = { emptyList() }
 
     /**
      * The configuration of the window [relative] drawn inside the window [root] — a ▾ window, a field's list, a

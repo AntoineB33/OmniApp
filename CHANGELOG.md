@@ -30,7 +30,13 @@ its tree the same way.
 shown in the info bubble of its name in the tree (a category's too) and in the Configuration Search window, and what
 "Where to search › Description" reads.
 
-No migration: `Config`'s JSON gains four optional fields (absent = the names alone, `WhereToSearchTest`). Deploy:
+**"Recent › Elsewhere"** (*"If I did this recently from another down arrow, it will appear in arrow > recent >
+elsewhere"*): what the other Search windows changed (their `settingsChangedAt`, read through `ArrowSearches.searchWindows`)
+in "Changed state recently", the categories the other ▾ trees stayed on 0.8 s or more in "Looked into the children"
+(`PopupMemory.lookedInto`, local-only, 30 per ▾ window, 20 windows), then both, the last first.
+
+No migration: `Config`'s JSON gains four optional fields; the `OpenPopups` row's JSON gains `lookedInto` (absent =
+none, `RecentElsewhereTest`) (absent = the names alone, `WhereToSearchTest`). Deploy:
 client apps.
 
 ### Parent distance is one level; the ▾ click pins; the root row's sub-tree — 2026-11-16

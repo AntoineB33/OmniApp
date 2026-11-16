@@ -2235,7 +2235,13 @@ object SearchDomain {
      * Every configuration stands in it ([Setting.entries]), and a category is never empty. Nothing but a search field
      * narrows it — never the types the window searches (anomaly 2026-11-11).
      */
-    fun configurationTree(config: Config, opened: Config? = null, relevant: List<Setting> = emptyList()): List<ConfigurationNode> {
+    fun configurationTree(
+        config: Config,
+        opened: Config? = null,
+        relevant: List<Setting> = emptyList(),
+        /** What the other ▾ trees changed and looked into ([Elsewhere]): "Recent › Elsewhere". */
+        elsewhere: Elsewhere = Elsewhere(),
+    ): List<ConfigurationNode> {
         fun qualified(settings: List<Setting>) = settings.map { ConfigurationLeaf(it, qualified = true) }
         fun pathed(settings: List<Setting>) = settings.map { ConfigurationLeaf(it, pathed = true) }
         fun typesOf(page: FeaturePage) =
@@ -2254,11 +2260,6 @@ object SearchDomain {
         fun defaultsOf(id: String, settings: List<Setting>) =
             settings.filter { it in defaults }.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("$id/default", DEFAULT_NODE_LABEL, qualified(it)) }
         val changedHere = Setting.entries.filter { it in config.settingsChangedAt }.sortedByDescending { config.settingsChangedAt.getValue(it) }
-        val recent = ConfigurationCategory(
-            RECENT_NODE, "Recent",
-            listOfNotNull(changedHere.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("$RECENT_NODE/here", "Here", pathed(it)) }) +
-                pathed(Setting.entries.sortedByDescending { config.settingsChangedAt[it] ?: Long.MIN_VALUE }),
-        )
         val on = activeSettings(config).takeIf { it.isNotEmpty() }?.let { ConfigurationCategory(ON_NODE, "Currently on", pathed(it)) }
         val about = relevant.distinct().takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("context", RELEVANT_NODE_LABEL, pathed(it)) }
         val byDefault = defaultList.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("default", DEFAULT_NODE_LABEL, pathed(it)) }
@@ -2289,15 +2290,66 @@ object SearchDomain {
             .takeIf { it.isNotEmpty() }
             ?.let { ConfigurationCategory(OTHER_PAGES_NODE, "Other feature pages", it) }
         val structure = groups + own?.let(::typesOf).orEmpty() + listOfNotNull(others)
-        // Every category below the root, by its path: what only leads to other configurations is found by its name too.
-        fun nested(nodes: List<ConfigurationNode>, above: List<String>): List<ConfigurationCategory> =
+        // Every category, by its path, as it stands away from its place: what only leads to other configurations is
+        // found by its name too, in the root's flat list (those below the root) and in "Recent › Elsewhere".
+        fun nested(nodes: List<ConfigurationNode>, above: List<String>): List<Pair<Boolean, ConfigurationCategory>> =
             nodes.filterIsInstance<ConfigurationCategory>().filterNot { it.label == DEFAULT_NODE_LABEL }.flatMap { node ->
                 val path = above + node.label
-                listOfNotNull(node.takeIf { above.isNotEmpty() }?.copy(id = FLAT_NODE_PREFIX + node.id, label = path.joinToString(TREE_PATH_SEPARATOR))) +
+                listOf((above.isEmpty()) to node.copy(id = FLAT_NODE_PREFIX + node.id, label = path.joinToString(TREE_PATH_SEPARATOR))) +
                     nested(node.children, path)
             }
-        return listOfNotNull(recent, on, about, byDefault) + structure + nested(structure, emptyList()) +
+        val away = nested(structure, emptyList())
+        val awayById = away.associate { (_, node) -> node.id.removePrefix(FLAT_NODE_PREFIX) to node }
+        // User rule 2026-11-16: "Recent › Here" (this window), "› Elsewhere" (the other ▾ trees: what they changed, what
+        // they looked into, then both, the last first), then every configuration, the last changed anywhere first.
+        val changedElsewhere = Setting.entries.filter { it in elsewhere.changed }.sortedByDescending { elsewhere.changed.getValue(it) }
+        val looked = elsewhere.looked.filterKeys { it in awayById }.entries.sortedByDescending { it.value }
+        val elsewhereNode = if (changedElsewhere.isEmpty() && looked.isEmpty()) null else ConfigurationCategory(
+            "$RECENT_NODE/elsewhere", "Elsewhere",
+            listOfNotNull(
+                changedElsewhere.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("$RECENT_NODE/elsewhere/changed", "Changed state recently", pathed(it)) },
+                looked.takeIf { it.isNotEmpty() }?.let { l -> ConfigurationCategory("$RECENT_NODE/elsewhere/looked", "Looked into the children", l.map { awayById.getValue(it.key) }) },
+            ) + (changedElsewhere.map { it to elsewhere.changed.getValue(it) } + looked.map { it.key to it.value })
+                .sortedByDescending { it.second }
+                .map { (what, _) -> if (what is Setting) ConfigurationLeaf(what, pathed = true) else awayById.getValue(what as String) },
+        )
+        fun lastChanged(setting: Setting) = maxOf(config.settingsChangedAt[setting] ?: Long.MIN_VALUE, elsewhere.changed[setting] ?: Long.MIN_VALUE)
+        val recent = ConfigurationCategory(
+            RECENT_NODE, "Recent",
+            listOfNotNull(
+                changedHere.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("$RECENT_NODE/here", "Here", pathed(it)) },
+                elsewhereNode,
+            ) + pathed(Setting.entries.sortedByDescending(::lastChanged)),
+        )
+        return listOfNotNull(recent, on, about, byDefault) + structure + away.filterNot { it.first }.map { it.second } +
             pathed(Setting.entries.sortedBy { it.sorts })
+    }
+
+    /**
+     * User rule 2026-11-16 (*"If I did this recently from another down arrow, it will appear in arrow > recent >
+     * elsewhere"*): **what the other ▾ trees did** — the configurations their windows changed and when ([changed], the
+     * last time any did), and the categories they looked into ([looked], by node id). Local to the device; never stored
+     * in a window's configuration.
+     */
+    data class Elsewhere(val changed: Map<Setting, Long> = emptyMap(), val looked: Map<String, Long> = emptyMap()) {
+        companion object {
+            /** What the windows [others] changed: each configuration at the last time one of them did. */
+            fun changedIn(others: List<Config>): Map<Setting, Long> {
+                val out = HashMap<Setting, Long>()
+                for (config in others) for ((setting, at) in config.settingsChangedAt) if (at > (out[setting] ?: Long.MIN_VALUE)) out[setting] = at
+                return out
+            }
+        }
+    }
+
+    /**
+     * Whether looking into the node [id] is worth remembering for "Looked into the children" ([Elsewhere.looked]): a
+     * category of the tree's structure, not one that only lists configurations found elsewhere ("Recent", "Currently
+     * on", "Relevant here", a "Default for this").
+     */
+    fun isLookedIntoWorthy(id: String): Boolean {
+        val own = id.removePrefix(FLAT_NODE_PREFIX)
+        return !(own == RECENT_NODE || own.startsWith("$RECENT_NODE/") || own == ON_NODE || own == "context" || own == "default" || own.endsWith("/default"))
     }
 
     /** User rule 2026-11-16: a category of a [TreeGroup]'s own, holding part of it ("Search › Matching"). */

@@ -16,7 +16,15 @@ import kotlinx.serialization.json.Json
  */
 class PopupMemory(read: () -> String?, private val write: (String) -> Unit) {
     @Serializable
-    private data class Stored(val fields: List<String> = emptyList(), val trees: Map<String, List<String>> = emptyMap())
+    private data class Stored(
+        val fields: List<String> = emptyList(),
+        val trees: Map<String, List<String>> = emptyMap(),
+        /**
+         * New 2026-11-16 ("Recent › Elsewhere › Looked into the children"): by ▾ window id, the categories of its tree
+         * looked into — opened and stayed on — and when, in epoch ms. Absent = none.
+         */
+        val lookedInto: Map<String, Map<String, Long>> = emptyMap(),
+    )
 
     private var stored: Stored = read()?.let { text -> runCatching { json.decodeFromString(Stored.serializer(), text) }.getOrNull() } ?: Stored()
 
@@ -27,8 +35,31 @@ class PopupMemory(read: () -> String?, private val write: (String) -> Unit) {
     fun setField(id: String, open: Boolean) {
         val next =
             if (open) stored.copy(fields = (stored.fields + id).distinct())
-            else Stored(stored.fields.filterNot { it.startsWith(id) }, stored.trees.filterKeys { !it.startsWith(id) })
+            else stored.copy(fields = stored.fields.filterNot { it.startsWith(id) }, trees = stored.trees.filterKeys { !it.startsWith(id) })
         save(next)
+    }
+
+    /**
+     * User rule 2026-11-16 (*"looked into the children"*): the ▾ window [arrow] looked into its tree's category [node]
+     * at [atMillis]. Kept bounded: the [LOOKED_INTO_KEPT] last of each ▾ window, the [LOOKED_INTO_WINDOWS] ▾ windows
+     * that looked last.
+     */
+    fun lookedInto(arrow: String, node: String, atMillis: Long) {
+        val own = ((stored.lookedInto[arrow] ?: emptyMap()) + (node to atMillis))
+            .entries.sortedByDescending { it.value }.take(LOOKED_INTO_KEPT).associate { it.key to it.value }
+        val all = (stored.lookedInto + (arrow to own))
+            .entries.sortedByDescending { e -> e.value.values.maxOrNull() ?: 0L }.take(LOOKED_INTO_WINDOWS).associate { it.key to it.value }
+        save(stored.copy(lookedInto = all))
+    }
+
+    /** The categories every ▾ window but [arrow] looked into, each at the last time one did ([lookedInto]). */
+    fun lookedIntoElsewhere(arrow: String?): Map<String, Long> {
+        val out = HashMap<String, Long>()
+        for ((id, nodes) in stored.lookedInto) {
+            if (id == arrow) continue
+            for ((node, at) in nodes) if (at > (out[node] ?: Long.MIN_VALUE)) out[node] = at
+        }
+        return out
     }
 
     /** The categories the pinned tree [id] showed, or null where it was not left pinned. */
@@ -38,7 +69,7 @@ class PopupMemory(read: () -> String?, private val write: (String) -> Unit) {
     fun setTree(id: String, path: List<String>?) {
         val next =
             if (path != null) stored.copy(trees = stored.trees + (id to path))
-            else Stored(stored.fields.filterNot { it.startsWith(id) }, stored.trees.filterKeys { !it.startsWith(id) })
+            else stored.copy(fields = stored.fields.filterNot { it.startsWith(id) }, trees = stored.trees.filterKeys { !it.startsWith(id) })
         save(next)
     }
 
@@ -49,6 +80,10 @@ class PopupMemory(read: () -> String?, private val write: (String) -> Unit) {
     }
 
     companion object {
+        /** How many categories looked into each ▾ window keeps, and how many ▾ windows are kept ([lookedInto]). */
+        const val LOOKED_INTO_KEPT: Int = 30
+        const val LOOKED_INTO_WINDOWS: Int = 20
+
         /** The placement row it is kept on. */
         const val PLACEMENT_ID: String = "OpenPopups"
 
@@ -61,7 +96,8 @@ class PopupMemory(read: () -> String?, private val write: (String) -> Unit) {
         fun kept(text: String?, windowOpen: (String) -> Boolean): String? {
             val stored = text?.let { runCatching { json.decodeFromString(Stored.serializer(), it) }.getOrNull() } ?: return text
             fun alive(id: String) = windowOpen(windowOf(id))
-            return json.encodeToString(Stored.serializer(), Stored(stored.fields.filter(::alive), stored.trees.filterKeys(::alive)))
+            // What was looked into is history, not a pop-up open: it outlives the window.
+            return json.encodeToString(Stored.serializer(), stored.copy(fields = stored.fields.filter(::alive), trees = stored.trees.filterKeys(::alive)))
         }
 
         /** The frame id at the start of a pop-up's id: up to its first "/" or "▾". */

@@ -5749,6 +5749,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     androidx.compose.runtime.SideEffect {
                         menuActionContext.value = addedActionHandlers to { row -> searchRowOpeners.open(schedulerState, row) }
+                        // User rule 2026-11-16, "Recent › Elsewhere": the ▾ trees read what the other Search windows changed.
+                        arrowSearches.searchWindows = addedActionHandlers.searchWindows
                     }
                     // User rule 2026-11-12: a Search window inside the actions section of the Search window [ownerId] (the
                     // "List of parents"): its search section alone, over the account; what it opens and commits is that window's.

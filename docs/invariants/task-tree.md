@@ -1558,7 +1558,15 @@ suggestions before it was ever entered.
   `settingDescription`, `nodeDescription`): every configuration and every category of the ▾ tree, the one text its
   bubble shows and "Where to search › Description" reads. A new configuration or node gets its sentence
   (`WhereToSearchTest` fails on a category without one); a type's filter not named there says what it keeps and,
-  as before, that it lists that type alone (`filterHint`). `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
+  as before, that it lists that type alone (`filterHint`).
+- **"RECENT › ELSEWHERE": WHAT THE OTHER ▾ TREES DID** (user rule 2026-11-16; `SearchDomain.Elsewhere`,
+  `RecentElsewhereTest`): "Changed state recently" — the configurations the other Search windows changed (every
+  window `App` lists, `ArrowSearches.searchWindows`, but the one this tree configures), each at the last time one did;
+  "Looked into the children" — the categories the other ▾ windows stayed on (`LOOKED_INTO_DWELL_MS`: a hover crossing
+  one is no look; `isLookedIntoWorthy`: never "Recent", "Currently on", "Relevant here", a "Default for this"),
+  each opening as itself, named by its path; then both, the last first. Read as the tree opens, never on a tick. What
+  was looked into is local-only view state on the `OpenPopups` row (`PopupMemory.lookedInto`), bounded, never synced
+  and no History Unit: a hover is no edit. `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
   added later — goes by its category (`roleOf`). **Every type's "Sort by" is in "Sorting"** too, the order of every
   row first, then this page's types, then the others'; so a type with an order and no filter (option, integer,
   action…) has no node of its own. **A configuration standing among other types' says its type** ("tasks: Sort by",
