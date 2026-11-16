@@ -319,8 +319,7 @@ data class SearchRowOpeners(
     val onOpenHistoryUnit: (String) -> Unit = {},
     /** Opens the Search window holding that quota alone — its actions are its editor (user rule 2026-10-03). */
     val onOpenQuota: (String) -> Unit = {},
-    /** The lateral-menu windows that own a task tree, a task relation and a keyboard shortcut. */
-    val onOpenTaskTrees: () -> Unit = {},
+    /** The lateral-menu windows that own a task relation and a keyboard shortcut. */
     val onOpenTaskRelations: () -> Unit = {},
     val onOpenShortcuts: () -> Unit = {},
     /** Opens the window a window row names (by frame id), or brings it back — a minimized one included. */
@@ -361,7 +360,6 @@ data class SearchRowOpeners(
             onEditReminder = { around { onEditReminder(it) } },
             onOpenHistoryUnit = { around { onOpenHistoryUnit(it) } },
             onOpenQuota = { around { onOpenQuota(it) } },
-            onOpenTaskTrees = { around { onOpenTaskTrees() } },
             onOpenTaskRelations = { around { onOpenTaskRelations() } },
             onOpenShortcuts = { around { onOpenShortcuts() } },
             onOpenWindow = { around { onOpenWindow(it) } },
@@ -400,7 +398,6 @@ data class SearchRowOpeners(
             SearchDomain.Kind.WorkplaceSetup -> onApplyWorkplaceSetup(item.id)
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }
-            SearchDomain.Kind.TaskTree -> onOpenTaskTrees()
             SearchDomain.Kind.TaskRelation -> onOpenTaskRelations()
             SearchDomain.Kind.Shortcut -> onOpenShortcuts()
             SearchDomain.Kind.Window -> onOpenWindow(item.id)
@@ -624,9 +621,9 @@ fun SearchWindow(
             }
         } else
         remember(
-            config.added, state.tasks, state.taskTrees, state.categories, state.periodKinds, state.panels, state.alarms,
+            config.added, state.tasks, state.categories, state.periodKinds, state.panels, state.alarms,
             state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations, state.shortcutBindings,
-            state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns, claudeLogs,
+            state.cells, state.lists, windows, state.notificationLog, schedulerRuns, claudeLogs,
         ) {
             // An added task shows its shortest path; listing every path is the result list's walk, not needed here.
             SearchDomain.resolve(state, config.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)
@@ -634,7 +631,7 @@ fun SearchWindow(
     val searchesTasks = SearchDomain.Kind.Task in kinds || filters.includedElements.any { it.startsWith(SearchDomain.Kind.Task.name + "/") }
     val allPaths =
         // The added elements list searches no task: its rows are given, each with the path it was resolved at.
-        remember(searchesTasks && addedList == null, state.cells, state.lists, state.tasks, state.taskTrees, state.activeTaskTreeId) {
+        remember(searchesTasks && addedList == null, state.cells, state.lists, state.tasks) {
             if (searchesTasks && addedList == null) SearchDomain.allPathsInAnyTree(state) else emptyMap()
         }
     val listed: List<SearchDomain.Result> =
@@ -657,9 +654,9 @@ fun SearchWindow(
             remember(actionRows.rows) { actionRows.rows.map { SearchDomain.ItemResult(SearchDomain.Kind.Action, it.key, it.title, it.detail) } }
         } else
         remember(
-            kinds, query, filters, sorts, allPaths, state.tasks, state.taskTrees, state.categories, state.periodKinds,
+            kinds, query, filters, sorts, allPaths, state.tasks, state.categories, state.periodKinds,
             state.panels, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.histories, state.taskRelations,
-            state.shortcutBindings, state.activeTaskTreeId, state.cells, state.lists, windows, state.notificationLog, schedulerRuns,
+            state.shortcutBindings, state.cells, state.lists, windows, state.notificationLog, schedulerRuns,
             // The parents of an element ([SearchDomain.Filters.parentsOf]) that are links come and go with them.
             state.elementLinks,
             // The calendar filter's "without removing anything" lays what "Add to the calendar" would, as long as it would.
@@ -3656,7 +3653,6 @@ private fun ItemResultRow(
         // the two.
         val elsewhere =
             when (item.kind) {
-                SearchDomain.Kind.TaskTree -> "open in All task trees"
                 SearchDomain.Kind.TaskRelation -> "open in Task relations"
                 SearchDomain.Kind.Shortcut -> "open in Keyboard shortcuts"
                 SearchDomain.Kind.Window -> "show window"

@@ -11,6 +11,34 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A task tree is a task under the root — 2026-11-16
+
+User rule: *"The type 'task tree' is redundant, since there already are task elements. … the default db must have a
+task element, acting as the root where all different task trees diverge, and a second task element, acting as the root
+of a task tree, child of the first task element."* — and *"Why deleting them? I just want a unified logic."* Anomaly
+behind it: 210 of the release account's 231 task paths still began with "tree-2026-08-20" — the tasks only a stored
+tree held, named from that tree, while no element of that name stood above them.
+
+- **Migration on decode** (`TaskTreesAsTasks.of`, in the codec's heal, so synced rows heal alike): the open tree becomes a
+  task under the root holding the live tree's top; every other stored tree a task beside it at a priority weight of 0,
+  its tasks copies under ids derived from the tree's (a shared task may have other children there), a shared task's
+  copy leaving its record to the live one. Deterministic and idempotent; nothing deleted. On the release account: root ›
+  tree-2026-10-20 (the 7 top tasks) and root › tree-2026-08-20 (233 tasks); every live priority unchanged; no path
+  begins with "tree-".
+- **A fresh account starts with root › tree-YYYY-MM-DD** (`TaskTreesAsTasks.seeded`), structural, no History Unit.
+- **Removed:** the "task tree" Search kind with its filters and sorts, the tree selector above the task tree, "New task
+  tree" / today's tree, the "All task trees" window, the link window, `SelectTaskTree` / `CreateTaskTree` /
+  `RenameTaskTree` / `LinkTask` / `SetTaskTreeDate` / `DeleteTaskTree`, `Task.treeName` (the "Tree name" action renames
+  the tree's task). An older build's `TaskTreeDelta` units stay in the log and change nothing when walked.
+- **Not done:** the dated trees' timeline has nothing to read (no tree can be dated); it is to be replaced by the user's
+  per-task formulas (*"the evolution of its presence ratio target and its minimum length target with any mathematical
+  formula"*). `BreaksAndSlidingPrioritiesTest` builds its keyframes directly until then.
+- **Measured cost:** the old tree's ~120 leaves are 0 % tasks the fill weighs (a 0 % task fills what nothing else may,
+  `SchedulerFillTest`): a 24 h fill on the release account took 4.0 s instead of 0.5 s, for the same plan.
+
+Persisted compat: `TaskTreesAsTasksTest`, `RootTaskMigrationTest`. Deploy: client apps (all devices, so no older build
+writes stored trees back).
+
 ### Pinned open groups, one row selection across windows, a path is its parents' titles — 2026-11-16
 
 Three anomalies of one kind, a rule kept in one place and missed in another:

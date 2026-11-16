@@ -43,7 +43,7 @@ object ElementTree {
     private val PICKED_KINDS =
         listOf(
             Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.TaskTree, Kind.WorkplaceSetup,
+            Kind.WorkplaceSetup,
         )
 
     /**

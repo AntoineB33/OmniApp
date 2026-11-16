@@ -110,6 +110,9 @@ class NotificationLogTest {
             override fun nowMillis(): Long = start + scheduler.currentTime
         }
         val vm = TaskSchedulerViewModel(store = null, saveDispatcher = Dispatchers.Default)
+        // A fresh account holds one task, its first tree's (user rule 2026-11-16): its own "Task to do now" is not
+        // what this drives.
+        fun breakLog() = vm.state.value.notificationLog.filter { it.title != "Task to do now" }
         val engine = SchedulerEngine(
             vm = vm,
             clock = clock,
@@ -131,7 +134,7 @@ class NotificationLogTest {
         vm.dispatch(SchedulerIntent.SetSleepSchedule(SleepSchedule(sleepDurationMinutes = 0), todayEpochDay = 5L))
         engine.start()
         runCurrent()
-        assertTrue(vm.state.value.notificationLog.isEmpty(), "nothing is announced before the break is due")
+        assertTrue(breakLog().isEmpty(), "nothing is announced before the break is due")
         // The instant to cross is the break's DUE — where the recurrence bars put it. It is not where the
         // period ends up sitting: the engine runs in `t_p` mode 1 here (`screenActive = { true }`, no pause),
         // and mode 1 pushes a period the line has swept onto the line, so the drawn period has no crossable
@@ -150,16 +153,16 @@ class NotificationLogTest {
         }
         assertEquals(
             listOf("look 20 feet away"),
-            vm.state.value.notificationLog.map { it.message },
+            breakLog().map { it.message },
             "the break's start posts a notification",
         )
-        assertEquals(VoiceCue.LookAway, vm.state.value.notificationLog.single().cue, "logged with its recording")
+        assertEquals(VoiceCue.LookAway, breakLog().single().cue, "logged with its recording")
 
         advanceTimeBy(20_001) // cross the break's end
         runCurrent()
         assertEquals(
             listOf("look 20 feet away", "Resume your work"),
-            vm.state.value.notificationLog.map { it.message },
+            breakLog().map { it.message },
             "the break's end posts one too",
         )
     }

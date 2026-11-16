@@ -940,10 +940,10 @@ private fun AddedActionBlocks(
                 FrameButton("Apply", enabled = tasks.any { it.text != draft }) { run(SearchDomain.AddedCommand.Text(draft)) }
             }
         }
-        // User rule 2026-11-13: the name of the tree(s) the added tasks belong to — its root's, not a task's title.
+        // User rule 2026-11-13: the name of the tree(s) the added tasks belong to — the title of the task at its root.
         SearchDomain.AddedAction.TaskTreeName -> {
             val roots = SearchDomain.treeRootsOf(added).mapNotNull { state.tasks[it] }
-            val shared = roots.map { it.treeName }.distinct().singleOrNull()
+            val shared = roots.map { it.title }.distinct().singleOrNull()
             var draft by remember(shared) { mutableStateOf(shared.orEmpty()) }
             Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(
@@ -954,7 +954,7 @@ private fun AddedActionBlocks(
                     placeholder = { if (shared == null && roots.isNotEmpty()) Text("mixed") },
                     modifier = Modifier.weight(1f),
                 )
-                FrameButton("Apply", enabled = roots.any { it.treeName != draft }) { run(SearchDomain.AddedCommand.TreeName(draft)) }
+                FrameButton("Apply", enabled = draft.isNotBlank() && roots.any { it.title != draft }) { run(SearchDomain.AddedCommand.TreeName(draft)) }
             }
         }
         SearchDomain.AddedAction.AlarmOnOff -> {
@@ -2563,7 +2563,7 @@ private fun ElementParentEditor(
     val children = added.map(SearchDomain::keyOf)
     val below = remember(children, state.elementLinks, state.lists, state.tasks) { children.associateWith { tree.descendantsOf(state, it) } }
     fun allowed(parent: String) = children.any { tree.canLink(state, parent, it, below.getValue(it)) }
-    val options = remember(below, state.categories, state.periodKinds, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.taskTrees, state.workplaceSetups) { tree.pickable(state).filter { allowed(it.first) } }
+    val options = remember(below, state.categories, state.periodKinds, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.workplaceSetups) { tree.pickable(state).filter { allowed(it.first) } }
     Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.weight(1f)) {
             ElementChooser("search/element-add-parent", options) { run(SearchDomain.AddedCommand.ElementParent(it, on = true)) }

@@ -8259,7 +8259,7 @@ object SchedulerDomain {
     /**
      * PRD §14 reminder title-suggestion menu: distinct reminder titles matching [input]. The title that IS
      * [input] is left out, exactly as the task menu's [titleSuggestions] does — picking it would only retype
-     * what is already there. (The task-tree selector deliberately keeps it, see [taskTreeTitleSuggestions].)
+     * what is already there.
      */
     fun reminderTitleSuggestions(state: SchedulerState, input: String): List<String> {
         val q = input.trim()
@@ -8309,110 +8309,13 @@ object SchedulerDomain {
 
     /**
      * The name a task tree carries by default: `tree-YYYY-MM-DD` for the local day [nowMillis] falls in.
-     * It is both what a fresh account's first tree is titled (see
-     * [org.example.project.scheduler.ui.TaskSchedulerViewModel.prepareLoadedState]) and the row the selector's
-     * identity menu always leads with — one string for both, so on the day a tree was seeded that row *is*
-     * that tree instead of offering to create a second one under the same name.
+     * What a fresh account's first tree — the task under the root it starts with — is titled (see
+     * [org.example.project.scheduler.ui.TaskSchedulerViewModel.prepareLoadedState], [TaskTreesAsTasks.seeded]).
      */
     fun defaultTaskTreeTitle(
         nowMillis: Long,
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
     ): String = "tree-" + Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date
-
-    /**
-     * One row of the task-tree selector's identity menu. [id] is the tree the row acts on, which is null both
-     * on the "New task tree" row and on a [Kind.Today] row for a day that has no tree yet — so what a row
-     * *means* is carried by [kind], never by `id == null`.
-     */
-    data class TaskTreeMenuEntry(
-        val id: TaskTreeId?,
-        val label: String,
-        val kind: Kind = Kind.Existing,
-    ) {
-        enum class Kind {
-            /** `tree-<today>`: opens that tree, or creates it when the day has none yet. */
-            Today,
-
-            /** "New task tree": creates one named after whatever is typed. */
-            New,
-
-            /** An existing tree whose title is similar to what is typed: opens it. */
-            Existing,
-        }
-    }
-
-    /**
-     * Rows of the task-tree selector's identity menu — which the UI shows in *Change task tree* mode only, so
-     * every row here acts on a tree (the [taskTreeTitleSuggestions] menu below it only fills the field):
-     *  1. **`tree-<today>`** ([todayTitle], from [defaultTaskTreeTitle]) — always, whatever is typed and even
-     *     on an empty field. That is the point of the dated default name: today's tree is one click away,
-     *     opened when it exists and created only when it does not.
-     *  2. **"New task tree"** — creates one under the typed name.
-     *  3. Every *other* tree whose title is **similar** to the typed text (containment, most similar first),
-     *     an empty field listing them all. Unlike the cell's Change Task menu this is deliberately not
-     *     restricted to an exact match: it is how a tree gets opened, and requiring the full title first
-     *     would make the menu useless for browsing.
-     */
-    fun taskTreeMenuEntries(
-        state: SchedulerState,
-        draftText: String,
-        todayTitle: String,
-    ): List<TaskTreeMenuEntry> {
-        val q = taskTreeMenuQuery(state, draftText)
-        val today = state.taskTrees.firstOrNull { it.title.equals(todayTitle, ignoreCase = true) }
-        return buildList {
-            add(TaskTreeMenuEntry(id = today?.id, label = todayTitle, kind = TaskTreeMenuEntry.Kind.Today))
-            add(TaskTreeMenuEntry(id = null, label = "New task tree", kind = TaskTreeMenuEntry.Kind.New))
-            state.taskTrees
-                .filter { it.id != today?.id && it.title.isNotBlank() }
-                .filter { q.isEmpty() || it.title.contains(q, ignoreCase = true) }
-                // Two stable sorts rather than one comparator: most similar first, ties alphabetical.
-                .sortedBy { it.title }
-                .sortedByDescending { titleSimilarity(it.title, q) }
-                .forEach {
-                    add(TaskTreeMenuEntry(id = it.id, label = it.title, kind = TaskTreeMenuEntry.Kind.Existing))
-                }
-        }
-    }
-
-    /**
-     * What the task-tree selector's two menus filter by: the typed text — except the open tree's own name, which is
-     * what the field holds on entering edit mode before anything is typed. Anomaly 2026-10-20 (*"I entered edit mode
-     * again, and the previous title wasn't showing anymore in the id suggestion list"*): filtering by it hid every
-     * other tree whose name does not contain it, so the field opened on a list of one.
-     */
-    fun taskTreeMenuQuery(state: SchedulerState, draftText: String): String {
-        val q = draftText.trim()
-        val open = state.activeTaskTree?.title?.trim()
-        return if (open != null && q.equals(open, ignoreCase = true)) "" else q
-    }
-
-    /**
-     * Task-tree title suggestions (the selector's second menu), mirroring [titleSuggestions]: every tree
-     * title containing [input], most similar first. An **empty** input lists them all, which is how the user
-     * browses the existing trees.
-     *
-     * One deliberate difference from [titleSuggestions] / [reminderTitleSuggestions], which drop the title
-     * that IS the typed text: here it is **kept** (and the UI highlights it). This menu is the browse list of
-     * every tree, so hiding one because its name happens to be typed in full would take a tree off the list;
-     * the highlighted row is also what Enter commits to, which is worth showing.
-     */
-    fun taskTreeTitleSuggestions(state: SchedulerState, input: String): List<String> {
-        val q = taskTreeMenuQuery(state, input)
-        return state.taskTrees
-            .map { it.title }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .filter { q.isEmpty() || it.contains(q, ignoreCase = true) }
-            .sortedWith(compareByDescending<String> { titleSimilarity(it, q) }.thenBy { it })
-    }
-
-    /** The first task tree whose title is exactly [title], if any (what Enter in the selector commits to). */
-    fun taskTreeIdForTitle(state: SchedulerState, title: String): TaskTreeId? {
-        val q = title.trim()
-        if (q.isEmpty()) return null
-        return state.taskTrees.firstOrNull { it.title.equals(q, ignoreCase = true) }?.id
-    }
 
     fun changeTaskMenuSelectedIndex(
         entries: List<ChangeTaskMenuEntry>,
@@ -8643,28 +8546,14 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §7 *Search*: [taskId] renamed to [title] wherever the account holds it — the live tree and every
-     * stored task tree carrying that id (a task id is one task across trees). A **task-level** rename, for the
-     * one surface that renames a task it may have no cell for (a task cut from the tree and kept by the timeline,
-     * or one only a stored tree holds). The title index of each tree it touches is rebuilt with it. The receiver
-     * itself when nothing changes; the caller refuses a blank title (a blank title is how a CELL deletes).
+     * PRD §7 *Search*: [taskId] renamed to [title]. A **task-level** rename, for the surfaces that rename a task they may
+     * have no cell for (a task cut from the tree). The title index is rebuilt with it. The receiver itself when nothing
+     * changes; the caller refuses a blank title (a blank title is how a CELL deletes).
      */
     fun withTaskRenamed(state: SchedulerState, taskId: TaskId, title: String): SchedulerState {
-        var result = state
-        result.tasks[taskId]?.takeIf { it.title != title }?.let { task ->
-            val tasks = result.tasks + (taskId to task.copy(title = title))
-            result = result.copy(tasks = tasks, titleToTaskIds = buildTitleIndex(tasks))
-        }
-        val trees =
-            result.taskTrees.map { entry ->
-                // The active entry's snapshot is stale by design: the live fields above ARE that tree.
-                if (entry.id == result.activeTaskTreeId) return@map entry
-                val task = entry.tree.tasks[taskId]?.takeIf { it.title != title } ?: return@map entry
-                val tasks = entry.tree.tasks + (taskId to task.copy(title = title))
-                entry.copy(tree = entry.tree.copy(tasks = tasks, titleToTaskIds = buildTitleIndex(tasks)))
-            }
-        if (trees != result.taskTrees) result = result.copy(taskTrees = trees)
-        return result
+        val task = state.tasks[taskId]?.takeIf { it.title != title } ?: return state
+        val tasks = state.tasks + (taskId to task.copy(title = title))
+        return state.copy(tasks = tasks, titleToTaskIds = buildTitleIndex(tasks))
     }
 
     fun buildTitleIndex(tasks: Map<TaskId, Task>): Map<String, List<TaskId>> {

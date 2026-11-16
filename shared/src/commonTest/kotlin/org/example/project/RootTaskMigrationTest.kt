@@ -314,10 +314,13 @@ class RootTaskMigrationTest {
                 .mapNotNull { s.defaultSubtree.tree.tasks[it]?.title },
         )
 
-        val storedRoot = assertNotNull(s.taskTrees.single().tree.tasks[WellKnownIds.ROOT_TASK])
-        assertEquals(SchedulerDomain.ROOT_TASK_TITLE, storedRoot.title)
-        assertEquals(WellKnownIds.ROOT_LIST, storedRoot.childListId)
-        assertEquals("Reading", s.taskTrees.single().tree.tasks[TaskId("task/user/5")]!!.title)
+        // The stored tree is a task under the root since 2026-11-16 (`TaskTreesAsTasks`), holding what it held — no "main"
+        // anywhere on the way.
+        assertTrue(s.taskTrees.isEmpty())
+        assertTrue(s.tasks.values.none { it.title == "main" })
+        val studies = s.tasks.values.single { it.title == "Studies" }
+        assertEquals(listOf("Studies"), s.tasks.getValue(WellKnownIds.ROOT_TASK).childTaskIds.map { s.tasks.getValue(it).title }.filter { it == "Studies" })
+        assertEquals(listOf("Reading"), studies.childTaskIds.map { s.tasks.getValue(it).title })
     }
 
     /** Turns a payload this build wrote back into the shape the previous build wrote. */

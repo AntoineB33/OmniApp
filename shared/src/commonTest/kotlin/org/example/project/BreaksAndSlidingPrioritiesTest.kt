@@ -12,6 +12,8 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
+import org.example.project.scheduler.state.TaskTreeEntry
+import org.example.project.scheduler.model.TaskTreeId
 
 /**
  * `side-dev` **test 13** in OmniApp's own terms: the break grid *and* the sliding percentages, together.
@@ -59,18 +61,13 @@ class BreaksAndSlidingPrioritiesTest {
         )
         // The "before" arrangement: Focus 3, Admin 1, Stretch 1 (60/20/20).
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cells[0], 0, 3.0))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("before"))
-        // A copy to diverge from — every edit below lands in "after", which is now the live tree.
-        s = SchedulerReducer.reduce(s, SchedulerIntent.CreateTaskTree("after"))
+        // User rule 2026-11-16: a tree is a task under the root, and nothing dates one any more — the rule state's evolution
+        // moves to each task's own formulas. Until then the two keyframes are built as the blend reads them.
+        val before = TaskTreeEntry(TaskTreeId("tree/before"), "before", s.captureTreeWithRecords(), dateMillis = T0)
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cells[0], 0, 1.0))
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cells[1], 0, 3.0))
-        fun dateOf(title: String, millis: Long): SchedulerState =
-            SchedulerReducer.reduce(
-                s,
-                SchedulerIntent.SetTaskTreeDate(s.taskTrees.first { it.title == title }.id, millis),
-            )
-        s = dateOf("before", T0)
-        s = dateOf("after", T0 + DAY)
+        val after = TaskTreeEntry(TaskTreeId("tree/after"), "after", s.captureTreeWithRecords(), dateMillis = T0 + DAY)
+        s = s.copy(taskTrees = listOf(before, after), activeTaskTreeId = after.id)
         return s.copy(screenBreaks = breaksAnchoredAt(T0))
     }
 

@@ -208,8 +208,11 @@ class SyncFingerprintGateTest {
         runTest(dispatcher) {
             val meta = FakeMetaStore()
             val start = 1_700_000_000_000L
-            val base = SchedulerState.empty()
-            val (tid, task) = base.tasks.entries.first()
+            // A task of the account's own (the empty account's first task was its root, before 2026-11-16 gave a fresh
+            // account a tree under it).
+            val empty = SchedulerState.empty()
+            val base = SchedulerReducer.reduce(empty, SchedulerIntent.SetCellTitle(empty.lists.getValue(empty.rootListId).cellIds.last(), "A"))
+            val (tid, task) = base.tasks.entries.first { it.value.title == "A" }
             // The synced baseline already holds one completed-work record; plus an elapsed auto panel for the
             // same task, sitting just before the now we will advance to.
             val seeded = TaskTimeRange(start - 10_000, start - 5_000)

@@ -112,47 +112,6 @@ sealed interface SchedulerIntent {
      */
     data class RemoveTaskPath(val cellId: CellId) : SchedulerIntent
 
-    /**
-     * Task-tree selector (the field above the tree): make [id] the live task tree. The tree being left is
-     * flushed into its own entry first, so nothing done in it is lost (see [TaskTreeEntry]). Recorded as an
-     * undoable Main History Unit; a no-op when [id] is already active or names no tree.
-     */
-    data class SelectTaskTree(val id: TaskTreeId) : SchedulerIntent
-
-    /**
-     * Task-tree selector: create a task tree named [title] holding a **copy of the current tree** and make it
-     * the live one — so the user can diverge it from what is on screen. The tree being left is flushed first.
-     * Recorded as an undoable Main History Unit; a no-op for a blank title.
-     */
-    data class CreateTaskTree(val title: String) : SchedulerIntent
-
-    /**
-     * Task-tree selector, Rename mode: rename the task tree [id] (its content and identity are untouched —
-     * the same tree under a new name). Recorded as an undoable Main History Unit.
-     */
-    data class RenameTaskTree(val id: TaskTreeId, val title: String) : SchedulerIntent
-
-    /**
-     * User rule 2026-10-20: link the live tree's task [taskId] to [otherTaskId] of the task tree [otherTreeId]
-     * ([org.example.project.scheduler.domain.TaskLinks]). Refused — nothing changes — where another task of the live tree
-     * is already linked to it (`TaskLinks.refusal`, which the window says before the user confirms).
-     */
-    data class LinkTask(val taskId: TaskId, val otherTreeId: TaskTreeId, val otherTaskId: TaskId) : SchedulerIntent
-
-    /**
-     * "All task trees" window: put the task tree [id] on the timeline at [dateMillis] (or take it off with
-     * `null`). A dated tree is a keyframe of the account's priorities — see [TaskTreeEntry.dateMillis].
-     * Recorded as an undoable Main History Unit; a no-op when the date is already that.
-     */
-    data class SetTaskTreeDate(val id: TaskTreeId, val dateMillis: Long?) : SchedulerIntent
-
-    /**
-     * "All task trees" window (the bin button): delete the task tree [id] for good. Deleting the tree that
-     * is currently live keeps what is on screen — only the *name* goes away, leaving the live tree unnamed
-     * — so no work is ever lost by pressing the bin. Recorded as an undoable Main History Unit.
-     */
-    data class DeleteTaskTree(val id: TaskTreeId) : SchedulerIntent
-
     /** PRD §5: set a cell's value in a weight column (clamped to ≥ 0); recorded as a content delta. */
     data class SetPriorityWeight(
         val cellId: CellId,
@@ -420,8 +379,8 @@ sealed interface SchedulerIntent {
     data class SetTasksText(val taskIds: List<TaskId>, val text: String) : SchedulerIntent
 
     /**
-     * User rule 2026-11-13: the name of the tree each task of [taskIds] is the root of ([org.example.project.scheduler.model.Task.treeName])
-     * — ONE Undo/Redo unit; a call that changes nothing records nothing.
+     * User rule 2026-11-13: the name of the tree each task of [taskIds] is the root of — that task's title, a tree being
+     * the task at its root (user rule 2026-11-16) — ONE Undo/Redo unit; a call that changes nothing records nothing.
      */
     data class SetTreeName(val taskIds: List<TaskId>, val name: String) : SchedulerIntent
 

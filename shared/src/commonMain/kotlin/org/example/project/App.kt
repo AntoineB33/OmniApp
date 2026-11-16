@@ -206,7 +206,6 @@ import org.example.project.ui.TaskPickerOverlay
 import org.example.project.ui.globalPointerLocation
 import org.example.project.ui.TaskPalette
 import org.example.project.ui.rememberTaskHues
-import org.example.project.ui.TaskTreesWindow
 import org.example.project.perf.Perf
 import org.example.project.ui.PerfOverlay
 import org.example.project.ui.TimeSimPanel
@@ -514,7 +513,6 @@ private enum class FloatingWindow(val title: String) {
     History("History"),
     Sleep("Sleep"),
     Alarms("Alarms"),
-    TaskTrees("All task trees"),
     TaskRelations("Task relations"),
     Categories("Categories"),
     DefaultSubtree("Default sub-tree"),
@@ -1509,8 +1507,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // PRD §14 "constrained in": the picker of the reminder (by id) a Search window's reminder editor asked it for.
         val reminderConstraintWindows = remember { ObjectWindows<String>() }
-        // User rule 2026-10-20: "link to a task of another tree", one window per task of the live tree.
-        val taskLinkWindows = remember { ObjectWindows<TaskId>() }
         // User rule 2026-10-01: an element's own edit window is a Search window holding that element alone — its
         // actions are that window's. Set once `openNewWindow` exists (below); the ☆ buttons reach it through
         // [openObjectWindow], which is declared before it.
@@ -1577,9 +1573,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // PRD §18 Alarms: whether the floating alarms window is open (local UI state; the alarms themselves
         // are authoritative synced state).
         var alarmWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Alarms)) }
-        // All task trees: whether the floating task-tree timeline window is open (local UI state; the trees
-        // and their dates are authoritative synced state).
-        var taskTreesWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.TaskTrees)) }
         // PRD §5 Task relations: whether the list of (task, relational target) pairs is open (local UI
         // state; the pairs the user has kept or struck off are authoritative synced state).
         var taskRelationsWindowOpen by
@@ -1743,7 +1736,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.History -> HistoryWindow.History
             FloatingWindow.Sleep -> HistoryWindow.Sleep
             FloatingWindow.Alarms -> HistoryWindow.Alarms
-            FloatingWindow.TaskTrees -> HistoryWindow.TaskTrees
             FloatingWindow.TaskRelations -> HistoryWindow.TaskRelations
             FloatingWindow.Categories -> HistoryWindow.Categories
             FloatingWindow.DefaultSubtree -> HistoryWindow.DefaultSubtree
@@ -1814,7 +1806,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.History -> historyManagerOpen
             FloatingWindow.Sleep -> sleepWindowOpen
             FloatingWindow.Alarms -> alarmWindowOpen
-            FloatingWindow.TaskTrees -> taskTreesWindowOpen
             FloatingWindow.TaskRelations -> taskRelationsWindowOpen
             FloatingWindow.Categories -> categoriesWindowOpen
             FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen
@@ -1835,7 +1826,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 FloatingWindow.History -> historyManagerOpen = open
                 FloatingWindow.Sleep -> sleepWindowOpen = open
                 FloatingWindow.Alarms -> alarmWindowOpen = open
-                FloatingWindow.TaskTrees -> taskTreesWindowOpen = open
                 FloatingWindow.TaskRelations -> taskRelationsWindowOpen = open
                 FloatingWindow.Categories -> categoriesWindowOpen = open
                 FloatingWindow.DefaultSubtree -> defaultSubtreeWindowOpen = open
@@ -2984,11 +2974,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         showCreated(SearchDomain.Kind.Reminder, it)
                     }
                 }
-                SearchDomain.Kind.TaskTree -> {
-                    vm.dispatch(SchedulerIntent.CreateTaskTree(unique("New tree", st.taskTrees.map { it.title })))
-                    taskTreesWindowOpen = true
-                    focusWindow(FloatingWindow.TaskTrees)
-                }
                 SearchDomain.Kind.Window -> openLinkedSearch(SearchDomain.WINDOW_TYPES_CONFIG)
                 // User rule 2026-10-12: a new chord for a window — with neither yet; its actions give it both.
                 SearchDomain.Kind.Shortcut -> {
@@ -3038,8 +3023,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var sleepSize by remember { mutableStateOf(savedSize(FloatingWindow.Sleep)) }
         var alarmOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Alarms, Offset(-120f, 120f))) }
         var alarmSize by remember { mutableStateOf(savedSize(FloatingWindow.Alarms)) }
-        var taskTreesOffset by remember { mutableStateOf(savedOffset(FloatingWindow.TaskTrees, Offset(-260f, -60f))) }
-        var taskTreesSize by remember { mutableStateOf(savedSize(FloatingWindow.TaskTrees)) }
         var taskRelationsOffset by
             remember { mutableStateOf(savedOffset(FloatingWindow.TaskRelations, Offset(100f, -100f))) }
         var taskRelationsSize by remember { mutableStateOf(savedSize(FloatingWindow.TaskRelations)) }
@@ -3063,7 +3046,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         LaunchedEffect(historyManagerOpen) { persistPlacement(FloatingWindow.History, historyOffset, historySize, historyManagerOpen) }
         LaunchedEffect(sleepWindowOpen) { persistPlacement(FloatingWindow.Sleep, sleepOffset, sleepSize, sleepWindowOpen) }
         LaunchedEffect(alarmWindowOpen) { persistPlacement(FloatingWindow.Alarms, alarmOffset, alarmSize, alarmWindowOpen) }
-        LaunchedEffect(taskTreesWindowOpen) { persistPlacement(FloatingWindow.TaskTrees, taskTreesOffset, taskTreesSize, taskTreesWindowOpen) }
         LaunchedEffect(taskRelationsWindowOpen) {
             persistPlacement(FloatingWindow.TaskRelations, taskRelationsOffset, taskRelationsSize, taskRelationsWindowOpen)
         }
@@ -4194,7 +4176,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             Perf.gauge("state.historyUnits", schedulerState.histories.all().sumOf { it.second.units.size }.toLong())
             Perf.gauge("state.notificationLog", schedulerState.notificationLog.size.toLong())
             Perf.gauge("state.supabaseUsageLog", schedulerState.supabaseUsageLog.size.toLong())
-            Perf.gauge("state.taskTrees", schedulerState.taskTrees.size.toLong())
         }
 
         // ---- The display's own clock ------------------------------------------------------------------
@@ -4292,7 +4273,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // User rule 2026-10-03: every id suggestion list's task row is the Search window's task result row, configured
         // ([TaskIdentityRow]). Its paths are one walk of every tree, measured when the trees change — never per row.
         val identityPaths =
-            remember(schedulerState.cells, schedulerState.lists, schedulerState.tasks, schedulerState.taskTrees) {
+            remember(schedulerState.cells, schedulerState.lists, schedulerState.tasks) {
                 SearchDomain.allPathsInAnyTree(schedulerState)
             }
         val taskIdentityRow: @Composable (EditMenuItem) -> Unit = { item ->
@@ -5235,22 +5216,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // "+ New reminder" moves it on), and closes itself once the row is gone — one rule, in one place.
                     // PRD §14 "constrained in": the picker a Search window's reminder editor opened, on one reminder. It writes
                     // that reminder's constraint into the account's list, the editor's own write.
-                    ObjectWindowsHost(taskLinkWindows) { w ->
-                        // A task the live tree no longer holds (deleted, or another tree selected) has nothing to link.
-                        if (schedulerState.cells.values.none { it.taskId == w.subject }) {
-                            w.close()
-                        } else {
-                            org.example.project.ui.TaskLinkWindow(
-                                state = schedulerState,
-                                taskId = w.subject,
-                                onLink = { treeId, otherTaskId ->
-                                    vm.dispatch(SchedulerIntent.LinkTask(w.subject, treeId, otherTaskId))
-                                    w.close()
-                                },
-                                onDismiss = w::close,
-                            )
-                        }
-                    }
                     ObjectWindowsHost(reminderConstraintWindows) { w ->
                         // One reminder's id, or several joined by a line break (the Search window's "Constrained in",
                         // over every added reminder at once): what is saved, all of them get.
@@ -5498,36 +5463,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                     }
 
-                    // All task trees: the account's named task trees over a timeline of the dated ones.
-                    // A date makes a tree a keyframe the scheduler blends its priorities between
-                    // (SchedulerDomain.blendedTaskPriorities), so both edits here are authoritative.
-                    LateralWindow(FloatingWindow.TaskTrees, taskTreesWindowOpen) {
-                        TaskTreesWindow(
-                            trees = schedulerState.taskTrees,
-                            activeId = schedulerState.activeTaskTreeId,
-                            // The quantized display now-line, like every other per-tick read here: the
-                            // marker only has to say which two trees `now` sits between.
-                            nowMillis = nowMillis,
-                            timeZone = tz,
-                            onSetDate = { id, date ->
-                                vm.dispatch(SchedulerIntent.SetTaskTreeDate(id, date))
-                            },
-                            onDelete = { vm.dispatch(SchedulerIntent.DeleteTaskTree(it)) },
-                            onDismiss = { taskTreesWindowOpen = false },
-                            windowSelections = schedulerState.windowSelections,
-                            onSelectInWindow = { vm.dispatch(it) },
-                            initialOffset = taskTreesOffset,
-                            initialSize = taskTreesSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                taskTreesOffset = windowOffset
-                                taskTreesSize = windowSize
-                                persistPlacement(FloatingWindow.TaskTrees, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.TaskTrees) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
-                        )
-                    }
 
                     // PRD §5 Task relations: every (task, relational target) pair the priority machinery
                     // has raised, in four sections. It reads the LIVE state — a relation is a fact about the
@@ -5606,10 +5541,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onOpenQuota = { openElementSearch(SearchDomain.Kind.Quota, it) },
                             // The windows that own a task tree, a task relation or a shortcut — opened if closed and
                             // brought to the front either way, never closed by this.
-                            onOpenTaskTrees = {
-                                taskTreesWindowOpen = true
-                                focusWindow(FloatingWindow.TaskTrees)
-                            },
                             onOpenTaskRelations = {
                                 taskRelationsWindowOpen = true
                                 focusWindow(FloatingWindow.TaskRelations)
@@ -6023,11 +5954,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         val added =
                             // Keyed on what the rows read, never on the whole state, which every tick replaces.
                             remember(
-                                targetConfig.added, schedulerState.tasks, schedulerState.taskTrees,
+                                targetConfig.added, schedulerState.tasks,
                                 schedulerState.categories, schedulerState.periodKinds, schedulerState.panels,
                                 schedulerState.alarms, schedulerState.timers, schedulerState.chronos, schedulerState.quotas, schedulerState.quotas,
                                 schedulerState.chores, schedulerState.histories, schedulerState.taskRelations,
-                                schedulerState.shortcutBindings, schedulerState.activeTaskTreeId,
+                                schedulerState.shortcutBindings,
                                 schedulerState.cells, schedulerState.lists, windows, schedulerState.notificationLog, schedulerRuns, claudeLogs,
                             ) {
                                 SearchDomain.resolve(schedulerState, targetConfig.added, { emptyMap() }, windows, schedulerRuns, claudeLogs)

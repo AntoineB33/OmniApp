@@ -15,7 +15,6 @@ import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskTimeRange
-import org.example.project.scheduler.model.TaskTreeId
 import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.CellEditMode
@@ -23,7 +22,6 @@ import org.example.project.scheduler.state.EditExitNavigation
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
-import org.example.project.scheduler.state.TaskTreeEntry
 
 /**
  * PRD §7 **Search**: the window's results, and the one fact about a task it needed the app to start keeping —
@@ -242,49 +240,6 @@ class SearchWindowTest {
         assertEquals(listOf(root(s), "Apple"), s.tasks[pie]?.lastTreePath)
     }
 
-    // ----- Several task trees -----------------------------------------------------------------------
-
-    /** [tree], with a stored (inactive) copy of itself named "Studies". */
-    private fun withStoredCopy(s: SchedulerState): SchedulerState =
-        s.copy(taskTrees = listOf(TaskTreeEntry(TaskTreeId("tree/9"), "Studies", s.captureTreeWithRecords())))
-
-    @Test
-    fun a_task_another_task_tree_still_holds_is_in_a_task_tree() {
-        var s = withStoredCopy(tree())
-        val pie = taskWithTitle(s, "Pie")
-        s = r(s, SchedulerIntent.SetCellTitle(cellWithTitle(s, "Pie"), ""))
-
-        assertEquals(emptyList(), s.tasks.getValue(pie).lastTreePath, "Studies still holds it")
-        val row = SearchDomain.taskResults(s, "Pie").single()
-        assertTrue(row.inTaskTree)
-        // The root segment names the tree the path runs through.
-        assertEquals(listOf("Studies", "Apple"), row.shownPath)
-    }
-
-    @Test
-    fun deleting_the_last_task_tree_that_held_it_stamps_that_trees_path() {
-        var s = withStoredCopy(tree())
-        val pie = taskWithTitle(s, "Pie")
-        s = r(s, SchedulerIntent.SetCellTitle(cellWithTitle(s, "Pie"), ""))
-        s = r(s, SchedulerIntent.DeleteTaskTree(TaskTreeId("tree/9")))
-
-        assertTrue(s.taskTrees.none { it.id == TaskTreeId("tree/9") })
-        assertEquals(listOf("Studies", "Apple"), s.tasks[pie]?.lastTreePath)
-    }
-
-    @Test
-    fun a_task_only_a_stored_tree_holds_is_a_result() {
-        var s = withStoredCopy(tree())
-        // The live tree loses Banana and Crumble entirely (no record, so the tasks are purged from it)...
-        s = deleteCells(s, listOf(cellWithTitle(s, "Banana")))
-        assertTrue(s.tasks.values.none { it.title == "Crumble" })
-
-        // ...and the search still finds it, where Studies holds it.
-        val row = SearchDomain.taskResults(s, "crumble").single()
-        assertTrue(row.inTaskTree)
-        assertEquals(listOf("Studies", "Banana"), row.shownPath)
-    }
-
     // ----- Paths ------------------------------------------------------------------------------------
 
     @Test
@@ -383,16 +338,14 @@ class SearchWindowTest {
     // ----- Renaming from a row, and a row's sub-tree ------------------------------------------------
 
     @Test
-    fun a_row_renames_its_task_everywhere_and_undo_puts_it_back() {
-        var s = withStoredCopy(tree())
+    fun a_row_renames_its_task_and_undo_puts_it_back() {
+        var s = tree()
         val pie = taskWithTitle(s, "Pie")
         s = r(s, SchedulerIntent.RenameTask(pie, "Tart"))
         assertEquals("Tart", s.tasks.getValue(pie).title)
         assertEquals(listOf(pie), s.titleToTaskIds["Tart"], "the title index follows")
-        assertEquals("Tart", s.taskTrees.single().tree.tasks.getValue(pie).title, "the stored tree's copy too")
         s = r(s, SchedulerIntent.Undo)
         assertEquals("Pie", s.tasks.getValue(pie).title)
-        assertEquals("Pie", s.taskTrees.single().tree.tasks.getValue(pie).title)
     }
 
     @Test
@@ -532,17 +485,6 @@ class SearchWindowTest {
     }
 
     @Test
-    fun task_trees_are_listed_with_the_open_one_and_filtered() {
-        val s = withStoredCopy(tree())
-        val trees = setOf(SearchDomain.Kind.TaskTree)
-        val rows = SearchDomain.results(s, trees, "").filterNot { it.kind == SearchDomain.Kind.Creation }.map { it as SearchDomain.ItemResult }
-        assertEquals(listOf("Studies"), rows.map { it.name })
-        assertTrue(rows.single().detail.startsWith("no date"), "a stored tree, not on the timeline")
-        assertTrue(SearchDomain.results(s, trees, "", filters = SearchDomain.Filters(taskTreeOpen = SearchDomain.Tri.Yes)).isEmpty())
-        assertEquals(1, SearchDomain.results(s, trees, "", filters = SearchDomain.Filters(taskTreeDated = SearchDomain.Tri.No)).size)
-    }
-
-    @Test
     fun keyboard_shortcuts_show_their_chord_and_a_rebound_one_says_so() {
         val shortcut = org.example.project.scheduler.platform.GlobalShortcut.entries.first()
         val other = shortcut.defaultBinding.copy(alt = !shortcut.defaultBinding.alt)
@@ -582,8 +524,6 @@ class SearchWindowTest {
                     historyCategory = org.example.project.scheduler.state.HistoryCategory.Main,
                     historyWindow = org.example.project.scheduler.state.HistoryWindow.Search,
                     historyUndone = SearchDomain.Tri.No,
-                    taskTreeOpen = SearchDomain.Tri.Yes,
-                    taskTreeDated = SearchDomain.Tri.No,
                     relationSection = org.example.project.scheduler.domain.TaskRelationsDomain.Section.Edited,
                     shortcutRebound = SearchDomain.Tri.Yes,
                     windowStatus = SearchDomain.WindowStatus.Minimized,
@@ -1033,8 +973,8 @@ class SearchWindowTest {
 
     @Test
     fun a_row_without_a_value_for_the_key_goes_last_in_either_direction() {
-        var s = withStoredCopy(tree())
-        // Pie leaves the live tree; the stored tree still holds it, so it is a row — with no live priority.
+        var s = tree()
+        // Pie leaves the tree, kept by its record, so it is a row — with no priority.
         val pie = taskWithTitle(s, "Pie")
         s = r(s, SchedulerIntent.SetCellTitle(cellWithTitle(s, "Pie"), ""))
         val tasks = setOf(SearchDomain.Kind.Task)

@@ -203,7 +203,7 @@ class QuotaTest {
         assertTrue(SearchDomain.defaultConfigurationAdded(listOf(creation), SearchDomain.Kind.Quota))
         assertEquals(1, SearchDomain.reachOf(SearchDomain.Kind.Quota, listOf(creation)), "the quota actions reach it")
         // Another kind's creation row is not: it has no default edited through its actions.
-        val tree = SearchDomain.ItemResult(SearchDomain.Kind.Creation, SearchDomain.Kind.TaskTree.name, "New task tree", "")
+        val tree = SearchDomain.ItemResult(SearchDomain.Kind.Creation, SearchDomain.Kind.Window.name, "New window", "")
         assertEquals(SearchDomain.Kind.Creation, SearchDomain.actionKindOf(tree))
 
         // The setting itself: settings only, no identity, no particular loop; one Undo/Redo unit.

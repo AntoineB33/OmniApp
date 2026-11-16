@@ -79,12 +79,8 @@ val Delta.changedElements: Set<ChangedElement>
             is TreeMutationDelta -> addTasksOf(delta.diff)
             is EmptyCellsDelta -> addTasksOf(delta.diff)
             is DefaultSubtreeDelta -> addTasksOf(delta.live)
-            is TaskTreeDelta -> {
-                val trees = delta.diff.added.map { it.id } + delta.diff.removed.map { it.id } + delta.diff.changed.map { it.id } +
-                    listOfNotNull(delta.diff.activeBefore, delta.diff.activeAfter).takeIf { delta.diff.activeBefore != delta.diff.activeAfter }.orEmpty()
-                trees.forEach { add(ChangedElement(SearchDomain.Kind.TaskTree, it.value)) }
-                addTasksOf(delta.diff.live)
-            }
+            // A unit an older build wrote about the stored trees: the tasks it moved.
+            is TaskTreeDelta -> addTasksOf(delta.diff.live)
             is PanelDelta -> {
                 addPanels(delta.changes.before.values + delta.changes.after.values)
                 delta.records.tasks.forEach { add(ChangedElement(SearchDomain.Kind.Task, it.value)) }

@@ -136,7 +136,6 @@ object SearchDomain {
          * focus (user rule 2026-10-04, [notificationsConfig]); read-only, like a history unit.
          */
         Notification("notification"),
-        TaskTree("task tree"),
         TaskRelation("task relation"),
         Shortcut("keyboard shortcut"),
 
@@ -214,7 +213,7 @@ object SearchDomain {
     val CREATABLE: List<Kind> =
         listOf(
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.TaskTree, Kind.Window, Kind.Shortcut, Kind.WorkplaceSetup,
+            Kind.Window, Kind.Shortcut, Kind.WorkplaceSetup,
         )
 
     /**
@@ -925,8 +924,6 @@ object SearchDomain {
                     historyEngine = filters.historyEngine.name,
                     historyChangedKinds = Kind.entries.filter { it in filters.historyChangedKinds }.map { it.name },
                     historyChangedElement = filters.historyChangedElement,
-                    taskTreeOpen = filters.taskTreeOpen.name,
-                    taskTreeDated = filters.taskTreeDated.name,
                     relationSection = filters.relationSection?.name,
                     shortcutRebound = filters.shortcutRebound.name,
                     windowStatus = filters.windowStatus?.name,
@@ -1039,8 +1036,6 @@ object SearchDomain {
                         historyEngine = enumNamed(stored.historyEngine, Tri.Any),
                         historyChangedKinds = kindsNamed(stored.historyChangedKinds).filterTo(HashSet()) { it in HISTORY_CHANGED_KINDS },
                         historyChangedElement = stored.historyChangedElement?.takeIf { it.isNotBlank() },
-                        taskTreeOpen = enumNamed(stored.taskTreeOpen, Tri.Any),
-                        taskTreeDated = enumNamed(stored.taskTreeDated, Tri.Any),
                         relationSection =
                             TaskRelationsDomain.Section.entries.firstOrNull { it.name == stored.relationSection },
                         shortcutRebound = enumNamed(stored.shortcutRebound, Tri.Any),
@@ -1337,10 +1332,6 @@ object SearchDomain {
          * element deleted since is still one to look for.
          */
         val historyChangedElement: String? = null,
-        /** Yes = the task tree that is open (the live one). */
-        val taskTreeOpen: Tri = Tri.Any,
-        /** Yes = put on the timeline at a date. */
-        val taskTreeDated: Tri = Tri.Any,
         /** Null = any of the Task relations window's four sections. */
         val relationSection: TaskRelationsDomain.Section? = null,
         /** Yes = bound to another chord than the one it ships with. */
@@ -1585,8 +1576,6 @@ object SearchDomain {
                 Setting.HistoryUndoneSetting -> historyUndone != Tri.Any
                 Setting.HistoryChangedKindsSetting -> historyChangedKinds.isNotEmpty()
                 Setting.HistoryChangedElementSetting -> historyChangedElement != null
-                Setting.TaskTreeOpenSetting -> taskTreeOpen != Tri.Any
-                Setting.TaskTreeDatedSetting -> taskTreeDated != Tri.Any
                 Setting.RelationSectionSetting -> relationSection != null
                 Setting.ShortcutReboundSetting -> shortcutRebound != Tri.Any
                 Setting.WindowStatusSetting -> windowStatus != null
@@ -1643,8 +1632,6 @@ object SearchDomain {
         BlockStart(Kind.CalendarBlock, "start"),
         HistoryDate(Kind.HistoryUnit, "date"),
         NotificationDate(Kind.Notification, "date"),
-        TaskTreeDate(Kind.TaskTree, "date"),
-        TaskTreeSize(Kind.TaskTree, "tasks"),
         RelationSection(Kind.TaskRelation, "section"),
         ShortcutChord(Kind.Shortcut, "chord"),
         /** [WindowStatus]'s order: open, minimized, not open. */
@@ -1909,7 +1896,6 @@ object SearchDomain {
         BlockSort(Kind.CalendarBlock, "Sort by", sorts = true),
         HistorySort(Kind.HistoryUnit, "Sort by", sorts = true),
         NotificationSort(Kind.Notification, "Sort by", sorts = true),
-        TaskTreeSort(Kind.TaskTree, "Sort by", sorts = true),
         RelationSort(Kind.TaskRelation, "Sort by", sorts = true),
         ShortcutSort(Kind.Shortcut, "Sort by", sorts = true),
         WorkplaceSetupSort(Kind.WorkplaceSetup, "Sort by", sorts = true),
@@ -1959,8 +1945,6 @@ object SearchDomain {
         HistoryChangedElementSetting(Kind.HistoryUnit, "Changed element"),
         /** What the notification came from ([Filters.notificationSources]). */
         NotificationSourceSetting(Kind.Notification, "From"),
-        TaskTreeOpenSetting(Kind.TaskTree, "Open"),
-        TaskTreeDatedSetting(Kind.TaskTree, "On the timeline"),
         RelationSectionSetting(Kind.TaskRelation, "Section"),
         ShortcutReboundSetting(Kind.Shortcut, "Rebound"),
         WindowStatusSetting(Kind.Window, "State"),
@@ -2894,8 +2878,6 @@ object SearchDomain {
         val historyChangedKinds: List<String> = emptyList(),
         /** New 2026-10-03: absent = any element. */
         val historyChangedElement: String? = null,
-        val taskTreeOpen: String? = null,
-        val taskTreeDated: String? = null,
         val relationSection: String? = null,
         val shortcutRebound: String? = null,
         /** New 2026-09-26: absent from what an older build stored, which reads as any. */
@@ -3079,15 +3061,9 @@ object SearchDomain {
     private fun liveRootLabel(state: SchedulerState): String =
         state.tasks[WellKnownIds.ROOT_TASK]?.title?.takeIf { it.isNotBlank() } ?: "root"
 
-    private fun sources(state: SchedulerState): List<TreeSource> = buildList {
-        add(TreeSource(state.cells, state.lists, state.tasks, state.rootListId, liveRootLabel(state)))
-        for (entry in state.taskTrees) {
-            // The active entry's snapshot is stale by design — the live fields above ARE that tree.
-            if (entry.id == state.activeTaskTreeId) continue
-            val tree = entry.tree
-            add(TreeSource(tree.cells, tree.lists, tree.tasks, WellKnownIds.ROOT_LIST, entry.title.ifBlank { "tree" }))
-        }
-    }
+    /** The one tree (user rule 2026-11-16: every task tree is a task under the root, [TaskTreesAsTasks]). */
+    private fun sources(state: SchedulerState): List<TreeSource> =
+        listOf(TreeSource(state.cells, state.lists, state.tasks, state.rootListId, liveRootLabel(state)))
 
     /**
      * Every task [source] holds, with its shortest path. Breadth-first with each list visited once — the walk
@@ -3346,7 +3322,6 @@ object SearchDomain {
     /** Whether anything [shortestPathsInAnyTree] reads differs between [a] and [b]. */
     private fun treeShapeChanged(a: SchedulerState, b: SchedulerState): Boolean {
         if (a.cells !== b.cells || a.lists !== b.lists || a.rootListId != b.rootListId) return true
-        if (a.taskTrees !== b.taskTrees || a.activeTaskTreeId != b.activeTaskTreeId) return true
         if (a.tasks === b.tasks) return false
         if (a.tasks.size != b.tasks.size) return true
         for ((id, task) in b.tasks) {
@@ -3424,14 +3399,7 @@ object SearchDomain {
         val lastPaths = lastPaths(state)
         // The trees each task belongs to (user rule 2026-11-13).
         val treeRoots = treeRootsByTask(state)
-        val candidates = LinkedHashMap<TaskId, Task>()
-        for (entry in state.taskTrees) {
-            if (entry.id == state.activeTaskTreeId) continue
-            for ((id, task) in entry.tree.tasks) if (id !in candidates) candidates[id] = task
-        }
-        // The live task wins: it is the one every edit reaches.
-        candidates.putAll(state.tasks)
-        return candidates.values
+        return state.tasks.values
             .asSequence()
             .filter { (withRoot || !SchedulerDomain.isRootTask(it.id)) && it.title.isNotBlank() }
             .mapNotNull { task -> matchRank(task.title, query)?.let { rank -> rank to task } }
@@ -3580,12 +3548,6 @@ object SearchDomain {
                         listOf(entry.message, dateTime(entry.timeMillis, timeZone)).filter { it.isNotBlank() }.joinToString(" · ") + said,
                     )
                 } }
-                Kind.TaskTree -> state.taskTrees.map { entry ->
-                    val open = entry.id == state.activeTaskTreeId
-                    val size = if (open) state.tasks.size else entry.tree.tasks.size
-                    val date = entry.dateMillis?.let { dateTime(it, timeZone).substringBefore(' ') } ?: "no date"
-                    ItemResult(kind, entry.id.value, entry.title.ifBlank { "tree" }, (if (open) "open · " else "") + date + " · " + plural(size, "task"))
-                }
                 // The Task relations window's own rows — the same pairs, the same sections, never a second reading.
                 Kind.TaskRelation -> TaskRelationsDomain.rows(state).map { row ->
                     ItemResult(
@@ -3966,7 +3928,6 @@ object SearchDomain {
         private val alarms by lazy { state.alarms.associateBy { it.id } }
         private val timers by lazy { state.timers.associateBy { it.id } }
         private val chores by lazy { state.chores.associateBy { it.id.ifEmpty { it.title } } }
-        private val trees by lazy { state.taskTrees.associateBy { it.id.value } }
         private val blocks by lazy { calendarBlocks(state).associateBy { it.id } }
         private val sectionRank by lazy {
             TaskRelationsDomain.Section.entries.associate { relationSectionLabel(it) to it.ordinal }
@@ -4000,10 +3961,6 @@ object SearchDomain {
                 SortKey.BlockStart -> blocks[row.id]?.startMillis
                 SortKey.HistoryDate -> schedulerRunTimeOf(row.id) ?: historyUnitOf(state, row.id)?.timeMillis
                 SortKey.NotificationDate -> notificationTimeOf(row.id)
-                SortKey.TaskTreeDate -> trees[row.id]?.dateMillis
-                SortKey.TaskTreeSize -> trees[row.id]?.let { entry ->
-                    if (entry.id == state.activeTaskTreeId) state.tasks.size else entry.tree.tasks.size
-                }
                 SortKey.RelationSection -> sectionRank[row.detail.substringBefore(" · ")]
                 SortKey.ShortcutChord -> row.detail.substringBefore(" · ").lowercase()
                 SortKey.WindowState -> windowStatusOf(row)?.ordinal
@@ -4021,7 +3978,6 @@ object SearchDomain {
         return when (result) {
             is TaskResult -> {
                 val task = state.tasks[result.taskId]
-                    ?: state.taskTrees.firstNotNullOfOrNull { it.tree.tasks[result.taskId] }
                 tri(filters.taskInTree, result.inTaskTree) &&
                     tri(filters.taskTreeRoot, result.taskId in result.treeRoots) &&
                     (filters.taskSchedulable == Tri.Any ||
@@ -4105,10 +4061,6 @@ object SearchDomain {
                         (filters.historyWindow == null || unit.window == filters.historyWindow) &&
                         tri(filters.historyUndone, unit.undone) &&
                         historyChangeMatches(unit.delta.changedElements, filters)
-                }
-                Kind.TaskTree -> {
-                    val entry = state.taskTrees.firstOrNull { it.id.value == result.id } ?: return true
-                    tri(filters.taskTreeOpen, entry.id == state.activeTaskTreeId) && tri(filters.taskTreeDated, entry.dateMillis != null)
                 }
                 Kind.TaskRelation ->
                     filters.relationSection == null ||
@@ -4283,7 +4235,6 @@ object SearchDomain {
         when (kind) {
             Kind.Window -> "a Search window of the window types"
             Kind.Shortcut -> "a chord for a window"
-            Kind.TaskTree -> "a copy of the open tree"
             else -> "added to this window's list"
         }
 
@@ -4365,7 +4316,7 @@ object SearchDomain {
     val HISTORY_CHANGED_KINDS: List<Kind> =
         listOf(
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.TaskTree, Kind.Shortcut, Kind.Window, Kind.WorkplaceSetup,
+            Kind.Shortcut, Kind.Window, Kind.WorkplaceSetup,
         )
 
     /** Whether a unit that changed [changed] passes the two "changed" filters: one of the checked kinds, the one element. */
@@ -4521,8 +4472,8 @@ object SearchDomain {
         fun <T> labels(entries: List<T>, label: (T) -> String) = entries.map(label)
         return when (setting) {
             Setting.TaskInTree, Setting.TaskTreeRoot, Setting.TaskSchedulable, Setting.TaskOnCalendar, Setting.CategoryHasRules,
-            Setting.PeriodOnCalendar, Setting.QuotaRepeatsSetting, Setting.HistoryUndoneSetting, Setting.TaskTreeOpenSetting,
-            Setting.TaskTreeDatedSetting, Setting.ShortcutReboundSetting,
+            Setting.PeriodOnCalendar, Setting.QuotaRepeatsSetting, Setting.HistoryUndoneSetting,
+            Setting.ShortcutReboundSetting,
             -> labels(Tri.entries) { it.label }
             Setting.PeriodOriginSetting -> labels(PeriodOrigin.entries) { it.label }
             Setting.PeriodResilienceSetting -> labels(ResilienceLevel.entries) { it.label }
@@ -4820,9 +4771,9 @@ object SearchDomain {
         TaskScheduleUnit(Kind.Task, "Schedule unit"),
         TaskText(Kind.Task, "Text"),
         /**
-         * User rule 2026-11-13: **the name of the tree a task belongs to** — its root's, the task standing directly under the
-         * global root ([org.example.project.scheduler.model.Task.treeName]), its own and not the task's title. *"the tree
-         * action should be in all tasks belonging to a tree"*: listed for every task of a tree ([TaskResult.treeRoots]).
+         * User rule 2026-11-13: **the name of the tree a task belongs to** — the title of its root, the task standing directly
+         * under the global root (user rule 2026-11-16: a tree IS that task, [TaskTreesAsTasks]). *"the tree action should be
+         * in all tasks belonging to a tree"*: listed for every task of a tree ([TaskResult.treeRoots]).
          */
         TaskTreeName(Kind.Task, "Tree name"),
         TaskPaths(Kind.Task, "Paths"),
@@ -5069,7 +5020,7 @@ object SearchDomain {
             AddedAction.TaskResilience -> task?.resilience
             AddedAction.TaskScheduleUnit -> task?.scheduleUnit
             AddedAction.TaskText -> task?.text
-            AddedAction.TaskTreeName -> task?.treeName
+            AddedAction.TaskTreeName -> treeRootsOf(listOf(row)).map { state.tasks[it]?.title }
             AddedAction.AlarmTitle -> alarm()?.label
             AddedAction.AlarmOnOff -> alarm()?.enabled
             AddedAction.AlarmTime -> alarm()?.let { it.timeOfDayMinutes to it.onlyOnEpochDay }
@@ -7482,14 +7433,10 @@ object SearchDomain {
         private val cells = state.cells
         private val lists = state.lists
         private val tasks = state.tasks
-        private val taskTrees = state.taskTrees
         private val rootListId = state.rootListId
-        private val activeTaskTreeId = state.activeTaskTreeId
 
         fun sameAs(other: ShapeKey): Boolean =
-            cells === other.cells && lists === other.lists && tasks === other.tasks &&
-                taskTrees === other.taskTrees && rootListId == other.rootListId &&
-                activeTaskTreeId == other.activeTaskTreeId
+            cells === other.cells && lists === other.lists && tasks === other.tasks && rootListId == other.rootListId
     }
 
     /**

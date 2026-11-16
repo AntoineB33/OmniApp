@@ -130,6 +130,7 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
 Only three things: **pre-placed tasks** (pinned/manual panels), **the frozen past** (records, past panels, the
 kept head on an extension) and **restrictive periods**. Nothing else, by any other route.
 
+
 - **Pre-placed tasks and restrictive periods can repeat for ever** (`TaskPanel.repeat`, `PanelRepeat`, requirements
   § *Priority, Granularity and Compensation*: *"can be in infinite patterns"*, 2026-09-27): every N days at the same
   local time, optionally until an instant. The panel is the first occurrence; the others are derived by ONE funnel,

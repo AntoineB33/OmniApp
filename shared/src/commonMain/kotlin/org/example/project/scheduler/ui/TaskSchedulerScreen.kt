@@ -339,50 +339,12 @@ fun TaskSchedulerScreen(
     /** Which of the two sections — the tree, the configuration — are retracted to their arrow; each change told back. */
     sectionsHidden: List<Boolean>? = null,
     onSectionsHiddenChange: (List<Boolean>) -> Unit = {},
-    /** User rule 2026-10-20: opens the window linking a task to a task of another tree ([LocalTaskLinker]); null: not offered. */
-    onLinkTask: ((TaskId) -> Unit)? = null,
 ) {
     Perf.count("recompose.TaskSchedulerScreen")
     val state by vm.state.collectAsState()
     // PRD §5: absolute priority percentage per task, displayed at the right of each populated cell.
     val priorities = SchedulerDomain.absoluteTaskPriorities(state)
     val focusRequester = remember { FocusRequester() }
-
-    // The task-tree selector above the tree: its draft name, edit mode, and whether its field holds focus
-    // (which is what reveals its menus and hands it the keyboard). Hoisted here so this screen's key
-    // handler can commit on Enter and revert on Escape.
-    var treeFieldFocused by remember { mutableStateOf(false) }
-    var treeNameDraft by remember { mutableStateOf("") }
-    var treeEditMode by remember { mutableStateOf(TaskTreeEditMode.Change) }
-    val activeTreeTitle = state.activeTaskTree?.title.orEmpty()
-
-    // The field shows the selected tree's name whenever the user is not typing in it — so a switch, a rename,
-    // an undo or a remote pull are all reflected without the field ever fighting the user's caret.
-    LaunchedEffect(activeTreeTitle, treeFieldFocused) {
-        if (!treeFieldFocused) treeNameDraft = activeTreeTitle
-    }
-    // Rename is meaningless with no tree selected (and the selector hides the mode there), so a state that
-    // loses its tree — undo of the first creation, a pull — must not leave the field renaming nothing.
-    LaunchedEffect(state.activeTaskTreeId) {
-        if (state.activeTaskTreeId == null) treeEditMode = TaskTreeEditMode.Change
-    }
-
-    // Enter / the selector's own button: rename the selected tree, switch to the tree of that exact name, or
-    // create one. Blank commits nothing (the reducers no-op on it anyway).
-    val commitTaskTreeName = {
-        val name = treeNameDraft.trim()
-        val activeId = state.activeTaskTreeId
-        when {
-            name.isEmpty() -> Unit
-            treeEditMode == TaskTreeEditMode.Rename && activeId != null ->
-                vm.dispatch(SchedulerIntent.RenameTaskTree(activeId, name))
-            else -> {
-                val existing = SchedulerDomain.taskTreeIdForTitle(state, name)
-                if (existing != null) vm.dispatch(SchedulerIntent.SelectTaskTree(existing))
-                else vm.dispatch(SchedulerIntent.CreateTaskTree(name))
-            }
-        }
-    }
 
     // The window is two sections side by side: the task tree fills the whole left one, the configuration
     // (the default sub-tree's switch and button, then the task-tree name field) the whole right one — so the
@@ -427,7 +389,7 @@ fun TaskSchedulerScreen(
         ) {
             TreeWindowSectionHead("Task tree", onCollapse = { treeCollapsed = true })
             Box(Modifier.weight(1f).fillMaxWidth()) {
-            androidx.compose.runtime.CompositionLocalProvider(LocalTaskLinker provides onLinkTask) {
+            run {
             Perf.measure("compose.TaskTreeView") {
             TaskTreeView(
                 state = state,
@@ -436,7 +398,7 @@ fun TaskSchedulerScreen(
                 // PRD §7/§8: the tree only owns the keyboard while it is the focused surface AND the selector's
                 // name field above it does not hold it — that field's menus close the moment it loses focus, so
                 // the tree's refocus effect must not pull focus back out of it.
-                keyboardActive = keyboardEnabled && state.focusedWindow == HistoryWindow.Tree && !treeFieldFocused,
+                keyboardActive = keyboardEnabled && state.focusedWindow == HistoryWindow.Tree,
                 refocusWindow = HistoryWindow.Tree,
                 modifier = Modifier.fillMaxSize(),
                 onSetWeightWindow = onSetWeightWindow,
@@ -445,28 +407,6 @@ fun TaskSchedulerScreen(
                 onSetEditCategory = onSetEditCategory,
                 onSetDeepCopyCell = onSetDeepCopyCell,
                 focusRequester = focusRequester,
-                // While the selector's field holds focus it owns the keyboard: Enter commits the typed name and
-                // Escape restores the selected tree's, both handing focus back to the tree; everything else
-                // (arrows, Backspace, its own Ctrl+A/C/V) reaches the field.
-                aboveTreeKeyHandler = { event ->
-                    if (!treeFieldFocused) {
-                        null
-                    } else {
-                        when (event.key) {
-                            Key.Escape -> {
-                                treeNameDraft = activeTreeTitle
-                                focusRequester.requestFocus()
-                                true
-                            }
-                            Key.Enter -> {
-                                commitTaskTreeName()
-                                focusRequester.requestFocus()
-                                true
-                            }
-                            else -> false
-                        }
-                    }
-                },
             )
             }
             }
@@ -521,22 +461,6 @@ fun TaskSchedulerScreen(
                 windowOpen = defaultSubtreeWindowOpen,
                 onToggleWindow = onToggleDefaultSubtree,
                 modifier = Modifier.fillMaxWidth(),
-            )
-
-            // Which named task tree is on screen (and how to pick another).
-            TaskTreeSelector(
-                state = state,
-                draft = treeNameDraft,
-                mode = treeEditMode,
-                focused = treeFieldFocused,
-                onDraftChange = { treeNameDraft = it },
-                onModeChange = { treeEditMode = it },
-                onFocusChange = { treeFieldFocused = it },
-                onCommit = {
-                    commitTaskTreeName()
-                    focusRequester.requestFocus()
-                },
-                onIntent = { intent -> vm.dispatch(intent) },
             )
 
             // User rule 2026-10-03: a category rule holding a cell whose weight a priority weights table PINS — the
@@ -748,14 +672,13 @@ internal fun CellListSection(
         val menuTaskId = cellTaskId?.takeIf { selectable || isRootRow }
         val menuStartable = menuTaskId != null && SchedulerDomain.isLeafTask(state, menuTaskId)
         val menuHasTemplate = !state.defaultSubtreeIsEmpty
-        val taskLinker = LocalTaskLinker.current
         val cellMenu: TaskCellMenuActions? =
             if (menuTaskId == null || pinned) {
                 null
             } else {
                 remember(
                     menuTaskId, cellId, isRootRow, hasChildren, menuStartable, menuHasTemplate,
-                    onGoToTaskTree, onCopyTaskIdCell, onDeepCopyCell, onOpenTaskEdit, onIntent, onAddTasks, taskLinker,
+                    onGoToTaskTree, onCopyTaskIdCell, onDeepCopyCell, onOpenTaskEdit, onIntent, onAddTasks,
                 ) {
                     val taskId = menuTaskId
                     val addTargets = {
@@ -775,7 +698,6 @@ internal fun CellListSection(
                                 null
                             },
                         onEdit = if (isRootRow) null else ({ onOpenTaskEdit(taskId) }),
-                        onLink = taskLinker?.takeUnless { isRootRow }?.let { link -> { link(taskId) } },
                         calendarTaskId = taskId.takeUnless { isRootRow },
                         // PRD §7/§8: offered only where the surface is NOT the tree — the Search
                         // window's sub-trees today. Same entry, same name and the same RevealCell primitive the
@@ -999,154 +921,6 @@ internal fun CellListSection(
                 onAddTasks = onAddTasks,
                 rowPath = path,
             )
-        }
-    }
-}
-
-/**
- * The two edit modes of the task-tree selector, mirroring a cell's Edit Mode (PRD §4): [Change] picks
- * *which* task tree the app shows (the tree menu is shown), [Rename] renames the selected one in place.
- */
-internal enum class TaskTreeEditMode { Change, Rename }
-
-/**
- * The **task tree selector** sitting right above the task tree: a name field that says which of the
- * account's named task trees ([org.example.project.scheduler.state.TaskTreeEntry]) is on screen, and picks
- * another one — built exactly like a cell's task selection (PRD §4), because it is the same gesture applied
- * to the whole tree:
- *  - a **Mode** selector (Change task tree / Rename), shown only once a tree is selected — there is nothing
- *    to rename before that, mirroring how a cell being *created* hides the selector;
- *  - a **Task trees** menu — the identity rows, shown in [TaskTreeEditMode.Change] only: `tree-<today>`
- *    first and always, then "New task tree", then the trees whose titles are similar to what is typed (see
- *    [SchedulerDomain.taskTreeMenuEntries]). A row here *acts*: it opens a tree, or creates one;
- *  - a **Title suggestions** menu of every tree title containing what is typed — empty text lists them all,
- *    which is how the trees are browsed. Picking one only fills the field (as in a cell); Enter commits it.
- *
- * The three sections are the shared [EditModeMenuBlock], so they render in the one order PRD §4 fixes and
- * look identical to every other naming field. The menus are focus-gated like the reminders manager's editor:
- * they appear only while the field holds focus, so the tree below is not permanently pushed down — hence
- * `focusPreserving = true`, so clicking a row cannot blur the field and collapse the block mid-pick.
- */
-@Composable
-private fun TaskTreeSelector(
-    state: SchedulerState,
-    draft: String,
-    mode: TaskTreeEditMode,
-    focused: Boolean,
-    onDraftChange: (String) -> Unit,
-    onModeChange: (TaskTreeEditMode) -> Unit,
-    onFocusChange: (Boolean) -> Unit,
-    onCommit: () -> Unit,
-    onIntent: (SchedulerIntent) -> Unit,
-) {
-    val activeId = state.activeTaskTreeId
-    // `tree-YYYY-MM-DD` for today, read off the same clock the first-startup seed used so the row the menu
-    // leads with and the tree that seeding created carry the identical name. O(1), so recomputing it per
-    // recomposition rather than remembering it is what keeps the row correct across midnight.
-    val todayTitle = SchedulerDomain.defaultTaskTreeTitle(SchedulerReducer.clock.nowMillis())
-    val entries = SchedulerDomain.taskTreeMenuEntries(state, draft, todayTitle)
-    val suggestions = SchedulerDomain.taskTreeTitleSuggestions(state, draft)
-    // The tree the field currently designates: the one whose title IS the typed text. Highlighted in the
-    // menu, so the user can see whether Enter would switch to an existing tree or create one.
-    val matchedId = SchedulerDomain.taskTreeIdForTitle(state, draft)
-
-    // A press outside the field and its menus takes the focus away, which closes the menus and reverts the field
-    // to the selected tree's name, as any focus loss does (PRD §4 *Forced Exit*, the task-cell rule's twin).
-    val outsidePress = org.example.project.ui.rememberFocusOutsidePressEditor(focused)
-    Column(
-        modifier = Modifier.outsidePressPart(outsidePress),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        OutlinedTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            label = { Text("Task tree") },
-            placeholder = { Text("No task tree selected") },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .onFocusChanged { onFocusChange(it.isFocused) },
-        )
-
-        if (!focused) return@Column
-
-        EditModeMenuBlock(
-            // Mode — only once a tree is selected: with none there is nothing to rename, and the field can
-            // only mean "create or pick one" (the same reason a cell being created hides its selector).
-            modeOptions =
-                if (activeId != null) {
-                    listOf(
-                        EditModeOption(
-                            label = "Change task tree",
-                            selected = mode == TaskTreeEditMode.Change,
-                            onSelect = { onModeChange(TaskTreeEditMode.Change) },
-                        ),
-                        EditModeOption(
-                            label = "Rename",
-                            selected = mode == TaskTreeEditMode.Rename,
-                            onSelect = { onModeChange(TaskTreeEditMode.Rename) },
-                        ),
-                    )
-                } else {
-                    emptyList()
-                },
-            identityLabel = "Task trees",
-            // Task trees (the identity menu) — Change mode only, by the user's rule: in Rename mode the field
-            // is naming the selected tree, so there is no other tree for a row to act on. Shown whatever is
-            // typed, empty field included, because its first row — today's tree — is offered unconditionally.
-            identityRows =
-                if (mode == TaskTreeEditMode.Change) {
-                    entries.map { entry ->
-                        EditMenuItem(
-                            label = entry.label,
-                            selected = when (entry.kind) {
-                                // "New task tree" is what Enter would do exactly when nothing matches the
-                                // typed name.
-                                SchedulerDomain.TaskTreeMenuEntry.Kind.New ->
-                                    draft.isNotBlank() && matchedId == null
-                                else -> entry.id != null && entry.id == matchedId
-                            },
-                        ) {
-                            // The field follows the row, so it can never sit on the half-typed text that
-                            // merely *matched* the tree now open ("Wor" left over from picking "Workshop").
-                            when (entry.kind) {
-                                SchedulerDomain.TaskTreeMenuEntry.Kind.New ->
-                                    onIntent(SchedulerIntent.CreateTaskTree(draft))
-                                else -> {
-                                    onDraftChange(entry.label)
-                                    if (entry.id != null) onIntent(SchedulerIntent.SelectTaskTree(entry.id))
-                                    // Today's tree, on a day that has none yet.
-                                    else onIntent(SchedulerIntent.CreateTaskTree(entry.label))
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    emptyList()
-                },
-            // Title suggestions — in both modes, as in a cell: picking one fills the field (Rename then
-            // renames the selected tree to it, Change switches to it) and Enter commits.
-            suggestions = suggestions.map { suggestion ->
-                EditMenuItem(
-                    label = suggestion,
-                    selected = suggestion.equals(draft.trim(), ignoreCase = true),
-                ) { onDraftChange(suggestion) }
-            },
-            focusPreserving = true,
-        )
-
-        // The field is not a form: nothing is applied until it is committed, so the commit needs a control of
-        // its own for pointer-only use (Enter does the same thing from the keyboard).
-        if (draft.isNotBlank()) {
-            TextButton(onClick = onCommit) {
-                Text(
-                    when {
-                        mode == TaskTreeEditMode.Rename -> "Rename"
-                        matchedId != null -> "Open"
-                        else -> "Create"
-                    },
-                )
-            }
         }
     }
 }
@@ -3556,7 +3330,6 @@ internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.exampl
         add(org.example.project.ui.MenuAction("copy task id (ctrl c)", onClick = cellMenu.onCopyTaskId))
         // Greyed, never hidden, where no live cell holds the task (a Search row of another tree's task).
         add(org.example.project.ui.MenuAction("deep copy", enabled = cellMenu.onDeepCopy != null) { cellMenu.onDeepCopy?.invoke() })
-        cellMenu.onLink?.let { add(org.example.project.ui.MenuAction("link to a task of another tree…", onClick = it)) }
         cellMenu.onCollapseSubtrees?.let { add(org.example.project.ui.MenuAction("collapse sub-trees", onClick = it)) }
         // PRD §7: only offered where there is a template to add.
         cellMenu.onAddDefaultSubtree?.let { add(org.example.project.ui.MenuAction("add default sub-tree", onClick = it)) }
@@ -3603,16 +3376,8 @@ internal class TaskCellMenuActions(
     val onAddReplacing: (() -> Unit)? = null,
     /** Entries of the surface the row stands in, where "add" stands elsewhere: an added element's "remove" (user rule 2026-11-13). */
     val extra: List<org.example.project.ui.MenuAction> = emptyList(),
-    /** User rule 2026-10-20: "link to a task of another tree" — the account's tree window only ([LocalTaskLinker]); null elsewhere. */
-    val onLink: (() -> Unit)? = null,
 )
 
-/**
- * The account's task tree window's answer to "link to a task of another tree" (user rule 2026-10-20): opens the link
- * window on a task. Provided by [TaskSchedulerScreen] around its tree alone, so the Search window's sub-trees and the
- * default sub-tree's window — whose rows are not the live tree's own tasks to link — do not offer it.
- */
-internal val LocalTaskLinker = androidx.compose.runtime.compositionLocalOf<((TaskId) -> Unit)?> { null }
 
 /** The Search window's row-menu entry that adds while removing every other added element — one name in both menus. */
 const val ADD_REPLACING_LABEL: String = "add and remove the others"

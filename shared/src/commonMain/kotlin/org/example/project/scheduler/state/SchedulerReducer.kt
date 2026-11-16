@@ -340,14 +340,6 @@ object SchedulerReducer {
             is SchedulerIntent.AddTasksPath ->
                 addTasksPathDelta(state, intent.taskIds, intent.parentTaskId)?.let { commitDelta(state, it) } ?: state
             is SchedulerIntent.RemoveTaskPath -> removeTaskPathDelta(state, intent.cellId)?.let { commitDelta(state, it) } ?: state
-            is SchedulerIntent.SelectTaskTree -> reduceSelectTaskTree(state, intent.id)
-            is SchedulerIntent.CreateTaskTree -> reduceCreateTaskTree(state, intent.title)
-            is SchedulerIntent.RenameTaskTree -> reduceRenameTaskTree(state, intent.id, intent.title)
-            is SchedulerIntent.LinkTask ->
-                if (org.example.project.scheduler.domain.TaskLinks.refusal(state, intent.taskId, intent.otherTreeId, intent.otherTaskId) != null) state
-                else settingsUnit(state, "Link task") { it.copy(taskLinks = org.example.project.scheduler.domain.TaskLinks.linked(it, intent.taskId, intent.otherTaskId)) }
-            is SchedulerIntent.SetTaskTreeDate -> reduceSetTaskTreeDate(state, intent.id, intent.dateMillis)
-            is SchedulerIntent.DeleteTaskTree -> reduceDeleteTaskTree(state, intent.id)
             is SchedulerIntent.SetPriorityWeight ->
                 commitDelta(state, priorityTreeDelta(state, "Priority weight") { applySetPriorityWeight(it, intent.cellId, intent.column, intent.value) })
             is SchedulerIntent.SetPriorityWeightTableRow -> {
@@ -621,11 +613,10 @@ object SchedulerReducer {
             is SchedulerIntent.DuplicateCategory -> settingsUnit(state, "Duplicate category") { reduceDuplicateCategory(it, intent.categoryId) }
             is SchedulerIntent.DuplicatePeriodKind -> settingsUnit(state, "Duplicate period") { reduceDuplicatePeriodKind(it, intent.kind) }
             is SchedulerIntent.SetTreeName -> {
+                // A tree is the task at its root (user rule 2026-11-16): its name is that task's title.
                 val apply = { working: SchedulerState ->
-                    intent.taskIds.distinct().fold(working) { acc, id ->
-                        val task = acc.tasks[id]
-                        if (task == null || task.treeName == intent.name) acc else acc.copy(tasks = acc.tasks + (id to task.copy(treeName = intent.name)))
-                    }
+                    if (intent.name.isBlank()) working
+                    else intent.taskIds.distinct().fold(working) { acc, id -> SchedulerDomain.withTaskRenamed(acc, id, intent.name) }
                 }
                 if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Tree name", apply))
             }
@@ -1888,24 +1879,13 @@ object SchedulerReducer {
         )
     }
 
-    /**
-     * PRD §7 *Search*: [SchedulerIntent.RenameTask]. A task only the live tree holds is the common case and is a
-     * diff-sized [TreeMutationDelta]; one a stored tree carries too needs [TaskTreeDelta], the one unit that
-     * carries the stored trees — kept for that case only, being the larger of the two.
-     */
+    /** PRD §7 *Search*: [SchedulerIntent.RenameTask], one diff-sized [TreeMutationDelta]. */
     private fun reduceRenameTask(state: SchedulerState, taskId: TaskId, title: String): SchedulerState {
         if (title.isBlank()) return state
         val after = SchedulerDomain.withTaskRenamed(state, taskId, title)
         if (after === state) return state
         val label = "Rename task \"" + title + "\""
-        return if (after.taskTrees == state.taskTrees) {
-            commitDelta(state, TreeMutationDelta(before = state.captureTree(), after = after.captureTree(), label = label))
-        } else {
-            commitDelta(
-                state,
-                TaskTreeDelta(before = state.captureTaskTreeState(), after = after.captureTaskTreeState(), label = label),
-            )
-        }
+        return commitDelta(state, TreeMutationDelta(before = state.captureTree(), after = after.captureTree(), label = label))
     }
 
     /**
@@ -4543,158 +4523,6 @@ object SchedulerReducer {
         } else {
             state.copy(editSession = session.copy(draftText = title))
         }
-    }
-
-    /**
-     * Task-tree selector: make [id] the live tree. The tree being left is **flushed** into its own entry
-     * first ([SchedulerState.withActiveTaskTreeFlushed]) — the trees are live alternatives, not frozen
-     * backups, so everything done in one must be there when the user comes back to it.
-     *
-     * The whole swap is one [TaskTreeDelta], which is also what keeps the Main history coherent across
-     * trees: undo walks units in order, so a tree mutation recorded under the previous tree can only be
-     * reached after this unit has already put that tree back.
-     */
-    private fun reduceSelectTaskTree(state: SchedulerState, id: TaskTreeId): SchedulerState {
-        if (state.activeTaskTreeId == id) return state
-        val flushed = state.withActiveTaskTreeFlushed()
-        val target = flushed.taskTrees.firstOrNull { it.id == id } ?: return state
-        val after = flushed.withTaskTreeLoaded(target)
-        return commitDelta(
-            state,
-            TaskTreeDelta(
-                before = state.captureTaskTreeState(),
-                after = after.captureTaskTreeState(),
-                label = "Task tree \"${target.title.ifBlank { SchedulerDomain.UNTITLED_LABEL }}\"",
-            ),
-        )
-    }
-
-    /**
-     * Task-tree selector: create a tree named [title] holding a copy of what is on screen and select it. The
-     * copy's tasks are NEW ids, each linked to the task it copies (user rule 2026-10-20, [org.example.project.scheduler.domain.TaskLinks]),
-     * so the two trees' tasks are distinct and diverge from the user's next edit onward, while the task-tree timeline
-     * still blends each with the task it was copied from. The tree being left is flushed first, so its stored copy is
-     * current before it stops being the live one.
-     */
-    private fun reduceCreateTaskTree(state: SchedulerState, title: String): SchedulerState {
-        val name = title.trim()
-        if (name.isEmpty()) return state
-        val (id, allocated) = state.withActiveTaskTreeFlushed().allocateTaskTreeId()
-        // User rule 2026-10-20: the copy's tasks are NEW ids, each linked to the task it copies ([TaskLinks]) — unless
-        // the tree on screen is in no entry yet (an account from before the trees), which this names rather than copies:
-        // replacing its ids would leave the calendar's blocks naming tasks no tree holds any more.
-        val stored = state.activeTaskTreeId != null && state.taskTrees.any { it.id == state.activeTaskTreeId }
-        val copy =
-            if (stored) {
-                org.example.project.scheduler.domain.TaskLinks.copyWithFreshIds(
-                    state.captureTreeWithRecords(),
-                    org.example.project.scheduler.domain.TaskLinks.keys(state),
-                    state.nextTaskCounter,
-                )
-            } else {
-                null
-            }
-        val entry =
-            TaskTreeEntry(
-                id = id,
-                title = name,
-                tree = copy?.tree ?: state.captureTreeWithRecords(),
-                expanded = state.expanded,
-            )
-        val after =
-            if (copy == null) {
-                allocated.copy(taskTrees = allocated.taskTrees + entry, activeTaskTreeId = id)
-            } else {
-                // The task relations and relative-priority pins stay with the tasks they were filed on: a pair naming a
-                // task the live tree does not hold is listed as broken, so a copy of each would be broken on the other tree.
-                allocated.copy(
-                    taskTrees = allocated.taskTrees + entry,
-                    taskLinks = allocated.taskLinks + copy.links,
-                    nextTaskCounter = maxOf(allocated.nextTaskCounter, copy.nextTaskCounter),
-                ).withTaskTreeLoaded(entry)
-            }
-        return commitDelta(
-            state,
-            TaskTreeDelta(
-                before = state.captureTaskTreeState(),
-                after = after.captureTaskTreeState(),
-                label = "New task tree \"$name\"",
-            ),
-        ).copy(
-            // The links are not part of the tree's undo unit (like the task relations, they are no Undo/Redo unit): an
-            // undone creation leaves its links naming ids no tree holds, which nothing reads.
-            taskLinks = org.example.project.scheduler.domain.TaskLinks.pruned(after, after.taskLinks),
-        )
-    }
-
-    /** Task-tree selector (Rename mode): the same tree under a new name — content and id are untouched. */
-    private fun reduceRenameTaskTree(state: SchedulerState, id: TaskTreeId, title: String): SchedulerState {
-        val name = title.trim()
-        val entry = state.taskTrees.firstOrNull { it.id == id } ?: return state
-        if (name.isEmpty() || name == entry.title) return state
-        val after =
-            state.copy(taskTrees = state.taskTrees.map { if (it.id == id) it.copy(title = name) else it })
-        return commitDelta(
-            state,
-            TaskTreeDelta(
-                before = state.captureTaskTreeState(),
-                after = after.captureTaskTreeState(),
-                label = "Rename task tree \"${entry.title}\" → \"$name\"",
-            ),
-        )
-    }
-
-    /**
-     * "All task trees": put [id] on the timeline at [dateMillis], or take it off with `null`. Only the
-     * entry's own date moves — the tree's content and which tree is live are untouched — but the plan
-     * itself changes, since the dated trees are what the scheduler blends between
-     * ([SchedulerDomain.blendedTaskPriorities]); the debounced rule-change watcher picks that up because
-     * the dates are part of [SchedulerDomain.schedulingSignature].
-     */
-    private fun reduceSetTaskTreeDate(state: SchedulerState, id: TaskTreeId, dateMillis: Long?): SchedulerState {
-        val entry = state.taskTrees.firstOrNull { it.id == id } ?: return state
-        if (entry.dateMillis == dateMillis) return state
-        val after =
-            state.copy(
-                taskTrees = state.taskTrees.map { if (it.id == id) it.copy(dateMillis = dateMillis) else it },
-            )
-        return commitDelta(
-            state,
-            TaskTreeDelta(
-                before = state.captureTaskTreeState(),
-                after = after.captureTaskTreeState(),
-                label =
-                    if (dateMillis == null) "Task tree \"${entry.title}\" off the timeline"
-                    else "Date task tree \"${entry.title}\"",
-            ),
-        )
-    }
-
-    /**
-     * "All task trees" (the bin button): delete [id]. Deleting the **live** tree is deliberately not
-     * destructive — the live tree fields stay exactly as they are and simply stop being named
-     * (`activeTaskTreeId = null`, the state a never-named account is already in), so the bin can only ever
-     * cost the user a name, never a tree's worth of work. Deleting an inactive tree does discard its stored
-     * copy, which is what the button is for; Undo puts it back whole.
-     */
-    private fun reduceDeleteTaskTree(state: SchedulerState, id: TaskTreeId): SchedulerState {
-        val entry = state.taskTrees.firstOrNull { it.id == id } ?: return state
-        // Flush first: if another tree is live, its own stored copy must be current before this one's
-        // removal is captured as the "after" side, or the switch away would resurrect a stale snapshot.
-        val flushed = state.withActiveTaskTreeFlushed()
-        val after =
-            flushed.copy(
-                taskTrees = flushed.taskTrees.filterNot { it.id == id },
-                activeTaskTreeId = flushed.activeTaskTreeId?.takeIf { it != id },
-            )
-        return commitDelta(
-            state,
-            TaskTreeDelta(
-                before = state.captureTaskTreeState(),
-                after = after.captureTaskTreeState(),
-                label = "Delete task tree \"${entry.title.ifBlank { SchedulerDomain.UNTITLED_LABEL }}\"",
-            ),
-        )
     }
 
     /**
@@ -7508,7 +7336,6 @@ internal data class TaskTreeDelta(
     val diff: TaskTreesDiff,
     override val label: String,
 ) : Delta {
-    constructor(before: TaskTreeStateSnapshot, after: TaskTreeStateSnapshot, label: String) : this(TaskTreesDiff.of(before, after), label)
 
     override val details: List<String>
         get() = buildList {
@@ -7520,11 +7347,14 @@ internal data class TaskTreeDelta(
             }
         }
 
-    override fun undo(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = false)
+    // User rule 2026-11-16: the stored trees are gone — every tree is a task under the root ([TaskTreesAsTasks]). A unit an
+    // older build wrote about them stays in the log and changes nothing: walking it back would swap the live tree for the
+    // one it left, which no longer has a place to stand.
+    override fun undo(state: SchedulerState): SchedulerState = state
 
-    override fun redo(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = true)
+    override fun redo(state: SchedulerState): SchedulerState = state
 
-    override fun commit(state: SchedulerState): SchedulerState = diff.applyTo(state, forward = true, exact = true)
+    override fun commit(state: SchedulerState): SchedulerState = state
 }
 
 /**

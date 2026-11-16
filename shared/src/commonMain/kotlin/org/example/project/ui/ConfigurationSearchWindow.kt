@@ -115,7 +115,7 @@ fun ConfigurationSearchWindow(
     // "only what applies" button keeps. One pass over that window's results (paths skipped), when they can change.
     val counts =
         remember(
-            config, state.tasks, state.taskTrees, state.cells, state.lists, state.categories, state.periodKinds,
+            config, state.tasks, state.cells, state.lists, state.categories, state.periodKinds,
             state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.panels, windows,
             calendarLayerKindsAt, schedulerRuns,
             claudeLogs,
@@ -636,10 +636,6 @@ internal fun SettingEditor(
             ChangedElementField(state, f.historyChangedKinds, f.historyChangedElement, windows) {
                 filters(f.copy(historyChangedElement = it))
             }
-        SearchDomain.Setting.TaskTreeOpenSetting ->
-            Choices(SearchDomain.Tri.entries, f.taskTreeOpen, { it.label }) { filters(f.copy(taskTreeOpen = it)) }
-        SearchDomain.Setting.TaskTreeDatedSetting ->
-            Choices(SearchDomain.Tri.entries, f.taskTreeDated, { it.label }) { filters(f.copy(taskTreeDated = it)) }
         SearchDomain.Setting.RelationSectionSetting ->
             EnumPicker(setting.name, TaskRelationsDomain.Section.entries, f.relationSection, { SearchDomain.relationSectionLabel(it) }) {
                 filters(f.copy(relationSection = it))
@@ -664,7 +660,7 @@ internal fun SettingEditor(
         SearchDomain.Setting.TaskSort, SearchDomain.Setting.CategorySort, SearchDomain.Setting.PeriodSort,
         SearchDomain.Setting.AlarmSort, SearchDomain.Setting.TimerSort, SearchDomain.Setting.ChronoSort, SearchDomain.Setting.QuotaSort,
         SearchDomain.Setting.ReminderSort, SearchDomain.Setting.BlockSort,
-        SearchDomain.Setting.HistorySort, SearchDomain.Setting.NotificationSort, SearchDomain.Setting.TaskTreeSort,
+        SearchDomain.Setting.HistorySort, SearchDomain.Setting.NotificationSort,
         SearchDomain.Setting.RelationSort,
         SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.WorkplaceSetupSort, SearchDomain.Setting.AppSettingSort, SearchDomain.Setting.CalendarSort,
         SearchDomain.Setting.WindowSort,
@@ -989,7 +985,7 @@ private fun ElementsDropDown(name: String,
     onChange: (Set<String>) -> Unit,
 ) {
     val elements =
-        remember(state.tasks, state.categories, state.periodKinds, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.taskTrees, state.workplaceSetups) {
+        remember(state.tasks, state.categories, state.periodKinds, state.alarms, state.timers, state.chronos, state.quotas, state.chores, state.workplaceSetups) {
             org.example.project.scheduler.domain.ElementTree.pickable(state)
         }
     val names = remember(elements) { elements.toMap() }

@@ -41,7 +41,36 @@ second copy of it on a kind of element.
   The result list's ↑ and ↓ walk the rows as drawn, children included (`shownRowOrder`, over `elementChildRows`, what
   `ElementChildren` draws: one reading).
 
-### The task-tree timeline
+### A task tree IS a task under the root
+
+User rule 2026-11-16: *"The type 'task tree' is redundant, since there already are task elements. … the default db must
+have a task element, acting as the root where all different task trees diverge, and a second task element, acting as the
+root of a task tree, child of the first task element."* — and, of the trees an older build stored beside the live one,
+*"Why deleting them? I just want a unified logic."* (`TaskTreesAsTasks`, `TaskTreesAsTasksTest`).
+
+- **One structure.** The global root task (`ROOT_TASK`, titled `root`) is where the trees diverge; each tree is a task
+  directly under it, its tasks the ones under that task. There is no "task tree" kind of element, no selector above the
+  tree, no "new task tree", no "All task trees" window, no stored tree beside the live one. A tree is created, copied,
+  renamed and removed as a task is; its name is its task's title (the "Tree name" action renames that task).
+- **A fresh account starts with the root and ONE tree under it** (`TaskTreesAsTasks.seeded`, from
+  `TaskSchedulerViewModel.prepareLoadedState`): a task titled `tree-YYYY-MM-DD` (`defaultTaskTreeTitle`), structural,
+  recording no History Unit. An account whose root already holds a task is left as it is.
+- **The stored trees an older build wrote are brought in on decode** (`SchedulerStateCodec`'s heal, so a payload
+  joined from synced rows heals the same way): the open tree goes under a task named after it, holding what the live
+  tree held at its top, with the whole of the root's share; every other stored tree goes beside it under a task of its
+  own **at a priority weight of 0** — it took no part in the plan and takes none until the user gives it a share. Its
+  tasks are COPIES under ids of their own (a task shared with the live tree may hold other children there, and a task
+  has one child list); a copy of a task the live tree holds leaves its completed-work record to the live one. Every id
+  is a function of the tree's id and the old id — two devices write the same rows — and nothing is deleted.
+- **An older build's task-tree History Unit (`TaskTreeDelta`) stays in the log and changes nothing** when walked: it
+  would swap the live tree for one that has no place to stand.
+- **Known gap, 2026-11-16:** the dated trees' timeline below has nothing to read any more — no tree can be dated. Its
+  replacement is the user's rule of the same day: *"In a task element, the user can define the evolution of its presence
+  ratio target and its minimum length target with any mathematical formula. By default, when a task element is created,
+  if it is a descendant of the default task tree root, then the presence ratio target relative to any task parents are
+  constants."* Until then the blend is reached by `BreaksAndSlidingPrioritiesTest` alone, which builds its keyframes.
+
+### The task-tree timeline (inert since 2026-11-16, see above)
 
 - A dated tree is a **keyframe**; between two, the scheduler follows a linear blend, not the tree on screen.
 - Identity is the **link group** (`TaskLinks`, user rule 2026-10-20): each tree's tasks are its own ids, and a task is
@@ -69,8 +98,9 @@ second copy of it on a kind of element.
 ### The tree has ONE root, and it is a real cell
 
 - There used to be two well-known tasks — a conceptual `task/root` whose single child was `task/main`, whose
-  cells lived in `list/main`. The second level existed so sibling trees could hang beside `main`; **named task
-  trees are how the account actually holds several trees**, so it answered nothing and is gone. The survivor is
+  cells lived in `list/main`. The second level existed so sibling trees could hang beside `main`; named task
+  trees held the account's several trees then, so it answered nothing and went. Since 2026-11-16 the trees ARE
+  the tasks under the root (§ *A task tree IS a task under the root*). The survivor is
   `WellKnownIds.ROOT_TASK` (`task/root`, titled `root`), and its child list `ROOT_LIST` (`list/root`) is the
   tree's top-level list — the one `SchedulerState.rootListId` names.
 - **`SchedulerDomain.withRoot` is the ONE definition of that shape**: `SchedulerState.empty` builds through it,
@@ -734,10 +764,8 @@ suggestions before it was ever entered.
 
 #### What counts as in a tree, and the last path
 
-- **"In a task tree" means ANY task tree** — the live one and every stored `TaskTreeEntry` — with the live
-  tree's own membership predicate (a title-bearing cell reachable from the root, `shortestTaskTreePaths`'s
-  walk). The **active** entry's snapshot is never read: it is stale by design and the live fields are that
-  tree. A task only a stored tree holds is a result, named from that tree.
+- **"In a task tree" means under the root** — a title-bearing cell reachable from it (`shortestTaskTreePaths`'s
+  walk). There is one structure (§ *A task tree IS a task under the root*).
 - **"Root of a tree"** (user rule 2026-11-14, use case *"display all the root cells of every tree"*;
   `Filters.taskTreeRoot`, `Setting.TaskTreeRoot`, `ElementTreeTest`): the task filter that keeps the tasks standing
   directly under the global root of the live tree (`treeRootsByTask`: a task is in its own `TaskResult.treeRoots`), or
@@ -1963,20 +1991,11 @@ until it is applied to a real cell.
 - **A task is filled once, by id.** One sub-list serves every occurrence, so two selected cells pointing at
   one task are one sub-list: filling it twice would write the template in twice.
 
-### Task trees are live alternatives, not backups
+### Task trees are tasks (formerly "live alternatives, not backups")
 
-- `SelectTaskTree` **flushes** the live tree into the entry being left before loading the target.
-- **`CreateTaskTree` copies the tree on screen under NEW task ids** (`TaskLinks.copyWithFreshIds`), each linked to the
-  task it copies, and loads the copy; a task no cell holds keeps its id. One task per tree per link group
-  (`TaskLinks.refusal`, said in the link window before the user confirms). Links are synced rows, not Undo/Redo units,
-  pruned of tasks no tree holds whenever links are written; the task relations and relative-priority pins stay with
-  the tasks they were filed on.
-- Stored snapshots **keep records** (`captureTreeWithRecords`); id counters take the **max** of both sides.
-- All three mutation intents commit one `TaskTreeDelta` into the **Main** history.
-- Identity-menu rows are told apart by `TaskTreeMenuEntry.Kind`, **never by `id == null`**.
-- The first-startup tree is seeded **structurally**, not through `CreateTaskTree` — a default is not a user
-  action and must record no history unit.
-- Known scope limit: panels are not per-tree.
+Until 2026-11-16 the account held named trees beside the live one, one of them on screen at a time
+(`SelectTaskTree`, `CreateTaskTree`, links between their tasks). They are tasks under the root now
+(§ *A task tree IS a task under the root*); what remains of them is the decode that brings them in.
 
 ---
 

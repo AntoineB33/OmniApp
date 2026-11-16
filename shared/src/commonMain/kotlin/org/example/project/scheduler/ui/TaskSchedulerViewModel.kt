@@ -714,29 +714,19 @@ class TaskSchedulerViewModel(
         }
 
         /**
-         * PRD §5 task-tree selector: an account that has never named its tree gets one, titled
-         * `tree-YYYY-MM-DD` for today ([SchedulerDomain.defaultTaskTreeTitle]) — so the field above the tree
-         * is never empty at first startup, and the row the identity menu always leads with *is* that tree
-         * rather than an offer to create it.
+         * User rule 2026-11-16: **the default account has the root and one tree under it** — a task named
+         * `tree-YYYY-MM-DD` for today ([SchedulerDomain.defaultTaskTreeTitle]) directly under the global root, holding
+         * what the root's list held ([org.example.project.scheduler.domain.TaskTreesAsTasks.seeded]). An account whose
+         * root already holds a task is left as it is.
          *
-         * Applied structurally rather than through [SchedulerIntent.CreateTaskTree]: a default is not
-         * something the user did, so it records no History Unit and Ctrl+Z cannot land on it — exactly like
-         * the sleep-window and screen-break seeding above. It captures the tree as loaded, so the entry is
-         * current from the start, and it does not mark the state dirty (every caller re-baselines
-         * `lastSyncedFingerprint` from the prepared state), so it reaches the account with the user's next
-         * real edit instead of provoking a push of its own.
+         * Applied structurally: a default is not something the user did, so it records no History Unit and Ctrl+Z cannot
+         * land on it — exactly like the sleep-window and screen-break seeding above — and it reaches the account with the
+         * user's next real edit instead of provoking a push of its own.
          */
-        private fun withDefaultTaskTree(state: SchedulerState): SchedulerState {
-            if (state.taskTrees.isNotEmpty() || state.activeTaskTreeId != null) return state
-            val (id, allocated) = state.allocateTaskTreeId()
-            val entry =
-                TaskTreeEntry(
-                    id = id,
-                    title = SchedulerDomain.defaultTaskTreeTitle(SchedulerReducer.clock.nowMillis()),
-                    tree = state.captureTreeWithRecords(),
-                    expanded = state.expanded,
-                )
-            return allocated.copy(taskTrees = listOf(entry), activeTaskTreeId = id)
-        }
+        private fun withDefaultTaskTree(state: SchedulerState): SchedulerState =
+            org.example.project.scheduler.domain.TaskTreesAsTasks.seeded(
+                state,
+                SchedulerDomain.defaultTaskTreeTitle(SchedulerReducer.clock.nowMillis()),
+            )
     }
 }

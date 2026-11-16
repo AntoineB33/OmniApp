@@ -379,10 +379,10 @@ class WorkplaceSetupTest {
         assertEquals(local.newWorkplaceDefaults, SchedulerStateCodec.decodeSnapshot(merged)!!.newWorkplaceDefaults)
     }
 
-    /** The audit of 2026-11-02: what each creatable kind's row offers, a task tree's and a window's having no action of theirs. */
+    /** The audit of 2026-11-02: what each creatable kind's row offers, a window's having no action of its own. */
     @Test
     fun every_creatable_kind_with_a_new_offers_it_on_its_row() {
-        for (kind in SearchDomain.CREATABLE - Kind.TaskTree - Kind.Window) {
+        for (kind in SearchDomain.CREATABLE - Kind.Window) {
             val actions = groups(listOf(creationRow(kind))).single().actions
             assertTrue(actions.any { it.section == kind && it.label == "New" }, "$kind: $actions")
         }
