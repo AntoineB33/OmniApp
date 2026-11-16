@@ -106,6 +106,30 @@ class WhereToSearchTest {
         assertEquals(listOf(Setting.WholeWord), tree.filterConfigurationNodes("WholeWord", ids).filterIsInstance<ConfigurationLeaf>().map { it.setting })
     }
 
+    /**
+     * User rule 2026-11-16: *"the description of a search configuration is displayed in an info bubble when hovering
+     * over it"* — every configuration and every category of every page's tree has one, and "Description" finds it.
+     */
+    @Test
+    fun every_search_configuration_has_a_description_that_can_be_searched() {
+        for (setting in Setting.entries) assertTrue(SearchDomain.settingDescription(setting).length > setting.label.length, setting.name)
+        fun categories(nodes: List<SearchDomain.ConfigurationNode>): List<ConfigurationCategory> =
+            nodes.filterIsInstance<ConfigurationCategory>().flatMap { listOf(it) + categories(it.children) }
+        for (page in SearchDomain.FEATURE_PAGES) {
+            val opened = SearchDomain.Config(filters = SearchDomain.Filters(matchCase = true), page = page.id)
+            val tree = SearchDomain.configurationTree(opened.copy(settingsChangedAt = mapOf(Setting.Types to 1L)), opened)
+            for (node in categories(tree)) {
+                assertTrue(SearchDomain.configurationDescription(SearchDomain.CONFIGURATION_NODE_PREFIX + node.id) != null, node.id)
+            }
+        }
+        val descriptions = SearchDomain.Filters(searchIn = setOf(SearchField.Description))
+        val rows = SearchDomain.results(SchedulerState.empty(), setOf(Kind.SearchConfiguration), "capitals", filters = descriptions)
+        assertEquals(listOf(Setting.MatchCase), rows.mapNotNull(SearchDomain::settingOf))
+        // The ▾'s own field too.
+        val tree = SearchDomain.configurationTree(SearchDomain.Config())
+        assertEquals(listOf(Setting.MatchCase), tree.filterConfigurationNodes("capitals", descriptions).filterIsInstance<ConfigurationLeaf>().map { it.setting })
+    }
+
     /** Persisted-DB compatibility: a configuration written before "Where to search" reads as the names alone. */
     @Test
     fun a_configuration_written_before_reads_the_names_alone_and_a_new_one_comes_back() {

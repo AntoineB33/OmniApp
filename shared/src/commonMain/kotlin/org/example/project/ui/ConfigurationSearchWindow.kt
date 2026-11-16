@@ -246,7 +246,7 @@ fun ConfigurationSearchWindow(
                             SettingRow(family.first().label, hint = SearchDomain.filterHint(family)) { SharedSettingEditor(family, config, changed(family), onPickOnCalendar, claudeLogs) }
                         }
                         for (setting in group.settings) {
-                            SettingRow(setting.label, hint = SearchDomain.filterHint(listOf(setting))) { SettingEditor(state, setting, config, openedConfig, changed(listOf(setting)), windows, onPickOnCalendar, claudeLogs) }
+                            SettingRow(setting.label, hint = SearchDomain.settingDescription(setting)) { SettingEditor(state, setting, config, openedConfig, changed(listOf(setting)), windows, onPickOnCalendar, claudeLogs) }
                         }
                     }
                 }

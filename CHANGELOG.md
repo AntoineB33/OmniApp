@@ -26,6 +26,10 @@ description, buttons, and its children's at a parent distance (`Filters.searchIn
 `childSearchIn`, `childDistance`; `SearchDomain.fieldsMatch`, one funnel in `results`); the ▾'s own field reads
 its tree the same way.
 
+**Every search configuration has a description** (`settingDescription`, `nodeDescription`, `configurationDescription`):
+shown in the info bubble of its name in the tree (a category's too) and in the Configuration Search window, and what
+"Where to search › Description" reads.
+
 No migration: `Config`'s JSON gains four optional fields (absent = the names alone, `WhereToSearchTest`). Deploy:
 client apps.
 

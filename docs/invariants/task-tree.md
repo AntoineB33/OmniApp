@@ -1552,7 +1552,13 @@ suggestions before it was ever entered.
   "Search › Where to search › Children" checks. **One funnel**: `results` reads it for every list, a given one
   included; the ▾'s own field reads its tree the same way (`filterConfigurationNodes`'s `filters`). Set otherwise
   than by default, a part is "Currently on" (`whereSettingsOn`); the name, checked by default, is no news. A
-  configuration stored before it reads the names alone. `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
+  configuration stored before it reads the names alone.
+- **EVERY SEARCH CONFIGURATION HAS A DESCRIPTION, IN ITS INFO BUBBLE** (user rule 2026-11-16, *"the description of a
+  search configuration is displayed in an info bubble when hovering over it"*; `SearchDomain.configurationDescription`,
+  `settingDescription`, `nodeDescription`): every configuration and every category of the ▾ tree, the one text its
+  bubble shows and "Where to search › Description" reads. A new configuration or node gets its sentence
+  (`WhereToSearchTest` fails on a category without one); a type's filter not named there says what it keeps and,
+  as before, that it lists that type alone (`filterHint`). `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
   added later — goes by its category (`roleOf`). **Every type's "Sort by" is in "Sorting"** too, the order of every
   row first, then this page's types, then the others'; so a type with an order and no filter (option, integer,
   action…) has no node of its own. **A configuration standing among other types' says its type** ("tasks: Sort by",

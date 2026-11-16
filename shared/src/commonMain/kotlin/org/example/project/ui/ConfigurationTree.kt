@@ -375,7 +375,8 @@ internal fun ConfigurationLeafRow(
 ) {
     CompactFields {
         SettingRow(
-            node.name, TREE_LABEL_WIDTH, hint = SearchDomain.filterHint(listOf(node.setting)),
+            // User rule 2026-11-16: its description, in the info bubble its name shows on hover.
+            node.name, TREE_LABEL_WIDTH, hint = SearchDomain.settingDescription(node.setting),
             path = node.path.takeIf { it.isNotEmpty() }?.joinToString(SearchDomain.TREE_PATH_SEPARATOR),
         ) {
             SettingEditor(state, node.setting, config, openedConfig, onChange, windows, onPickOnCalendar, claudeLogs)
@@ -576,7 +577,10 @@ private fun TreeColumn(
                                 }
                                 .padding(horizontal = 8.dp, vertical = 6.dp),
                         ) {
-                            Text(node.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            // User rule 2026-11-16: a category is a search configuration too; its description in an info bubble.
+                            InfoHint(text = SearchDomain.nodeDescription(node.id.removePrefix(SearchDomain.FLAT_NODE_PREFIX)), modifier = Modifier.weight(1f)) {
+                                Text(node.label, style = MaterialTheme.typography.bodyMedium)
+                            }
                             Text("◂", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (revealing) {

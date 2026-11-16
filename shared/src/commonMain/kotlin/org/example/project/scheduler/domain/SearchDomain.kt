@@ -2369,8 +2369,101 @@ object SearchDomain {
     /** What the id of the pop-up of "General" held in a window's [Config.inside]: a node the tree no longer has (2026-11-14). */
     private const val RETIRED_GENERAL_POPUP: String = "▾/general"
 
-    /** The description of the [Kind.SearchConfiguration] row [id] — a configuration's or a node's; null where it has none. */
-    fun configurationDescription(id: String): String? = null
+    /**
+     * User rule 2026-11-16 (*"the description of a search configuration is displayed in an info bubble when hovering over
+     * it"*): **the description of the [Kind.SearchConfiguration] row [id]** — a configuration's ([settingDescription]) or a
+     * node's of the tree ([nodeDescription]); what "Where to search › Description" reads. Null for an id that is neither.
+     */
+    fun configurationDescription(id: String): String? =
+        if (id.startsWith(CONFIGURATION_NODE_PREFIX)) nodeDescription(id.removePrefix(CONFIGURATION_NODE_PREFIX).removePrefix(FLAT_NODE_PREFIX))
+        else Setting.entries.firstOrNull { it.name == id }?.let(::settingDescription)
+
+    /** What [setting] does, in a sentence or two: its info bubble ([configurationDescription]). */
+    fun settingDescription(setting: Setting): String =
+        when (setting) {
+            Setting.SearchText -> "What the window's bar holds: the rows that answer it are listed, the best answers first."
+            Setting.MatchCase -> "The bars match only text written with the same capitals."
+            Setting.WholeWord -> "The bars match only whole words, never part of a longer word."
+            Setting.Regex -> "The bars hold regular expressions."
+            Setting.SearchInId -> "The bars are matched against each row's id."
+            Setting.SearchInName -> "The bars are matched against each row's name — the only part searched by default."
+            Setting.SearchInDescription -> "The bars are matched against each row's description, the text of its info bubble."
+            Setting.SearchInButtons -> "The bars are matched against the labels of what can be pressed on each row."
+            Setting.SearchInChildren -> "A row is also found by its children: those at the parent distance below, by the parts checked here."
+            Setting.ChildSearchInId -> "A row is found by its children's ids."
+            Setting.ChildDistance -> "How far below a row its children are read: 1, its direct children; 2, their children alone…"
+            Setting.ChildSearchInName -> "A row is found by its children's names."
+            Setting.ChildSearchInDescription -> "A row is found by its children's descriptions."
+            Setting.ChildSearchInButtons -> "A row is found by the labels of what can be pressed on its children."
+            Setting.SearchBars -> "More bars beside the window's own, and the formula that puts them together (AND, OR, NOT)."
+            Setting.Types -> "The types of element the window lists."
+            Setting.PageTypes -> "The type selector offers only the types of the window's feature page."
+            Setting.ResetSearch -> "Puts the window back to the configuration it opened with."
+            Setting.CompletionList -> "What the bar offers to complete what is typed."
+            Setting.SortResults -> "The order of every row: the sorting methods checked, the first one dominant."
+            Setting.CalendarAdd -> "Only what can be put on the calendar at the instant given."
+            Setting.CalendarAt -> "Only what is on the calendar at the instant given."
+            Setting.ExcludedElements -> "Elements always kept out of the list."
+            Setting.IncludedElements -> "Elements always in the list, whatever else narrows it."
+            Setting.NoParentOfKinds -> "Only the elements with no parent of the types checked."
+            Setting.ParentsOf -> "Only the parents of the elements given."
+            Setting.ParentDistance -> "How far above those elements a parent stands to be listed: 1, the direct parents; 2, their parents alone…"
+            Setting.GroupByAddedElements -> "The actions grouped by the added elements they act on."
+            Setting.ExpandResults -> "The top rows open, showing their children, from the start."
+            Setting.SearchSortsOnly -> "The actions section's bar sorts the actions and hides none."
+            Setting.MenuCustomizing -> "A press selects a row and activates nothing; a held press drags the selected rows into the order kept."
+            Setting.DropButtons -> "A button on every element to drop it from the list."
+            else -> {
+                val kind = setting.section
+                when {
+                    kind == null -> setting.label + "."
+                    setting.sorts -> "The order of the ${kind.plural}: the sorting methods checked, the first one dominant."
+                    else -> "Keeps the ${kind.plural} by \"${setting.label}\". " + (filterHint(listOf(setting)) ?: "")
+                }.trim()
+            }
+        }
+
+    /** What the node [id] of the configurations tree holds: its info bubble ([configurationDescription]). */
+    fun nodeDescription(id: String): String? {
+        if (id.endsWith("/default") || id == "default") return "The configurations on by default in this window" +
+            (if (id == "default") "." else ", among those of this category.")
+        TreeGroup.entries.firstOrNull { it.id == id }?.let { group ->
+            return when (group) {
+                TreeGroup.Bar -> "What the bars hold, what of a row they are matched against, and how."
+                TreeGroup.Types -> "Which types of element the window lists."
+                TreeGroup.Sorting -> "The order of the rows: of every row, then of each type's."
+                TreeGroup.Parents -> "Who stands above or under whom: parents, children, and how the rows open."
+                TreeGroup.Filters -> "What keeps rows of any type out of the list."
+                TreeGroup.Display -> "How every row is drawn and what pressing it does."
+            }
+        }
+        TreeSubNode.entries.firstOrNull { it.id == id }?.let { sub ->
+            return when (sub) {
+                TreeSubNode.WhereToSearch -> "What of a row the bars are matched against: its id, name, description, buttons, children."
+                TreeSubNode.WhereChildren -> "A row found by its children: which of them, and what of them is read."
+                TreeSubNode.Matching -> "How the bars match: case, whole words, regular expressions."
+            }
+        }
+        if (id.startsWith("kind/")) {
+            val kind = Kind.entries.firstOrNull { it.name == id.removePrefix("kind/") } ?: return null
+            return "The configurations of the ${kind.plural}: their filters, then their order."
+        }
+        if (id.startsWith("page/")) {
+            val page = FEATURE_PAGES.firstOrNull { it.id == id.removePrefix("page/") } ?: return null
+            return "The types of the ${page.label} page, each with its configurations."
+        }
+        return when (id) {
+            RECENT_NODE -> "Every configuration, the last changed first; \"Here\" holds those changed in this window."
+            "$RECENT_NODE/here" -> "The configurations changed in this window, the last first."
+            "$RECENT_NODE/elsewhere" -> "The configurations changed, and the categories looked into, from other ▾ trees."
+            "$RECENT_NODE/elsewhere/changed" -> "The configurations changed from other ▾ trees, the last first."
+            "$RECENT_NODE/elsewhere/looked" -> "The categories looked into from other ▾ trees, the last first."
+            ON_NODE -> "The configurations set otherwise than \"any\" in this window."
+            "context" -> "What this window is about, on or off."
+            OTHER_PAGES_NODE -> "The feature pages other than this window's, each with its types."
+            else -> null
+        }
+    }
 
     /** What the id of a node of the configurations tree wears as a [Kind.SearchConfiguration] row; a leaf's is its [Setting]'s name. */
     const val CONFIGURATION_NODE_PREFIX: String = "node:"
