@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A click on a category of the ▾ tree pins it instead of closing the tree — 2026-11-16
+
+User: *"clicked on Parents and Children, and instead of pinning the children window of 'Parents and Children', it removed
+the window that appeared from the down arrow"*. The `[popup]` trace showed it: the press made the tree's own window the
+active one, and the open category's menu, told of that change with no word of where the keyboard went
+(`MenuHoverTracker.windowLeft()` alone), closed every pop-up up to the root. The active-window path now says where, as
+the keyboard's loss already did (`MenuSession.gone`): only what stands below the window pressed in closes. The `[popup]`
+trace stays until the user confirms. No migration. Deploy: client apps.
+
 ### Pop-ups stay in the app and off their caller's list; rows fit what is shown; hover grey — 2026-11-16
 
 User: *"When I click on 'add a parent' field in a window with little width, I have to horizontally scroll to get to the

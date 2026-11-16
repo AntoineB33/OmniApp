@@ -400,7 +400,12 @@ private class MenuSession(
                 // Back in the app by a press on another of its windows — which no loss of the keyboard told the pop-up,
                 // having lost it to the other application: it closes as a press elsewhere in the app closes it.
                 popupTrace("menu $site: dismissed, ${active?.javaClass?.simpleName} became the active window")
-                if (hover?.pinned == true) hover?.windowLeft()
+                // Anomaly 2026-11-16 (*"clicked on Parents and Children, and instead of pinning the children window … it
+                // removed the window that appeared from the down arrow"*, the `[popup]` trace): the press on a row of the ▾
+                // tree made the tree's own window the active one. Told nothing of where the keyboard went, the pinned
+                // branch closed every pop-up up to the tree's root. Gone to a pop-up it hangs from, only what stands
+                // below that one closes — the keyboard's loss says the same ([gone]).
+                if (hover?.pinned == true) hover?.windowLeft(gone(active))
                 dismiss.value()
             }
         }
@@ -430,6 +435,12 @@ private class MenuSession(
         }
         keyForward?.invoke(key, event.isControlDown || event.isMetaDown, event.isShiftDown, event.isAltDown) ?: false
     }
+
+    /**
+     * Where the keyboard went, as [MenuHoverTracker.windowLeft] asks it: whether [to] is one of a pop-up's windows or a
+     * menu opened from one — the one test for both ways the keyboard is heard leaving (its loss, another window active).
+     */
+    private fun gone(to: AwtWindow?): (Set<Any>) -> Boolean = { windows -> generateSequence(to) { it.owner }.any { it in windows } }
 
     /** A menu opened from this one is not "outside" it. */
     private fun ours(other: AwtWindow?): Boolean = generateSequence(other) { it.owner }.any { it === dialog }
@@ -488,7 +499,7 @@ private class MenuSession(
                         // Gone to a pop-up this one hangs from: what is below that one closes, it stays.
                         if (!inside && !(event.oppositeWindow == null && tracker.pinned) && !heldByHand) {
                             popupTrace("menu $site: its tracker left for ${event.oppositeWindow?.javaClass?.simpleName} (pinned=${tracker.pinned})")
-                            tracker.windowLeft { windows -> generateSequence(event.oppositeWindow) { it.owner }.any { it in windows } }
+                            tracker.windowLeft(gone(event.oppositeWindow))
                         }
                     }
                 }
