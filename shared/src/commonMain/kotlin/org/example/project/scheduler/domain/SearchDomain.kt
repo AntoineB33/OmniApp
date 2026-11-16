@@ -1412,9 +1412,10 @@ object SearchDomain {
          */
         val parentsOf: Set<String> = emptySet(),
         /**
-         * User rule 2026-11-13, the **parent distance**: how far above the elements of [parentsOf] a parent may stand to be
-         * listed — 1, the direct parents alone (the default); 2, their parents too… ([ElementTree.parentsWithin]);
-         * [PARENT_DISTANCE_HIGHEST], at any distance. Asks nothing while [parentsOf] is empty.
+         * User rule 2026-11-13, the **parent distance**: how far above the elements of [parentsOf] a parent stands to be
+         * listed — 1, the direct parents (the default); 2, their parents alone, not the direct ones (anomaly 2026-11-16)…
+         * ([ElementTree.parentsWithin]); [PARENT_DISTANCE_HIGHEST], the highest distance there is. Asks nothing while
+         * [parentsOf] is empty.
          */
         val parentDistance: Int = 1,
         /**
@@ -2383,10 +2384,10 @@ object SearchDomain {
         results(state, config.searchedKinds, config.query, { emptyMap() }, config.filters, windows = windows, claudeLogs = claudeLogs)
             .mapTo(HashSet()) { checkedKindOf(it, config.searchedKinds) }
 
-    /** [Filters.parentDistance] for "at any distance": the list's first row, the highest parent distance. */
+    /** [Filters.parentDistance] for the highest distance there is: the list's first row, "highest parent distance (n)". */
     const val PARENT_DISTANCE_HIGHEST: Int = 0
 
-    /** What the parent distance's field reads: the number, or the highest one there is ([highest]) for any distance. */
+    /** What the parent distance's field reads: the number, or the highest one there is ([highest]). */
     fun parentDistanceLabel(distance: Int, highest: Int): String =
         if (distance == PARENT_DISTANCE_HIGHEST) "highest ($highest)" else distance.toString()
 

@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
@@ -173,6 +174,14 @@ internal fun ConfigurationTreeArrow(
         path = emptyList()
         open = true
     }
+    fun arrowClicked() {
+        if (open) hover.pin()
+        else if (hover.takeClosedPinned()) hover.unpin()
+        else {
+            openFresh()
+            hover.pin()
+        }
+    }
     // The pop-up this arrow stands in (null: a window of the app): where a hover over it is read from.
     val around = LocalMenuHover.current
     // User rule 2026-11-15: the outermost tree of a Search window of the app becomes that window's Search
@@ -219,18 +228,26 @@ internal fun ConfigurationTreeArrow(
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier
                 .clip(RoundedCornerShape(6.dp))
-                .reportsHover(hover)
+                // Its press pins nothing: the click does (anomaly 2026-11-16, [reportsHover]'s `pinOnPress`).
+                .reportsHover(hover, pinOnPress = false)
                 // User rule 2026-11-14: no hover opens it while a pinned pop-up it is not in holds the keyboard.
                 .onHoverEnter { if (!open && MenuHoverTracker.hoverActs(around)) openFresh() }
-                // User rule 2026-11-14: a click on the arrow pins its pop-up (the press did, [reportsHover]), opening it
-                // first where the press itself just closed it as a hover pop-up (the keyboard gone to this window). A
-                // pinned one left on that press: the arrow is outside it, and it stays closed.
-                .clickable {
-                    if (open) hover.pin()
-                    else if (hover.takeClosedPinned()) hover.unpin()
-                    else {
-                        openFresh()
-                        hover.pin()
+                // User rule 2026-11-14: a click on the arrow pins its pop-up, opening it first where the press itself just
+                // closed it as a hover pop-up (the keyboard gone to this window). A pinned one left on that press: the
+                // arrow is outside it, and it stays closed. Only one pinned BEFORE the press is: the press pins nothing.
+                .clickable { arrowClicked() }
+                // ...and so does a right-click (user rule 2026-11-14: *"clicking or right-clicking the button"*).
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        var secondary = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            when (event.type) {
+                                PointerEventType.Press -> secondary = event.buttons.isSecondaryPressed
+                                PointerEventType.Release -> if (secondary) { secondary = false; arrowClicked() }
+                                else -> Unit
+                            }
+                        }
                     }
                 }
                 .padding(horizontal = 8.dp, vertical = 4.dp),

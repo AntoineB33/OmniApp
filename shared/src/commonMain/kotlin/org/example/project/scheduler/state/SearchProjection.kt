@@ -26,7 +26,22 @@ fun SchedulerState.projectSearchSubtree(listId: CellListId): SchedulerState =
         expanded = searchExpanded,
         selection = searchSelection,
         editSession = searchEditSession,
+        lists = withoutRootCellAbove(listId),
     )
+
+/**
+ * Anomaly 2026-11-16 (*"'root' is the parent of a glitchy task element that is supposed to be the root of a task tree
+ * … it has no name, no expansion arrow with a color background, no other numbers in the row, and the row itself is
+ * short in height"*): the root task's row expanded, its sub-tree is the tree's top-level list — which a drawing starts
+ * ABOVE, at the inert root cell ([org.example.project.scheduler.domain.SchedulerDomain.displayRootListId]): the strip
+ * the tree is drawn under, collapsed in the window's own expansion. The row IS that root here, so the projection
+ * draws the list itself — its link to the root cell cut, and put back by [withSearchSubtreeCapturedFrom].
+ */
+private fun SchedulerState.withoutRootCellAbove(listId: CellListId): Map<CellListId, org.example.project.scheduler.model.CellList> {
+    val list = lists[listId] ?: return lists
+    if (list.parentCellId == null || org.example.project.scheduler.domain.SchedulerDomain.rootCellId(copy(rootListId = listId)) == null) return lists
+    return lists + (listId to list.copy(parentCellId = null))
+}
 
 /**
  * Folds a reduced [projected] sub-tree back: the tree as the reduction left it, the root, the tree's own view
@@ -36,6 +51,11 @@ fun SchedulerState.projectSearchSubtree(listId: CellListId): SchedulerState =
 fun SchedulerState.withSearchSubtreeCapturedFrom(projected: SchedulerState): SchedulerState =
     projected.copy(
         rootListId = rootListId,
+        // The root cell's link the projection cut ([withoutRootCellAbove]), put back.
+        lists = lists[projected.rootListId]?.parentCellId
+            ?.takeIf { projected.lists[projected.rootListId]?.parentCellId == null }
+            ?.let { cell -> projected.lists[projected.rootListId]?.let { projected.lists + (projected.rootListId to it.copy(parentCellId = cell)) } }
+            ?: projected.lists,
         expanded = expanded,
         selection = selection,
         editSession = editSession,

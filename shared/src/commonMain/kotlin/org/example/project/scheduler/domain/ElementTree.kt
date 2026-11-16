@@ -129,10 +129,14 @@ object ElementTree {
         }
     }
 
-    /** The parents of [keys] at a distance of [distance] or less ([parentLevels]); null: at any distance. */
+    /**
+     * The parents of [keys] at a distance of exactly [distance] ([parentLevels]: each at its shortest); null: at the
+     * highest distance — the last level. Anomaly 2026-11-16 (*"I set the parent distance to 2 for this list, however I
+     * still see the direct parent"*): a distance is one level, not every level up to it.
+     */
     fun parentsWithin(parents: Map<String, Set<String>>, keys: Collection<String>, distance: Int?): Set<String> {
         val levels = parentLevels(parents, keys)
-        return (if (distance == null) levels else levels.take(distance.coerceAtLeast(1))).flatMapTo(HashSet()) { it }
+        return (if (distance == null) levels.lastOrNull() else levels.getOrNull(distance.coerceAtLeast(1) - 1)).orEmpty()
     }
 
     /** The highest parent distance of [keys]: how many levels stand above them; 0 with no parent. */

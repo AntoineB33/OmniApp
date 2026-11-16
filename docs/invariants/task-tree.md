@@ -888,7 +888,10 @@ suggestions before it was ever entered.
   `searchExpanded` / `searchSelection` / `searchEditSession` (in memory only), wrapped in
   `InSearchSubtree`. **A task with no live cell (cut, kept by the timeline) has a read-only sub-tree**: the
   reducer refuses Edit Mode there and any gesture that would change the tree. Bounded in height, it scrolls
-  inside the list. A task only a stored tree holds has no live sub-tree to open.
+  inside the list. A task only a stored tree holds has no live sub-tree to open. **The global root's row draws the
+  top-level tasks themselves**, not the inert root cell the tree is drawn under (anomaly 2026-11-16: a nameless short
+  row, that cell collapsed): the projection cuts the top-level list's link to the root cell, and the capture puts it
+  back (`withoutRootCellAbove`, `SearchWindowTest`).
 - **While the search BAR holds the focus, no row is selected** (the tree's rule for its selector's field); ↓ or
   Enter move into the list, ↑ on its first row goes back. Leaving a row being renamed commits it.
 - **A result row's right-click "add" replaces "edit"** (user rule 2026-10-01): a task row's menu — the cell's own,
@@ -1043,9 +1046,10 @@ suggestions before it was ever entered.
   configuration is something relevant for the left-side menu, so it should be accessible intuitively in the down arrow
   of the left-side menu"*): the left-side menu's is "Arrange by dragging" (`LATERAL_MENU_RELEVANT`).
 - **THE PARENT DISTANCE** (user rule 2026-11-13; `Filters.parentDistance`, `ElementTree.parentLevels` /
-  `parentsWithin` / `highestParentDistance`): how far above the elements of "Parents of" a parent may stand to be
-  listed — 1 by default (the direct parents), n for every parent at a distance of n **or less**, an element standing at
-  its shortest distance; `PARENT_DISTANCE_HIGHEST` (0) for any distance. Its field opens a Search window of
+  `parentsWithin` / `highestParentDistance`): how far above the elements of "Parents of" a parent stands to be
+  listed — 1 by default (the direct parents), n for the parents at a distance of **exactly** n (anomaly 2026-11-16,
+  *"I set the parent distance to 2 for this list, however I still see the direct parent"*), an element standing at its
+  shortest distance; `PARENT_DISTANCE_HIGHEST` (0) for the highest distance there is — the last level. Its field opens a Search window of
   **integers** (`Kind.Integer`, `SearchDomain.integerResults`, `IntegerRows`): "highest parent distance (5)" then 1, 2,
   3… **with no end** — rows come by pages as the end nears (`SearchOptions.onNearEnd`), and the scrollbar's thumb is
   sized as if the list stopped at the highest, shrinking as the user scrolls past it (`ListScrollbar`'s `openEnd`,

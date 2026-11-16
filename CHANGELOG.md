@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Parent distance is one level; the ▾ click pins; the root row's sub-tree — 2026-11-16
+
+Three anomalies reported in the focused Search window ("List of parents" of *chalazion*):
+- *"I set the parent distance to 2 for this list, however I still see the direct parent"*: a distance n listed every
+  parent up to n (a reading of the 2026-11-13 rule it never stated). `ElementTree.parentsWithin` now gives the parents
+  at distance n alone, and "highest parent distance" the last level alone.
+- *"When I hover over the down arrow … it opens a pop-up window, but when I click on the down arrow, it disappears"*:
+  the ▾'s press pinned the hover pop-up before AWT told it the keyboard went to the app's window, so that loss closed
+  it as a pinned pop-up left by a press outside, and the click (`takeClosedPinned`) kept it closed. The ▾'s press no
+  longer pins (`reportsHover(pinOnPress = false)`); its click or right-click does. Reasoned from the event order, not
+  traced.
+- *"'root' is the parent of a glitchy task element … no name, no expansion arrow with a color background, no other
+  numbers, short"*: the global root's row expanded drew the tree's inert root cell (collapsed) above the top-level
+  list. Its Search sub-tree now draws that list itself (`SearchProjection.withoutRootCellAbove`). Reproduced
+  headlessly over a copy of the release DB.
+
+No migration. Deploy: client apps.
+
 ### A row selected in the actions section is the Search window's one selection — 2026-11-16
 
 User: *"there are two rows selected, one in the search result list, one in the action section"*. The section is a

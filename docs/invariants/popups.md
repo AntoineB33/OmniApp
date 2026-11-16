@@ -394,7 +394,11 @@ means.
     right-clicking the button that makes the window appear also pins it)"*; `MenuHoverTrackerTest`): a key typed in it
     pins it too (the menu window's key handler), and so does a press of either button on what opens it — the ▾, a
     category's row — which opens it again, pinned, where that press had just closed it as a hover pop-up (the keyboard
-    gone to the window the button stands in). Pinning changes nothing but these two things:
+    gone to the window the button stands in). **The ▾'s own press pins nothing — its click (or right-click) does**
+    (anomaly 2026-11-16, *"when I click on the down arrow, it disappears instead of getting pinned"*;
+    `reportsHover(pinOnPress = false)`): the press reaches Compose before AWT tells the hover pop-up its keyboard went
+    to the app's window, so a pin on the press made that loss read as a pinned pop-up left by a press outside — closed,
+    and `takeClosedPinned` kept it closed. Pinning changes nothing but these two things:
     - **No hover opens or closes a pop-up outside the pinned one holding the keyboard**
       (`MenuHoverTracker.hoverActs`, asked by every `onHoverEnter` of the tree: the ▾, a category's row, an end node
       closing its neighbour's child) — only what stands in it or in its descendants answers a hover; a fresh hover

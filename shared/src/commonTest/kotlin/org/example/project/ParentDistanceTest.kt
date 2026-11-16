@@ -44,13 +44,26 @@ class ParentDistanceTest {
         assertEquals(setOf(key("b"), key("x")), listed(null))
     }
 
+    /**
+     * Anomaly 2026-11-16 (*"I set the parent distance to 2 for this list, however I still see the direct parent of the
+     * task"*): a distance lists the parents at that distance alone.
+     */
     @Test
-    fun aHigherDistanceListsTheParentsFurtherAboveToo() {
-        assertEquals(setOf(key("b"), key("x"), key("c")), listed(2))
-        assertEquals(setOf(key("b"), key("x"), key("c"), key("d")), listed(3))
-        // Past the highest there is, nothing more; "highest" is every parent at any distance.
-        assertEquals(listed(3), listed(40))
+    fun aDistanceListsTheParentsAtThatDistanceAlone() {
+        assertEquals(setOf(key("c")), listed(2))
+        assertEquals(setOf(key("d")), listed(3))
+        // Past the highest there is, nothing; "highest" is the highest distance there is.
+        assertEquals(emptySet(), listed(40))
         assertEquals(listed(3), listed(SearchDomain.PARENT_DISTANCE_HIGHEST))
+    }
+
+    /** The anomaly's own shape: a task under a tree's root, under the global root — distance 2 is the global root alone. */
+    @Test
+    fun theHighestDistanceOfATaskInATreeIsTheGlobalRootAlone() {
+        val parents = mapOf("chalazion" to setOf("very short term"), "very short term" to setOf("root"))
+        assertEquals(setOf("root"), ElementTree.parentsWithin(parents, listOf("chalazion"), 2))
+        assertEquals(setOf("root"), ElementTree.parentsWithin(parents, listOf("chalazion"), null))
+        assertEquals(setOf("very short term"), ElementTree.parentsWithin(parents, listOf("chalazion"), 1))
     }
 
     @Test

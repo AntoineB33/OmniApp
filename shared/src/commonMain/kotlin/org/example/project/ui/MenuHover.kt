@@ -193,8 +193,13 @@ val LocalMenuHover = compositionLocalOf<MenuHoverTracker?> { null }
  * This element as one part of [tracker]'s pop-up: the pointer entering and leaving it, it going while held, and a press
  * on it pinning the pop-up ([MenuHoverTracker.pin]) — whatever is pressed, with either button: its background, a control
  * in it, or the button that opens it (user rule 2026-11-14).
+ *
+ * [pinOnPress] false: the press does not pin — the button opening the pop-up, whose click pins it itself. Anomaly
+ * 2026-11-16 (*"when I click on the down arrow, it disappears instead of getting pinned"*): the press reaches Compose
+ * before AWT tells the hover pop-up it lost the keyboard to the app's window, so a pin on the press made that loss read
+ * as "a pinned pop-up left by a press outside" ([MenuHoverTracker.windowLeft]) — closed, and the click kept it closed.
  */
-fun Modifier.reportsHover(tracker: MenuHoverTracker?): Modifier =
+fun Modifier.reportsHover(tracker: MenuHoverTracker?, pinOnPress: Boolean = true): Modifier =
     if (tracker == null) this else composed {
         val part = remember { Any() }
         val latest by rememberUpdatedState(tracker)
@@ -205,7 +210,7 @@ fun Modifier.reportsHover(tracker: MenuHoverTracker?): Modifier =
                     when (awaitPointerEvent().type) {
                         PointerEventType.Enter -> latest.enter(part)
                         PointerEventType.Exit -> latest.exit(part)
-                        PointerEventType.Press -> latest.pin()
+                        PointerEventType.Press -> if (pinOnPress) latest.pin()
                         else -> Unit
                     }
                 }

@@ -1,6 +1,7 @@
 package org.example.project
 
 import kotlin.test.Test
+import org.example.project.scheduler.state.projectSearchSubtree
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -404,6 +405,31 @@ class SearchWindowTest {
         s = r(s, SchedulerIntent.RenameTask(pie, "Tart"))
         assertEquals("Tart", s.tasks.getValue(pie).title)
         assertEquals(s, r(s, SchedulerIntent.RenameTask(pie, "  ")), "a blank title is how a CELL deletes, not a row")
+    }
+
+    /**
+     * Anomaly 2026-11-16: the root task's row expanded showed one nameless short row — the tree's inert root cell,
+     * collapsed — instead of the tree's top-level tasks. Its sub-tree draws the top-level list itself, and an edit there
+     * leaves the tree's root cell where it was.
+     */
+    @Test
+    fun the_root_rows_sub_tree_draws_the_top_level_tasks_not_the_root_cell() {
+        var s = tree()
+        val rootCell = org.example.project.scheduler.domain.SchedulerDomain.rootCellId(s)
+        assertTrue(rootCell != null, "the live tree is drawn under its root cell")
+        val top = s.rootListId
+        val projected = s.projectSearchSubtree(top)
+        assertEquals(top, org.example.project.scheduler.domain.SchedulerDomain.displayRootListId(projected))
+        assertEquals(null, org.example.project.scheduler.domain.SchedulerDomain.rootCellId(projected))
+        assertEquals(rootCell, s.lists.getValue(top).parentCellId, "the projection leaves the tree alone")
+        // An edit in that sub-tree is the tree's, and the root cell stays above the top-level list.
+        s = r(s, SchedulerIntent.InSearchSubtree(SchedulerIntent.SetCellTitle(cellWithTitle(s, "Apple"), "Apricot"), top, readOnly = false))
+        assertTrue(cellsWithTitle(s, "Apricot").isNotEmpty())
+        assertEquals(rootCell, s.lists.getValue(top).parentCellId)
+        assertEquals(rootCell, org.example.project.scheduler.domain.SchedulerDomain.rootCellId(s))
+        // Any other task's sub-tree is drawn as before.
+        val sub = s.tasks.getValue(taskWithTitle(s, "Apricot")).childListId!!
+        assertEquals(s.lists, s.projectSearchSubtree(sub).lists)
     }
 
     @Test
