@@ -19,10 +19,15 @@ then every configuration by its last change), "Currently on", "Relevant here" (w
 "Default for this" (what it was opened on), the groups — "Search text" became **"Search"**, its "Matching" (match case,
 whole word, regular expression) under it — each ending with its own "Default for this", the page's types, "Other
 feature pages", then the flat list: every category below the root by its path, then every configuration. A
-configuration listed away from its category draws its path small above its name ("Search › Matching"). Still to come:
-"Where to search", the configurations' descriptions in their info bubbles, "Recent › Elsewhere".
+configuration listed away from its category draws its path small above its name ("Search › Matching").
 
-No migration (`Config` unchanged). Deploy: client apps.
+**"Search › Where to search"**, for every Search window: the bars matched against a row's id, name (the default),
+description, buttons, and its children's at a parent distance (`Filters.searchIn`, `searchChildren`,
+`childSearchIn`, `childDistance`; `SearchDomain.fieldsMatch`, one funnel in `results`); the ▾'s own field reads
+its tree the same way.
+
+No migration: `Config`'s JSON gains four optional fields (absent = the names alone, `WhereToSearchTest`). Deploy:
+client apps.
 
 ### Parent distance is one level; the ▾ click pins; the root row's sub-tree — 2026-11-16
 

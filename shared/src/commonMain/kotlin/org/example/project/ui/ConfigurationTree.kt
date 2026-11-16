@@ -279,7 +279,7 @@ internal fun ConfigurationTreeArrow(
         ) { onFit ->
             ConfigurationTreeColumns(
                 state, config, openedConfig, onConfigChange, own.query, path, { path = it }, nowMillis, windows, claudeLogs, depth,
-                relevant = relevant, onFit = onFit,
+                relevant = relevant, onFit = onFit, queryFilters = own.filters,
             ) { which ->
                 close()
                 onPickOnCalendar(which)
@@ -317,6 +317,8 @@ private fun ConfigurationTreeColumns(
     relevant: List<SearchDomain.Setting> = emptyList(),
     /** Its pop-up fitted to it ([TreeColumn]'s). */
     onFit: ((Int) -> Unit)? = null,
+    /** How the pop-up's own search reads [query] ([filterConfigurationNodes]). */
+    queryFilters: SearchDomain.Filters = SearchDomain.Filters(),
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
 ) {
     // The pop-ups are windows of their own: what they write reaches the Search window and comes back a frame or more
@@ -330,9 +332,9 @@ private fun ConfigurationTreeColumns(
         if (echo >= 0) repeat(echo + 1) { written.removeFirst() } else { written.clear(); shown = config }
     }
     // The whole configuration: the tree's first node is what is on now ([SearchDomain.activeSettings]).
-    val tree = remember(shown, query, openedConfig, relevant) {
+    val tree = remember(shown, query, queryFilters, openedConfig, relevant) {
         // User rule 2026-11-13: what the window was opened on comes first ([SearchDomain.contextSettings]).
-        SearchDomain.configurationTree(shown, openedConfig, relevant).filterConfigurationNodes(query)
+        SearchDomain.configurationTree(shown, openedConfig, relevant).filterConfigurationNodes(query, queryFilters)
     }
     val leaf: @Composable (SearchDomain.ConfigurationLeaf) -> Unit = { node ->
         ConfigurationLeafRow(
@@ -388,13 +390,43 @@ internal fun ConfigurationLeafRow(
  * own label kept only the children found too, none as often as not. User rule 2026-11-04: every configuration is in
  * the tree; nothing but the field narrows it, and a category is never shown empty.
  */
-internal fun List<SearchDomain.ConfigurationNode>.filterConfigurationNodes(query: String): List<SearchDomain.ConfigurationNode> {
+internal fun List<SearchDomain.ConfigurationNode>.filterConfigurationNodes(
+    query: String,
+    /**
+     * User rule 2026-11-16: the field is a Search window's bar, read as its configuration says — "Where to search"
+     * ([SearchDomain.Filters.searchIn]: a node's id, name, description, buttons, and its children's) and "Matching".
+     */
+    filters: SearchDomain.Filters = SearchDomain.Filters(),
+): List<SearchDomain.ConfigurationNode> {
     val needle = query.trim()
     if (needle.isEmpty()) return this
+    val match = filters.queryOptions
+    fun answers(text: String) =
+        if (match == org.example.project.scheduler.domain.TaskTreeSearch.Options()) text.contains(needle, ignoreCase = true)
+        else SearchDomain.textAnswers(text, query, match)
+    fun texts(node: SearchDomain.ConfigurationNode, fields: Set<SearchDomain.SearchField>): List<String> =
+        buildList {
+            val id = when (node) {
+                is SearchDomain.ConfigurationLeaf -> node.setting.name
+                is SearchDomain.ConfigurationCategory -> SearchDomain.CONFIGURATION_NODE_PREFIX + node.id.removePrefix(SearchDomain.FLAT_NODE_PREFIX)
+            }
+            if (SearchDomain.SearchField.Id in fields) add(id.removePrefix(SearchDomain.CONFIGURATION_NODE_PREFIX))
+            if (SearchDomain.SearchField.Name in fields) add(node.label)
+            if (SearchDomain.SearchField.Description in fields) SearchDomain.configurationDescription(id)?.let(::add)
+            if (SearchDomain.SearchField.Buttons in fields && node is SearchDomain.ConfigurationLeaf) addAll(SearchDomain.settingButtonLabels(node.setting))
+        }
+    fun childrenAt(node: SearchDomain.ConfigurationNode, distance: Int): List<SearchDomain.ConfigurationNode> {
+        var level = listOf(node)
+        repeat(distance.coerceAtLeast(1)) { level = level.flatMap { (it as? SearchDomain.ConfigurationCategory)?.children.orEmpty() } }
+        return level
+    }
+    fun found(node: SearchDomain.ConfigurationNode) =
+        texts(node, filters.searchIn).any(::answers) ||
+            (filters.searchChildren && childrenAt(node, filters.childDistance).any { child -> texts(child, filters.childSearchIn).any(::answers) })
     fun filter(nodes: List<SearchDomain.ConfigurationNode>): List<SearchDomain.ConfigurationNode> =
         nodes.mapNotNull { node ->
             when {
-                node.label.contains(needle, ignoreCase = true) -> node
+                found(node) -> node
                 node is SearchDomain.ConfigurationCategory ->
                     filter(node.children).takeIf { it.isNotEmpty() }?.let { node.copy(children = it) }
                 else -> null
@@ -574,8 +606,8 @@ private fun TreeColumn(
                                     // Anomaly 2026-11-11 (*"the right-click menu doesn't appear on the background of the
                                     // 2nd headless search window"*): it is a Search window too, as the root's pop-up is.
                                     var parts by rememberKeptParts(branchId, CellEditPopupHost.PICKER_SPLITS)
-                                    val children = remember(node.children, own.query) {
-                                        node.children.filterConfigurationNodes(own.query)
+                                    val children = remember(node.children, own.query, own.filters) {
+                                        node.children.filterConfigurationNodes(own.query, own.filters)
                                     }
                                     val closeThis = { if (path.getOrNull(depth) == node.id) onPathChange(path.take(depth)) }
                                     val ownControl = LocalPopupWindowControl.current

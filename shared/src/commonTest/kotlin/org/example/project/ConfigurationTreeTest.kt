@@ -132,7 +132,8 @@ class ConfigurationTreeTest {
             val otherPage = setting.section != null && setting.section !in SearchDomain.FEATURE_PAGES.first().kinds
             val expected = when {
                 otherPage && !setting.sorts -> 3
-                SearchDomain.subNodeOf(setting) != null -> 2
+                // Under its group and its sub-categories ("Search › Where to search › Children").
+                setting.section == null -> SearchDomain.homePathOf(setting).size
                 else -> 1
             }
             assertEquals(expected, hoversTo(tree, setting), setting.name)
@@ -140,7 +141,9 @@ class ConfigurationTreeTest {
         // Every configuration about every row has a group, and a group is short enough to be read at a glance.
         for (setting in Setting.entries.filter { it.section == null && it != Setting.ResetSearch }) assertTrue(SearchDomain.treeGroupOf(setting) != null, setting.name)
         for (group in SearchDomain.TreeGroup.entries.filter { it != SearchDomain.TreeGroup.Sorting }) {
-            assertTrue(Setting.entries.count { SearchDomain.treeGroupOf(it) == group } <= 8, group.label)
+            // What its pop-up shows: its sub-categories ("Where to search") count as one row each.
+            val rows = tree.filterIsInstance<ConfigurationCategory>().single { it.id == group.id }.children
+            assertTrue(rows.size <= 8, group.label + ": " + rows.map { it.label })
         }
     }
 

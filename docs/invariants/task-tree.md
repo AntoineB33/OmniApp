@@ -1543,7 +1543,16 @@ suggestions before it was ever entered.
   search over configurations), then every configuration. **A configuration listed away from its own category says
   the way to it** — "Recent", "Currently on", "Relevant here", "Default for this", the flat list — drawn small above
   its name (`ConfigurationLeaf.pathed`, `homePathOf`: *"This search configuration will show in its row the path
-  search > where to search"*). Reset is one of those rows alone. `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
+  search > where to search"*). Reset is one of those rows alone.
+- **WHERE TO SEARCH** (user rule 2026-11-16, *"Every Search window"*; `Filters.searchIn`, `searchChildren`,
+  `childSearchIn`, `childDistance`, `SearchDomain.fieldsMatch`, `WhereToSearchTest`): what of a row the bars are
+  matched against — its id (its key without its kind), its name (the only one by default, as before), its description
+  (`descriptionOf`), the labels of its buttons (`buttonLabelsOf`: a configuration's control, any other element's
+  actions) — and its children's, those exactly `childDistance` levels below it (`ElementTree.childrenOf`), as
+  "Search › Where to search › Children" checks. **One funnel**: `results` reads it for every list, a given one
+  included; the ▾'s own field reads its tree the same way (`filterConfigurationNodes`'s `filters`). Set otherwise
+  than by default, a part is "Currently on" (`whereSettingsOn`); the name, checked by default, is no news. A
+  configuration stored before it reads the names alone. `treeGroupOf` is the one statement of the group of a configuration: a few are named, any other — so any
   added later — goes by its category (`roleOf`). **Every type's "Sort by" is in "Sorting"** too, the order of every
   row first, then this page's types, then the others'; so a type with an order and no filter (option, integer,
   action…) has no node of its own. **A configuration standing among other types' says its type** ("tasks: Sort by",

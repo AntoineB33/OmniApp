@@ -381,6 +381,9 @@ internal fun SettingRow(
     }
 }
 
+/** How far below a row "Where to search › Children" may look: 1 (its children) to this. */
+private const val CHILD_DISTANCE_CHOICES = 5
+
 /** How wide a configuration's naming cell is (a category, a task, a changed element). */
 private val SETTING_CELL_WIDTH = 280.dp
 
@@ -420,6 +423,13 @@ internal fun SettingEditor(
             CompactSwitch(checked = f.matchCase, onCheckedChange = { filters(f.copy(matchCase = it)) })
         SearchDomain.Setting.WholeWord ->
             CompactSwitch(checked = f.wholeWord, onCheckedChange = { filters(f.copy(wholeWord = it)) })
+        // User rule 2026-11-16, "Where to search": what of a row, and of its children, the bars are matched against.
+        SearchDomain.Setting.SearchInId, SearchDomain.Setting.SearchInName, SearchDomain.Setting.SearchInDescription,
+        SearchDomain.Setting.SearchInButtons, SearchDomain.Setting.SearchInChildren, SearchDomain.Setting.ChildSearchInId,
+        SearchDomain.Setting.ChildSearchInName, SearchDomain.Setting.ChildSearchInDescription, SearchDomain.Setting.ChildSearchInButtons,
+        -> CompactSwitch(checked = f.searches(setting) == true, onCheckedChange = { filters(f.withSearches(setting, it)) })
+        SearchDomain.Setting.ChildDistance ->
+            Choices((1..CHILD_DISTANCE_CHOICES).toList(), f.childDistance, { it.toString() }) { filters(f.copy(childDistance = it)) }
         // User rule 2026-11-06: the bars hold regular expressions.
         SearchDomain.Setting.Regex ->
             CompactSwitch(checked = f.regex, onCheckedChange = { filters(f.copy(regex = it)) })

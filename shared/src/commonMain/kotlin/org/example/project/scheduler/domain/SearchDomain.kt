@@ -680,6 +680,16 @@ object SearchDomain {
         }
     }
 
+    /**
+     * User rule 2026-11-16, "Where to search": **a part of a row the bars can be matched against** ([Filters.searchIn],
+     * [fieldsMatch]): its id ([keyOf] without its kind), its name, its description ([descriptionOf]), the labels of
+     * its buttons ([buttonLabelsOf]).
+     */
+    enum class SearchField { Id, Name, Description, Buttons }
+
+    /** What the bars are matched against by default ([Filters.searchIn]): the name alone. */
+    val DEFAULT_SEARCH_IN: Set<SearchField> = setOf(SearchField.Name)
+
     /** What a search bar's completion list offers ([Config.completion]). */
     enum class Completion(val label: String) {
         TaskTitles("task titles"),
@@ -959,6 +969,10 @@ object SearchDomain {
                     noParentOfKinds = Kind.entries.filter { it in filters.noParentOfKinds }.map { it.name },
                     parentsOf = filters.parentsOf.sorted(),
                     parentDistance = filters.parentDistance,
+                    searchIn = SearchField.entries.filter { it in filters.searchIn }.map { it.name }.takeIf { filters.searchIn != DEFAULT_SEARCH_IN },
+                    searchChildren = filters.searchChildren,
+                    childSearchIn = SearchField.entries.filter { it in filters.childSearchIn }.map { it.name }.takeIf { filters.childSearchIn != DEFAULT_SEARCH_IN },
+                    childDistance = filters.childDistance,
                     placeStartMillis = placement.startMillis,
                     placeEndByDelta = placement.endByDelta,
                     placeStatedLengthMillis = placement.lengthMillis,
@@ -1053,6 +1067,10 @@ object SearchDomain {
                         noParentOfKinds = kindsNamed(stored.noParentOfKinds),
                         parentsOf = stored.parentsOf.toSet(),
                         parentDistance = stored.parentDistance.coerceAtLeast(PARENT_DISTANCE_HIGHEST),
+                        searchIn = stored.searchIn?.let { names -> SearchField.entries.filterTo(HashSet()) { it.name in names } } ?: DEFAULT_SEARCH_IN,
+                        searchChildren = stored.searchChildren,
+                        childSearchIn = stored.childSearchIn?.let { names -> SearchField.entries.filterTo(HashSet()) { it.name in names } } ?: DEFAULT_SEARCH_IN,
+                        childDistance = stored.childDistance.coerceAtLeast(1),
                         claudeProject = stored.claudeProject,
                         claudeFrom = stored.claudeFromMillis,
                         claudeUntil = stored.claudeUntilMillis,
@@ -1359,6 +1377,15 @@ object SearchDomain {
         val wholeWord: Boolean = false,
         /** User rule 2026-11-06: the bars hold regular expressions ([TaskTreeSearch.Options.regex]). */
         val regex: Boolean = false,
+        /**
+         * User rule 2026-11-16, "Where to search": **what of a row the bars are matched against** ([SearchField]); a row
+         * answers a bar where one of them does ([fieldsMatch]). Its name alone by default, as before that day.
+         */
+        val searchIn: Set<SearchField> = DEFAULT_SEARCH_IN,
+        /** ...and its children's, those [childDistance] levels below it ([ElementTree.childrenOf]), by [childSearchIn]. */
+        val searchChildren: Boolean = false,
+        val childSearchIn: Set<SearchField> = DEFAULT_SEARCH_IN,
+        val childDistance: Int = 1,
         val calendarAddOn: Boolean = false,
         val calendarAddAtMillis: Long? = null,
         /**
@@ -1468,6 +1495,41 @@ object SearchDomain {
 
         /** The search bar's filters ([matchCase], [wholeWord], [regex]) as a find bar holds them. */
         val queryOptions: TaskTreeSearch.Options get() = TaskTreeSearch.Options(matchCase, wholeWord, regex)
+
+        /** Whether the bars are matched against the rows' names alone, as before "Where to search" ([searchIn]). */
+        val searchesNamesOnly: Boolean get() = searchIn == DEFAULT_SEARCH_IN && !searchChildren
+
+        /** Whether "Where to search" checks [field] of a row ([searchIn]), or of its children ([childSearchIn]). */
+        fun searches(setting: Setting): Boolean? =
+            when (setting) {
+                Setting.SearchInId -> SearchField.Id in searchIn
+                Setting.SearchInName -> SearchField.Name in searchIn
+                Setting.SearchInDescription -> SearchField.Description in searchIn
+                Setting.SearchInButtons -> SearchField.Buttons in searchIn
+                Setting.SearchInChildren -> searchChildren
+                Setting.ChildSearchInId -> SearchField.Id in childSearchIn
+                Setting.ChildSearchInName -> SearchField.Name in childSearchIn
+                Setting.ChildSearchInDescription -> SearchField.Description in childSearchIn
+                Setting.ChildSearchInButtons -> SearchField.Buttons in childSearchIn
+                else -> null
+            }
+
+        /** These filters with "Where to search"'s [setting] checked or not. */
+        fun withSearches(setting: Setting, on: Boolean): Filters {
+            fun Set<SearchField>.with(field: SearchField) = if (on) this + field else this - field
+            return when (setting) {
+                Setting.SearchInId -> copy(searchIn = searchIn.with(SearchField.Id))
+                Setting.SearchInName -> copy(searchIn = searchIn.with(SearchField.Name))
+                Setting.SearchInDescription -> copy(searchIn = searchIn.with(SearchField.Description))
+                Setting.SearchInButtons -> copy(searchIn = searchIn.with(SearchField.Buttons))
+                Setting.SearchInChildren -> copy(searchChildren = on)
+                Setting.ChildSearchInId -> copy(childSearchIn = childSearchIn.with(SearchField.Id))
+                Setting.ChildSearchInName -> copy(childSearchIn = childSearchIn.with(SearchField.Name))
+                Setting.ChildSearchInDescription -> copy(childSearchIn = childSearchIn.with(SearchField.Description))
+                Setting.ChildSearchInButtons -> copy(childSearchIn = childSearchIn.with(SearchField.Buttons))
+                else -> this
+            }
+        }
 
         /**
          * Anomaly 2026-11-15 (*"Root of a tree to yes, and the search result list of the original window shows elements
@@ -1765,6 +1827,21 @@ object SearchDomain {
         WholeWord(null, "Match whole word"),
         /** User rule 2026-11-06: the bars hold regular expressions ([Filters.regex]). */
         Regex(null, "Use regular expression"),
+        /**
+         * User rule 2026-11-16, "Search › Where to search": **what of a row the bars are matched against** — its id, its
+         * name (the only one, by default), its description, its buttons ([Filters.searchIn], [SearchField]) — and its
+         * children's, at a distance ([Filters.searchChildren], [Filters.childSearchIn], [Filters.childDistance]).
+         */
+        SearchInId(null, "Search in ids"),
+        SearchInName(null, "Search in names"),
+        SearchInDescription(null, "Search in descriptions"),
+        SearchInButtons(null, "Search in buttons"),
+        SearchInChildren(null, "Search in children"),
+        ChildSearchInId(null, "Search in children's ids"),
+        ChildDistance(null, "Children's parent distance"),
+        ChildSearchInName(null, "Search in children's names"),
+        ChildSearchInDescription(null, "Search in children's descriptions"),
+        ChildSearchInButtons(null, "Search in children's buttons"),
         /** User rule 2026-11-06: the search bars added to the window's own, and their formula ([Config.extraQueries]). */
         SearchBars(null, "Search bars"),
         Types(null, "Types"),
@@ -1941,7 +2018,7 @@ object SearchDomain {
 
     fun activeSettings(config: Config?): List<Setting> {
         config ?: return emptyList()
-        val filters = Setting.entries.filter { config.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES }
+        val filters = Setting.entries.filter { config.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES } + whereSettingsOn(config.filters)
         val own = listOfNotNull(
             Setting.SortResults.takeIf { !config.sortFollowsDefault && config.sorts.isNotEmpty() },
             Setting.CompletionList.takeIf { config.completion != null },
@@ -1961,13 +2038,32 @@ object SearchDomain {
      */
     fun contextSettings(opened: Config?, relevant: List<Setting> = emptyList()): List<Setting> {
         opened ?: return relevant
-        val on = Setting.entries.filter { opened.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES }
+        val on = Setting.entries.filter { opened.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES } + whereSettingsOn(opened.filters)
         val first = listOfNotNull(
             Setting.ParentDistance.takeIf { opened.filters.parentsOf.isNotEmpty() },
             Setting.DropButtons.takeIf { opened.dropButtons },
         )
         return (relevant + first.take(1) + on + first.drop(1)).distinct()
     }
+
+    /**
+     * User rule 2026-11-16: **what of "Where to search" is set otherwise than by default** — a part checked that is not
+     * by default ([DEFAULT_SEARCH_IN]: the name), and the children's parent distance once it is not 1. A part unchecked
+     * is off, so not "on": the name, by default checked, is no news.
+     */
+    fun whereSettingsOn(filters: Filters): List<Setting> =
+        WHERE_SETTINGS.filter { setting ->
+            when (setting) {
+                Setting.ChildDistance -> filters.searchChildren && filters.childDistance != 1
+                else -> filters.searches(setting) == true && Filters().searches(setting) != true
+            }
+        }
+
+    /** "Where to search"'s configurations, in the tree's order ([TreeSubNode.WhereToSearch]). */
+    val WHERE_SETTINGS: List<Setting> = listOf(
+        Setting.SearchInId, Setting.SearchInName, Setting.SearchInDescription, Setting.SearchInButtons, Setting.SearchInChildren,
+        Setting.ChildSearchInId, Setting.ChildDistance, Setting.ChildSearchInName, Setting.ChildSearchInDescription, Setting.ChildSearchInButtons,
+    )
 
     /**
      * User rule 2026-11-14, "Arrange by dragging": [results] in the order the user dragged them into ([Config.arranged])
@@ -2036,13 +2132,13 @@ object SearchDomain {
 
         override val label: String
             get() = when {
-                pathed -> (path + setting.label).joinToString(TREE_PATH_SEPARATOR)
-                qualified -> setting.section?.let { treeNameOf(it) + ": " + setting.label } ?: setting.label
-                else -> setting.label
+                pathed -> (path + treeLabelOf(setting)).joinToString(TREE_PATH_SEPARATOR)
+                qualified -> setting.section?.let { treeNameOf(it) + ": " + setting.label } ?: treeLabelOf(setting)
+                else -> treeLabelOf(setting)
             }
 
         /** Its name alone, the [path] drawn apart above it. */
-        val name: String get() = if (pathed) setting.label else label
+        val name: String get() = if (pathed) treeLabelOf(setting) else label
     }
 
     /** What stands between two categories of a path ([ConfigurationLeaf.path]). */
@@ -2094,6 +2190,7 @@ object SearchDomain {
             Setting.SearchText, Setting.MatchCase, Setting.WholeWord, Setting.Regex, Setting.SearchBars,
             Setting.CompletionList, Setting.SearchSortsOnly,
             -> TreeGroup.Bar
+            in WHERE_SETTINGS -> TreeGroup.Bar
             Setting.Types, Setting.PageTypes -> TreeGroup.Types
             Setting.NoParentOfKinds, Setting.ParentsOf, Setting.ParentDistance -> TreeGroup.Parents
             else -> {
@@ -2170,11 +2267,18 @@ object SearchDomain {
                 // The order of every row, then of this page's types, then of the others'.
                 .sortedBy { if (it.section == null) 0 else if (it.section in ownKinds) 1 else 2 }
             if (settings.isEmpty()) return@mapNotNull null
-            // Its sub-categories first ("Matching"), then its own configurations, then what of it is on by default.
-            val subs = TreeSubNode.entries.filter { it.group == group }.map { sub ->
-                val held = settings.filter { subNodeOf(it) == sub }
-                ConfigurationCategory(sub.id, sub.label, qualified(held) + listOfNotNull(defaultsOf(sub.id, held)))
-            }
+            // Its sub-categories first ("Where to search", "Matching"), then its configurations, then what of it is on by
+            // default; a sub-category its configurations first ("Where to search": Id … then "Children").
+            fun under(sub: TreeSubNode): List<Setting> =
+                settings.filter { subNodeOf(it) == sub } + TreeSubNode.entries.filter { it.parent == sub }.flatMap(::under)
+            fun subNode(sub: TreeSubNode): ConfigurationCategory =
+                ConfigurationCategory(
+                    sub.id, sub.label,
+                    qualified(WHERE_SETTINGS.filter { subNodeOf(it) == sub } + settings.filter { subNodeOf(it) == sub && it !in WHERE_SETTINGS }) +
+                        TreeSubNode.entries.filter { it.parent == sub }.map(::subNode) +
+                        listOfNotNull(defaultsOf(sub.id, under(sub))),
+                )
+            val subs = TreeSubNode.entries.filter { it.group == group && it.parent == null }.map(::subNode)
             ConfigurationCategory(
                 group.id, group.label,
                 subs + qualified(settings.filter { subNodeOf(it) == null }) + listOfNotNull(defaultsOf(group.id, settings)),
@@ -2197,7 +2301,9 @@ object SearchDomain {
     }
 
     /** User rule 2026-11-16: a category of a [TreeGroup]'s own, holding part of it ("Search › Matching"). */
-    enum class TreeSubNode(val group: TreeGroup, val id: String, val label: String) {
+    enum class TreeSubNode(val group: TreeGroup, val id: String, val label: String, val parent: TreeSubNode? = null) {
+        WhereToSearch(TreeGroup.Bar, "bar/where", "Where to search"),
+        WhereChildren(TreeGroup.Bar, "bar/where/children", "Children", WhereToSearch),
         Matching(TreeGroup.Bar, "bar/matching", "Matching"),
     }
 
@@ -2205,6 +2311,10 @@ object SearchDomain {
     fun subNodeOf(setting: Setting): TreeSubNode? =
         when (setting) {
             Setting.MatchCase, Setting.WholeWord, Setting.Regex -> TreeSubNode.Matching
+            Setting.SearchInId, Setting.SearchInName, Setting.SearchInDescription, Setting.SearchInButtons -> TreeSubNode.WhereToSearch
+            Setting.SearchInChildren, Setting.ChildSearchInId, Setting.ChildDistance, Setting.ChildSearchInName,
+            Setting.ChildSearchInDescription, Setting.ChildSearchInButtons,
+            -> TreeSubNode.WhereChildren
             else -> null
         }
 
@@ -2215,8 +2325,24 @@ object SearchDomain {
     fun homePathOf(setting: Setting): List<String> {
         setting.section?.let { return listOf(treeNameOf(it)) }
         val group = treeGroupOf(setting) ?: return emptyList()
-        return listOf(group.label) + listOfNotNull(subNodeOf(setting)?.label)
+        return listOf(group.label) + generateSequence(subNodeOf(setting)) { it.parent }.toList().asReversed().map { it.label }
     }
+
+    /**
+     * User rule 2026-11-16 (the sketch: *"where to search: id, name, description, buttons, children"*): what a
+     * configuration is called in the tree, where its category says the rest — "Where to search › Id"; elsewhere (the
+     * Configuration Search window, a row of the search over configurations) its whole [Setting.label].
+     */
+    fun treeLabelOf(setting: Setting): String =
+        when (setting) {
+            Setting.SearchInId, Setting.ChildSearchInId -> "Id"
+            Setting.SearchInName, Setting.ChildSearchInName -> "Name"
+            Setting.SearchInDescription, Setting.ChildSearchInDescription -> "Description"
+            Setting.SearchInButtons, Setting.ChildSearchInButtons -> "Buttons"
+            Setting.SearchInChildren -> "Search the children"
+            Setting.ChildDistance -> "Parent distance"
+            else -> setting.label
+        }
 
     /** The id of the tree's first node ([configurationTree]). */
     const val RECENT_NODE: String = "recent"
@@ -2242,6 +2368,9 @@ object SearchDomain {
 
     /** What the id of the pop-up of "General" held in a window's [Config.inside]: a node the tree no longer has (2026-11-14). */
     private const val RETIRED_GENERAL_POPUP: String = "▾/general"
+
+    /** The description of the [Kind.SearchConfiguration] row [id] — a configuration's or a node's; null where it has none. */
+    fun configurationDescription(id: String): String? = null
 
     /** What the id of a node of the configurations tree wears as a [Kind.SearchConfiguration] row; a leaf's is its [Setting]'s name. */
     const val CONFIGURATION_NODE_PREFIX: String = "node:"
@@ -2604,6 +2733,14 @@ object SearchDomain {
         val parentsOf: List<String> = emptyList(),
         /** New 2026-11-13: absent = the direct parents (1); 0 = at any distance. */
         val parentDistance: Int = 1,
+        /**
+         * New 2026-11-16 ("Where to search"): absent = the names alone, as before; a field this build does not know is
+         * dropped. [childDistance] absent = the direct children.
+         */
+        val searchIn: List<String>? = null,
+        val searchChildren: Boolean = false,
+        val childSearchIn: List<String>? = null,
+        val childDistance: Int = 1,
         val placeStartMillis: Long? = null,
         val placeEndByDelta: Boolean = true,
         val placeEndMillis: Long? = null,
@@ -3381,7 +3518,9 @@ object SearchDomain {
         // plain bar keeps the kinds' own search, which also ranks what it finds.
         val bars = listOf(query) + extraQueries
         val severalBars = extraQueries.any { it.isNotBlank() }
-        val kindQuery = if (severalBars || match.regex) "" else query
+        // User rule 2026-11-16: bars read against more than the names ([Filters.searchIn]) read every row of the kinds too.
+        val whereWide = !filters.searchesNamesOnly
+        val kindQuery = if (severalBars || match.regex || whereWide) "" else query
         val base =
             (given?.filter { it.kind in kinds && (kindQuery.isBlank() || matchRank(it.name, kindQuery) != null) }
                 ?: Kind.entries
@@ -3400,6 +3539,20 @@ object SearchDomain {
                 .let { rows -> rows + withCreatedKindRows(state, kinds, query, filters) })
                 .let { rows ->
                     when {
+                        whereWide -> {
+                            // The children a row's are read once each, at the distance asked ([fieldsMatch]).
+                            val children = HashMap<String, List<Result>>()
+                            val childrenOf = { row: Result ->
+                                children.getOrPut(keyOf(row)) {
+                                    var level = listOf(keyOf(row))
+                                    repeat(filters.childDistance.coerceAtLeast(1)) { level = level.flatMap { ElementTree.childrenOf(state, it, claudeLogs) }.distinct() }
+                                    resolve(state, level, allPaths, windows, schedulerRuns, claudeLogs)
+                                }
+                            }
+                            val answers = { row: Result, bar: String -> fieldsMatch(row, bar, filters, childrenOf, claudeLogs) }
+                            if (severalBars) rows.filter { row -> SearchBarFormula.evaluate(queryFormula, bars.size) { i -> answers(row, bars[i]) } }
+                            else rows.filter { answers(it, query) }
+                        }
                         severalBars -> rows.filter { row -> SearchBarFormula.evaluate(queryFormula, bars.size) { i -> barMatches(row, bars[i], match, claudeLogs) } }
                         match == TaskTreeSearch.Options() || query.isBlank() -> rows
                         else -> rows.filter { matchesWith(it, query, match, claudeLogs) }
@@ -4017,6 +4170,93 @@ object SearchDomain {
     /** What the "Changed element" field shows for the element [key] names: its name now, else the key itself. */
     fun changedElementTitle(state: SchedulerState, key: String, windows: List<WindowEntry> = emptyList()): String =
         resolve(state, listOf(key), windows = windows).firstOrNull()?.name ?: key
+
+    /**
+     * User rule 2026-11-16, "Where to search": **whether [text] answers the bar's [query]** — the one reading of a bar
+     * against one part of a row ([fieldsMatch]): with a filter of the bar on, as [matchesWith] reads a name; else every
+     * term of it, case aside, as one bar among several is read ([barMatches]).
+     */
+    fun textAnswers(text: String, query: String, match: TaskTreeSearch.Options): Boolean =
+        if (match != TaskTreeSearch.Options()) TaskTreeSearch.ranges(text, matchPhrase(query, match), match).isNotEmpty()
+        else ClaudeLogSearch.rawTerms(query).all { text.contains(it, ignoreCase = true) }
+
+    /**
+     * The texts of [row] the bars are matched against, by the parts [fields] checks ([SearchField]): its id (its key
+     * without its kind), its name (a log entry's whole text), its description, its buttons.
+     */
+    fun searchTexts(row: Result, fields: Set<SearchField>, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): List<String> =
+        buildList {
+            if (SearchField.Id in fields) add(keyOf(row).substringAfter('/'))
+            if (SearchField.Name in fields) {
+                val entry = (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.let { claudeLogs.find(it.id)?.second }
+                add(entry?.text ?: row.name)
+            }
+            if (SearchField.Description in fields) descriptionOf(row)?.let(::add)
+            if (SearchField.Buttons in fields) addAll(buttonLabelsOf(row))
+        }
+
+    /**
+     * User rule 2026-11-16 (*"where to search: id, name, description (the description of a search configuration is
+     * displayed in an info bubble when hovering over it), buttons, children"*): **whether [row] answers the bar
+     * [query]** by the parts [filters] checks of it ([Filters.searchIn]) or of its children [Filters.childDistance]
+     * levels below it ([Filters.searchChildren], [Filters.childSearchIn]). [children] gives the rows at that distance.
+     * A blank bar answers everything.
+     */
+    fun fieldsMatch(
+        row: Result,
+        query: String,
+        filters: Filters,
+        children: (Result) -> List<Result>,
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+    ): Boolean {
+        if (query.isBlank()) return true
+        val match = filters.queryOptions
+        if (searchTexts(row, filters.searchIn, claudeLogs).any { textAnswers(it, query, match) }) return true
+        if (!filters.searchChildren) return false
+        return children(row).any { child -> searchTexts(child, filters.childSearchIn, claudeLogs).any { textAnswers(it, query, match) } }
+    }
+
+    /**
+     * The description of [row], as its info bubble says it; null where it has none. A search configuration's is its
+     * [configurationDescription].
+     */
+    fun descriptionOf(row: Result): String? =
+        (row as? ItemResult)?.takeIf { it.kind == Kind.SearchConfiguration }?.let { configurationDescription(it.id) }
+
+    /**
+     * User rule 2026-11-16 ("Where to search › Buttons"): **the labels of what can be pressed on [row]** — a search
+     * configuration's control ([settingButtonLabels]); any other element's actions, those the actions section offers
+     * for its type ([AddedAction.section]).
+     */
+    fun buttonLabelsOf(row: Result): List<String> {
+        settingOf(row)?.let { return settingButtonLabels(it) }
+        if (row.kind == Kind.SearchConfiguration) return emptyList()
+        return AddedAction.entries.filter { it.section == row.kind && it !in RETIRED_ACTIONS }.map { it.label }
+    }
+
+    /** The labels on [setting]'s control, as the configurations tree draws it ([buttonLabelsOf]); none for a switch. */
+    fun settingButtonLabels(setting: Setting): List<String> {
+        fun <T> labels(entries: List<T>, label: (T) -> String) = entries.map(label)
+        return when (setting) {
+            Setting.TaskInTree, Setting.TaskTreeRoot, Setting.TaskSchedulable, Setting.TaskOnCalendar, Setting.CategoryHasRules,
+            Setting.PeriodOnCalendar, Setting.QuotaRepeatsSetting, Setting.HistoryUndoneSetting, Setting.TaskTreeOpenSetting,
+            Setting.TaskTreeDatedSetting, Setting.ShortcutReboundSetting,
+            -> labels(Tri.entries) { it.label }
+            Setting.PeriodOriginSetting -> labels(PeriodOrigin.entries) { it.label }
+            Setting.PeriodResilienceSetting -> labels(ResilienceLevel.entries) { it.label }
+            Setting.AlarmStateSetting -> labels(AlarmState.entries) { it.label }
+            Setting.TimerStateSetting, Setting.ChronoStateSetting -> labels(TimerState.entries) { it.label }
+            Setting.ReminderRepeatsSetting -> labels(ReminderRepeats.entries) { it.label }
+            Setting.WindowDuplicatesSetting -> labels(WindowDuplicates.entries) { it.label }
+            Setting.AlarmDays -> listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su", "any day")
+            Setting.TaskBoxesFrom, Setting.TaskBoxesUntil, Setting.PeriodBoxesFrom, Setting.PeriodBoxesUntil -> listOf("any", "Pick", "Now")
+            Setting.CalendarAdd, Setting.CalendarAt -> listOf("Now")
+            Setting.SearchBars -> listOf("Add a search bar")
+            Setting.ResetSearch -> listOf("Reset")
+            Setting.SortResults -> listOf("Default")
+            else -> emptyList()
+        }
+    }
 
     /**
      * How well [name] answers [query]: 0 = the same name, 1 = starts with it, 2 = contains it, null = not a
