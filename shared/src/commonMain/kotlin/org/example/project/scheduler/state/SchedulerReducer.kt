@@ -620,6 +620,33 @@ object SchedulerReducer {
                 }
                 if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Tree name", apply))
             }
+            is SchedulerIntent.SetCellWeightFormula -> {
+                val formula = intent.formula.trim()
+                val cell = state.cells[intent.cellId]
+                if (cell == null || cell.weightFormula == formula || org.example.project.scheduler.domain.TimeFormula.problem(formula) != null) {
+                    state
+                } else {
+                    val apply = { working: SchedulerState ->
+                        working.cells[intent.cellId]?.let { c -> working.copy(cells = working.cells + (c.id to c.copy(weightFormula = formula))) } ?: working
+                    }
+                    commitDelta(state, priorityTreeDelta(state, "Presence ratio target", apply))
+                }
+            }
+            is SchedulerIntent.SetTasksMinimumFormula -> {
+                val formula = intent.formula.trim()
+                if (org.example.project.scheduler.domain.TimeFormula.problem(formula) != null) {
+                    state
+                } else {
+                    val apply = { working: SchedulerState ->
+                        intent.taskIds.distinct().fold(working) { acc, id ->
+                            val task = acc.tasks[id]
+                            if (task == null || task.minimumFormula == formula) acc
+                            else acc.copy(tasks = acc.tasks + (id to task.copy(minimumFormula = formula)))
+                        }
+                    }
+                    if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Minimum length target", apply))
+                }
+            }
             is SchedulerIntent.SetTasksText -> {
                 val apply = { working: SchedulerState ->
                     intent.taskIds.distinct().fold(working) { acc, id -> applySetTaskText(acc, id, intent.text) }

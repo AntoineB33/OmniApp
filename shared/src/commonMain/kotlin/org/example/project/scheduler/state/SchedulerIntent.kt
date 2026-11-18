@@ -385,6 +385,19 @@ sealed interface SchedulerIntent {
     data class SetTreeName(val taskIds: List<TaskId>, val name: String) : SchedulerIntent
 
     /**
+     * User rule 2026-11-16: the weight of the occurrence [cellId] under its parent as a formula of the instant
+     * ([org.example.project.scheduler.domain.TimeFormula]); blank: the constant weight again. A formula that does not read
+     * is refused. ONE Undo/Redo unit; a call that changes nothing records nothing.
+     */
+    data class SetCellWeightFormula(val cellId: CellId, val formula: String) : SchedulerIntent
+
+    /**
+     * User rule 2026-11-16: the minimum length of every task of [taskIds], in minutes, as a formula of the instant; blank:
+     * the constant minimum again. A formula that does not read is refused. ONE Undo/Redo unit.
+     */
+    data class SetTasksMinimumFormula(val taskIds: List<TaskId>, val formula: String) : SchedulerIntent
+
+    /**
      * [SetScheduleUnit] for every task of [taskIds]. A task whose minimum time the [entries] exceed keeps its own
      * unit (the reducer's guard, as for one task); so does one that is not a schedulable leaf.
      */

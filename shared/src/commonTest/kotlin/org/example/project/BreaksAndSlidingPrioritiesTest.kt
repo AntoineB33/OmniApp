@@ -12,8 +12,6 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
-import org.example.project.scheduler.state.TaskTreeEntry
-import org.example.project.scheduler.model.TaskTreeId
 
 /**
  * `side-dev` **test 13** in OmniApp's own terms: the break grid *and* the sliding percentages, together.
@@ -21,10 +19,11 @@ import org.example.project.scheduler.model.TaskTreeId
  * Test 12 is the environment — a timeline the three screen-break periods arrive on one after another — and
  * test 13 adds the one thing the requirement names: the priorities themselves slide from one arrangement to
  * another, and "at t_p the scheduler is done to satisfy the priorities that are at exactly t_p". OmniApp's
- * two halves of that are the §15 screen breaks (periods, one shape each) and the §9 task-tree timeline (dated
- * trees as keyframes, linearly blended at the now-line). Each half is pinned on its own — the break shapes
- * against the reference in `SchedulerPlanTest`, the blend in `TaskTreeTimelineTest` — and these are what says
- * the two hold **at the same time**, which is the whole of what test 13 asks:
+ * two halves of that are the §15 screen breaks (periods, one shape each) and, since 2026-11-16, each weight's own
+ * formula of the instant (user rule: *"the evolution of its presence ratio target … with any mathematical formula"*,
+ * `TimeFormula`; dated task trees until then). Each half is pinned on its own — the break shapes against the
+ * reference in `SchedulerPlanTest`, the formulas in `TimeFormulaTest` — and these are what says the two hold **at the
+ * same time**, which is the whole of what test 13 asks:
  *
  *  - the plan a fill from `now` produces satisfies the percentages *at* `now`, breaks and all;
  *  - and the breaks stay periods while it does: nothing that needs a screen is ever placed in one, and the
@@ -38,9 +37,10 @@ class BreaksAndSlidingPrioritiesTest {
     private val T0 = 1_700_000_000_000L
 
     /**
-     * Three tasks and two dated keyframes: "before" (at [T0]) weights the screen work toward Focus, "after"
-     * (a day later) hands that weight to Admin. Stretch — the only task needing no screen — keeps its share
-     * throughout, so what slides is which of the two screen tasks the timeline is for.
+     * Three tasks whose weights slide from one arrangement to another: until [T0] the screen work leans toward Focus
+     * (3, 1, 1), from a day later toward Admin (1, 3, 1), on a straight line between ([TimeFormula]'s `ramp`). Stretch —
+     * the only task needing no screen — keeps its share throughout, so what slides is which of the two screen tasks the
+     * timeline is for.
      */
     private fun keyframes(): SchedulerState {
         var s = SchedulerState.empty()
@@ -59,16 +59,16 @@ class BreaksAndSlidingPrioritiesTest {
             s,
             SchedulerIntent.SetTaskResilience(ids.getValue("Stretch"), PeriodKinds.NO_SCREEN, 1.0),
         )
-        // The "before" arrangement: Focus 3, Admin 1, Stretch 1 (60/20/20).
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cells[0], 0, 3.0))
-        // User rule 2026-11-16: a tree is a task under the root, and nothing dates one any more — the rule state's evolution
-        // moves to each task's own formulas. Until then the two keyframes are built as the blend reads them.
-        val before = TaskTreeEntry(TaskTreeId("tree/before"), "before", s.captureTreeWithRecords(), dateMillis = T0)
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cells[0], 0, 1.0))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetPriorityWeight(cells[1], 0, 3.0))
-        val after = TaskTreeEntry(TaskTreeId("tree/after"), "after", s.captureTreeWithRecords(), dateMillis = T0 + DAY)
-        s = s.copy(taskTrees = listOf(before, after), activeTaskTreeId = after.id)
+        // "Before": Focus 3, Admin 1, Stretch 1 (60/20/20); "after": Focus 1, Admin 3 — each weight its own formula.
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellWeightFormula(cells[0], ramp(3, 1)))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellWeightFormula(cells[1], ramp(1, 3)))
         return s.copy(screenBreaks = breaksAnchoredAt(T0))
+    }
+
+    /** From [from] until [T0] to [to] from a day later, a straight line between: `t` is in days. */
+    private fun ramp(from: Int, to: Int): String {
+        val day = 86_400_000.0
+        return "ramp(${T0 / day}, ${(T0 + DAY) / day}, $from, $to)"
     }
 
     /**
@@ -79,10 +79,7 @@ class BreaksAndSlidingPrioritiesTest {
         SchedulerDomain.DEFAULT_SCREEN_BREAKS
 
     private fun taskId(state: SchedulerState, title: String): TaskId =
-        state.tasks.entries.firstOrNull { it.value.title == title }?.key
-            ?: state.taskTrees.firstNotNullOf { entry ->
-                entry.tree.tasks.entries.firstOrNull { it.value.title == title }?.key
-            }
+        state.tasks.entries.first { it.value.title == title }.key
 
     private fun servedMillis(panels: List<TaskPanel>, id: TaskId): Long =
         panels.filter { it.auto && it.taskId == id }.sumOf { it.endEpochMillis - it.startEpochMillis }
@@ -100,8 +97,8 @@ class BreaksAndSlidingPrioritiesTest {
         val admin = taskId(s, "Admin")
         // Sanity on the two ends the blend runs between, so a failure below is about the SCHEDULE and not
         // about the fixture's arrangement.
-        assertEquals(0.6, SchedulerDomain.blendedTaskPriorities(s, T0)[focus]!!, 1e-9)
-        assertEquals(0.6, SchedulerDomain.blendedTaskPriorities(s, T0 + DAY)[admin]!!, 1e-9)
+        assertEquals(0.6, SchedulerDomain.absoluteTaskPriorities(s, T0)[focus]!!, 1e-9)
+        assertEquals(0.6, SchedulerDomain.absoluteTaskPriorities(s, T0 + DAY)[admin]!!, 1e-9)
 
         val from = T0 - DAY
         val panels = SchedulerDomain.fillSchedule(s, from, horizonMillis = T0 + 3 * DAY)
@@ -181,7 +178,7 @@ class BreaksAndSlidingPrioritiesTest {
     }
 
     @Test
-    fun the_dated_trees_and_the_breaks_are_both_scheduling_inputs() {
+    fun the_formulas_and_the_breaks_are_both_scheduling_inputs() {
         // CLAUDE.md trigger rule: the plan is re-run when [schedulingSignature] moves. Test 13's two moving
         // parts are a keyframe's contents and the break grid, so an edit to either must re-plan — otherwise
         // "the priorities of exactly this position" would be whatever the last unrelated edit left behind.
@@ -189,9 +186,9 @@ class BreaksAndSlidingPrioritiesTest {
         val base = SchedulerDomain.schedulingSignature(s)
         val retimed = s.copy(screenBreaks = s.screenBreaks.map { it.copy(intervalMillis = it.intervalMillis * 2) })
         assertTrue(base != SchedulerDomain.schedulingSignature(retimed), "the breaks are a scheduling input")
-        val moved =
-            s.copy(taskTrees = s.taskTrees.map { if (it.title == "before") it.copy(dateMillis = T0 - DAY) else it })
-        assertTrue(base != SchedulerDomain.schedulingSignature(moved), "a keyframe's DATE is a scheduling input")
+        val focus = s.lists[s.rootListId]!!.cellIds[0]
+        val moved = SchedulerReducer.reduce(s, SchedulerIntent.SetCellWeightFormula(focus, "ramp(${(T0 - DAY) / 86_400_000.0}, ${(T0 + DAY) / 86_400_000.0}, 3, 1)"))
+        assertTrue(base != SchedulerDomain.schedulingSignature(moved), "a formula's DATE is a scheduling input")
     }
 
     /** A hand-drawn "no screen" stretch of 25 minutes ending five minutes before [now]: a rest, so no pose is owed. */

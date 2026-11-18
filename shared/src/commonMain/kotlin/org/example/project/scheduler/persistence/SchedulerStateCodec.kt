@@ -502,7 +502,7 @@ object SchedulerStateCodec {
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value))
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value), it.weightFormula)
                 },
             tasks =
                 tasks.values.map {
@@ -513,6 +513,7 @@ object SchedulerStateCodec {
                         occurrences = it.occurrences.map(CellId::value),
                         childListId = it.childListId?.value,
                         minimumMinutes = it.minimumMinutes,
+                        minimumFormula = it.minimumFormula,
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                         scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
                         text = it.text,
@@ -1120,7 +1121,7 @@ object SchedulerStateCodec {
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value))
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value), it.weightFormula)
                 },
             tasks =
                 tasks.values.map {
@@ -1131,6 +1132,7 @@ object SchedulerStateCodec {
                         occurrences = it.occurrences.map(CellId::value),
                         childListId = it.childListId?.value,
                         minimumMinutes = it.minimumMinutes,
+                        minimumFormula = it.minimumFormula,
                         record = it.record.map { r -> PersistedTimeRange(r.startEpochMillis, r.endEpochMillis) },
                         scheduleUnit = it.scheduleUnit.map { e -> PersistedScheduleUnitEntry(e.title, e.spanMinutes) },
                         text = it.text,
@@ -1177,6 +1179,7 @@ object SchedulerStateCodec {
                         occurrences = p.occurrences.map(::CellId),
                         childListId = p.childListId?.let(::CellListId),
                         minimumMinutes = p.minimumMinutes,
+                        minimumFormula = p.minimumFormula,
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
@@ -1196,6 +1199,7 @@ object SchedulerStateCodec {
                         taskId = p.taskId?.let(::TaskId),
                         priorityWeights = p.priorityWeights,
                         categoryIds = p.categoryIds.distinct().map(::CategoryId),
+                        weightFormula = p.weightFormula,
                     )
             }
         val lists =
@@ -1697,6 +1701,7 @@ object SchedulerStateCodec {
                         occurrences = p.occurrences.map(::CellId),
                         childListId = p.childListId?.let(::CellListId),
                         minimumMinutes = p.minimumMinutes,
+                        minimumFormula = p.minimumFormula,
                         record = p.record.map { TaskTimeRange(it.start, it.end) },
                         scheduleUnit = p.scheduleUnit.map { ScheduleUnitEntry(it.title, it.spanMinutes) },
                         text = p.text,
@@ -1716,6 +1721,7 @@ object SchedulerStateCodec {
                         taskId = p.taskId?.let(::TaskId),
                         priorityWeights = p.priorityWeights,
                         categoryIds = p.categoryIds.distinct().map(::CategoryId),
+                        weightFormula = p.weightFormula,
                     )
             }
         val lists =
@@ -3019,6 +3025,8 @@ private data class PersistedCell(
     val priorityWeights: List<Double> = listOf(1.0),
     /** User rule 2026-10-03: the task cell categories this occurrence carries; absent before they existed. */
     val categoryIds: List<String> = emptyList(),
+    /** User rule 2026-11-16: the weight as a formula of the instant; absent (blank) before it existed. */
+    val weightFormula: String = "",
 )
 
 /**
@@ -3347,6 +3355,8 @@ private data class PersistedTask(
     // PRD §10 / §8: defaults keep payloads written before these fields existed loadable. A missing
     // minimum time decodes to the §10 default (45 min), matching a freshly created task.
     val minimumMinutes: Int = DEFAULT_MINIMUM_MINUTES,
+    // User rule 2026-11-16: the minimum as a formula of the instant; absent (blank) before it existed.
+    val minimumFormula: String = "",
     val record: List<PersistedTimeRange> = emptyList(),
     // PRD §13: a missing schedule unit decodes to empty (a task with no schedule unit).
     val scheduleUnit: List<PersistedScheduleUnitEntry> = emptyList(),

@@ -261,6 +261,7 @@ data class TreeDiff(
                     parentListId = rebaseField(c.parentListId, f.parentListId, t.parentListId),
                     taskId = rebaseField(c.taskId, f.taskId, t.taskId),
                     priorityWeights = rebaseField(c.priorityWeights, f.priorityWeights, t.priorityWeights),
+                    weightFormula = rebaseField(c.weightFormula, f.weightFormula, t.weightFormula),
                 )
             }
         fun stripped(task: Task) = if (withRecords) task else task.copy(record = emptyList())
@@ -279,6 +280,7 @@ data class TreeDiff(
                     occurrences = rebaseIds(c.occurrences, f.occurrences, t.occurrences, ::cellGone),
                     childListId = rebaseField(c.childListId, f.childListId, t.childListId),
                     minimumMinutes = rebaseField(c.minimumMinutes, f.minimumMinutes, t.minimumMinutes),
+                    minimumFormula = rebaseField(c.minimumFormula, f.minimumFormula, t.minimumFormula),
                     record = rebaseField(c.record, f.record, t.record),
                     scheduleUnit = rebaseField(c.scheduleUnit, f.scheduleUnit, t.scheduleUnit),
                     text = rebaseField(c.text, f.text, t.text),

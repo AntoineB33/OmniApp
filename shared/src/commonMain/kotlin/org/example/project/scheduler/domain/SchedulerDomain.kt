@@ -837,6 +837,34 @@ object SchedulerDomain {
      * placeholder cells (no `taskId`) hold no priority.
      */
     /**
+     * User rule 2026-11-16 ([TimeFormula]): [cell]'s weight in its first column at [atMillis] — its formula's value there,
+     * never below 0, else (no formula, or none that reads as a number there) the constant it stores.
+     */
+    fun cellWeightAt(cell: org.example.project.scheduler.model.Cell, atMillis: Long): Double {
+        val stored = cell.priorityWeights.getOrElse(0) { defaultWeightAt(0) }
+        val formula = TimeFormula.parse(cell.weightFormula) ?: return stored
+        return formula.at(atMillis)?.coerceAtLeast(0.0) ?: stored
+    }
+
+    /** User rule 2026-11-16 ([TimeFormula]): [task]'s minimum in minutes at [atMillis] — its formula's value, else [Task.minimumMinutes]. */
+    fun minimumMinutesAt(task: Task, atMillis: Long): Double {
+        val formula = TimeFormula.parse(task.minimumFormula) ?: return task.minimumMinutes.toDouble()
+        return formula.at(atMillis)?.coerceAtLeast(0.0) ?: task.minimumMinutes.toDouble()
+    }
+
+    /** Whether any weight or minimum of [state] is a formula that moves with time ([TimeFormula.Parsed.constant]). */
+    fun hasMovingFormulas(state: SchedulerState): Boolean =
+        state.cells.values.any { it.weightFormula.isNotBlank() && TimeFormula.parse(it.weightFormula)?.constant == false } ||
+            state.tasks.values.any { it.minimumFormula.isNotBlank() && TimeFormula.parse(it.minimumFormula)?.constant == false }
+
+    /** Every instant a formula of [state] may change pace at ([TimeFormula.Parsed.breakpoints]), in order. */
+    fun formulaBreakpoints(state: SchedulerState): List<Long> =
+        (state.cells.values.map { it.weightFormula } + state.tasks.values.map { it.minimumFormula })
+            .filter { it.isNotBlank() }.distinct()
+            .flatMap { TimeFormula.parse(it)?.breakpoints.orEmpty() }
+            .distinct().sorted()
+
+    /**
      * Whether [cellId] holds a real task for priority purposes: it points at a task whose title is not
      * blank. An empty placeholder (no `taskId`) holds none; so does a cell whose task was "deleted" by
      * clearing its title — the cell keeps its id and the task lingers blank (kept alive by its
@@ -847,7 +875,11 @@ object SchedulerDomain {
         return state.tasks[taskId]?.title?.isNotBlank() == true
     }
 
-    fun absoluteTaskPriorities(state: SchedulerState): Map<TaskId, Double> {
+    fun absoluteTaskPriorities(state: SchedulerState, atMillis: Long? = null): Map<TaskId, Double> {
+        // User rule 2026-11-16: a weight given as a formula of the instant is read at [atMillis] (null: now).
+        val at by lazy { atMillis ?: org.example.project.scheduler.state.SchedulerReducer.clock.nowMillis() }
+        fun weightOf(cell: org.example.project.scheduler.model.Cell, c: Int): Double =
+            if (c == 0 && cell.weightFormula.isNotBlank()) cellWeightAt(cell, at) else cell.priorityWeights.getOrElse(c) { defaultWeightAt(c) }
         val cellsByTask = HashMap<TaskId, MutableList<CellId>>()
         for (cell in state.cells.values) {
             val taskId = cell.taskId ?: continue
@@ -865,7 +897,7 @@ object SchedulerDomain {
                     list?.cellIds?.filter { isPopulatedCell(state, it) }.orEmpty()
                 val colSums =
                     absW.indices.map { c ->
-                        populated.sumOf { state.cells[it]!!.priorityWeights.getOrElse(c) { defaultWeightAt(c) } }
+                        populated.sumOf { weightOf(state.cells[it]!!, c) }
                     }
                 absW to colSums
             }
@@ -876,7 +908,7 @@ object SchedulerDomain {
             for (c in absW.indices) {
                 val sum = colSums[c]
                 if (sum == 0.0) continue
-                w += (cell.priorityWeights.getOrElse(c) { defaultWeightAt(c) } / sum) * absW[c]
+                w += (weightOf(cell, c) / sum) * absW[c]
             }
             return w
         }
@@ -994,163 +1026,64 @@ object SchedulerDomain {
         return common
     }
 
-    // ----- The task-tree timeline ("All task trees") -------------------------------------------
+    // ----- The rule state over time (user rule 2026-11-16) -----------------------------------------
 
     /**
-     * Where `now` sits on the task-tree timeline: between the keyframe [from] and the keyframe [to],
-     * [fraction] of the way across (0 at [from]'s date, 1 at [to]'s).
-     *
-     * Outside the dated range the nearest keyframe holds, which is expressed as `from === to` with a
-     * fraction of 0 — a *degenerate* blend, not a missing one. That distinction matters: it still means
-     * "the scheduler follows the dated trees", it just happens to be following exactly one of them.
+     * User rule 2026-11-16: *"In a task element, the user can define the evolution of its presence ratio target and its
+     * minimum length target with any mathematical formula."* **The rule state at [atMillis]**: [leaves] with the
+     * priorities their weights' formulas give there ([absoluteTaskPriorities] at the instant), the minimums theirs give
+     * ([minimumMinutesAt], in millis, not rounded to a minute), their resilience and their sets — in the tie-break order
+     * (`docs/scheduler_score.md` § *Ties*: the highest priority, then the title). It replaces the dated task trees'
+     * blend: a tree is a task, and what moves is a task's own number.
      */
-    data class TaskTreeBlend(
-        val from: TaskTreeEntry,
-        val to: TaskTreeEntry,
-        val fraction: Double,
-    ) {
-        /** True while `now` sits on a keyframe / outside the dated range, so nothing is being interpolated. */
-        val isSingle: Boolean get() = from.id == to.id
+    fun ruleStateAt(state: SchedulerState, leaves: List<TaskId>, atMillis: Long): List<PlanTask> {
+        val priorities = absoluteTaskPriorities(state, atMillis)
+        val ids = leaves.toHashSet()
+        return leaves.map { id ->
+            val task = state.tasks[id]
+            PlanTask(
+                id = id,
+                priority = priorities[id] ?: 0.0,
+                minimumMillis = ((task?.let { minimumMinutesAt(it, atMillis) } ?: 0.0) * MILLIS_PER_MINUTE).roundToLong(),
+                resilience = task?.resilience.orEmpty(),
+                credits = fulfilmentCredits(state.tasks, id, ids),
+            )
+        }.sortedWith(compareByDescending<PlanTask> { it.priority }.thenBy { state.tasks[it.id]?.title.orEmpty() })
     }
 
     /**
-     * The trees on the timeline, in date order — the keyframes the scheduler blends between.
-     *
-     * The **active** tree's stored snapshot is stale by design (the live [SchedulerState] fields are the
-     * truth for it, see [TaskTreeEntry]), so the state is flushed first: a keyframe that happens to be the
-     * tree on screen must contribute what the user has actually got, not what it looked like when it was
-     * last selected. Ties on the same instant fall back to the id, so the order is total and stable.
+     * The rule state as the fill walks it ([ScheduleFill.RuleStates]) where a formula moves: its pieces end at the
+     * formulas' dates ([formulaBreakpoints]); a piece is MOVING where some formula's value differs across it, and is
+     * then decided run by run, each under the rule state at its own instant.
      */
-    fun datedTaskTrees(state: SchedulerState): List<TaskTreeEntry> =
-        TaskLinks.inLinkSpace(
-            state,
-            state.withActiveTaskTreeFlushed().taskTrees
-                .filter { it.dateMillis != null }
-                .sortedWith(compareBy({ it.dateMillis }, { it.id.value })),
-        )
+    private class FormulaTimeline(val state: SchedulerState, val leaves: List<TaskId>) : ScheduleFill.RuleStates {
+        private val breakpoints = formulaBreakpoints(state)
+        private val formulas =
+            (state.cells.values.map { it.weightFormula } + state.tasks.values.map { it.minimumFormula })
+                .filter { it.isNotBlank() }.distinct().mapNotNull { TimeFormula.parse(it) }.filterNot { it.constant }
 
-    /**
-     * The blend in force at [nowMillis], or `null` when **no** tree is dated — in which case there is no
-     * timeline at all and every priority question falls back to the live tree, exactly as before this
-     * feature existed. That null is the "feature is off" signal every caller below keys on.
-     */
-    fun taskTreeBlendAt(state: SchedulerState, nowMillis: Long): TaskTreeBlend? =
-        taskTreeBlendAt(datedTaskTrees(state), nowMillis)
+        override fun at(x: Long): List<PlanTask> = ruleStateAt(state, leaves, x)
 
-    /**
-     * [taskTreeBlendAt] over trees already in date order. **Right-continuous**: the last keyframe dated at or before
-     * the instant (of several on ONE date, the last — `docs/scheduler_requirements.md` § *Rule state input evolution*:
-     * at a discrete switch the state switched TO is the one in force), blended towards the next one dated after it.
-     * Before the first date the first keyframe holds; from the last date on, the last.
-     */
-    fun taskTreeBlendAt(dated: List<TaskTreeEntry>, nowMillis: Long): TaskTreeBlend? {
-        if (dated.isEmpty()) return null
-        val k = dated.lastOrNull { (it.dateMillis ?: Long.MIN_VALUE) <= nowMillis }
-            ?: return TaskTreeBlend(dated.first(), dated.first(), 0.0)
-        val next = dated.firstOrNull { (it.dateMillis ?: Long.MIN_VALUE) > nowMillis } ?: return TaskTreeBlend(k, k, 0.0)
-        val ta = k.dateMillis ?: return TaskTreeBlend(k, k, 0.0)
-        val tb = next.dateMillis ?: return TaskTreeBlend(k, k, 0.0)
-        return TaskTreeBlend(k, next, (nowMillis - ta).toDouble() / (tb - ta).toDouble())
-    }
+        override fun nextChange(x: Long): Long? = breakpoints.firstOrNull { it > x }
 
-    /** The absolute priorities the task tree [entry] defines on its own, as if it were the live tree. */
-    fun taskTreePriorities(state: SchedulerState, entry: TaskTreeEntry): Map<TaskId, Double> =
-        absoluteTaskPriorities(state.applyTreeWithRecords(entry.tree))
-
-    /**
-     * **The priorities the scheduler actually follows at [nowMillis]** — the whole point of the timeline.
-     *
-     * Between two keyframes each task's absolute priority moves linearly from the share its tree gives it
-     * to the share the next tree gives it, so the plan transforms evenly and continuously from one
-     * arrangement into the other rather than snapping over on the date. A task that exists in only one of
-     * the two trees is treated as **0% in the other**, which is what makes a task fade out (or in) over the
-     * transition instead of appearing at full share the instant its tree becomes current.
-     *
-     * Note this is deliberately NOT the priority the tree on screen shows: the displayed tree keeps
-     * reporting its own [absoluteTaskPriorities], because that is the arrangement the user is editing. With
-     * no dated tree at all, the two are the same thing.
-     */
-    fun blendedTaskPriorities(state: SchedulerState, nowMillis: Long): Map<TaskId, Double> {
-        val blend = taskTreeBlendAt(state, nowMillis) ?: return absoluteTaskPriorities(state)
-        val from = taskTreePriorities(state, blend.from)
-        if (blend.isSingle) return from
-        val to = taskTreePriorities(state, blend.to)
-        val f = blend.fraction.coerceIn(0.0, 1.0)
-        return (from.keys + to.keys).associateWith { id ->
-            (1.0 - f) * (from[id] ?: 0.0) + f * (to[id] ?: 0.0)
+        override fun movingAt(x: Long): Boolean {
+            val end = nextChange(x) ?: (x + 366L * 86_400_000L)
+            // Read at both ends and the middle of the piece: a formula smooth between its dates moves across it
+            // exactly when these differ (a ramp flat before its start, flat after its end, reads alike).
+            val probes = listOf(x, x + (end - x) / 2, end - 1)
+            return formulas.any { f -> probes.map { f.at(it) }.distinct().size > 1 }
         }
     }
 
     /**
-     * The tasks the scheduler may place at [nowMillis]: the **union** of the two keyframes' schedulable
-     * leaves. A task living only in the tree being transitioned *to* is schedulable as soon as its blended
-     * share leaves zero — without that, a continuous priority transformation would still hand out a
-     * discontinuous plan, since the task could not be placed until its tree became the live one.
+     * Whether the rule state changes anywhere in `[fromMillis, untilMillis)`: a formula's date inside it (a switch, or a
+     * ramp starting or ending) or a piece over which a formula moves.
      */
-    fun blendedSchedulableLeaves(state: SchedulerState, nowMillis: Long): List<TaskId> {
-        val blend = taskTreeBlendAt(state, nowMillis) ?: return schedulableLeaves(state)
-        val from = schedulableLeaves(state.applyTreeWithRecords(blend.from.tree))
-        if (blend.isSingle) return from
-        return (from + schedulableLeaves(state.applyTreeWithRecords(blend.to.tree))).distinct()
-    }
-
-    /**
-     * The task attributes the fill reads — title, minimum time, screen flags, records — widened to cover
-     * the union above, since a leaf drawn from the other keyframe has no entry in the live `tasks` map and
-     * would otherwise schedule as a nameless, zero-minimum task.
-     *
-     * The **live** map wins wherever a task exists in both: it is the freshest copy (a stored snapshot is
-     * only as current as the last flush) and its records are the ones the advance has been banking. With
-     * one exception — a **blank-titled tombstone**. Emptying a cell to delete a task leaves its id behind
-     * with a blank title (kept alive by its panels/records, PRD §4/§8), so a task deleted from the live
-     * tree but still alive in a keyframe would take its name from the tombstone and schedule as
-     * "(untitled)". A tombstone carries no title precisely because it is *not* a task any more here, so the
-     * keyframe's copy is the better answer.
-     */
-    fun blendedTaskAttributes(state: SchedulerState, nowMillis: Long): Map<TaskId, Task> {
-        val blend = taskTreeBlendAt(state, nowMillis) ?: return state.tasks
-        val merged = LinkedHashMap(state.tasks)
-        for (entry in listOf(blend.from, blend.to)) {
-            for ((id, task) in entry.tree.tasks) {
-                val live = merged[id]
-                if (live == null || (live.title.isBlank() && task.title.isNotBlank())) merged[id] = task
-            }
-        }
-        // `side-dev/README.md` § *Rule State Definition*: the rule state is *"the set of tasks and their
-        // associated priority percentages, **minimum execution time and resilience values**"*, and § *Rule
-        // State Evolution* says the whole of it *"transforms evenly from the first state to the second one"*.
-        // So the two numeric facts a keyframe holds about a task travel with the percentage, and neither is
-        // read off the live tree while a blend is in force.
-        //
-        // Only these two: everything else on a [Task] — its title, its records, its schedule unit — is not a
-        // rule-state quantity and has no midpoint, so the merge above still answers for it.
-        val from = blend.from.tree.tasks
-        val to = blend.to.tree.tasks
-        val f = blend.fraction.coerceIn(0.0, 1.0)
-        for (id in from.keys + to.keys) {
-            val base = merged[id] ?: continue
-            // A task the OTHER keyframe does not hold is not half-defined there: the identity is what carries
-            // across, so only its percentage fades (to 0%) and the side that HAS it states its minimum and its
-            // resilience throughout — `side-dev/scheduler.py`'s `RuleStates.at`, *"its minimum is taken from
-            // the side that has it"*.
-            val a = from[id] ?: to[id] ?: continue
-            val b = to[id] ?: a
-            val minimum = a.minimumMinutes + (b.minimumMinutes - a.minimumMinutes) * f
-            // A resilience is read through [PeriodKinds.resilienceFor], so a kind ABSENT from one side is at
-            // that kind's default there and not at zero — blending the raw maps would silently drag every
-            // untouched kind towards 0. A kind neither side mentions is at one default on both sides, so it
-            // interpolates to itself and needs no override.
-            val kinds = a.resilience.keys + b.resilience.keys
-            val resilience =
-                if (kinds.isEmpty()) a.resilience
-                else kinds.associateWith { kind ->
-                    val ra = PeriodKinds.resilienceFor(a.resilience, kind)
-                    val rb = PeriodKinds.resilienceFor(b.resilience, kind)
-                    PeriodKinds.clamp(ra + (rb - ra) * f)
-                }
-            merged[id] = base.copy(minimumMinutes = minimum.roundToInt(), resilience = resilience)
-        }
-        return merged
+    private fun ruleStateChangesWithin(state: SchedulerState, fromMillis: Long, untilMillis: Long): Boolean {
+        if (!hasMovingFormulas(state)) return false
+        val timeline = FormulaTimeline(state, emptyList())
+        if (timeline.nextChange(fromMillis)?.let { it < untilMillis } == true) return true
+        return timeline.movingAt(fromMillis)
     }
 
     // ----- PRD §9 Scheduler -------------------------------------------------------------------
@@ -3857,18 +3790,9 @@ object SchedulerDomain {
      * is a REST (the README's "without any task") is a question about the tasks, not about the period.
      */
     fun planTasksOf(state: SchedulerState, nowMillis: Long): List<PlanTask> {
-        val leaves = blendedSchedulableLeaves(state, nowMillis)
+        val leaves = schedulableLeaves(state)
         if (leaves.isEmpty()) return emptyList()
-        val priorities = blendedTaskPriorities(state, nowMillis)
-        val attributes = blendedTaskAttributes(state, nowMillis)
-        return leaves.map { id ->
-            PlanTask(
-                id = id,
-                priority = priorities[id] ?: 0.0,
-                minimumMillis = (attributes[id]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE,
-                resilience = attributes[id]?.resilience.orEmpty(),
-            )
-        }
+        return ruleStateAt(state, leaves, nowMillis).map { it.copy(credits = emptyMap()) }
     }
 
     /**
@@ -6516,24 +6440,20 @@ object SchedulerDomain {
         // Derived from the same schedule the sleep windows are, and regenerated with them.
         val envBeforeBedPanels = beforeBedPanels(state, nowMillis, searchEnd, timeZone)
         val beforeBedPanels = envBeforeBedPanels.filter { it.startEpochMillis < horizon }
-        // The task-tree timeline: while `now` sits between two dated trees the scheduler follows the two
-        // trees' BLENDED priorities over the UNION of their leaves, not the live tree's own — so the plan
-        // transforms continuously from one arrangement into the next. With no dated tree these collapse to
-        // `schedulableLeaves(state)` / `state.tasks`, i.e. exactly the pre-timeline behaviour.
-        val leaves = blendedSchedulableLeaves(state, nowMillis)
-        val priorities = blendedTaskPriorities(state, nowMillis)
+        // User rule 2026-11-16: the rule state at `now` — each weight and minimum given as a formula read at the line.
+        val leaves = schedulableLeaves(state)
+        val priorities = absoluteTaskPriorities(state, nowMillis)
         val keptIds = kept.mapTo(HashSet()) { it.id }
-        // Everything below reads task attributes through `working`, which carries the widened map: a leaf
-        // that lives only in the other keyframe still gets its title (so its panels are not nameless), its
-        // minimum time, its screen flags and its records.
-        val working = state.copy(panels = kept, tasks = blendedTaskAttributes(state, nowMillis))
+        val working = state.copy(panels = kept)
 
         // `docs/scheduler_score.md` § *Ties*: (highest absolute priority, then title). The search takes the first
         // candidate on a tie, so handing it this order IS the tie-break.
         val tieBreak =
             compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { working.tasks[it]?.title.orEmpty() }
         val ordered = leaves.sortedWith(tieBreak)
-        val minimumMillisOf = ordered.associateWith { (working.tasks[it]?.minimumMinutes ?: 0).toLong() * MILLIS_PER_MINUTE }
+        val minimumMillisOf = ordered.associateWith { id ->
+            ((working.tasks[id]?.let { minimumMinutesAt(it, nowMillis) } ?: 0.0) * MILLIS_PER_MINUTE).roundToLong()
+        }
         val orderedIds = ordered.toHashSet()
         val planTasks =
             ordered.map {
@@ -6745,17 +6665,10 @@ object SchedulerDomain {
         val refusedHere = if (noPast) null else liveForcedSwitchTask(state.forcedSwitch, pastBlocks, nowMillis)
         val forcedStartTask = if (noPast) null else liveForcedStartTask(state.forcedStart, pastBlocks, nowMillis)
 
-        // --- the rule state: `R(now)` — exact inside a task-tree transition (the minimum in millis, not rounded to a
-        // minute) — and, where it changes over this fill, the timeline the fill walks (`docs/scheduler_requirements.md`
-        // § *Rule state input evolution*: every stretch is placed under the rule state in force THERE).
-        val inTransition = taskTreeBlendAt(state, nowMillis)?.isSingle == false
-        // The rule state MOVES over this fill when the transitions (first keyframe to last) overlap what it searches —
-        // at a transition's very first instant the blend still reads as a single tree, and from the next millisecond
-        // it does not.
-        val dated = if (inTransition) emptyList() else datedTaskTrees(state)
-        val moving = inTransition ||
-            (dated.size >= 2 && (dated.first().dateMillis ?: Long.MAX_VALUE) < searchEnd && (dated.last().dateMillis ?: Long.MIN_VALUE) > nowMillis)
-        val timeline = if (moving) RuleStateTimeline(state) else null
+        // --- the rule state: `R(now)` and, where a formula moves it over this fill, the timeline the fill walks
+        // (`docs/scheduler_requirements.md` § *Rule state input evolution*: every stretch is placed under the rule state
+        // in force THERE; user rule 2026-11-16, the formulas of the instant).
+        val timeline = if (ruleStateChangesWithin(state, nowMillis, searchEnd)) FormulaTimeline(state, ordered) else null
         val ruleState = timeline?.at(startMillis) ?: planTasks
 
         // `docs/scheduler_score.md` § *Degradation*: the plan this re-plan replaces competes with the search, re-scored
@@ -6846,8 +6759,7 @@ object SchedulerDomain {
                 TaskPanel(
                     id = nextAutoId(),
                     taskId = p.taskId,
-                    // A task only a LATER keyframe holds is not among the line's: its title is the timeline's.
-                    title = working.tasks[p.taskId]?.title?.takeIf { it.isNotBlank() } ?: timeline?.titleOf(p.taskId).orEmpty(),
+                    title = working.tasks[p.taskId]?.title.orEmpty(),
                     startEpochMillis = p.startMillis,
                     endEpochMillis = p.endMillis,
                     pinned = false,
@@ -6890,7 +6802,7 @@ object SchedulerDomain {
                     pinnedBlocks = pinnedBlocks,
                     minimumWeight = state.minimumTimeWeight,
                     usedIds = keptIds,
-                    titleOf = { id -> working.tasks[id]?.title?.takeIf { it.isNotBlank() } ?: timeline?.titleOf(id).orEmpty() },
+                    titleOf = { id -> working.tasks[id]?.title.orEmpty() },
                 )
             }
         // PRD §9: two consecutive auto panels of the same task merge into one block. Screen-break and sleep
@@ -7011,72 +6923,6 @@ object SchedulerDomain {
     }
 
     /**
-     * The rule state `R(x)` along the task-tree timeline, as the score reads it: every leaf of the two keyframes
-     * around `x`, its priority, minimum execution time and resilience moving at a constant rate between them
-     * (`docs/scheduler_requirements.md` § *Rule State Evolution*) — the minimum in millis, not rounded to a
-     * minute. The keyframes' own readings are computed once per keyframe, since a transition asks at every
-     * decision.
-     */
-    private class RuleStateTimeline(val state: SchedulerState) : ScheduleFill.RuleStates {
-        private val dated = datedTaskTrees(state)
-        private val priorities = HashMap<TaskTreeId, Map<TaskId, Double>>()
-        private val leaves = HashMap<TaskTreeId, List<TaskId>>()
-
-        private fun prioritiesOf(entry: TaskTreeEntry) = priorities.getOrPut(entry.id) { taskTreePriorities(state, entry) }
-
-        private fun leavesOf(entry: TaskTreeEntry) =
-            leaves.getOrPut(entry.id) { schedulableLeaves(state.applyTreeWithRecords(entry.tree)) }
-
-        fun titleOf(id: TaskId): String =
-            state.tasks[id]?.title?.takeIf { it.isNotBlank() }
-                ?: state.taskTrees.firstNotNullOfOrNull { it.tree.tasks[id]?.title?.takeIf { t -> t.isNotBlank() } }
-                ?: ""
-
-        /** The piece [x] is on — the ONE reading of the timeline ([taskTreeBlendAt]), over trees dated once. */
-        private fun pieceAt(x: Long): TaskTreeBlend? = taskTreeBlendAt(dated, x)
-
-        override fun at(x: Long): List<PlanTask> = planTasksOf(pieceAt(x))
-
-        override fun nextChange(x: Long): Long? = dated.asSequence().mapNotNull { it.dateMillis }.firstOrNull { it > x }
-
-        override fun movingAt(x: Long): Boolean = pieceAt(x)?.isSingle == false
-
-        private fun planTasksOf(blend: TaskTreeBlend?): List<PlanTask> {
-            if (blend == null) return emptyList()
-            val f = if (blend.isSingle) 0.0 else blend.fraction.coerceIn(0.0, 1.0)
-            val pa = prioritiesOf(blend.from)
-            val pb = if (blend.isSingle) pa else prioritiesOf(blend.to)
-            val ids = if (blend.isSingle) leavesOf(blend.from) else (leavesOf(blend.from) + leavesOf(blend.to)).distinct()
-            val ta = blend.from.tree.tasks
-            val tb = blend.to.tree.tasks
-            // § *Sets of tasks*: a set is read where the task is — either keyframe, else the live tree (a pathless task).
-            val setsOf = state.tasks + tb + ta
-            val idSet = ids.toHashSet()
-            val tasks = ids.map { id ->
-                // A task only one keyframe holds keeps that side's minimum and resilience; only its percentage fades.
-                val a = ta[id] ?: tb[id] ?: state.tasks[id]
-                val b = tb[id] ?: a
-                val minA = (a?.minimumMinutes ?: DEFAULT_MINIMUM_MINUTES).toDouble() * MILLIS_PER_MINUTE
-                val minB = (b?.minimumMinutes ?: DEFAULT_MINIMUM_MINUTES).toDouble() * MILLIS_PER_MINUTE
-                val ra = a?.resilience.orEmpty()
-                val rb = b?.resilience.orEmpty()
-                PlanTask(
-                    id = id,
-                    priority = (1.0 - f) * (pa[id] ?: 0.0) + f * (pb[id] ?: 0.0),
-                    minimumMillis = (minA + (minB - minA) * f).roundToLong(),
-                    resilience = (ra.keys + rb.keys).associateWith { kind ->
-                        val x0 = PeriodKinds.resilienceFor(ra, kind)
-                        val x1 = PeriodKinds.resilienceFor(rb, kind)
-                        PeriodKinds.clamp(x0 + (x1 - x0) * f)
-                    },
-                    credits = fulfilmentCredits(setsOf, id, idSet),
-                )
-            }
-            return tasks.sortedWith(compareByDescending<PlanTask> { it.priority }.thenBy { titleOf(it.id) })
-        }
-    }
-
-    /**
      * `side-dev/README.md` § *Alternative Schedules* **at the now-line**: *"the task that must be scheduled if
      * the task scheduled by the scheduler can't be scheduled now"*, read out of the rules the fill returned.
      *
@@ -7120,11 +6966,9 @@ object SchedulerDomain {
      *   (`RemoveRecordPeriod`, work hidden under a period) counts itself in [SchedulerState.recordRewrites], which
      *   the engine watches beside this signature — it is never planned for inside its reducer.
      *
-     * The **dated** task trees are in it too, content and date alike — they are keyframes the fill reads
-     * directly ([blendedTaskPriorities]), so editing one that is not on screen changes the plan exactly as
-     * editing the live tree does. Undated trees are not: nothing reads them until they are selected, at
-     * which point they *are* the live tree. The plan is NOT a function of `now` through the blend: every stretch
-     * is placed under the rule state in force there (`ScheduleFill.run`), so time passing never re-plans.
+     * The weights' and minimums' **formulas** are in it with the tree (user rule 2026-11-16): the plan is NOT a function
+     * of `now` through them, every stretch being placed under the rule state in force there (`ScheduleFill.run`), so
+     * time passing never re-plans.
      *
      * **It is PERSISTED** ([SchedulerState.planBasis]) and compared across launches ([planHoldsAtLaunch]), so it
      * must hash only values whose hash is the same in every process: strings, numbers, booleans and collections
@@ -7136,11 +6980,6 @@ object SchedulerDomain {
         result = 31 * result + state.sleep.hashCode()
         result = 31 * result + state.screenBreaks.hashCode()
         result = treeSignature(result, state.lists, state.cells, state.tasks)
-        for (entry in datedTaskTrees(state)) {
-            result = 31 * result + entry.id.value.hashCode()
-            result = 31 * result + (entry.dateMillis?.hashCode() ?: 0)
-            result = treeSignature(result, entry.tree.lists, entry.tree.cells, entry.tree.tasks)
-        }
         for (panel in state.panels.filterNot(::isRegeneratedPanel).sortedBy { it.id }) {
             result = 31 * result + panel.id.hashCode()
             result = 31 * result + (panel.taskId?.value?.hashCode() ?: 0)
@@ -7204,6 +7043,8 @@ object SchedulerDomain {
             result = 31 * result + cell.id.value.hashCode()
             result = 31 * result + (cell.taskId?.value?.hashCode() ?: 0)
             result = 31 * result + cell.priorityWeights.hashCode()
+            // User rule 2026-11-16: a weight given as a formula of the instant is a rule like the weight it replaces.
+            result = 31 * result + cell.weightFormula.hashCode()
         }
         for (task in tasks.values.sortedBy { it.id.value }) {
             result = 31 * result + task.id.value.hashCode()
@@ -7217,6 +7058,7 @@ object SchedulerDomain {
             // re-planned the account once per letter for a plan that could not come out any different.
             result = 31 * result + if (task.title.isBlank()) 1 else 0
             result = 31 * result + task.minimumMinutes
+            result = 31 * result + task.minimumFormula.hashCode()
             // `side-dev/README.md`: a resilience IS a scheduling rule — changing one changes the plan, so it
             // belongs in the signature (CLAUDE.md: anything new that wants to re-plan belongs here).
             for ((kind, value) in task.resilience.entries.sortedBy { it.key }) {

@@ -525,7 +525,7 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   - where the rule state **holds** up to its next change `t_s`, the stretch is the perfect schedule of that state
     ALONE on the whole timeline — searched past `t_s` under it, so its hypothetical backward compensation from what
     lies beyond reaches back — and emitted only up to `t_s`
-    (`TaskTreeTimelineTest.before_a_switch_the_plan_is_the_one_the_old_rule_state_alone_would_give`);
+    (`RuleStateEvolutionTest.before_a_switch_the_plan_is_the_one_the_old_rule_state_alone_would_give`);
   - from `t_s` the next state plans with everything placed before `t_s` as its **frozen past**, so it catches up on
     how that past deviated from its goals, and nothing of it leaks back before `t_s`
     (`a_switch_ahead_is_planned_under_the_rule_state_in_force_on_each_side_of_it`);

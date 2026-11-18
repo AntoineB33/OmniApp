@@ -279,6 +279,7 @@ object SnapshotMerge {
             occurrences = mergeOrdered(base?.occurrences, local.occurrences, remote.occurrences),
             childListId = pickNullable(base?.childListId, local.childListId, remote.childListId),
             minimumMinutes = pick(base?.minimumMinutes, local.minimumMinutes, remote.minimumMinutes),
+            minimumFormula = pick(base?.minimumFormula, local.minimumFormula, remote.minimumFormula),
             // Completed-work periods are banked facts, not a value one side "owns": each device banks the ones
             // its own now-line crossed, so the union (less whatever either side deliberately removed via
             // RemoveRecordPeriod) is the only answer that loses no history.
@@ -322,6 +323,7 @@ object SnapshotMerge {
             parentListId = pick(base?.parentListId, local.parentListId, remote.parentListId),
             taskId = pickNullable(base?.taskId, local.taskId, remote.taskId),
             priorityWeights = pick(base?.priorityWeights, local.priorityWeights, remote.priorityWeights),
+            weightFormula = pick(base?.weightFormula, local.weightFormula, remote.weightFormula),
             // A membership list, merged like a task's `categoryIds`: both sides' additions survive.
             categoryIds = mergeOrdered(base?.categoryIds, local.categoryIds, remote.categoryIds),
         )

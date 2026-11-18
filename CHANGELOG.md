@@ -11,6 +11,26 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A task's presence and minimum over time are formulas — 2026-11-16
+
+User rule: *"In a task element, the user can define the evolution of its presence ratio target and its minimum length
+target with any mathematical formula. By default, when a task element is created, if it is a descendant of the default
+task tree root, then the presence ratio target relative to any task parents are constants."* It replaces the dated task
+trees' timeline (`docs/invariants/task-tree.md` § *A task's numbers over time*):
+
+- `TimeFormula`: `t` (days, absolute), `date(…)`, `+ - * / ^`, `min`, `max`, `clamp`, `ramp(t0, t1, a, b)`, `step(t0, a, b)`
+  and the usual functions; problems said as typed.
+- `Cell.weightFormula` (a place's weight under its parent) and `Task.minimumFormula` (minutes): blank = the constant,
+  the default for every task. Persisted only when given, synced, merged field-wise, in the undo diff and in
+  `schedulingSignature`. Intents `SetCellWeightFormula`, `SetTasksMinimumFormula` (a formula that does not read is
+  refused); Search actions "Presence ratio target" (per place) and "Minimum length target".
+- The fill reads them where it places: `SchedulerDomain.ruleStateAt` and `FormulaTimeline` (pieces end at the formulas'
+  dates, a moving piece decided run by run) replace the dated-tree blend, `RuleStateTimeline`, `TaskLinks` and the
+  tree-switching helpers, all deleted. `TaskTreeTimelineTest`'s scheduling half is carried over to
+  `RuleStateEvolutionTest`; side-dev test 13 (`BreaksAndSlidingPrioritiesTest`) runs on `ramp` formulas.
+
+No migration: absent fields read blank. Deploy: client apps.
+
 ### A task tree is a task under the root — 2026-11-16
 
 User rule: *"The type 'task tree' is redundant, since there already are task elements. … the default db must have a
@@ -30,9 +50,7 @@ tree held, named from that tree, while no element of that name stood above them.
   tree" / today's tree, the "All task trees" window, the link window, `SelectTaskTree` / `CreateTaskTree` /
   `RenameTaskTree` / `LinkTask` / `SetTaskTreeDate` / `DeleteTaskTree`, `Task.treeName` (the "Tree name" action renames
   the tree's task). An older build's `TaskTreeDelta` units stay in the log and change nothing when walked.
-- **Not done:** the dated trees' timeline has nothing to read (no tree can be dated); it is to be replaced by the user's
-  per-task formulas (*"the evolution of its presence ratio target and its minimum length target with any mathematical
-  formula"*). `BreaksAndSlidingPrioritiesTest` builds its keyframes directly until then.
+- The dated trees' timeline is replaced by per-task formulas (entry above).
 - **Measured cost:** the old tree's ~120 leaves are 0 % tasks the fill weighs (a 0 % task fills what nothing else may,
   `SchedulerFillTest`): a 24 h fill on the release account took 4.0 s instead of 0.5 s, for the same plan.
 

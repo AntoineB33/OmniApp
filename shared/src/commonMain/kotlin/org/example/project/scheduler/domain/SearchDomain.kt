@@ -4771,6 +4771,14 @@ object SearchDomain {
         TaskScheduleUnit(Kind.Task, "Schedule unit"),
         TaskText(Kind.Task, "Text"),
         /**
+         * User rule 2026-11-16: *"In a task element, the user can define the evolution of its presence ratio target and its
+         * minimum length target with any mathematical formula."* — the task's weight under each of its parents, a formula
+         * of the instant ([TimeFormula]) per place.
+         */
+        TaskPresenceFormula(Kind.Task, "Presence ratio target"),
+        /** User rule 2026-11-16: the task's minimum length, in minutes, a formula of the instant ([TimeFormula]). */
+        TaskMinimumFormula(Kind.Task, "Minimum length target"),
+        /**
          * User rule 2026-11-13: **the name of the tree a task belongs to** — the title of its root, the task standing directly
          * under the global root (user rule 2026-11-16: a tree IS that task, [TaskTreesAsTasks]). *"the tree action should be
          * in all tasks belonging to a tree"*: listed for every task of a tree ([TaskResult.treeRoots]).
@@ -5020,6 +5028,8 @@ object SearchDomain {
             AddedAction.TaskResilience -> task?.resilience
             AddedAction.TaskScheduleUnit -> task?.scheduleUnit
             AddedAction.TaskText -> task?.text
+            AddedAction.TaskPresenceFormula -> task?.let { t -> state.cells.values.filter { it.taskId == t.id }.sortedBy { it.id.value }.map { it.weightFormula } }
+            AddedAction.TaskMinimumFormula -> task?.minimumFormula
             AddedAction.TaskTreeName -> treeRootsOf(listOf(row)).map { state.tasks[it]?.title }
             AddedAction.AlarmTitle -> alarm()?.label
             AddedAction.AlarmOnOff -> alarm()?.enabled
@@ -5497,6 +5507,8 @@ object SearchDomain {
             AddedAction.TaskChildren -> "children sub-tree cells edit rename change task id switch"
             AddedAction.TaskResilience -> "period apply"
             AddedAction.TaskScheduleUnit, AddedAction.TaskText -> "apply"
+            AddedAction.TaskPresenceFormula -> "presence ratio target weight priority formula evolution time ramp date apply"
+            AddedAction.TaskMinimumFormula -> "minimum length target time formula evolution ramp date apply"
             AddedAction.TaskTreeName -> "rename tree name apply"
             AddedAction.AlarmOnOff, AddedAction.AlarmRepeat, AddedAction.TimerBelowZero -> "on off"
             AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow -> "now"
@@ -6106,6 +6118,12 @@ object SearchDomain {
         data class ScheduleUnit(val entries: List<org.example.project.scheduler.model.ScheduleUnitEntry>) : AddedCommand
 
         data class Text(val text: String) : AddedCommand
+
+        /** User rule 2026-11-16: one place's weight as a formula of the instant (blank: the constant). */
+        data class WeightFormula(val cellId: CellId, val formula: String) : AddedCommand
+
+        /** User rule 2026-11-16: every added task's minimum length as a formula of the instant (blank: the constant). */
+        data class MinimumFormula(val formula: String) : AddedCommand
 
         /** User rule 2026-11-13: the name of every tree the added tasks belong to. */
         data class TreeName(val name: String) : AddedCommand
@@ -7389,6 +7407,9 @@ object SearchDomain {
             }
             is AddedCommand.Text ->
                 if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksText(taskIds.distinct(), command.text))
+            is AddedCommand.WeightFormula -> listOf(SchedulerIntent.SetCellWeightFormula(command.cellId, command.formula))
+            is AddedCommand.MinimumFormula ->
+                if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksMinimumFormula(taskIds.distinct(), command.formula))
             is AddedCommand.TreeName -> {
                 val roots = treeRootsOf(added)
                 if (roots.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTreeName(roots, command.name))

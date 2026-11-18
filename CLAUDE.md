@@ -131,7 +131,7 @@ cross-reference each other. Source directories carry a `CLAUDE.md` pointing at t
 | `display-hot-path.md` | anything on a per-tick or per-frame path (`App.kt` included), the resample delay, the schedule horizon |
 | `popups.md` | any pop-up window, transient or otherwise |
 | `priorities.md` | relative priority, the weight table, the task-relations list, categories and category rules |
-| `task-tree.md` | the tree and its three drawings, sub-list ownership, the clipboard, find & replace, task colours, which tasks the tree holds, the Search window and a task's last path, the default sub-tree, task trees, the timeline blend |
+| `task-tree.md` | the tree and its three drawings, sub-list ownership, the clipboard, find & replace, task colours, which tasks the tree holds, the Search window and a task's last path, the default sub-tree, task trees (tasks under the root), a task's weights and minimum over time (formulas) |
 | `sync-and-accounts.md` | accounts, partitions, the reconcile, sync by rows, the three-way merge |
 | `server-quota.md` | anything that sends, stores or publishes on Supabase: a table, a column, a request, a Realtime stream, a cron job |
 | `pause-cue.md` | presence, the Edge Functions, the cron, the traffic budget |

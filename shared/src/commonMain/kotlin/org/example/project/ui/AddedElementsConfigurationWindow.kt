@@ -940,6 +940,20 @@ private fun AddedActionBlocks(
                 FrameButton("Apply", enabled = tasks.any { it.text != draft }) { run(SearchDomain.AddedCommand.Text(draft)) }
             }
         }
+        // User rule 2026-11-16: the evolution of a task's presence ratio target and minimum length, formulas of the instant.
+        SearchDomain.AddedAction.TaskPresenceFormula -> PresenceFormulaEditor(state, tasks, run)
+        SearchDomain.AddedAction.TaskMinimumFormula -> {
+            val shared = tasks.map { it.minimumFormula }.distinct().singleOrNull()
+            val constant = tasks.map { it.minimumMinutes }.distinct().singleOrNull()
+            FormulaField(
+                current = shared,
+                constantHint = constant?.let { "$it (minutes, constant)" } ?: "mixed",
+                valueNow = tasks.singleOrNull()?.let { t ->
+                    SchedulerDomain.minimumMinutesAt(t, org.example.project.scheduler.state.SchedulerReducer.clock.nowMillis()).let { "now: ${formatNumber(it)} min" }
+                },
+                onApply = { run(SearchDomain.AddedCommand.MinimumFormula(it)) },
+            )
+        }
         // User rule 2026-11-13: the name of the tree(s) the added tasks belong to — the title of the task at its root.
         SearchDomain.AddedAction.TaskTreeName -> {
             val roots = SearchDomain.treeRootsOf(added).mapNotNull { state.tasks[it] }
@@ -2763,3 +2777,65 @@ private fun WorkplaceApplyButton(setups: List<org.example.project.scheduler.doma
  */
 internal val LocalTaskChildren =
     androidx.compose.runtime.compositionLocalOf<(@Composable (TaskId, org.example.project.scheduler.model.CellListId) -> Unit)?> { null }
+
+
+/**
+ * User rule 2026-11-16: *"the evolution of its presence ratio target … with any mathematical formula"* — for each added
+ * task, each of its places: its parent, and its weight there as a formula of the instant ([TimeFormula]). Blank is the
+ * constant weight of the weights table.
+ */
+@Composable
+private fun PresenceFormulaEditor(state: SchedulerState, tasks: List<org.example.project.scheduler.model.Task>, run: (SearchDomain.AddedCommand) -> Unit) {
+    val now = org.example.project.scheduler.state.SchedulerReducer.clock.nowMillis()
+    val priorities = remember(state.cells, state.lists, state.tasks) { SchedulerDomain.absoluteTaskPriorities(state, now) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (task in tasks) {
+            val places = state.cells.values.filter { it.taskId == task.id }.sortedBy { it.id.value }
+            if (places.isEmpty()) NoteText("\"${task.title}\" is in no tree")
+            for (cell in places) {
+                val parent = SchedulerDomain.parentTaskIdOfList(state, cell.parentListId)?.let { state.tasks[it]?.title } ?: "?"
+                Text("\"${task.title}\" under \"$parent\"", style = MaterialTheme.typography.labelMedium)
+                androidx.compose.runtime.key(cell.id) {
+                    FormulaField(
+                        current = cell.weightFormula,
+                        constantHint = formatNumber(cell.priorityWeights.firstOrNull() ?: 1.0) + " (weight, constant)",
+                        valueNow = "now: weight ${formatNumber(SchedulerDomain.cellWeightAt(cell, now))} · ${formatNumber((priorities[task.id] ?: 0.0) * 100.0)} % of the whole",
+                        onApply = { run(SearchDomain.AddedCommand.WeightFormula(cell.id, it)) },
+                    )
+                }
+            }
+        }
+        NoteText("t is the instant in days; date(2026-12-01), ramp(t0, t1, a, b), step(t0, a, b), min, max, clamp, + - * / ^")
+    }
+}
+
+/**
+ * A formula of the instant ([TimeFormula]): what is typed, what is wrong with it as it is typed, its value now, and Apply.
+ * [current] null: the added elements hold different ones ("mixed").
+ */
+@Composable
+private fun FormulaField(current: String?, constantHint: String, valueNow: String?, onApply: (String) -> Unit) {
+    var draft by remember(current) { mutableStateOf(current.orEmpty()) }
+    val problem = org.example.project.scheduler.domain.TimeFormula.problem(draft)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                singleLine = true,
+                isError = problem != null,
+                placeholder = { Text(text = if (current == null) "mixed" else constantHint) },
+                modifier = Modifier.weight(1f).leaveFocusOnOutsidePress(),
+            )
+            FrameButton("Apply", enabled = problem == null && draft.trim() != current) { onApply(draft.trim()) }
+        }
+        when {
+            problem != null -> NoteText(problem)
+            valueNow != null -> NoteText(valueNow)
+        }
+    }
+}
+
+private fun formatNumber(value: Double): String =
+    if (value == kotlin.math.floor(value) && kotlin.math.abs(value) < 1e9) value.toLong().toString()
+    else ((value * 100.0).let { kotlin.math.round(it) } / 100.0).toString()

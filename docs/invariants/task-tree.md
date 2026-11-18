@@ -64,36 +64,31 @@ root of a task tree, child of the first task element."* — and, of the trees an
   is a function of the tree's id and the old id — two devices write the same rows — and nothing is deleted.
 - **An older build's task-tree History Unit (`TaskTreeDelta`) stays in the log and changes nothing** when walked: it
   would swap the live tree for one that has no place to stand.
-- **Known gap, 2026-11-16:** the dated trees' timeline below has nothing to read any more — no tree can be dated. Its
-  replacement is the user's rule of the same day: *"In a task element, the user can define the evolution of its presence
-  ratio target and its minimum length target with any mathematical formula. By default, when a task element is created,
-  if it is a descendant of the default task tree root, then the presence ratio target relative to any task parents are
-  constants."* Until then the blend is reached by `BreaksAndSlidingPrioritiesTest` alone, which builds its keyframes.
+- **What moved with time moves in each task** (user rule 2026-11-16: *"In a task element, the user can define the
+  evolution of its presence ratio target and its minimum length target with any mathematical formula. By default, when
+  a task element is created, if it is a descendant of the default task tree root, then the presence ratio target
+  relative to any task parents are constants."*). See § *A task's numbers over time*. The dated trees' timeline, its
+  blend, its keyframes and the links between trees' tasks are gone with the trees.
 
-### The task-tree timeline (inert since 2026-11-16, see above)
+### A task's numbers over time
 
-- A dated tree is a **keyframe**; between two, the scheduler follows a linear blend, not the tree on screen.
-- Identity is the **link group** (`TaskLinks`, user rule 2026-10-20): each tree's tasks are its own ids, and a task is
-  linked to the tasks of the other trees that stand for the same thing — a created tree's copies to what they copy,
-  others by the cell's "link to a task of another tree…". `datedTaskTrees` hands every keyframe over with each group
-  under ONE id (`TaskLinks.inLinkSpace`: the live tree's, else the first keyframe's), so everything below still keys by
-  `TaskId`. A task with no link is its own key — trees that shared ids before links existed stay linked. A task absent
-  from a keyframe is **0 %** there. The leaves are the **union** of both keyframes.
-- **The whole RULE STATE blends, not just the percentages**: `side-dev/README.md` names *"priority percentages,
-  minimum execution time and resilience values"*, and all three travel (`blendedTaskAttributes`). The other two
-  used to be read off the LIVE tree at every instant, so a task sitting exactly ON a keyframe was scheduled with
-  a minimum that keyframe does not state. Two rules the blend needs: a resilience is read through
-  `PeriodKinds.resilienceFor`, so a kind **absent** from one side is at that kind's *default* there and not at
-  zero (blending the raw maps drags every untouched kind towards 0); and a task only ONE keyframe holds keeps
-  that side's minimum and resilience throughout — only its **percentage** fades.
-- `datedTaskTrees` **flushes** the active tree first. Dated trees are in `schedulingSignature`; undated ones
-  deliberately are not.
-- **Time passing never re-plans a transition** (2026-10-04): the fill places every stretch under the rule state in
-  force there — a keyframe's state alone up to the next change, decision by decision inside a transition — ahead of
-  time (`scheduler.md` § *Every stretch is placed under the rule state in force there*). The engine's re-plan at every
-  run start (`launchTaskTreeBlendReschedule`, `taskTreeBlendDecisionKey`) is gone. Several keyframes on ONE date are a
-  discrete switch; the last of them is in force from that instant (`taskTreeBlendAt` is right-continuous). Do not
-  reintroduce a per-tick, stepped or run-start re-plan.
+`TimeFormula`, `Cell.weightFormula`, `Task.minimumFormula`, `TimeFormulaTest`, `BreaksAndSlidingPrioritiesTest`.
+
+- **A place's weight under its parent and a task's minimum are formulas of the instant.** `t` is the instant in days
+  since 1970-01-01 UTC; `date(2026-12-01)` / `date(2026-12-01 08:30)` are instants read in the device's zone; `+ - * /
+  ^`, `min`, `max`, `clamp`, `abs`, `sqrt`, `exp`, `ln`, `sin`, `cos`, `floor`, `ramp(t0, t1, a, b)` and `step(t0, a, b)`.
+  Blank — the default for every task, created anywhere — is the constant of the weights table and of the minimum time.
+  A formula that does not read is refused (`SetCellWeightFormula`, `SetTasksMinimumFormula`); one that reads as no
+  finite number at an instant falls back to the constant there.
+- **The weight replaces the first column of the place's weights**: the presence ratio target relative to that parent is
+  the weight over its siblings', as for a constant weight. Edited per place in the Search window's "Presence ratio
+  target", the minimum in its "Minimum length target", each saying what is wrong as it is typed and its value now.
+- **It is absolute**: `t` never means "now", so time passing never changes what a formula says about an instant and never
+  re-plans (`scheduler.md`). The formulas are in `schedulingSignature`, as the weights and minimums are.
+- **The plan reads them where it places** (`SchedulerDomain.ruleStateAt`, `FormulaTimeline`): where a formula moves over a
+  fill, the fill walks the rule state piece by piece, a piece ending at a formula's date (`TimeFormula.Parsed.breakpoints`),
+  run by run inside a moving piece (`ScheduleFill.RuleStates`). Where none moves, one rule state for the whole fill, as
+  before. The tree's percentages read the formulas at now (`absoluteTaskPriorities` with no instant).
 
 ### The tree has ONE root, and it is a real cell
 

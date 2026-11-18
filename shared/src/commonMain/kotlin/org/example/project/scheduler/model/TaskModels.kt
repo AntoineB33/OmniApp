@@ -22,6 +22,12 @@ data class Task(
      */
     val minimumMinutes: Int = DEFAULT_MINIMUM_MINUTES,
     /**
+     * User rule 2026-11-16: *"the evolution of … its minimum length target with any mathematical formula"* — the minimum,
+     * in minutes, as a formula of the instant ([org.example.project.scheduler.domain.TimeFormula]). Blank (the default, and
+     * every payload written before it): [minimumMinutes] at every instant. Authoritative: persisted and synced.
+     */
+    val minimumFormula: String = "",
+    /**
      * PRD §8/§9 Task record: the periods during which the user did this task, used by the calendar
      * (visualization) and the scheduler (the §9 task score's recent-share term). Per PRD §8 this is intentionally
      * excluded from the Undo/Redo history state (see [org.example.project.scheduler.state.SchedulerState]).
@@ -1147,6 +1153,13 @@ data class Cell(
      * given to one occurrence of a task id in one sub-list, never to the task.
      */
     val categoryIds: List<CategoryId> = emptyList(),
+    /**
+     * User rule 2026-11-16: *"the evolution of its presence ratio target … with any mathematical formula"* — **this
+     * occurrence's weight under its parent as a formula of the instant** ([org.example.project.scheduler.domain.TimeFormula]),
+     * in place of the first column of [priorityWeights] wherever an instant is asked. Blank (the default, and every
+     * payload written before it): the constant in [priorityWeights]. Authoritative: persisted and synced.
+     */
+    val weightFormula: String = "",
 )
 
 /**
