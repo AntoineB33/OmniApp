@@ -203,16 +203,11 @@ object SchedulerReducer {
 
     /**
      * PRD §9: the instant every refill materializes the work plan out to, given `now` — **$t_{goal}$**
-     * ([SchedulerDomain.scheduleHorizonEndMillis] over [SchedulerDomain.scheduleGoalEndMillis]): the latest of
-     * the end of the current week, the last displayed time in the calendar, and `now + 10 min`. The engine
-     * injects a provider that answers all three (`SchedulerEngine.setCalendarHorizon`, and the week from the
-     * zone the app runs in).
+     * ([SchedulerDomain.scheduleHorizonEndMillis]): `now + 168 h` (user rule 2026-11-18). The engine injects it.
      *
-     * **The default is the seam UNSET, not the goal**: the rolling floor alone, which is what a reducer nobody
-     * has told the goal to can honestly reach for. The week term needs a time zone and would make every fill in
-     * a test plan seven days in whatever zone the machine is in — a rule about the product read into a stub.
-     * Every host installs the provider at start; tests that want a longer goal set it themselves
-     * (`CalendarHorizonFixture`).
+     * **The default is the seam UNSET, not the goal**: twenty minutes, so a test reducing without an engine does not
+     * plan a week at every fill. Every host installs the provider at start; tests that want a longer goal set it
+     * themselves (`CalendarHorizonFixture`).
      */
     var scheduleHorizonEndMillis: (Long) -> Long = { it + 2 * SchedulerDomain.SCHEDULE_GOAL_FLOOR_MILLIS }
 
@@ -766,10 +761,10 @@ object SchedulerReducer {
                 settingsUnit(state, if (intent.muted) "Sound off" else "Sound on") {
                     if (it.soundMuted == intent.muted) it else it.copy(soundMuted = intent.muted)
                 }
-            is SchedulerIntent.SetPlanCalculationLimit ->
-                intent.seconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS).let { seconds ->
-                    settingsUnit(state, "Time limit of the plan", coalesceKey = "setting/plan-limit") {
-                        if (seconds == it.planCalculationLimitSeconds) it else it.copy(planCalculationLimitSeconds = seconds)
+            is SchedulerIntent.SetPlanResources ->
+                (if (intent.q.isNaN()) DEFAULT_PLAN_RESOURCES else intent.q.coerceIn(0.0, 1.0)).let { q ->
+                    settingsUnit(state, "Allocated resources", coalesceKey = "setting/plan-resources") {
+                        if (q == it.planResources) it else it.copy(planResources = q)
                     }
                 }
             is SchedulerIntent.SetShowScreenBreaks ->

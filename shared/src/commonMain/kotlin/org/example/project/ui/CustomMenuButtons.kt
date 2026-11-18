@@ -147,7 +147,7 @@ enum class MenuControl(val title: String) {
     Reminders("Reminders"),
     ScreenBreaks("Screen breaks"),
     CalendarDisplay("Display"),
-    PlanTimeLimit("Time limit after a change"),
+    PlanTimeLimit("Allocated resources (q)"),
     MinimumTimeWeight("Minimum time weight"),
     SleepSchedule("Sleep"),
     SoundVolume("Global volume"),

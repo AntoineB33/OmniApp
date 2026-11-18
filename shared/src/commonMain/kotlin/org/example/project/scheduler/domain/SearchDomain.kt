@@ -4111,7 +4111,7 @@ object SearchDomain {
         Reminders("Reminders"),
         ScreenBreaks("Screen breaks"),
         CalendarDisplay("Calendar display"),
-        PlanTimeLimit("Time limit after a change"),
+        PlanTimeLimit("Allocated resources (q)"),
         MinimumTimeWeight("Minimum time weight"),
         SupabaseUsage("Supabase free tier"),
         MemoryLimits("Memory limits"),
@@ -4153,7 +4153,7 @@ object SearchDomain {
             AppSettingEntry.Reminders -> if (state.showReminders) "shown" else "hidden"
             AppSettingEntry.ScreenBreaks -> if (state.showScreenBreaks) "shown" else "hidden"
             AppSettingEntry.CalendarDisplay -> "how the calendar is drawn"
-            AppSettingEntry.PlanTimeLimit -> "how long a re-plan may take"
+            AppSettingEntry.PlanTimeLimit -> "how much the scheduler searches: 0 the fastest run, 1 the best plan the pace allows"
             AppSettingEntry.MinimumTimeWeight -> "the minimum times' weight in the score"
             AppSettingEntry.SupabaseUsage -> "the server's usage, read on Refresh"
             AppSettingEntry.MemoryLimits -> "the project database's and this device's"
@@ -4871,7 +4871,7 @@ object SearchDomain {
         CalendarAutoSchedule(Kind.Calendar, "Auto schedule"),
         CalendarReminders(Kind.Calendar, "Reminders"),
         CalendarScreenBreaks(Kind.Calendar, "Screen breaks"),
-        CalendarPlanTimeLimit(Kind.Calendar, "Time limit after a change"),
+        CalendarPlanTimeLimit(Kind.Calendar, "Allocated resources (q)"),
         CalendarMinimumTimeWeight(Kind.Calendar, "Minimum time weight"),
         CalendarSleepSchedule(Kind.Calendar, "Sleep schedule"),
         SoundVolume(Kind.AppSetting, "Global volume"),
@@ -4961,7 +4961,7 @@ object SearchDomain {
         RemindersControl(Kind.AppSetting, "Reminders"),
         ScreenBreaksControl(Kind.AppSetting, "Screen breaks"),
         CalendarDisplayControl(Kind.AppSetting, "Display"),
-        PlanTimeLimitControl(Kind.AppSetting, "Time limit after a change"),
+        PlanTimeLimitControl(Kind.AppSetting, "Allocated resources (q)"),
         MinimumTimeWeightControl(Kind.AppSetting, "Minimum time weight"),
         SupabaseUsageControl(Kind.AppSetting, "Supabase free tier"),
         MemoryLimitsControl(Kind.AppSetting, "Memory limits"),

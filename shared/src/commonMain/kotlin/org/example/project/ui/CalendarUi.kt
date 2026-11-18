@@ -1873,7 +1873,7 @@ class MenuControlHost(
     val onSetReminders: (Boolean) -> Unit,
     val onSetScreenBreaks: (Boolean) -> Unit,
     val onSetDisplayMode: (CalendarDisplayMode) -> Unit,
-    val onSetPlanTimeLimit: (Int) -> Unit,
+    val onSetPlanTimeLimit: (Double) -> Unit,
     val onSetMinimumTimeWeight: (Double) -> Unit,
     val onSetSleepSchedule: (org.example.project.scheduler.model.SleepSchedule) -> Unit,
     val onSetSoundVolume: (Double) -> Unit,
@@ -1965,7 +1965,7 @@ internal fun MenuControlItem(control: MenuControl, title: String?, host: MenuCon
         MenuControl.Reminders -> switchRow(title ?: control.title, host.state.showReminders, onChange = host.onSetReminders)
         MenuControl.ScreenBreaks -> switchRow(title ?: control.title, host.state.showScreenBreaks, onChange = host.onSetScreenBreaks)
         MenuControl.CalendarDisplay -> CalendarDisplayModeField(host.displayMode, host.onSetDisplayMode, label = title ?: control.title)
-        MenuControl.PlanTimeLimit -> PlanCalculationLimitField(host.state.planCalculationLimitSeconds, host.onSetPlanTimeLimit, label = title ?: control.title)
+        MenuControl.PlanTimeLimit -> PlanResourcesField(host.state.planResources, host.onSetPlanTimeLimit, label = title ?: control.title)
         MenuControl.MinimumTimeWeight -> MinimumTimeWeightField(host.state.minimumTimeWeight, host.onSetMinimumTimeWeight, label = title ?: control.title)
         MenuControl.SleepSchedule ->
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -4387,28 +4387,24 @@ fun CalendarElementLocks(
 }
 
 /**
- * The scheduler engine's **time limit after a change**: how long one calculation may run before the scheduler stops
- * wherever it has reached (`docs/scheduler_requirements.md` § *Progressive Calculation*). Seconds, kept between
- * [org.example.project.scheduler.state.MIN_PLAN_CALCULATION_LIMIT_SECONDS] and
- * [org.example.project.scheduler.state.MAX_PLAN_CALCULATION_LIMIT_SECONDS]; a text that is not such a number shows the
- * error state and writes nothing. The limit governs the NEXT calculation, never one already running.
+ * `docs/scheduler_requirements.md`, user rule 2026-11-18: **`q`, the allocated resources quantity** — 0 spends nothing
+ * on the search (the fastest run, the least CPU), 1 every second the ten-second pace leaves each ten-minute step
+ * ([org.example.project.scheduler.state.SchedulerState.planResources]). A number in [0, 1]; a text that is not one shows
+ * the error state and writes nothing. It governs the NEXT step, never one already running.
  */
 @Composable
-private fun PlanCalculationLimitField(seconds: Int, onChange: (Int) -> Unit, label: String = "Time limit after a change") {
-    var draft by remember(seconds) { mutableStateOf(seconds.toString()) }
-    val bounds =
-        org.example.project.scheduler.state.MIN_PLAN_CALCULATION_LIMIT_SECONDS..org.example.project.scheduler.state.MAX_PLAN_CALCULATION_LIMIT_SECONDS
-    val parsed = draft.trim().toIntOrNull()?.takeIf { it in bounds }
+private fun PlanResourcesField(q: Double, onChange: (Double) -> Unit, label: String = "Allocated resources (q)") {
+    var draft by remember(q) { mutableStateOf(q.toString()) }
+    val parsed = draft.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in 0.0..1.0 }
     OutlinedTextField(
         value = draft,
         onValueChange = { typed ->
             draft = typed
-            typed.trim().toIntOrNull()?.takeIf { it in bounds }?.let(onChange)
+            typed.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in 0.0..1.0 }?.let(onChange)
         },
         singleLine = true,
         isError = parsed == null,
         label = { Text(label) },
-        suffix = { Text("s") },
         // A text field has to take the focus to be typed in (unlike the switches above, which must not); a press
         // anywhere else gives the keyboard back to the calendar.
         modifier = Modifier.fillMaxWidth().leaveFocusOnOutsidePress(),

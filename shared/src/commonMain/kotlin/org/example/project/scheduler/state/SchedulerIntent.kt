@@ -1175,10 +1175,10 @@ sealed interface SchedulerIntent {
     data class SetDatabaseLimits(val serverBytes: Long? = null, val deviceBytes: Long? = null) : SchedulerIntent
 
     /**
-     * User rule 2026-10-04: the scheduler engine's time limit after a change, in seconds
-     * ([SchedulerState.planCalculationLimitSeconds]) — this device's own setting: persisted, never synced, one History Unit.
+     * User rule 2026-11-18: `q`, the allocated resources quantity ([SchedulerState.planResources]), kept in [0, 1] — this
+     * device's own setting: persisted, never synced, one History Unit.
      */
-    data class SetPlanCalculationLimit(val seconds: Int) : SchedulerIntent
+    data class SetPlanResources(val q: Double) : SchedulerIntent
 
     /** User rule 2026-10-18: every sound of the app off on this device ([SchedulerState.soundMuted]) — never synced, one History Unit. */
     data class SetSoundMuted(val muted: Boolean) : SchedulerIntent

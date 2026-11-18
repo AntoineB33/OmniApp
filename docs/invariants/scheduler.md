@@ -628,6 +628,11 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
 - **The rules on the wire are derived and never stored**: a broadcast, not a row, and `AdoptScheduleRules` never
   pushes (`syncsToServer`). The channel is `realtime:scheduler:<userId>`, **private** — its RLS is migration
   20260916000000.
+- **Not every step goes on the wire** (2026-11-18, `server-quota.md`): a run is about a thousand ten-minute steps to
+  `now + 168 h`, and each message carries the whole plan, so a later one supersedes the earlier. A re-plan sends its
+  first set at once, one once it reaches `PEER_RULES_REACH_MILLIS` (1 h) ahead of the line, one per
+  `PEER_RULES_INTERVAL_MILLIS` (30 min) of wall time while it runs, and its last; an extension its last only
+  (`SchedulerEngine.runProgressiveStages`, `publishStep`). A follower past what it was sent extends it itself.
 - **The in-reducer presses stay local** (§7 switch, §13 start, sleep-schedule edit, record removal).
 
 ### The rules are parameterized by the mode
@@ -702,47 +707,31 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
 
 → `docs/scheduler_requirements.md` § *Progressive Calculation*.
 
-- **THE SCHEDULER MAY STOP FOR EXACTLY THREE REASONS** (user rule, 2026-09-18). Two of them are $t_{goal}$'s
-  terms and one is not an instant at all:
-  1. **$t_{goal}$ — the LATEST of the end of the current week, the last displayed time in the calendar, and
-     `now + 10 min`** (`SchedulerDomain.scheduleGoalEndMillis`; the week from `currentWeekEndMillis`, Monday-first
-     and in the app's own zone). The week term holds **with the calendar closed**: a rule change on a headless
-     device plans to Monday, not for ten minutes, and the goal steps a week forward at each rollover rather than
-     drifting with the line. It replaces the 2026-09-16 rule, whose goal was the calendar's end alone. The floor
-     can therefore only govern a week's last ten minutes — which is also where the rollover falls, and that is
-     what `HorizonRefillRuleTest` reads.
-  2. **the set of rules growing too heavy** — the 168 h ceiling, applied by `scheduleHorizonEndMillis`; only a
-     calendar scrolled out can reach it. Past it the plan is a display-only far week (`display-hot-path.md`).
-  3. **the calculation time limit** — REAL time per progressive fill, **this device's own setting**
-     (`SchedulerState.planCalculationLimitSeconds`, 2 min until the user sets another in the calendar's configuration
-     section, 1 s – 1 h; local-only like the view state: a phone and a desktop are not given one budget; read as a
-     fill starts, user rule 2026-10-04). When it runs out the front stays where the last stage left it, and — this is the half
-     that makes it a stop rather than a pause — `extensionStoodDown` keeps the rolling-horizon and calendar
-     watchers from closing the shortfall it left. Only a **rule change** (the signature it was stopped under) or
-     a **goal that has grown past the one abandoned** asks the question again. Without that latch the watcher
-     would resume the stages one poll later with a fresh budget, for ever (`PlanCalculationLimitTest`).
-     The limit is given up in the requirement's own order: `stageSearchMillis` drops the SEARCH first and spends
-     what is left on reaching further, because a schedule that stops short is worse than one that is not the best.
-     This third reason is the requirement's own: *"It will also stop if the set of rules became too heavy, or if it
-     calculated for too long"* — and § *Strict Requirements*' exception 2 bounds the computing power a plan may take.
-  How the rolling floor is kept from re-triggering itself, and the 168 h ceiling, are in `display-hot-path.md`.
-  Each extension keeps the head, so a run the line is in continues to its minimum across them.
+- **A RUN GOES TO $t_{goal}$ = `now + 168 h`, PACED BY `q`** (user rule 2026-11-18: *"the 10 minute per 10 seconds
+  minimum scheduler from now to now + 168h with a pace varying with the hyperparameter q"*;
+  `SchedulerDomain.scheduleGoalEndMillis`, `SCHEDULE_HORIZON_MILLIS`). The goal no longer depends on the calendar or
+  the week, and rolls with the line: `horizonRefillDueMillis` extends the plan once its coverage falls
+  `HORIZON_REFILL_MARGIN_MILLIS` (1 h) short, so about one extension per hour of the line (`HorizonRefillRuleTest`).
+  Each step searches **`q` of what the ten-second pace leaves it** (`pacedStepSearchMillis`;
+  `SchedulerState.planResources`, local-only, persisted, never synced, in [0, 1], 0.25 until the user sets another in
+  the calendar's configuration section; read at every step): 0 searches nothing (the fastest run, the least CPU), 1
+  every millisecond the pace leaves. The pace itself is never given up (`PlanResourcesTest`). Until then (2026-09-18 →
+  2026-11-18) the goal was the latest of the week's end, the calendar's end and `now + 10 min`, the 168 h ceiling capped
+  a far calendar, and a run stopped at a calculation time limit (`planCalculationLimitSeconds`, latched by
+  `extensionStoodDown`): all removed. Each extension keeps the head, so a run the line is in continues to its minimum
+  across them.
 - **The engine fills in TEN-MINUTE STEPS** (requirements § *Two paces*, user choice 2026-11-11;
   `SchedulerEngine.runProgressiveStages`, `progressiveStageCapMillis`): after the first 10 s (below), each step extends
   the definitive front by exactly `PROGRESSIVE_MIN_ADVANCE_MILLIS` (10 min), searching one decision window past it (the
   big picture, `ScheduleOptimizer.searchMarginMillis`, hours) with the whole pace, and emitting its ten minutes, up to
-  $t_{goal}$ or the calculation limit — on the default two minutes, about twelve steps, two hours. An extension keeps
+  $t_{goal}$ — about a thousand steps, under three hours at the full pace, much less at small `q`. An extension keeps
   everything materialized, so every published step is **definitive** until a rule change
   (`SchedulerFillTest.progressive_stages_never_rewrite_what_an_earlier_stage_made_definitive`).
   - **An extension steps on from the materialized front**, never from the line: from the line it walked the whole plan
     already held, ten minutes at a time, at every refill (hundreds of fills a minute, 2026-11-11).
   - **A step that placed nothing is certain**: the next reaches further (`emptySkip`, doubling while they stay empty),
     back to ten minutes as soon as one places a task. Without it, an account the plan cannot reach far walked every ten
-    minutes to the week's end at every refill.
-  - **The front stays ahead of the line.** With ten-minute steps the limit stops a run hours before the week's end,
-    and the line reaches that front long before $t_{goal}$ grows: where it comes within two floors of where the stopped
-    run REACHED (`calculationLimitFront`, never the chain of panels from the line, which a stretch no task can fill
-    ends early), the stop is voided and the steps go on (`extensionStoodDown`, `PlanCalculationLimitTest`).
+    minutes to the goal at every refill.
   - **Past the front the calendar shows the instant schedule** (`display-hot-path.md`).
 - **First 10 s** (requirements § *Progressive Calculation*, 2026-10-03). Before the first stage of a re-plan from
   scratch, `dispatchProgressivePlan` asks `SchedulerDomain.firstSecondsGapFillable`: do the next

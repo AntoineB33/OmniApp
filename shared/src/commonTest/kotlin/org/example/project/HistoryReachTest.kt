@@ -207,7 +207,7 @@ class HistoryReachTest {
                 SchedulerIntent.SetAutomaticSchedule(!s.automaticSchedule),
                 SchedulerIntent.SetMinimumTimeWeight(s.minimumTimeWeight / 2 + 0.01),
                 SchedulerIntent.SetSoundMuted(!s.soundMuted),
-                SchedulerIntent.SetPlanCalculationLimit(s.planCalculationLimitSeconds + 1),
+                SchedulerIntent.SetPlanResources(if (s.planResources > 0.5) 0.1 else 0.9),
                 SchedulerIntent.SetShowScreenBreaks(!s.showScreenBreaks),
                 SchedulerIntent.SetShowReminders(!s.showReminders),
                 SchedulerIntent.SetCalendarDayMode(!s.calendarDayMode),

@@ -154,6 +154,10 @@ limit, and nothing here may exceed it.
   device nobody is using plans for itself without a word, and a device that has heard from no other one since its
   last unanswered probe leads alone without probing. A device hands its plan to a leader (`PeerMessage.Counter`) at
   most ONCE per election and only when that plan was made alone — never as a reply to every set of rules.
+- **A leader's run sends three or four sets of rules, never one per step** (2026-11-18, `scheduler.md` § *One device
+  plans*): a run is about a thousand ten-minute steps to `now + 168 h`, and each message carries the whole plan. The
+  count must not grow with the reach or with `q`; `QuotaScenario` bounds the reach to an hour, so a rule that did would
+  be under-counted there.
 - **An unchanged value is not re-sent**: the active-session push is skipped when this device's own rows are those it
   last pushed.
 - **No timer-driven request** (`CLAUDE.md`). The presence tick (`t_a`) is the pause cue's own, bounded, exception. The

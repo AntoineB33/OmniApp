@@ -35,9 +35,7 @@ import org.example.project.scheduler.model.QuotaLoop
 import org.example.project.scheduler.state.instanceOfWindowColumn
 import org.example.project.scheduler.state.windowColumn
 import org.example.project.scheduler.state.QuotasDelta
-import org.example.project.scheduler.state.DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS
-import org.example.project.scheduler.state.MAX_PLAN_CALCULATION_LIMIT_SECONDS
-import org.example.project.scheduler.state.MIN_PLAN_CALCULATION_LIMIT_SECONDS
+import org.example.project.scheduler.state.DEFAULT_PLAN_RESOURCES
 import org.example.project.scheduler.state.ChronosDelta
 import org.example.project.scheduler.state.ExternalDelta
 import org.example.project.scheduler.state.EntryChanges
@@ -637,7 +635,7 @@ object SchedulerStateCodec {
             // User rule 2026-10-20: one row per link (`id` is the task, so the row sync keys it), sorted for the fingerprint.
             taskLinks = taskLinks.sortedBy { it.taskId.value }.map { PersistedTaskLink(id = it.taskId.value, linkedTo = it.linkedTo.value) },
             showScreenBreaks = showScreenBreaks,
-            planCalculationLimitSeconds = planCalculationLimitSeconds,
+            planResources = planResources,
             soundMuted = soundMuted,
             periodCrossings = periodCrossings.entries.sortedBy { it.key }.map { (id, crossing) ->
                 PersistedPeriodCrossing(
@@ -1351,9 +1349,8 @@ object SchedulerStateCodec {
                     .associateBy { it.id }.values
                     .map { org.example.project.scheduler.model.TaskLink(TaskId(it.id), TaskId(it.linkedTo)) },
             showScreenBreaks = showScreenBreaks,
-            // Healed into its bounds: an older payload has none (two minutes), a hand-edited one may hold anything.
-            planCalculationLimitSeconds =
-                planCalculationLimitSeconds.coerceIn(MIN_PLAN_CALCULATION_LIMIT_SECONDS, MAX_PLAN_CALCULATION_LIMIT_SECONDS),
+            // Healed into [0, 1]: an older payload has none (its time limit is ignored), a hand-edited one may hold anything.
+            planResources = if (planResources.isNaN()) DEFAULT_PLAN_RESOURCES else planResources.coerceIn(0.0, 1.0),
             soundMuted = soundMuted,
             // Healed on the way in: a crossing of a panel the state no longer holds is dropped, and an empty stretch too.
             periodCrossings = periodCrossings
@@ -1829,8 +1826,9 @@ private data class PersistedState(
     // field while new writes use `showScreenBreaks`.
     @JsonNames("showSideTasks")
     val showScreenBreaks: Boolean = false,
-    // New 2026-10-04: the engine's time limit after a change; absent = the two minutes it always was.
-    val planCalculationLimitSeconds: Int = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+    // New 2026-11-18: q, the allocated resources quantity; absent = the default. The time limit it replaced
+    // (`planCalculationLimitSeconds`, 2026-10-04) is ignored.
+    val planResources: Double = DEFAULT_PLAN_RESOURCES,
     /** New 2026-10-18: every sound of the app off on this device; missing = sound on. Local-only (neutralized for the wire). */
     val soundMuted: Boolean = false,
     // New 2026-10-06: what a mode-1 line crossed of the user's "no screen" periods; absent = nothing crossed.
@@ -3447,7 +3445,7 @@ internal object SettingEntries {
 
     /** The entries that are local-only view state: the fields [SchedulerState.withLocalViewStateNeutralized] resets. */
     val LOCAL_ONLY: Set<String> =
-        setOf("showScreenBreaks", "showReminders", "calendarDayMode", "planCalculationLimitSeconds", "soundMuted", "deviceDatabaseLimitBytes")
+        setOf("showScreenBreaks", "showReminders", "calendarDayMode", "planResources", "soundMuted", "deviceDatabaseLimitBytes")
 
     private fun pair(prefix: String, a: String, b: String): String = "$prefix|$a|$b"
 
@@ -3459,7 +3457,7 @@ internal object SettingEntries {
             put("serverDatabaseLimitBytes", s.serverDatabaseLimitBytes.toString())
             put("deviceDatabaseLimitBytes", s.deviceDatabaseLimitBytes.toString())
             put("soundMuted", s.soundMuted.toString())
-            put("planCalculationLimitSeconds", s.planCalculationLimitSeconds.toString())
+            put("planResources", s.planResources.toString())
             put("showScreenBreaks", s.showScreenBreaks.toString())
             put("showReminders", s.showReminders.toString())
             put("calendarDayMode", s.calendarDayMode.toString())
@@ -3540,7 +3538,7 @@ internal object SettingEntries {
             "deviceDatabaseLimitBytes" ->
                 s.copy(deviceDatabaseLimitBytes = org.example.project.scheduler.domain.ServerBudget.deviceLimitOf(value.toLong()))
             "soundMuted" -> s.copy(soundMuted = value.toBoolean())
-            "planCalculationLimitSeconds" -> s.copy(planCalculationLimitSeconds = value.toInt())
+            "planResources" -> s.copy(planResources = value.toDoubleOrNull()?.coerceIn(0.0, 1.0) ?: DEFAULT_PLAN_RESOURCES)
             "showScreenBreaks" -> s.copy(showScreenBreaks = value.toBoolean())
             "showReminders" -> s.copy(showReminders = value.toBoolean())
             "calendarDayMode" -> s.copy(calendarDayMode = value.toBoolean())

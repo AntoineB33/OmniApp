@@ -3270,7 +3270,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 } else {
                     val panel =
                         CalendarLockDomain.closestPanelCenterMillis(schedulerState, lockedTask, nowMillis, provisionalPanels)
-                    val front = SchedulerDomain.definitiveScheduleFrontMillis(nowMillis, visibleSpanEndMillis, tz)
+                    val front = definitiveFrontMillis
                     (panel ?: CalendarLockDomain.lockCenterMillis(schedulerState, lockedTask, nowMillis, front)) to
                         (panel == null)
                 }
@@ -3763,7 +3763,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // where the plan stops being the scheduler's settled answer and starts being the far-week
                     // fill's display-only continuation of it.
                     definitiveFrontMillis =
-                        SchedulerDomain.definitiveScheduleFrontMillis(nowMillis, visibleSpanEndMillis, tz),
+                        definitiveFrontMillis,
                 )
                 )
                 }
@@ -3799,7 +3799,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     .filterNot { it.reminder || it.alarm || it.screenBreak || it.noScreen }
                     .map { it.range }
             val inactivityUntilMillis =
-                maxOf(nowMillis, SchedulerDomain.definitiveScheduleFrontMillis(nowMillis, visibleSpanEndMillis, tz))
+                maxOf(nowMillis, definitiveFrontMillis)
             val pastInactivityRecords =
                 Perf.measure("display.inactivityBands") {
                 SchedulerDomain.derivedInactivityBands(pastCoveredRegions, displayFloorMillis, inactivityUntilMillis)
@@ -4410,7 +4410,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         onSetDisplayMode = {
                             vm.dispatch(inMenu(SchedulerIntent.SetCalendarDayMode(it == org.example.project.ui.CalendarDisplayMode.Day)))
                         },
-                        onSetPlanTimeLimit = { vm.dispatch(inMenu(SchedulerIntent.SetPlanCalculationLimit(it))) },
+                        onSetPlanTimeLimit = { vm.dispatch(inMenu(SchedulerIntent.SetPlanResources(it))) },
                         projectUsage = projectUsageValue,
                         projectUsageMiss = projectUsageMissValue,
                         onRefreshProjectUsage = { vm.refreshProjectUsage() },

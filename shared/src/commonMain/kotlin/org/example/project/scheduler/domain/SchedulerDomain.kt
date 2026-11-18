@@ -2045,90 +2045,32 @@ object SchedulerDomain {
             .toEpochMilliseconds()
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_{goal}$ — the instant the scheduler
-     * may stop at.** *"The scheduler can have a time $t goal$ such as when definitive schedule is found for
-     * any t < $t goal$ the scheduler can stop."*
-     *
-     * It is **the LATEST of three instants** (user rule, 2026-09-18): the **end of the current week**
-     * ([currentWeekEndMillis]), the **last displayed time in the calendar** ([displayedEndMillis] — the
-     * EXCLUSIVE end of the displayed day span, what `App.kt` publishes through
-     * [org.example.project.scheduler.engine.SchedulerEngine.setCalendarHorizon]), and **`now + `**
-     * [SCHEDULE_GOAL_FLOOR_MILLIS]. The scheduler may stop once the schedule is definitive up to all three.
-     *
-     * The week term holds WITH NO CALENDAR OPEN (it replaces the 2026-09-16 rule, under which a closed
-     * calendar asked for ten minutes and nothing more): the week the user is living in is what the plan is
-     * for, and opening the calendar on it must not be what makes it exist. A grid scrolled into the past adds
-     * nothing — it shows no time the plan has to reach — and one scrolled forward adds its own end.
-     *
-     * The floor ROLLS with the line, so a plan that has just reached it is short again a millisecond later.
-     * That is why a fill is not aimed at the goal itself but at [scheduleHorizonEndMillis], which carries
-     * another floor's worth of slack, and why [horizonRefillDueMillis] answers against the goal: the two
-     * together extend the plan once per [SCHEDULE_GOAL_FLOOR_MILLIS] rather than at every tick.
-     *
-     * The other two ways the scheduler may stop are not here, because neither is an instant: the set of rules
-     * growing too heavy ([SCHEDULE_HORIZON_MILLIS], applied by [scheduleHorizonEndMillis]) and the calculation
-     * time limit (`SchedulerEngine.PLAN_CALCULATION_LIMIT_MILLIS`, which stops a fill wherever it has reached).
+     * `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_{goal}$ — how far a run of the scheduler goes:
+     * `now + 168 h`** ([SCHEDULE_HORIZON_MILLIS]; user rule 2026-11-18: *"the 10 minute per 10 seconds minimum
+     * scheduler from now to now + 168h with a pace varying with the hyperparameter q"*). Until then it was the latest of
+     * the week's end, the calendar's end and ten minutes ahead, and a run stopped at a calculation time limit; the
+     * requirements' run ends once it has published its last script, and its pace and its cost are `q`'s
+     * ([org.example.project.scheduler.state.SchedulerState.planResources]). Past it the calendar shows the instant
+     * schedule. [displayedEndMillis] and [timeZone] are kept for the callers' shape.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun scheduleGoalEndMillis(
         nowMillis: Long,
         displayedEndMillis: Long?,
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
-    ): Long =
-        maxOf(
-            displayedEndMillis ?: nowMillis,
-            currentWeekEndMillis(nowMillis, timeZone),
-            nowMillis + SCHEDULE_GOAL_FLOOR_MILLIS,
-        )
+    ): Long = nowMillis + SCHEDULE_HORIZON_MILLIS
 
-    /**
-     * PRD §9 Scheduling: the instant a fill materializes the work plan out to — [scheduleGoalEndMillis] with
-     * two adjustments:
-     * - a goal past `now + `[SCHEDULE_HORIZON_MILLIS] is capped there — *"the set of rules is too heavy"*, the
-     *   second of the requirement's stopping conditions. Only a calendar scrolled out can reach it: the week
-     *   term is at most a week away by construction. Past the cap the far week is computed for display only,
-     *   off the UI thread, and never retained (`App.kt`'s far-week `LaunchedEffect`);
-     * - the rolling floor is DOUBLED, so a fill made at the floor is not due again until the line has moved a
-     *   whole [SCHEDULE_GOAL_FLOOR_MILLIS] ([horizonRefillDueMillis]).
-     */
+    /** The instant a fill materializes the work plan out to: [scheduleGoalEndMillis]. */
     fun scheduleHorizonEndMillis(
         nowMillis: Long,
         displayedEndMillis: Long?,
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
-    ): Long =
-        maxOf(
-            minOf(
-                maxOf(displayedEndMillis ?: nowMillis, currentWeekEndMillis(nowMillis, timeZone)),
-                nowMillis + SCHEDULE_HORIZON_MILLIS,
-            ),
-            nowMillis + 2 * SCHEDULE_GOAL_FLOOR_MILLIS,
-        )
-
-    /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: **the DEFINITIVE-SCHEDULE FRONT**, the
-     * instant $t_1$ the requirement's guarantee reaches — *"for all the next set of rules the scheduler will
-     * return until it is done, they will all indicate the same schedule rules for any t < t_1"*.
-     *
-     * It is [scheduleHorizonEndMillis], and that is the whole of the rule: the front is exactly how far a fill
-     * MATERIALIZES into `state.panels`. Everything below it has been published by a progressive stage, and an
-     * extension keeps what a stage published (`docs/invariants/scheduler.md` § *Progressive Calculation*), so
-     * the schedule there is settled until a rule change. Past it the scheduler has returned nothing: the plan
-     * `App.kt` draws there is the far-week fill, computed off the UI thread for DISPLAY, never retained, and
-     * recomputed from scratch the next time that week is looked at.
-     *
-     * The same instant answers three questions, and they are the same question: how far the derived inactivity
-     * bands run (`App.kt` — past the front there is no answer yet to give), where the far-week display fill
-     * takes over, and which task panels are PROVISIONAL ([isProvisionalPanel]).
-     */
-    fun definitiveScheduleFrontMillis(
-        nowMillis: Long,
-        displayedEndMillis: Long?,
-        timeZone: TimeZone = TimeZone.currentSystemDefault(),
-    ): Long = scheduleHorizonEndMillis(nowMillis, displayedEndMillis, timeZone)
+    ): Long = scheduleGoalEndMillis(nowMillis, displayedEndMillis, timeZone)
 
     /**
      * `docs/scheduler_requirements.md` § *Progressive Calculation*: whether [panel] is part of a schedule the
      * scheduler has **not made definitive**, i.e. one a later set of rules may still contradict — an AUTO panel
-     * reaching past [definitiveFrontMillis] ([definitiveScheduleFrontMillis]).
+     * reaching past [definitiveFrontMillis] (the end of the plan's chain of panels from the line, [firstFreeMoment]).
      *
      * Two halves, both needed. *Auto*: only the fill's own picks are the scheduler's answer — a pinned or
      * hand-drawn panel is § *Starting timeline* input, as fixed past the front as before it, and so is a
@@ -2140,44 +2082,28 @@ object SchedulerDomain {
         panel.auto && panel.endEpochMillis > definitiveFrontMillis
 
     /**
-     * PRD §9 calculation event #1: how far a CAPPED calendar goal (one past [SCHEDULE_HORIZON_MILLIS]) may
-     * fall short before it is extended (1 hour). The cap is `now + 168 h` and rolls, so without this slack the
-     * plan capped there would be short again the instant its fill finished and re-fire forever — the
-     * self-retriggering shape that kept the release app's window from ever presenting (2026-07-28).
+     * PRD §9 calculation event #1 (the line moving on): how far the plan may fall short of `now + 168 h` before it is
+     * extended (1 hour) — so the rolling goal is met by one extension per hour of the line, not one per tick. Without
+     * the slack the plan would be short again the instant its fill finished and re-fire forever — the self-retriggering
+     * shape that kept the release app's window from ever presenting (2026-07-28).
      */
     const val HORIZON_REFILL_MARGIN_MILLIS: Long = 60L * 60 * 1000
 
     /**
-     * PRD §9 calculation event #1 (rolling horizon): the instant the plan materialized in [panels] stops
-     * covering what $t_{goal}$ requires — the engine extends it (to [scheduleHorizonEndMillis]) once `now`
-     * reaches this instant. A value at or before [nowMillis] means "due now".
-     *
-     * Coverage is [firstFreeMoment] — the end of the contiguous chain of panels covering `now`. It is due:
-     * - when the coverage has only [SCHEDULE_GOAL_FLOOR_MILLIS] left ahead of the line — a fill reaches twice
-     *   that, so this turns true once per floor, never right after the fill;
-     * - when $t_{goal}$ asks for more than the coverage reaches — the calendar showing further out, or the END
-     *   OF THE CURRENT WEEK, which is a term of the goal whether or not a calendar is open ([currentWeekEndMillis])
-     *   and which steps forward on its own at every rollover. Due at once while the shortfall is inside
-     *   `now + `[SCHEDULE_HORIZON_MILLIS]` − `[HORIZON_REFILL_MARGIN_MILLIS], and past that cap once the line has
-     *   moved one margin on.
-     *
-     * A goal the coverage already reaches is NOT due (the comparison is strict), so a plan that has reached the
-     * instant the requirement lets the scheduler stop at does not keep re-filling it.
+     * PRD §9 calculation event #1 (rolling horizon): the instant the plan materialized in [panels] stops covering
+     * $t_{goal}$ ([scheduleGoalEndMillis], `now + 168 h`) by more than [HORIZON_REFILL_MARGIN_MILLIS] — the engine
+     * extends it once `now` reaches this instant. A value at or before [nowMillis] means "due now". Coverage is
+     * [firstFreeMoment], the end of the contiguous chain of panels covering `now`. [reachMillis] is how far a run goes
+     * past the line (a test's engine bounds it). [displayedEndMillis] and [timeZone] are kept for the callers' shape.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun horizonRefillDueMillis(
         panels: List<TaskPanel>,
         nowMillis: Long,
         displayedEndMillis: Long?,
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
-    ): Long {
-        val coverage = firstFreeMoment(panels, nowMillis)
-        val floorDue = coverage - SCHEDULE_GOAL_FLOOR_MILLIS
-        val target = maxOf(displayedEndMillis ?: nowMillis, currentWeekEndMillis(nowMillis, timeZone))
-        val goalDue =
-            if (target > coverage) coverage - (SCHEDULE_HORIZON_MILLIS - HORIZON_REFILL_MARGIN_MILLIS)
-            else Long.MAX_VALUE
-        return minOf(floorDue, goalDue)
-    }
+        reachMillis: Long = SCHEDULE_HORIZON_MILLIS,
+    ): Long = firstFreeMoment(panels, nowMillis) - (reachMillis - minOf(HORIZON_REFILL_MARGIN_MILLIS, reachMillis / 2))
 
     /**
      * PRD §15: shortest account-wide pause worth drawing as an "Inactivity" band (90 s). Below this a

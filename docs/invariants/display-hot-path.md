@@ -165,23 +165,14 @@ Global rules that always apply: `CLAUDE.md`.
   hit-testing, the contextual menu and the drag snap set all still see the whole day — a partner scrolled out
   of view must still narrow the block on screen. A block mid-gesture is exempt: its slices hold the gesture.
 - **Test against a large, realistic DB**, not just an emptied one — an empty account hides the cost entirely.
-- **The schedule horizon is $t_{goal}$** (`SchedulerDomain.scheduleGoalEndMillis`): **the LATEST of the end of
-  the current week, the end of the timeline the calendar shows, and `now + `**`SCHEDULE_GOAL_FLOOR_MILLIS`
-  (user rule, 2026-09-18) — `docs/scheduler_requirements.md` § *Progressive Calculation*, the instant the
-  scheduler may stop at. It follows the SCROLL and it follows the WEEK, so a closed calendar no longer leaves
-  only the floor: the week the user is living in is planned whether or not a window shows it, and the goal steps
-  forward at each rollover instead of drifting with the line. The floor is what is left in a week's last ten
-  minutes, and what the headless task and wind-down cues read ahead of the line (the break windows the server is
-  told come from the recurrence bars, not from `state.panels`). There is no "focused week".
-- **A fill may also stop for the other two reasons the rule names** — the set of rules growing too heavy (the
-  168 h ceiling) and `SchedulerEngine.PLAN_CALCULATION_LIMIT_MILLIS`. The second one leaves `panels` SHORT of
-  $t_{goal}$ on purpose, and `extensionStoodDown` is what stops the watcher below from treating that as the gap
-  it exists to close (`scheduler.md` § *Progressive Calculation*).
-- **The floor ROLLS, so a fill never aims at the goal itself.** It fills to `scheduleHorizonEndMillis` — the
-  goal with the floor **doubled** and a calendar end capped at 168 h — and `horizonRefillDueMillis` comes due
-  when the plan covers only one floor ahead of the line. So a closed calendar costs one small extension per ten
-  minutes, never one per tick; the capped far week one per `HORIZON_REFILL_MARGIN_MILLIS`. A fill aimed at the
-  rolling instant itself is the 2026-07-28 self-retrigger (`HorizonRefillRuleTest`).
+- **The schedule horizon is $t_{goal}$ = `now + 168 h`** (`SchedulerDomain.scheduleGoalEndMillis`, user rule
+  2026-11-18) — `docs/scheduler_requirements.md` § *Progressive Calculation*. It does not follow the scroll or the week:
+  the calendar past the definitive front shows the instant schedule (below). Until then (2026-09-18) it was the latest
+  of the week's end, the calendar's end and `now + 10 min`, a far calendar was capped at 168 h, and a calculation time
+  limit could leave `panels` short of it (`scheduler.md` § *Progressive Calculation*).
+- **The goal ROLLS, so a fill never re-fires at once.** `horizonRefillDueMillis` comes due when the plan covers an
+  `HORIZON_REFILL_MARGIN_MILLIS` (1 h) less than the goal, so about one extension per hour of the line, never one per
+  tick. A fill aimed at the rolling instant itself is the 2026-07-28 self-retrigger (`HorizonRefillRuleTest`).
 - **A fill cuts the previous plan's auto panels past its own horizon too.** With the ten-minute floor a fill
   that stops short of an older, longer plan is routine; the old panels answer rules the fill may have replaced,
   and one abutting the new tail was read by the next extension as materialized and kept as definitive
@@ -190,7 +181,7 @@ Global rules that always apply: `CLAUDE.md`.
   2026-11-11: *"the instantaneous scheduler schedules for the part of the timeline displayed"*): the same fill as below,
   with `fillSchedule(instant = true)` — `InstantSchedule`, the score's own policy rolled by two-hour parts, nothing
   searched — from the front (`firstFreeMoment` of the plan) to the displayed end, wherever that is, not only past the
-  ceiling (the steps now leave the front about two hours ahead). Re-derived when the front moves (a step published).
+  168 h goal (a run in flight leaves the front where its last step reached). Re-derived when the front moves (a step published).
 - **What that costs follows the WINDOW, never its distance from the line** (requirements § *Two paces*, Example 3:
   *thousands of years in the future*, nothing obviously wrong). The one funnel is `SchedulerDomain.instantDisplayPlan`:
   a window starting within `INSTANT_DETACH_AFTER_MILLIS` (168 h) of the front is the extension from the front; one

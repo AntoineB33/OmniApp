@@ -75,12 +75,11 @@ data class PeriodCrossing(
     val ranges: List<org.example.project.scheduler.model.TaskTimeRange> = emptyList(),
 )
 
-/** The scheduler engine's time limit after a change until the user sets another: two minutes. */
-const val DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS: Int = 120
-
-/** The bounds a time limit is kept in: a second at least (a limit of nothing plans nothing), an hour at most. */
-const val MIN_PLAN_CALCULATION_LIMIT_SECONDS: Int = 1
-const val MAX_PLAN_CALCULATION_LIMIT_SECONDS: Int = 3600
+/**
+ * `docs/scheduler_requirements.md`: **the "allocated resources quantity" hyperparameter `q` in [0, 1]** until the user
+ * sets another — a quarter of what the pace allows: a run to `now + 168 h` searches about two seconds per ten-minute step.
+ */
+const val DEFAULT_PLAN_RESOURCES: Double = 0.25
 
 data class SchedulerHistory(
     val pointer: Int = -1,
@@ -941,16 +940,19 @@ data class SchedulerState(
      */
     val showScreenBreaks: Boolean = false,
     /**
-     * User rule 2026-10-04: **the scheduler engine's time limit after a change**, in seconds — the wall time ONE
-     * progressive fill may spend before the scheduler stops wherever it has reached (`docs/scheduler_requirements.md`
-     * § *Progressive Calculation*'s third stopping condition; it was a fixed two minutes). A resource of THIS device:
-     * local-only like the view state — a phone and a desktop are not given the same budget — persisted, never synced.
+     * `docs/scheduler_requirements.md`, user rule 2026-11-18: **`q`, the "allocated resources quantity" hyperparameter**,
+     * in [0, 1] — *"balances between resource usage economy (0) and optimization problem-solving (1). When q is lower,
+     * then a rules generator run will be faster and use less CPU resources … At 1, the generator uses all the time the
+     * pace allows finding the best arrangement."* Each ten-minute step of a run searches `q` of what the ten-second pace
+     * leaves it (`SchedulerEngine.stageSearchMillis`). It replaces the time limit after a change (2026-10-04), which
+     * stopped a run wherever it had reached. A resource of THIS device: local-only like the view state, persisted, never
+     * synced.
      */
-    val planCalculationLimitSeconds: Int = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+    val planResources: Double = DEFAULT_PLAN_RESOURCES,
     /**
      * User rule 2026-10-18: **every sound of the app off on this device** — no voice, no notification sound, no alarm,
      * timer or reminder ringing, no cue (`AlertSettings.heard`, the engine's one gate; the notifiers post silently).
-     * THIS device's, like [planCalculationLimitSeconds] (the user chose it: muting the desktop at work leaves the phone's
+     * THIS device's, like [planResources] (the user chose it: muting the desktop at work leaves the phone's
      * morning alarm ringing): persisted locally, never synced.
      */
     val soundMuted: Boolean = false,
@@ -1356,7 +1358,7 @@ data class SchedulerState(
             windowSelections = other.windowSelections,
             selection = other.selection,
             showScreenBreaks = other.showScreenBreaks,
-            planCalculationLimitSeconds = other.planCalculationLimitSeconds,
+            planResources = other.planResources,
             deviceDatabaseLimitBytes = other.deviceDatabaseLimitBytes,
             soundMuted = other.soundMuted,
             periodCrossings = other.periodCrossings,
@@ -1380,7 +1382,7 @@ data class SchedulerState(
             windowSelections = emptyMap(),
             selection = SchedulerSelection(),
             showScreenBreaks = false,
-            planCalculationLimitSeconds = DEFAULT_PLAN_CALCULATION_LIMIT_SECONDS,
+            planResources = DEFAULT_PLAN_RESOURCES,
             deviceDatabaseLimitBytes = org.example.project.scheduler.domain.ServerBudget.DEFAULT_DEVICE_LIMIT_BYTES,
             soundMuted = false,
             periodCrossings = emptyMap(),

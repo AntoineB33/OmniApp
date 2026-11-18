@@ -25,8 +25,8 @@ import org.example.project.ui.recordsForDay
  * *"When the schedule is definitive for any t < $t_1$, it means that for all the next set of rules the
  * scheduler will return until it is done, they will all indicate the same schedule rules for any t < $t_1$."*
  * The front $t_1$ is exactly how far a fill materializes into `state.panels`
- * ([SchedulerDomain.definitiveScheduleFrontMillis]); past it the calendar is drawing the far-week display fill,
- * which is never retained and is recomputed from scratch the next time that week is looked at. Those panels
+ * ([SchedulerDomain.firstFreeMoment]); past it the calendar is drawing the instant schedule, which is never
+ * retained and is recomputed from scratch the next time it is looked at. Those panels
  * are drawn with blurred edges, and this pins WHICH ones they are.
  */
 class ProvisionalPanelTest {
@@ -50,25 +50,18 @@ class ProvisionalPanelTest {
     )
 
     @Test
-    fun theFrontIsHowFarTheFillMaterializes() {
-        // A calendar showing five days — past this Friday's week end: the whole span is materialized, so the
-        // front is its end.
-        val fiveDays = now + 5 * 24 * hour
-        assertEquals(fiveDays, SchedulerDomain.definitiveScheduleFrontMillis(now, fiveDays, tz))
-
-        // A calendar scrolled two weeks out: the fill stops at the 168 h ceiling and the rest is the far-week
-        // display fill, so the front is the ceiling — not the displayed end.
-        val twoWeeks = now + 14 * 24 * hour
+    fun theGoalIsAWeekFromTheLineAndTheFrontIsHowFarTheFillMaterializes() {
+        // User rule 2026-11-18: $t_{goal}$ is `now + 168 h`, whatever the calendar shows (or whether one is open).
+        for (displayed in listOf(null, now + 5 * 24 * hour, now + 14 * 24 * hour)) {
+            assertEquals(now + 168 * hour, SchedulerDomain.scheduleGoalEndMillis(now, displayed, tz))
+        }
+        // The front is the end of the contiguous chain of panels covering the line — what the fill materialized.
+        val panels = listOf(panel("a", now - hour, now + 2 * hour), panel("b", now + 2 * hour, now + 5 * hour))
+        assertEquals(now + 5 * hour, SchedulerDomain.firstFreeMoment(panels, now))
+        // The refill is due once that front falls an hour short of the goal.
         assertEquals(
-            now + SchedulerDomain.SCHEDULE_HORIZON_MILLIS,
-            SchedulerDomain.definitiveScheduleFrontMillis(now, twoWeeks, tz),
-        )
-
-        // No calendar open: $t_{goal}$ still reaches the END OF THE CURRENT WEEK, so the front does too —
-        // Monday 2026-09-21 00:00 UTC, from a Friday 09:00 now-line.
-        assertEquals(
-            now + 2 * 24 * hour + 15 * hour,
-            SchedulerDomain.definitiveScheduleFrontMillis(now, null, tz),
+            now + 5 * hour - (168 - 1) * hour,
+            SchedulerDomain.horizonRefillDueMillis(panels, now, null, tz),
         )
     }
 

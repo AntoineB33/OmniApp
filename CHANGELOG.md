@@ -11,6 +11,26 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A run plans to now + 168 h, its search paced by q — 2026-11-18
+
+User rule: *"Make sure there is the 10 minute per 10 seconds minimum scheduler from now to now + 168h with a pace varying
+with the hyperparameter q."*
+
+- **$t_{goal}$ is `now + 168 h`** (`SchedulerDomain.scheduleGoalEndMillis`), whatever the calendar shows. It was the latest
+  of the week's end, the calendar's end and `now + 10 min`, with a far calendar capped at 168 h. The goal rolls, so the
+  plan is extended once its coverage falls an hour short (`horizonRefillDueMillis`).
+- **`q`, the allocated resources quantity** (`SchedulerState.planResources`, in [0, 1], 0.25 by default, local-only, persisted,
+  never synced; "Allocated resources (q)" in the calendar's configuration section): each ten-minute step searches `q` of
+  what the ten-second pace leaves it (`pacedStepSearchMillis`). It replaces the time limit after a change
+  (`planCalculationLimitSeconds`, 2026-10-04), which stopped a run wherever it had reached; an older payload's limit is
+  ignored and decodes to the default `q`. `extensionStoodDown` and its latch are gone.
+- **A leader's run sends three or four sets of rules to its peers, not one per step** (`publishStep`): the first at once,
+  one at an hour of reach, one per 30 min of wall time, the last; an extension its last only. Sent at every step, a run
+  to 168 h would have cost a thousand Realtime messages per rule change; `ServerQuotaTest` caught the start of it
+  (200 700 of 200 000 a month on the one-hour test reach) and now reads 188 100.
+- `PlanCalculationLimitTest` → `PlanResourcesTest`; `ScheduleHorizonTest`, `HorizonRefillRuleTest`, `ProvisionalPanelTest`
+  rewritten for the rolling goal. Engine tests bound a run with `SchedulerEngine(runReachMillis = …)`.
+
 ### The deep search no longer does worse than the instant schedule — 2026-11-18
 
 User rule: *"The deep search is worse than the instant schedule. Fix it."* Measured on one week filled in one fill (the
