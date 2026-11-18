@@ -38,8 +38,9 @@ cycle in closed form, and the past beyond the cap. line_manager's score (`tests/
   where no task may run (a night, a 20s period) is transparent to the score: it neither discounts, nor forgets,
   nor separates.
 * $\sigma(t)$ is the task scheduled at $t$: none where $t$ is not schedulable, and none where the continuation
-  leaves schedulable time to **nobody**. The requirements require no task anywhere, so nobody is a choice like any
-  task, and the score prices it: the targets $f_i$ add up to 1, so every lag falls behind over time left to nobody.
+  leaves schedulable time to **nobody** — which it does only where no task may run *(2026-11-18, user rule: "The deep
+  search is worse than the instant schedule. Fix it.")*: the instant schedule never leaves time to nobody where a task
+  may, and a search allowed to did so wherever every candidate would overshoot its own small lag by its minimum.
 * $\tau_i = \max(M_i, 1) / \pi_i$ is **the smallest window in which task $i$ can get one slot of its minimum
   execution time at its share** (§ *Priority, Granularity and Compensation*: the window must be as small as
   possible while still allowing the minimum execution time). It is also the task's **period**: at its share, one
@@ -120,15 +121,26 @@ past, so the past has to be replayed far enough back that what is left out no lo
 
 * The **lag** of task $i$ is its service minus its target, forgetting exponentially over its own window, on the
   schedulable clock:
-  $$\frac{dL_i}{du} = \mathbb{1}[\sigma = i] - f_i - \frac{L_i}{\tau_i}$$
+  $$\frac{dL_i}{du} = \mathbb{1}[\sigma = i] - f_i - \frac{L_i}{m_i}, \qquad m_i = \max(\lambda, \tau_i)$$
+  $m_i$ is **how long the lag is remembered** *(2026-11-18; $\tau_i$ until then)*: the default compensation length
+  $\lambda$ for every ordinary task, a rare task's own window past it.
   $L_i(x)$ is determined by the frozen past (the past schedule measured against the targets of $R(x)$).
-* Criterion 1 is the discounted squared lag of the continuation, **each task's lag counted in units of its own
-  minimum execution time**:
+* Criterion 1 is the discounted squared lag of the continuation, **each task's lag counted in its own unit**
+  $\pi_i m_i$ — the lag it settles at when served a whole share under its target (its minimum $M_i$ while $m_i$ was
+  $\tau_i$, since $\pi_i\tau_i = M_i$; still a rare task's). Below, $\max(M_i, 1)$ reads $\max(\pi_i m_i, 1)$:
   $$J_1 = \int_{u(x)}^{\infty} \sum_i e^{-(u - u(x))/\Theta_i} \Big(\frac{L_i}{\max(M_i, 1)}\Big)^2 \, du$$
   ($\Theta_i = \Theta$ for every ordinary task, so with no rare task this is the single discount it always was.)
   A block twice as long produces a lag excursion twice as high, so this criterion strictly prefers the smallest
   windows: two 50% tasks alternating every 10min score 4 times better than every 20min.
-* **Why the unit is the task's own minimum** (2026-10-06, `ScoreModel.lagWeight`). A task served a fraction
+* **Why the memory is the same for every ordinary task** (2026-11-18, `ScoreModel.memory`). Remembered over $\tau_i$, a
+  lag saturates at one unit: a task never served cost no more than one a minimum behind, a task due every forty minutes
+  forgot a deficit within the hour while one due every two days remembered its own for days, and the search neglected
+  the first to keep the second — 5 % of the simulations' time left to nobody and their short, high-share tasks under
+  the instant schedule's own division. Remembered alike, and in $\pi_i m_i$ so a relative miss $\delta$ still costs
+  $\delta^2$ for every task, the long simulations pass for the first time (`docs/invariants/scheduler.md`
+  § *Simulations*). On a cold start the lags' oscillation is centered once (one run longer than its minimum), then the
+  alternation is the smallest the minimums allow.
+* **Why the unit was the task's own minimum** (2026-10-06, `ScoreModel.lagWeight`). A task served a fraction
   $\delta$ under its share settles at a lag of $-\delta\,\pi_i\tau_i = -\delta M_i$. Counted in bare minutes that
   costs $\delta^2 M_i^2$: the same RELATIVE miss weighed 81 times less on a task with a 5-minute minimum than on one
   with 45 minutes, so the best continuation under-served the short-minimum tasks to spare the long ones — and, a
@@ -242,10 +254,8 @@ A quantity $k$ of task $i$ asks for $Q_k$ minutes of presence within $[a_k, b_k]
   $J = J_1 + w\,J_2 + w_X\,J_3$ and $D$ the shortfall of § *Quantities by a date* (0 when there is none, so $J$ alone
   as before). Two values of $D$ within one second of each other are equal. Hard constraints are not in the score:
   a continuation that violates any requirement of `docs/scheduler_requirements.md` (resilience 0, pre-placed tasks,
-  dynamic restrictive periods, $now line$ modes, frozen past) is not a candidate at all. Leaving schedulable time to
-  nobody violates none of them: it is a candidate, and it is kept only where it scores lower than any task — as a
-  stretch before an edge can, where every task would be a panel cut far short of its minimum or a task served far
-  past its share.
+  dynamic restrictive periods, $now line$ modes, frozen past) is not a candidate at all. Nor is leaving schedulable time
+  to nobody where a task may run *(2026-11-18)*.
 * **The best possible score** at $(x, m)$ is the infimum of $(D, J)$, in that order, over all candidate
   continuations of the frozen past. Because the discount is exponential, the score is time-consistent: the best continuation from a later
   $now line$ is the rest of the best continuation from an earlier one whenever $R$ and the environment did not

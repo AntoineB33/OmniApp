@@ -10,10 +10,11 @@ import org.example.project.scheduler.domain.ScheduleFill
 import org.example.project.scheduler.model.TaskId
 
 /**
- * `docs/scheduler_requirements.md` requires no task anywhere: **time the rules leave to nobody is a decision**, priced
- * by the score like any other. A fill places it as nothing and reports it ([ScheduleFill.Result.idle]) — the one
- * reading the check at the line ([org.example.project.scheduler.domain.SchedulerDomain.planMismatchAtLine]) tells a
- * hole the plan chose from a hole a moved break left with.
+ * User rule 2026-11-18: *"The deep search is worse than the instant schedule. Fix it."* — **time is left to nobody only
+ * where no task may run** ([org.example.project.scheduler.domain.ScoreModel.choicesAt]), as the instant schedule never
+ * leaves it. Until then nobody was a decision the score priced, and the search took it wherever every candidate would
+ * overshoot its own small lag by its minimum: 5 % of the simulations' time. A fill still reports what it leaves
+ * ([ScheduleFill.Result.idle]), which is now only time no task may run in.
  */
 class IdleDecisionFillTest {
     private val MIN = 60_000L
@@ -23,8 +24,8 @@ class IdleDecisionFillTest {
 
     /**
      * T2 and T1 are turned away for half an hour every three hours, where only T0 may run, and T0 has a pre-placed
-     * hour. The plan leaves a stretch before one of the bans to nobody: running T1 into it cuts a panel far short of
-     * its minimum, and running T0 early serves it far past its share.
+     * hour. Running T1 into a ban's eve cuts a panel short of its minimum, and running T0 early serves it past its share —
+     * where the score once left that stretch to nobody.
      */
     private fun fill(): ScheduleFill.Result {
         val tasks = listOf(
@@ -49,20 +50,12 @@ class IdleDecisionFillTest {
     }
 
     @Test
-    fun time_left_to_nobody_is_placed_as_nothing_and_reported() {
+    fun nobody_is_scheduled_where_a_task_may_run() {
         val result = fill()
-        assertTrue(result.idle.isNotEmpty(), "this case leaves time to nobody: ${result.placements.map { it.taskId.value to (it.startMillis - NOW) / MIN }}")
-        for (hole in result.idle) {
-            assertTrue(
-                result.placements.none { it.startMillis < hole.endEpochMillis && hole.startEpochMillis < it.endMillis },
-                "a placement inside the reported hole $hole",
-            )
-        }
-        // Placements, holes and the pre-placed hour tile the whole horizon: every instant is either decided or pre-placed.
+        assertTrue(result.idle.isEmpty(), "time left to nobody where some task may run: ${result.idle.map { (it.startEpochMillis - NOW) / MIN }}")
+        // Placements and the pre-placed hour tile the whole horizon: every instant is decided or pre-placed.
         val covered =
-            (result.placements.map { it.startMillis to it.endMillis } +
-                result.idle.map { it.startEpochMillis to it.endEpochMillis } +
-                listOf(NOW + 7 * HOUR to NOW + 8 * HOUR)).sortedBy { it.first }
+            (result.placements.map { it.startMillis to it.endMillis } + listOf(NOW + 7 * HOUR to NOW + 8 * HOUR)).sortedBy { it.first }
         var at = NOW
         for ((a, b) in covered) {
             assertEquals(at, a, "nothing between ${(at - NOW) / MIN} and ${(a - NOW) / MIN} min")

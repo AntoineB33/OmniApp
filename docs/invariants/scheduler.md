@@ -408,22 +408,14 @@ model exists to prevent.
   schedulable time), never over `τ_i`.** `λ` sets both how far a blockage's repayment reaches and how much a long
   one can buy (`π_i(1−π_i)·λ` of extra presence per side), so a 48-hour blockage buys barely more than a 24-hour
   one. Tied to `τ_i`, it made the repayment depend on the minimum time and shrank it to minutes (2026-09-19).
-- **LEAVING TIME TO NOBODY IS A DECISION THE SCORE PRICES, NOT A CONSTRAINT EITHER WAY** (2026-09-29, when
-  `docs/scheduler_requirements.md` dropped § *No idling*). Every decision tries nobody (`ScoreModel.IDLE`,
-  `ScoreModel.choicesAt`) beside every task — the rollout, the exhaustive search, the improver's reassign, the MIP's
-  "at most one task per slot" — and keeps it only where `J` goes down: the targets add up to 100 %, so every lag
-  falls behind, and the panel it interrupts ends. In practice that is a stretch before an edge too short for any
-  minimum, where a task would be a panel cut far short or a task served far past its share. Never put back a hard
-  "no gap" rule (it throws away continuations that score lower), and never a candidate filter on "does the minimum
-  fit" either (the score already weighs the shortfall against the lag).
-  - **A run of nobody is an explicit `Run` with task `IDLE`**: it names no alternative (§ *Alternative Schedules*
-    sets a task), is placed as nothing, and is reported as `ScheduleFill.Result.idle` →
-    `SchedulerState.plannedIdle` (in memory only, like `scheduleCycle`).
-  - **The check at the line tells the two holes apart through `plannedIdle`** (`planMismatchAtLine`,
-    `screen-breaks.md`): a hole the plan chose is the plan; a hole a moved break left behind is a mismatch, logged
-    (since 2026-09-29 the check never re-plans — a re-plan there rewrote a definitive schedule).
-  - **A peer's gap is not a decision** (§ *One device plans*): `isLegalContinuation` refuses gaps, and the runs then
-    compete as a seed, where a gap IS read as time left to nobody and the score judges it.
+- **NOBODY ONLY WHERE NO TASK MAY RUN** (user rule 2026-11-18: *"The deep search is worse than the instant schedule.
+  Fix it."*; `ScoreModel.choicesAt`, `permitted`, the MIP's slot constraint). Until then (2026-09-29, when
+  `docs/scheduler_requirements.md` dropped § *No idling*) nobody was a decision the score priced beside every task, and
+  the search took it wherever every candidate would overshoot its own small lag by its minimum — 5 % of the simulations'
+  time — while the instant schedule, which never does, divided the time better. Nobody is now what a stretch no task may
+  run in holds, and nothing else: `ScoreModel.IDLE` is still a run (a stretch every task is barred from), reported as
+  `ScheduleFill.Result.idle` → `SchedulerState.plannedIdle`, and a seed with a gap where a task may run is cut there
+  (`legalPrefix`). `IdleDecisionFillTest`.
 - **The one panel shorter than a minute is at `t_p` itself**, and it is the README's: modes 1 and 2 push the swept
   period onto the line as the half-open `(t_p, t_p + d]`, so the line's own instant is uncovered and *"the
   passing of the $now line$ creates task panels not covered by the period"*.
@@ -486,7 +478,14 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
     That is a change of the DEFINITION, made because the definition was what missed the requirement — not a term
     added for the short tasks. Do not answer the next such finding with a floor, a boost or a special case for the
     tasks it names.
-  - **Quarter scale (`-PlongScale=0.25`, seed 1) has never met `TOLERATED`** on the 120- and 200-task scenarios (red on
+  - **Green at quarter scale since 2026-11-18** (user rule: *"The deep search is worse than the instant schedule. Fix
+    it."*): nobody only where no task may run (`ScoreModel.choicesAt`), a lag remembered over `max(λ, τ_i)` and counted
+    in `π_i·max(λ, τ_i)` (`ScoreModel.memory`, `docs/scheduler_score.md` § *Criterion 1*). 0 % left to nobody
+    everywhere; least served task 60 tasks 0.94×, 120 tasks 0.77–0.89×, 200 tasks 0.77× / 0.54× (the ten days after the
+    upheaval, tolerated 0.50×) / 0.82×; most served ≤ 1.22×. On one week filled in one fill the deep search now beats the
+    instant schedule on two accounts of three (30 tasks 0.88× vs 0.82×, 50 tasks 0.81× vs 0.76×; 15 tasks 0.91× vs
+    0.94×).
+  - **Before that (history):** quarter scale (`-PlongScale=0.25`, seed 1) had never met `TOLERATED` on the 120- and 200-task scenarios (red on
     `ab3dd956`, the commit that wrote them: 0.73×). After the extension-head fix (2026-11-18) the week the first rules
     hold reads 0.74× (120 tasks, was 0.66×) and 0.69× (200 tasks, was 0.54×), 4.7–5 % left to nobody (was 6.4 %); the
     later weeks 6.6–11.8 % left to nobody. What remains, measured: the time left to nobody is chosen where every candidate

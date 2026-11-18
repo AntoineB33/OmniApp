@@ -78,7 +78,8 @@ class ScheduleScoreTest {
         assertTrue(ten < five, "10/10 ($ten) must beat 5/5 below the minimum ($five)")
 
         val plan = ScheduleOptimizer(m).plan(m.cursor(), 4.0 * HOUR)
-        val lengths = merged(plan.runs).drop(1).dropLast(1).map { it.second }
+        // With a lag remembered over hours (`ScoreModel.memory`, 2026-11-18), a cold start opens with one run that centers the lags' oscillation on zero — a quarter of the cost of a strict alternation from zero.
+        val lengths = merged(plan.runs).drop(2).dropLast(1).map { it.second }
         assertTrue(lengths.all { it == 10L }, "the plan alternates every 10 min: $lengths")
     }
 
@@ -96,7 +97,8 @@ class ScheduleScoreTest {
         val plan = ScheduleOptimizer(m).plan(m.cursor(), 9.0 * HOUR)
         val seq = merged(plan.runs)
         // After the first A, the pattern repeats: A30 then B15 C15 B15 C15 (or C/B swapped).
-        val firstA = seq.indexOfFirst { it.first == 0 }
+        // With a lag remembered over hours (`ScoreModel.memory`, 2026-11-18), a cold start opens with one run that centers the lags' oscillation on zero — a quarter of the cost of a strict alternation from zero. Read from the SECOND A.
+        val firstA = seq.withIndex().filter { it.value.first == 0 }.map { it.index }.getOrElse(1) { 0 }
         val steady = seq.drop(firstA).dropLast(5)
         for ((k, run) in steady.withIndex()) {
             if (run.first == 0) {

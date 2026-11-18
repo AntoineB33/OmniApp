@@ -239,10 +239,11 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                     for (q in k until K) row[q]?.let { link.setCoefficient(it, -1.0) }
                 }
             }
-            // At most one task per slot; a free slot may be left to nobody. A pre-placed slot admits its owner alone
-            // (allowed), and must hold it.
+            // One task per slot, and nobody only where none of them may run ([ScoreModel.choicesAt], user rule
+            // 2026-11-18). A pre-placed slot admits its owner alone (allowed), and must hold it.
             for (k in 0 until K) {
-                val one = solver.makeConstraint(if (slots[k].fixed >= 0) 1.0 else 0.0, 1.0)
+                val anyone = slots[k].fixed >= 0 || tasks.any { slots[k].allowed[it] }
+                val one = solver.makeConstraint(if (anyone) 1.0 else 0.0, 1.0)
                 for (t in tasks.indices) one.setCoefficient(x[t][k], 1.0)
             }
             // Two runs of one task back to back are ONE panel: never two variables for it.
@@ -273,7 +274,8 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
 
             // --- criterion 1: the lag dynamics, exact per slot, and its square bounded by tangents
             for ((t, i) in tasks.withIndex()) {
-                val tau = model.tau[i] / UNIT
+                // The lag's memory ([ScoreModel.memory]), not the task's window.
+                val tau = model.memory[i] / UNIT
                 val thetaMin = model.discount[i] / UNIT
                 var lagVar: MPVariable? = null
                 var lagConst = atA.lag[i] / UNIT
@@ -396,7 +398,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
         b: Double,
         untilU: Double,
     ): Pair<Double, Double> {
-        val d = model.tau[i]
+        val d = model.memory[i]
         fun costFrom(lag: Double): Double {
             val lags = start.lag.copyOf().also { it[i] = lag }
             val lagU = start.lagU.copyOf().also { it[i] = b }

@@ -59,16 +59,15 @@ class ScoreModel(
     val minimum: DoubleArray = DoubleArray(n) { tasks[it].minimumMillis.coerceAtLeast(0L).toDouble() }
 
     /**
-     * `docs/scheduler_score.md` § *Criterion 1*: **each task's lag is counted in units of its own minimum execution
-     * time** — `w_i = (1 min / max(M_i, 1 min))²`, on both criteria. A lag of one minimum then costs the same for
+     * `docs/scheduler_score.md` § *Criterion 1*: **each task's lag is counted in its own unit** — `w_i = (1 min /
+     * max(π_i·m_i, 1 min))²` with `m_i` its [memory] (2026-11-18), on both criteria; until then `max(M_i, 1 min)`, the same
+     * unit while the memory was `τ_i` (`π_i τ_i = M_i`). A lag of one minimum then costs the same for
      * every task, so a task under-served by a FRACTION of its share costs that fraction squared whatever its minimum
      * is: the percentages are matched for each task, not for the tasks with the longest minimums (counted in bare
      * minutes, a lag of a 5-minute task weighed 81 times less than a 45-minute task's, and the plan under-served the
      * short ones by a quarter to a half and left hours to nobody — the simulations, 2026-10-06).
      */
-    val lagWeight: DoubleArray = DoubleArray(n) {
-        (MIN_WINDOW_MILLIS / maxOf(minimum[it], MIN_WINDOW_MILLIS)).let { w -> w * w }
-    }
+    val lagWeight: DoubleArray
 
     /**
      * `docs/scheduler_score.md` § *Sets of tasks*: for each task, the tasks its time also counts for ([PlanTask.credits])
@@ -121,6 +120,15 @@ class ScoreModel(
      */
     val compLength: DoubleArray
 
+    /**
+     * `docs/scheduler_score.md` § *Criterion 1* *(2026-11-18)*: **how long a lag is remembered** — the same
+     * [COMPENSATION_LENGTH_MILLIS] for every ordinary task, a rare task's own `τ_i` past it: `max(λ, τ_i)`. It was `τ_i`
+     * for every task: a task due every forty minutes then forgot a deficit within the hour while one due every two days
+     * remembered its own for days, so the search neglected the first to keep the second — below the instant schedule's
+     * own division (`docs/invariants/scheduler.md` § *Simulations*). Remembered alike, no task is cheaper to neglect.
+     */
+    val memory: DoubleArray
+
     // --- wall segments -------------------------------------------------------------------------------
     private val wallStart: LongArray
     private val wallEnd: LongArray
@@ -154,6 +162,16 @@ class ScoreModel(
         tau = DoubleArray(n) { i -> if (windowOf[i].isNaN()) theta else windowOf[i] }
         discount = DoubleArray(n) { i -> if (!windowOf[i].isNaN() && windowOf[i] > RARE_AFTER_MILLIS) windowOf[i] else theta }
         compLength = DoubleArray(n) { i -> compensationLength(if (windowOf[i].isNaN()) 0.0 else windowOf[i]) }
+        memory = DoubleArray(n) { i -> maxOf(COMPENSATION_LENGTH_MILLIS, tau[i]) }
+        // The lag's unit is the lag its task settles at when served a whole share under its target over its [memory]:
+        // `π_i·max(λ, τ_i)`, so a relative miss δ costs δ² for every task. With `τ_i` as the memory it was `M_i`, the task's
+        // own minimum (`π_i τ_i = M_i`): that unit is this one's case, and stays a rare task's.
+        lagWeight = DoubleArray(n) { i ->
+            val unit =
+                if (share[i] > 0.0 && !windowOf[i].isNaN()) maxOf(share[i] * memory[i], MIN_WINDOW_MILLIS)
+                else maxOf(minimum[i], MIN_WINDOW_MILLIS)
+            (MIN_WINDOW_MILLIS / unit).let { w -> w * w }
+        }
 
         // --- cut the wall timeline at every edge
         val edgeSet = HashSet<Long>()
@@ -446,15 +464,18 @@ class ScoreModel(
     }
 
     /**
-     * May task [i] run at the schedulable instant [u]? [IDLE] — nobody — may wherever the scheduler decides, i.e.
-     * everywhere but inside a pre-placed task.
+     * May task [i] run at the schedulable instant [u]? [IDLE] — nobody — only where no task may (user rule 2026-11-18,
+     * [choicesAt]).
      */
     fun permitted(i: Int, u: Double): Boolean {
         val p = pieceAt(u)
         if (p < 0) return false
         val fixed = pieceFixed[p]
-        return if (fixed >= 0) fixed == i else i == IDLE || pieceMult[p][i] > 0.0
+        return if (fixed >= 0) fixed == i else if (i == IDLE) nobodyMay(p) else pieceMult[p][i] > 0.0
     }
+
+    /** Whether nobody may be scheduled in piece [p]: only where no task may run there ([choicesAt]). */
+    private fun nobodyMay(p: Int): Boolean = pieceMult[p].none { it > 0.0 }
 
     /**
      * How far a run of [i] may go from [u]: up to the first piece where it may not run, or where a pre-placed task
@@ -466,7 +487,7 @@ class ScoreModel(
         if (p < 0) return u
         while (p < pieceCount) {
             val fixed = pieceFixed[p]
-            val ok = if (fixed >= 0) fixed == i else i == IDLE || pieceMult[p][i] > 0.0
+            val ok = if (fixed >= 0) fixed == i else if (i == IDLE) nobodyMay(p) else pieceMult[p][i] > 0.0
             if (!ok) return maxOf(u, pieceUStart[p])
             p++
         }
@@ -515,16 +536,17 @@ class ScoreModel(
     }
 
     /**
-     * What the scheduler may decide at [u]: [candidatesAt], then [IDLE] — `docs/scheduler_requirements.md` asks for
-     * no task anywhere, so leaving schedulable time to nobody is a candidate like any other, priced by the score (every
-     * lag falls behind its target, and the panel it interrupts ends). Last, so it loses every tie. Inside a pre-placed
-     * task, its owner alone.
+     * What the scheduler may decide at [u]: [candidatesAt] — and [IDLE], nobody, only where no task may run. User rule
+     * 2026-11-18: *"The deep search is worse than the instant schedule. Fix it."* The instant schedule never leaves time
+     * to nobody where a task may run (its "obviously wrong" list); the search did, wherever every candidate would overshoot
+     * its own small lag by its minimum — 5 % of the simulations' time, its least served task below the instant schedule's
+     * (`docs/invariants/scheduler.md` § *Simulations*). Inside a pre-placed task, its owner alone.
      */
     fun choicesAt(u: Double): List<Int> {
         val p = pieceAt(u)
         if (p < 0) return emptyList()
         if (pieceFixed[p] >= 0) return listOf(pieceFixed[p])
-        return candidatesAt(u) + IDLE
+        return candidatesAt(u).ifEmpty { listOf(IDLE) }
     }
 
     /** Is [u] inside a pre-placed task? Its owner, or -1. */
@@ -696,7 +718,7 @@ class ScoreModel(
 
     private fun integrateOne(cursor: ScoreCursor, i: Int, x: Double, f: Double, u: Double, h: Double) {
         if (h <= 0.0) return
-        val t = tau[i]
+        val t = memory[i]
         val kd = 1.0 / discount[i]
         val lInf = (x - f) * t
         val d = cursor.lag[i] - lInf
@@ -714,7 +736,7 @@ class ScoreModel(
      */
     private fun integrateCredit(cursor: ScoreCursor, i: Int, rate: Double, f: Double, u: Double, h: Double) {
         if (h <= 0.0) return
-        val t = tau[i]
+        val t = memory[i]
         var from = u
         var left = h
         var guard = 0
@@ -782,7 +804,7 @@ class ScoreModel(
         val l0 = abs(lag)
         if (span <= 0.0 || l0 <= 0.0) return 0.0
         val kd = 1.0 / discount[i]
-        val t = tau[i]
+        val t = memory[i]
         // |L|(w) ≥ (l0 + τ)e^(−w/τ) − τ, which reaches 0 at w0 = τ·ln(1 + l0/τ).
         val w0 = minOf(span, t * ln(1.0 + l0 / t))
         val a = l0 + t

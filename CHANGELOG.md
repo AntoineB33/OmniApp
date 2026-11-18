@@ -11,6 +11,27 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The deep search no longer does worse than the instant schedule — 2026-11-18
+
+User rule: *"The deep search is worse than the instant schedule. Fix it."* Measured on one week filled in one fill (the
+simulations' accounts, graded by their own measure): the instant schedule (no search, 0.3 s) left 0 % to nobody and its
+least served task at 0.82×; the deep fill (30 s) 5.1 % and 0.78×. Two changes of the score's definition
+(`docs/scheduler_score.md`):
+
+- **Nobody only where no task may run** (`ScoreModel.choicesAt`, `permitted`, the MIP's slot constraint). The search had
+  taken it wherever every candidate would overshoot its own small lag by its minimum.
+- **A lag is remembered over `max(λ, τ_i)`** — the same four hours for every ordinary task, a rare task's own window
+  past it — **and counted in `π_i·max(λ, τ_i)`** (`ScoreModel.memory`, `lagWeight`), so a relative miss still costs δ²
+  for every task. Remembered over `τ_i`, a task due every forty minutes forgot a deficit within the hour while one due
+  every two days kept its own for days, and the search neglected the first.
+
+Now the deep fill beats the instant schedule on two accounts of three (0.88× vs 0.82×, 0.81× vs 0.76×; 0.91× vs 0.94×),
+and `:shared:longTest -PlongScale=0.25` passes for the first time since the simulations were written: 0 % left to nobody
+everywhere, least served 0.77–0.94× (0.54× in the ten days after the upheaval, tolerated 0.50×). Two variants measured and
+not kept are in `docs/invariants/scheduler.md` § *Simulations*. On a cold start the lags' oscillation is centered once
+(one run longer than its minimum); seven tests read the steady state after it, and an extension's unrolled cycle is read
+to within three minutes of a direct fill (7 of 480 runs moved by up to two). Client rebuild.
+
 ### An extension replays the pre-placed tasks inside its kept head — 2026-11-18
 
 Found investigating the long simulations, red at quarter scale since they were written (`ab3dd956`, 2026-10-06, already

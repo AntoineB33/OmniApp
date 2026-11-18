@@ -110,7 +110,14 @@ class ScheduleCycleTest {
         val direct = fill(s, NOW + 6 * DAY)
 
         val horizon = NOW + 6 * DAY - HOUR
-        assertEquals(autoRuns(direct.panels, horizon), autoRuns(extended.panels, horizon))
+        // The same runs in the same order; a lag remembered over hours (2026-11-18) lets the search's reach nudge a few
+        // boundaries (7 of 480 runs by up to two minutes, measured), so each is read to within three.
+        val d = autoRuns(direct.panels, horizon)
+        val e = autoRuns(extended.panels, horizon)
+        assertEquals(d.map { it.first }, e.map { it.first })
+        for ((x, y) in d.zip(e)) {
+            assertTrue(kotlin.math.abs(x.second - y.second) <= 3 * 60_000L && kotlin.math.abs(x.third - y.third) <= 3 * 60_000L, "$x vs $y")
+        }
         val rebased = assertNotNull(extended.cycle, "an unrolled extension keeps the cycle")
         assertTrue(rebased.anchorMillis > first.cycle.anchorMillis + 3 * DAY, "the cycle is rebased onto the extension")
         assertEquals(first.cycle.runs.map { it.taskId to it.lengthMillis }.toSet(), rebased.runs.map { it.taskId to it.lengthMillis }.toSet())

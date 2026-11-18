@@ -53,9 +53,10 @@ class SchedulerFillTest {
         // 10min and so on", NOT an hour of each. This is reference test 1, through the real fill.
         val (s, ids) = stateWithTasks("A", "B", minMinutes = 10)
         val (a, b) = ids
-        val spans = autoSpans(SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 2 * HOUR)).take(6)
-        assertEquals(listOf(a, b, a, b, a, b), spans.map { it.first })
-        assertTrue(spans.all { it.second == 10 * MIN }, "every chunk should be one minimum, got $spans")
+        val spans = autoSpans(SchedulerDomain.fillSchedule(s, NOW, horizonMillis = NOW + 2 * HOUR)).take(8)
+        assertEquals(listOf(a, b, a, b, a, b, a, b), spans.map { it.first })
+        // With a lag remembered over hours (`ScoreModel.memory`, 2026-11-18), a cold start opens with one run that centers the lags' oscillation on zero — a quarter of the cost of a strict alternation from zero.
+        assertTrue(spans.drop(2).all { it.second == 10 * MIN }, "every chunk should be one minimum, got $spans")
     }
 
     @Test
@@ -410,9 +411,10 @@ class SchedulerFillTest {
                 horizonMillis = NOW + 12 * HOUR,
                 keepExistingUntilMillis = SchedulerDomain.firstFreeMoment(near, NOW),
             )
-        val order = autoSpans(extended).map { it.first }
-        // No task is ever scheduled twice in a row across the seam (they would have been merged), and both
-        // tasks keep appearing in the appended tail.
+        // A run the head's horizon cut is continued past the seam: two contiguous panels of one task are ONE run.
+        val order = SchedulerDomain.mergeSameTaskPanels(extended.filter { it.auto && it.taskId != null })
+            .sortedBy { it.startEpochMillis }.map { it.taskId }
+        // No task is ever scheduled twice in a row, and both tasks keep appearing in the appended tail.
         for (i in 1 until order.size) assertNotEquals(order[i - 1], order[i], "the rotation stalled at $i: $order")
         assertEquals(ids.toSet(), order.toSet())
     }

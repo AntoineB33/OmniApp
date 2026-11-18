@@ -147,7 +147,8 @@ class RuleStateEvolutionTest {
             val panels = SchedulerDomain.fillSchedule(state, now, horizonMillis = now + 6 * hour)
                 .filter { it.taskId != null && it.startEpochMillis < until }
                 .sortedBy { it.startEpochMillis }
-            return panels.map { "${it.title}@${it.startEpochMillis}-${minOf(it.endEpochMillis, until)}" } +
+            // To the second: a moving rule state's cut is bisected to a second (`docs/invariants/scheduler.md`).
+            return panels.map { "${it.title}@${it.startEpochMillis / 1000}-${minOf(it.endEpochMillis, until) / 1000}" } +
                 (now until until step minute).map { t -> "alt@$t=${SchedulerDomain.alternativeTaskAt(panels, t)?.let { id -> state.tasks[id]?.title }}" }
         }
         for (halfMinute in 0..9) {
