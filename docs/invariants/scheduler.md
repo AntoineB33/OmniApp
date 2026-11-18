@@ -494,6 +494,18 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
     within their own window (`τ_i` under an hour), so the score barely sees it — a question about the DEFINITION, open.
     A tried change that counted a panel holding a pre-placed block as whole (no shortfall) moved the figures both ways
     and was not kept.
+  - **The search does worse than its own base policy** (2026-11-18, the 120-task scenario's week 1 filled in ONE fill,
+    measured by the harness): the instant schedule (`InstantSchedule`, no search, 0.3 s) left 0 % to nobody with the least
+    served task at 0.82×; the deep fill (30 s) left 5.1 % with 0.78×. What the search optimizes is not what the
+    requirements measure — the score, not the search, is where the remaining gap lives.
+  - **Tried and NOT kept (2026-11-18): remembering a lag over the compensation length `λ_i` instead of `τ_i`**, the lag
+    counted in `π_i λ_i` (so a relative miss still costs δ² for every task). It removes the cause above — a lag no longer
+    saturates at one minimum — and time left to nobody fell everywhere (0.3–8.9 %), the 60-task run and most later weeks
+    divided better (0.84–0.89×), but the first weeks of the large accounts collapsed: 120 tasks week 1 0.74× → 0.62×,
+    200 tasks days 0–20 0.69×/0.65× → 0.39×/0.34× (rare tasks remember an excess over `≈3τ_i` in a unit three times
+    larger, so over-serving them became cheap). Counted in minimums instead, short-minimum tasks weighed up to
+    `(λ_i/τ_i)² ≈ 30` times more and the long-minimum ones fell to 0.53×. A next attempt must keep the rare tasks'
+    excess as costly as their deficit.
   - `TOLERATED` is today's behaviour with a margin: the tests fail past it, so nothing gets worse unnoticed, and
     every long run prints how far it is from `GOAL`. **Tighten `TOLERATED` when the scheduler improves; never loosen
     it to make a change pass.** A stretch that FOLLOWS a rule change is held to `TOLERATED_AFTER_CHANGE`: the
