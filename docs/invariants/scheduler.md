@@ -130,6 +130,13 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
 Only three things: **pre-placed tasks** (pinned/manual panels), **the frozen past** (records, past panels, the
 kept head on an extension) and **restrictive periods**. Nothing else, by any other route.
 
+- **What an extension keeps is replayed whole, its pre-placed tasks included** (2026-11-18, `ExtensionHeadBlocksTest`):
+  the history a fill starts from is the past up to the line, then the kept head up to where the fill starts — the
+  scheduler's runs AND the user's pre-placed blocks inside it, each served by its task. Replayed without the blocks, a
+  block between the line and the fill's start read as its owner not served where its target is the whole of the time:
+  the fill paid it back right after the head (a 0.7 % task given 125 min after its 117-min block), and the next fill,
+  reading the block as served, found it as far ahead and left time to nobody to bring it back (136 min).
+
 
 - **Pre-placed tasks and restrictive periods can repeat for ever** (`TaskPanel.repeat`, `PanelRepeat`, requirements
   § *Priority, Granularity and Compensation*: *"can be in infinite patterns"*, 2026-09-27): every N days at the same
@@ -479,6 +486,14 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
     That is a change of the DEFINITION, made because the definition was what missed the requirement — not a term
     added for the short tasks. Do not answer the next such finding with a floor, a boost or a special case for the
     tasks it names.
+  - **Quarter scale (`-PlongScale=0.25`, seed 1) has never met `TOLERATED`** on the 120- and 200-task scenarios (red on
+    `ab3dd956`, the commit that wrote them: 0.73×). After the extension-head fix (2026-11-18) the week the first rules
+    hold reads 0.74× (120 tasks, was 0.66×) and 0.69× (200 tasks, was 0.54×), 4.7–5 % left to nobody (was 6.4 %); the
+    later weeks 6.6–11.8 % left to nobody. What remains, measured: the time left to nobody is chosen where every candidate
+    would overshoot its own small lag by its minimum, and the short, high-share tasks it deprives forget the deficit
+    within their own window (`τ_i` under an hour), so the score barely sees it — a question about the DEFINITION, open.
+    A tried change that counted a panel holding a pre-placed block as whole (no shortfall) moved the figures both ways
+    and was not kept.
   - `TOLERATED` is today's behaviour with a margin: the tests fail past it, so nothing gets worse unnoticed, and
     every long run prints how far it is from `GOAL`. **Tighten `TOLERATED` when the scheduler improves; never loosen
     it to make a change pass.** A stretch that FOLLOWS a rule change is held to `TOLERATED_AFTER_CHANGE`: the

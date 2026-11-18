@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An extension replays the pre-placed tasks inside its kept head — 2026-11-18
+
+Found investigating the long simulations, red at quarter scale since they were written (`ab3dd956`, 2026-10-06, already
+0.73×). An extension starts its fill where the head it keeps ends, and replayed that head as the scheduler's runs alone:
+a user's pre-placed block between the line and the fill's start read as its owner not served where its target is the
+whole of the time. The fill then gave that task its block's length again right after the head, and the next fill,
+reading the block as served, found it as far ahead and left time to nobody to bring it back. The history now carries
+the pre-placed blocks of that span (`SchedulerDomain.fillSchedule`, `ExtensionHeadBlocksTest`: 95 min of a 1 % task
+after its block before, none now). `:shared:longTest -PlongScale=0.25`: still red, closer — 120 tasks week 1 0.66× →
+0.74× (6.4 % → 4.7 % left to nobody), 200 tasks days 0–10 0.54× → 0.69×; later weeks move both ways (120 tasks week 3
+0.86× → 0.80×, week 4 0.69× → 0.76×). What remains is in `docs/invariants/scheduler.md` § *Simulations*. Client rebuild.
+
 ### A task's presence and minimum over time are formulas — 2026-11-16
 
 User rule: *"In a task element, the user can define the evolution of its presence ratio target and its minimum length

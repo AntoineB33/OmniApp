@@ -6654,10 +6654,17 @@ object SchedulerDomain {
                     .map { PlanBlock(id, maxOf(it.startEpochMillis, scoreFrom), minOf(it.endEpochMillis, nowMillis)) }
                     .filter { it.endMillis > it.startMillis }
             }
+        // What was served up to where this fill starts: the past, and — on an extension — the kept head, WITH the
+        // pre-placed tasks inside it. Replayed without them, a pre-placed task between the line and the fill's start read
+        // as its owner not served where its target is the whole of the time, a deficit of the block's length: the fill
+        // then served that task far over its share right after, and the next fill, reading the block as served, found it
+        // as far ahead and left time to nobody to bring it back (2026-11-18, the long simulations' week 1: a 0.7 % task
+        // given 125 min after its 117-min block, then 136 min left to nobody, `ExtensionHeadBlocksTest`).
         val history =
-            pastBlocks + keptHead
-                .map { PlanBlock(it.taskId, maxOf(it.startEpochMillis, nowMillis), minOf(it.endEpochMillis, startMillis)) }
-                .filter { it.endMillis > it.startMillis }
+            pastBlocks + (
+                keptHead.map { PlanBlock(it.taskId, maxOf(it.startEpochMillis, nowMillis), minOf(it.endEpochMillis, startMillis)) } +
+                    pinnedBlocks.filter { it.taskId != null }.map { PlanBlock(it.taskId, maxOf(it.startMillis, nowMillis), minOf(it.endMillis, startMillis)) }
+                ).filter { it.endMillis > it.startMillis }
 
         // PRD §7 "Switch task" and PRD §13 "start this task now" are the README's alternative schedule put to use:
         // the refused task may not be the first run, the requested one must be. Both are about the line itself, so
