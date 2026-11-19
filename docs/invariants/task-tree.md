@@ -1061,6 +1061,9 @@ suggestions before it was ever entered.
   section and 'added elements' list section"*): a result row, a cell of an open row's sub-tree (its task, while that
   sub-tree holds the window's selection), a child row under an open element (`subtreeSelected`, `childSelected`). Only
   the result rows counted, so in the Task trees window — every task a cell under the root — no selection reached them.
+  **The added elements list never clears the selection surface it shares with its window** (same day: *"It blinks when
+  I select a row"* — drawn for the first row a click gave it, the list's own "a new question starts at the top" cleared
+  it, the cell no longer counted, and the row went).
 - **A double-click on a result row never opens a window** (user rule 2026-10-01): on a task row's title it enters
   Edit Mode (the tree's rule), on any other row it ADDS the element to the added elements (`addKeys`) — a "creation"
   row and a workplace setup excepted, which are commands: a creation row makes its element, a workplace setup is

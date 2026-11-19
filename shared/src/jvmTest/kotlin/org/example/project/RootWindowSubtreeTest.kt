@@ -38,6 +38,87 @@ import org.example.project.scheduler.state.projectSearchSubtree
 @OptIn(androidx.compose.ui.InternalComposeUiApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 class RootWindowSubtreeTest {
 
+    /**
+     * Anomaly 2026-11-19: *"It blinks when I select a row"*. Clicked, the cell's task joined the empty added list, whose
+     * window, drawn for it, cleared the surface it shares with its window: the cell no longer counted and the row went.
+     */
+    @Test
+    fun a_cell_clicked_first_stays_in_the_added_elements() {
+        var account = org.example.project.scheduler.domain.TaskTreesAsTasks.seeded(SchedulerState.empty(), "tree-2026-11-19")
+        val tree = account.lists[account.rootListId]!!.cellIds.first { account.cells[it]?.taskId != null }
+        val treeTask = account.cells[tree]!!.taskId!!
+        val kidCell = account.lists[account.tasks[treeTask]!!.childListId!!]!!.cellIds[0]
+        account = SchedulerReducer.reduce(account, SchedulerIntent.SetCellTitle(kidCell, "Kid"))
+        val popups = CellEditPopupHost()
+        var live = account
+        val scene = onEdt { ImageComposeScene(1200, 620, density = Density(1f)) {
+            var state by remember { mutableStateOf(account) }
+            var config by remember { mutableStateOf(SearchDomain.rootSearchConfig()) }
+            CompositionLocalProvider(LocalCellEditPopupHost provides popups) {
+                SearchWindow(
+                    state = state,
+                    openers = SearchRowOpeners(
+                        onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {},
+                    ),
+                    onStartTaskNow = {},
+                    onGoToTaskTree = { _, _ -> },
+                    onDeepCopyCell = {},
+                    actionHandlers = AddedActionHandlers(
+                        onStartNow = {}, onEdit = {}, onGoToTaskTree = {}, onDeepCopyCell = {}, onOpenResilienceSearch = {},
+                        onOpenKindSearch = {}, timerRun = { _, _ -> }, reminderEditor = {}, onCreate = {},
+                        onDuplicate = { _, _ -> emptyList() }, onPlaceOnCalendar = {},
+                    ),
+                    onIntent = {
+                        state = SchedulerReducer.reduce(state, it)
+                        live = state
+                    },
+                    onDismiss = {},
+                    config = config,
+                    onConfigChange = { config = it },
+                    onOpenConfigurations = {},
+                    splits = SearchSplits(expandedResults = setOf(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK.value)),
+                    initialSize = Size(1200f, 620f),
+                )
+            }
+        } }
+        var time = 0L
+        fun frame() = onEdt { time += 16_000_000L; scene.render(time) }
+        fun settle() = repeat(6) {
+            frame()
+            Thread.sleep(20)
+        }
+        fun key(key: Key) {
+            onEdt {
+                scene.sendKeyEvent(KeyEvent(key = key, type = KeyEventType.KeyDown))
+                scene.sendKeyEvent(KeyEvent(key = key, type = KeyEventType.KeyUp))
+            }
+            settle()
+        }
+        fun texts(title: String) = onEdt {
+            scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                .filter { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == title } == true }
+        }
+        try {
+            repeat(30) {
+                frame()
+                Thread.sleep(30)
+            }
+            val treeTitle = live.tasks.getValue(treeTask).title
+            val at = texts(treeTitle).first().boundsInWindow.center
+            onEdt {
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, at)
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Press, at)
+            }
+            settle()
+            onEdt { scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Release, at) }
+            repeat(4) { settle() }
+            assertEquals(tree, live.searchSelection.main, "the click selected the cell")
+            assertTrue(texts(treeTitle).size >= 2, "its task stays in the added elements: ${texts(treeTitle).size}")
+        } finally {
+            onEdt { scene.close() }
+        }
+    }
+
     @Test
     fun the_roots_children_are_walked_selected_and_opened_as_any_rows() {
         var account = org.example.project.scheduler.domain.TaskTreesAsTasks.seeded(SchedulerState.empty(), "tree-2026-11-19")
@@ -109,6 +190,14 @@ class RootWindowSubtreeTest {
                     .count { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == treeTitle } == true }
             }
             assertTrue(shown >= 2, "the cell in the sub-tree, and its task in the added elements: $shown")
+            // …and it stays (anomaly 2026-11-19: *"It blinks when I select a row"*): frames later, still there.
+            settle()
+            settle()
+            val still = onEdt {
+                scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                    .count { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == treeTitle } == true }
+            }
+            assertTrue(still >= 2, "still in the added elements frames later: $still")
             // On along the root's children, and back, as in the tree.
             key(Key.DirectionDown)
             assertTrue(live.searchSelection.main != tree, "↓ walks on along the root's children")

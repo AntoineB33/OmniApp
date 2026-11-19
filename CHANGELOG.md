@@ -16,6 +16,9 @@ Check here before assuming the code matches the docs.
 - Anomaly: *"I select a task element, but nothing happens in the action section and 'added elements' list section"*.
   Only result rows counted as selected; a cell of an open row's sub-tree (every task in the Task trees window) and a
   child row under an open element did not. Both do now (`SearchWindow`'s `selectedOnly`). `RootWindowSubtreeTest`.
+- Anomaly, the same evening: *"It blinks when I select a row"*. The added list, drawn for the first row a click gave it,
+  cleared the selection surface it shares with its window on its first question; the clicked cell no longer counted and
+  the row went. It no longer clears the shared surface. `RootWindowSubtreeTest` (a cell clicked first).
 
 ### A quick click on ▾ keeps its pop-up — 2026-11-19
 

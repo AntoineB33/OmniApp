@@ -777,7 +777,11 @@ fun SearchWindow(
     // A new question starts at its best answer.
     LaunchedEffect(kinds, query, filters, sorts) {
         select(0, record = false)
-        selectionSurface = null
+        // Never the surface the added elements list SHARES with its window (anomaly 2026-11-19: *"It blinks when I select
+        // a row"* — a cell selected in a sub-tree gave the empty list a row; drawn for it, the list's first question
+        // cleared the window's surface, the cell no longer counted, the row went, and the list with it). Its own rows
+        // still take the surface when pressed ([selectRow]).
+        if (addedList == null) selectionSurface = null
     }
     // History navigation changes the authoritative row without passing through clickRow. Anomaly 2026-11-14 (*"I do
     // shift+click to select several rows, but it doesn't work. ctrl+click doesn't work either"*): it also ran for the
