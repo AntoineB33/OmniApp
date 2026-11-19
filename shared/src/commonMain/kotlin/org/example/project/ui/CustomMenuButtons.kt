@@ -689,7 +689,18 @@ object CustomMenuButtons {
         return others.subList(0, at) + rest + others.subList(at, others.size)
     }
 
-    /** The placement row the order of the bar's tabs is kept on (user rule 2026-11-01): [encodeGlobalWindows]' shape. */
+    /**
+     * Anomaly 2026-11-19 (*"I set off 'Menu keeps open rows', then right-clicked the 'task trees' button, but I don't see
+     * any 'Update' option"*): **the window each button opened, by button id → frame id**, kept across a restart. It was
+     * found again by the window's tab name alone, which a renamed button no longer matches. Local-only view state.
+     */
+    const val BUTTON_WINDOWS_PLACEMENT_ID: String = "MenuButtonWindows"
+
+    fun encodeButtonWindows(windows: Map<String, String>): String = encodeTabTitles(windows)
+
+    fun decodeButtonWindows(text: String?): Map<String, String> = decodeTabTitles(text)
+
+    /** The order of the bar's tabs is kept on (user rule 2026-11-01): [encodeGlobalWindows]' shape. */
     const val TAB_ORDER_PLACEMENT_ID: String = "TabOrder"
 
     /** The placement row the windows set global are kept on (user rule 2026-10-18), in the order they were set so. */
@@ -1166,24 +1177,49 @@ private fun MenuItemRow(
             ActionMenu("lateral menu button menu",
                 open = menuOpen,
                 onDismiss = { menuOpen = false },
-                actions = buildList {
-                    if (!button.folder && canUpdate(button)) add(MenuAction("Update") { onUpdate(button) })
-                    if (CustomMenuButtons.canRename(button)) add(MenuAction("Rename") { onStartRename(button.id) })
-                    // Checked while the item stands in the menu of every page. A folder is its items, each global or not.
-                    // User rule 2026-11-04: named "all pages" (it was "Global").
-                    if (!button.folder) add(MenuAction((if (button.global) "✓ " else "") + "all pages") { onSetGlobal(button.id, !button.global) })
-                    // User rule 2026-11-05: a window's button only — checked, it brings back its window only as it keeps it whole.
-                    if (!button.folder && button.control == null && button.action == null && button.windowId.isNotBlank()) {
-                        val on = CustomMenuButtons.wholeStateOn(button)
-                        add(MenuAction((if (on) "✓ " else "") + "match the whole state") { onSetWholeState(button.id, !on) })
-                    }
-                    add(MenuAction("Remove") { onRemove(button.id) })
-                    add(MenuAction("Reset") { onReset() })
-                },
+                actions = menuItemActions(button, canUpdate, onUpdate, onStartRename, onSetGlobal, onSetWholeState, onRemove, onReset),
             )
         }
     }
 }
+
+/**
+ * **The right-click entries of an item of the left-side menu** — ONE list, every row of the menu's (anomaly 2026-11-19:
+ * *"when I right-click on the feature page selector button, it gives me the options I should have if I right-click on the
+ * background of the left-side menu"*). [button] null is the page selector: the one item that is not the user's, never
+ * renamed, removed or made a page's own — those entries greyed, never absent — standing on every page.
+ */
+internal fun menuItemActions(
+    button: CustomMenuButton?,
+    canUpdate: (CustomMenuButton) -> Boolean = { false },
+    onUpdate: (CustomMenuButton) -> Unit = {},
+    onStartRename: (id: String) -> Unit = {},
+    onSetGlobal: (id: String, global: Boolean) -> Unit = { _, _ -> },
+    onSetWholeState: (id: String, on: Boolean) -> Unit = { _, _ -> },
+    onRemove: (id: String) -> Unit = {},
+    onReset: () -> Unit,
+): List<MenuAction> =
+    buildList {
+        if (button == null) {
+            add(MenuAction("Rename", enabled = false) {})
+            add(MenuAction("✓ all pages", enabled = false) {})
+            add(MenuAction("Remove", enabled = false) {})
+            add(MenuAction("Reset") { onReset() })
+            return@buildList
+        }
+        if (!button.folder && canUpdate(button)) add(MenuAction("Update") { onUpdate(button) })
+        if (CustomMenuButtons.canRename(button)) add(MenuAction("Rename") { onStartRename(button.id) })
+        // Checked while the item stands in the menu of every page. A folder is its items, each global or not.
+        // User rule 2026-11-04: named "all pages" (it was "Global").
+        if (!button.folder) add(MenuAction((if (button.global) "✓ " else "") + "all pages") { onSetGlobal(button.id, !button.global) })
+        // User rule 2026-11-05: a window's button only — checked, it brings back its window only as it keeps it whole.
+        if (!button.folder && button.control == null && button.action == null && button.windowId.isNotBlank()) {
+            val on = CustomMenuButtons.wholeStateOn(button)
+            add(MenuAction((if (on) "✓ " else "") + "match the whole state") { onSetWholeState(button.id, !on) })
+        }
+        add(MenuAction("Remove") { onRemove(button.id) })
+        add(MenuAction("Reset") { onReset() })
+    }
 
 /** The gap between two rows of the menu, which a level's line crosses. */
 internal val MENU_ROW_GAP = 10.dp

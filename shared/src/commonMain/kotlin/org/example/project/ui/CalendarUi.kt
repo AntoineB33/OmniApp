@@ -1808,7 +1808,7 @@ fun LateralMenu(
                     row = { key, arranging ->
                         // In a box of its own: open, its list is a node of the layout, and the column's gap, given to
                         // it, moved every item under it (anomaly 2026-11-01, `LateralMenuShiftTest`).
-                        if (key == PAGE_SELECTOR_ROW) Box(Modifier.fillMaxWidth()) { PageNavButton(page = page, onPageSelected = onPageSelected) }
+                        if (key == PAGE_SELECTOR_ROW) PageSelectorRow(page, onPageSelected, onReset)
                         else given.row(key, arranging)
                     },
                     onActivate = { key -> if (key != PAGE_SELECTOR_ROW) given.onActivate(key) },
@@ -3859,6 +3859,26 @@ internal fun parseTimeOfDay(text: String): Int {
 internal fun pageSelectorAnswers(query: String, page: OmniPage): Boolean =
     query.isBlank() || OmniPage.entries.any { org.example.project.scheduler.domain.SearchDomain.matchRank(it.label, query) != null } ||
         org.example.project.scheduler.domain.SearchDomain.matchRank(page.label, query) != null
+
+/**
+ * The page selector as a row of the left-side menu: its right-click is an item's ([menuItemActions], anomaly 2026-11-19),
+ * not the menu's background's.
+ */
+@Composable
+private fun PageSelectorRow(page: OmniPage, onPageSelected: (OmniPage) -> Unit, onReset: () -> Unit) {
+    var menuOpen by remember { mutableStateOf(false) }
+    // In a box of its own: open, its list is a node of the layout, and the column's gap, given to it, moved every item
+    // under it (anomaly 2026-11-01, `LateralMenuShiftTest`).
+    Box(Modifier.fillMaxWidth().then(contextMenuModifier(enabled = true, key = PAGE_SELECTOR_ROW) { menuOpen = true })) {
+        PageNavButton(page = page, onPageSelected = onPageSelected)
+        ActionMenu(
+            "lateral menu button menu",
+            open = menuOpen,
+            onDismiss = { menuOpen = false },
+            actions = menuItemActions(null, onReset = onReset),
+        )
+    }
+}
 
 @Composable
 private fun PageNavButton(page: OmniPage, onPageSelected: (OmniPage) -> Unit) {

@@ -85,4 +85,29 @@ class RootMenuButtonTest {
         val renamed = CustomMenuButtons.encode(CustomMenuButtons.DEFAULTS.map { if (it.id == "d-root") it.copy(title = "Mine") else it })
         assertEquals("Mine", CustomMenuButtons.decode(renamed).single { it.id == "d-root" }.title)
     }
+
+    /**
+     * Anomaly 2026-11-19: *"when I right-click on the feature page selector button, it gives me the options I should have if I
+     * right-click on the background of the left-side menu"*. Its right-click is an item's, from the one list of them: what
+     * cannot apply to it greyed, never absent.
+     */
+    @Test
+    fun the_page_selector_has_an_items_right_click_entries() {
+        val selector = org.example.project.ui.menuItemActions(null, onReset = {})
+        val item = org.example.project.ui.menuItemActions(CustomMenuButtons.ROOT_SEARCH, onReset = {})
+        assertEquals(listOf("Rename", "✓ all pages", "Remove", "Reset"), selector.map { it.label })
+        assertEquals(listOf("Reset"), selector.filter { it.enabled }.map { it.label })
+        assertTrue(selector.map { it.label }.all { label -> item.any { it.label.removePrefix("✓ ") == label.removePrefix("✓ ") } })
+    }
+
+    /**
+     * Anomaly 2026-11-19: *"I set off 'Menu keeps open rows', then right-clicked the 'task trees' button, but I don't see any
+     * 'Update' option"*: the window a button opened is kept across a restart, not found again by its tab's name alone.
+     */
+    @Test
+    fun the_window_a_button_opened_is_kept_by_the_store() {
+        val links = mapOf(CustomMenuButtons.ROOT_SEARCH.id to "Search#3", "b1" to "Search")
+        assertEquals(links, CustomMenuButtons.decodeButtonWindows(CustomMenuButtons.encodeButtonWindows(links)))
+        assertEquals(emptyMap(), CustomMenuButtons.decodeButtonWindows(null))
+    }
 }

@@ -324,7 +324,7 @@ private val VIEW_ROWS: Set<String> =
         CustomMenuButtons.WINDOW_SECTIONS_PLACEMENT_ID, org.example.project.ui.WindowShortcuts.PLACEMENT_ID, "AppWindow",
         CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID,
         org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID, CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID,
-        CustomMenuButtons.SETTINGS_PLACEMENT_ID, CustomMenuButtons.TAB_ORDER_PLACEMENT_ID,
+        CustomMenuButtons.SETTINGS_PLACEMENT_ID, CustomMenuButtons.TAB_ORDER_PLACEMENT_ID, CustomMenuButtons.BUTTON_WINDOWS_PLACEMENT_ID,
         org.example.project.ui.AppViewState.PLACEMENT_ID,
         org.example.project.ui.PopupMemory.PLACEMENT_ID,
     )
@@ -706,6 +706,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // (by frame id), the layout that window had then — the reference for a button that kept none — and the lines
         // between the sections of the windows that have some, which those windows tell here. Compose-only.
         val menuButtonWindows = remember { androidx.compose.runtime.mutableStateMapOf<String, String>() }
+        // Kept across a restart (anomaly 2026-11-19): loaded once, for the windows that come back; written as it changes.
+        remember(placementStore) {
+            menuButtonWindows.putAll(
+                CustomMenuButtons.decodeButtonWindows(placements[CustomMenuButtons.BUTTON_WINDOWS_PLACEMENT_ID]?.config)
+                    .filterValues { placements[it]?.visible == true },
+            )
+            true
+        }
         val menuButtonOpenedLayouts = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowLayout>() }
         val searchSplits = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.SearchSplits>() }
         // Anomaly 2026-11-04: the Online window, opened on the Task Scheduler page, was asked for again from the settings
@@ -1342,6 +1350,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 .filterKeys { placements[it]?.visible == true }
             windowFrames.tabTitles.putAll(visible)
             true
+        }
+        LaunchedEffect(placementStore) {
+            androidx.compose.runtime.snapshotFlow { menuButtonWindows.toMap() }.collect { links ->
+                updatePlacementById(CustomMenuButtons.BUTTON_WINDOWS_PLACEMENT_ID) {
+                    it.copy(config = CustomMenuButtons.encodeButtonWindows(links))
+                }
+            }
         }
         fun saveTabTitles() =
             updatePlacementById(CustomMenuButtons.TAB_TITLES_PLACEMENT_ID) {
@@ -2202,7 +2217,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun menuButtonWindowOf(button: CustomMenuButton): String? =
             menuButtonWindows[button.id]
                 ?: windowFrames.registrations.firstOrNull { window ->
-                    windowFrames.tabTitles[window.id] == button.title &&
+                    (windowFrames.tabTitles[window.id] == button.title ||
+                        // The Task trees button was "Root" when it opened windows still open (user rule 2026-11-19).
+                        (button.id == CustomMenuButtons.ROOT_SEARCH.id && windowFrames.tabTitles[window.id] == "Root")) &&
                         (ObjectWindowKey.decode(button.windowId)?.let { window.menuKey == button.windowId }
                             ?: (lateralWindowOf(window.id) != null && lateralWindowOf(window.id) == lateralWindowOf(button.windowId)))
                 }?.id

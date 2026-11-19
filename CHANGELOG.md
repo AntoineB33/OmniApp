@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Update" after a restart, the page selector's right-click — 2026-11-19
+
+- Anomaly: no "Update" on the Task trees button after turning "Menu keeps open rows" off. The link from a button to its
+  window was rebuilt after a restart from the tab's name, and the window's tab still said "Root". The link is now kept
+  (`MenuButtonWindows` placement row; a tab named "Root" is still the Task trees button's).
+- Anomaly: the page selector's right-click was the menu background's. Every row's is `menuItemActions` now.
+
 ### The global root is "Task trees" — 2026-11-19
 
 - User rule: *"rename 'root' by something like task trees"*. `ROOT_TASK_TITLE` is `Task trees` (forced on load: an

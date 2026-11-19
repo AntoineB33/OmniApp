@@ -126,6 +126,11 @@ means.
     configuration is kept by `App` as any Search window's (`searchConfigs[LATERAL_MENU_ID]`, its placement row, its
     History Units), its ▾ windows are named after it (`LateralMenu▾`), and "State in each window" lists it. Which of
     its parts are shown is not kept across a restart.
+  - **Every row of the menu has an item's right-click, from one list** (`menuItemActions`, anomaly 2026-11-19: the page
+    selector showed the background's): the page selector's greys Rename, "all pages" (it is on every page) and Remove.
+  - **The window a button opened is kept across a restart** (`menuButtonWindows`, kept on the `MenuButtonWindows`
+    placement row, anomaly 2026-11-19: after a restart it was found by the tab's name alone, which the renamed "Task
+    trees" button no longer matched, and "Update" was not offered). The tab's name is still the fallback.
   - **A button's right-click "Update" saves its window's state as it stands** (user rule 2026-10-07;
     `CustomMenuButtons.needsUpdate` / `updated`, `CustomMenuButtonsTest`): offered only while the window THE BUTTON
     opened or brought back is open (`App`'s `menuButtonWindows`, Compose-only — forgotten when that window closes;
