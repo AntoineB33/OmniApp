@@ -393,6 +393,11 @@ internal fun PopupSearchField(
     canDrop: (SearchDomain.Result) -> Boolean = { true },
     /** What tells this field's window from the others of the window it stands in: its id ends with it. */
     fieldId: String = placeholder,
+    /**
+     * What its window shows of itself as it opens: its search section alone by default; user rule 2026-11-19, the
+     * presence ratio target evolutions' window shows its added elements list too.
+     */
+    openedParts: SearchSplits = EMBEDDED_SEARCH_SPLITS,
 ) {
     val search = LocalEmbeddedSearch.current
     val host = LocalFieldSearchPopupHost.current
@@ -424,7 +429,7 @@ internal fun PopupSearchField(
     androidx.compose.runtime.LaunchedEffect(open, restored) {
         if (restored && windowId != null) memory?.setField(windowId, open)
     }
-    var parts by rememberKeptParts(windowId, EMBEDDED_SEARCH_SPLITS)
+    var parts by rememberKeptParts(windowId, openedParts)
     // Anomaly 2026-11-15 (*"when I click on list of parents it must open the default window for this element"*): opened
     // by the user — a click, a letter typed — its window is its DEFAULT one: its configuration what it opens with
     // ([openedConfig]; what the bar holds kept), its parts the default ones, and nothing of what was opened inside it
@@ -435,7 +440,7 @@ internal fun PopupSearchField(
     val partsStore = LocalSearchPartsStore.current
     fun openFresh(query: String) {
         onConfigChange(openedConfig.copy(query = query))
-        parts = EMBEDDED_SEARCH_SPLITS
+        parts = openedParts
         if (windowId != null) {
             if (registry != null && arrowRoot != null && windowId.startsWith(arrowRoot)) registry.forgetInside(arrowRoot, windowId.removePrefix(arrowRoot))
             partsStore?.forgetInside(windowId)

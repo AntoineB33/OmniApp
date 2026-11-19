@@ -385,15 +385,6 @@ sealed interface SchedulerIntent {
     data class SetCellWeightFormula(val cellId: CellId, val formula: String) : SchedulerIntent
 
     /**
-     * User rule 2026-11-19: the presence ratio target of every occurrence of [cellIds] relative to its parent, a fraction as
-     * a formula of the instant ([org.example.project.scheduler.model.Cell.presenceFormula], `periods(…)` for its time
-     * periods); blank: the weights decide again. A formula that does not read is refused; one that reads but is incoherent
-     * is kept and stops the schedulers until resolved ([org.example.project.scheduler.domain.FormulaCoherence]). ONE
-     * Undo/Redo unit; a call that changes nothing records nothing.
-     */
-    data class SetCellsPresenceFormula(val cellIds: List<CellId>, val formula: String) : SchedulerIntent
-
-    /**
      * User rule 2026-11-16: the minimum length of every task of [taskIds], in minutes, as a formula of the instant; blank:
      * the constant minimum again. A formula that does not read is refused. ONE Undo/Redo unit.
      */
@@ -907,6 +898,15 @@ sealed interface SchedulerIntent {
     /** User rule 2026-11-19: the account's md elements, one History Unit. [editKey] as [SetChronos]' for a field typed into. */
     data class SetMdElements(
         val entries: List<org.example.project.scheduler.domain.MdElement>,
+        val editKey: String? = null,
+    ) : SchedulerIntent
+
+    /**
+     * User rule 2026-11-19: the account's presence ratio target evolutions, one History Unit. [editKey] as [SetChronos]'
+     * for a field typed into.
+     */
+    data class SetPresenceEvolutions(
+        val entries: List<org.example.project.scheduler.domain.PresenceEvolution>,
         val editKey: String? = null,
     ) : SchedulerIntent
 

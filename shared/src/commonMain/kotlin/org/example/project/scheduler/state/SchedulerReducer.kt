@@ -625,21 +625,6 @@ object SchedulerReducer {
                     commitDelta(state, priorityTreeDelta(state, "Presence ratio target", apply))
                 }
             }
-            is SchedulerIntent.SetCellsPresenceFormula -> {
-                val formula = intent.formula.trim()
-                if (org.example.project.scheduler.domain.TimeFormula.problem(formula) != null) {
-                    state
-                } else {
-                    val apply = { working: SchedulerState ->
-                        intent.cellIds.distinct().fold(working) { acc, id ->
-                            val cell = acc.cells[id]
-                            if (cell == null || cell.presenceFormula == formula) acc
-                            else acc.copy(cells = acc.cells + (id to cell.copy(presenceFormula = formula)))
-                        }
-                    }
-                    if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Presence ratio target", apply))
-                }
-            }
             is SchedulerIntent.SetTasksMinimumFormula -> {
                 val formula = intent.formula.trim()
                 if (org.example.project.scheduler.domain.TimeFormula.problem(formula) != null) {
@@ -693,6 +678,9 @@ object SchedulerReducer {
             is SchedulerIntent.SetMdElements ->
                 if (state.mdElements == intent.entries) state
                 else commitDelta(state, MdElementsDelta(state.mdElements, intent.entries, intent.editKey))
+            is SchedulerIntent.SetPresenceEvolutions ->
+                if (state.presenceEvolutions == intent.entries) state
+                else commitDelta(state, PresenceEvolutionsDelta(state.presenceEvolutions, intent.entries, intent.editKey))
             is SchedulerIntent.SetWorkplaceSetups ->
                 if (state.workplaceSetups == intent.entries) state
                 else commitDelta(state, WorkplaceSetupsDelta(state.workplaceSetups, intent.entries, intent.editKey))
@@ -7700,6 +7688,37 @@ internal data class MdElementsDelta(
 
     override fun commit(state: SchedulerState): SchedulerState =
         state.copy(mdElements = changes.applyToList(state.mdElements, forward = true, exact = true) { it.id })
+}
+
+/** User rule 2026-11-19: a change to the account's **presence ratio target evolutions**: [ChronosDelta]'s rule, the rows whole. */
+internal data class PresenceEvolutionsDelta(
+    val changes: EntryChanges<String, org.example.project.scheduler.domain.PresenceEvolution>,
+    override val coalesceKey: String? = null,
+) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.domain.PresenceEvolution>,
+        after: List<org.example.project.scheduler.domain.PresenceEvolution>,
+        coalesceKey: String? = null,
+    ) : this(EntryChanges.ofList(before, after) { it.id }, coalesceKey)
+
+    override val label: String
+        get() = listLabel(changes.before.keys.toList(), changes.after.keys.toList(), "presence ratio target evolution")
+
+    override val details: List<String>
+        get() = changes.touched.map { id -> "presence ratio target evolution: " + ((changes.after[id] ?: changes.before[id])?.formula.orEmpty().ifBlank { id }) }
+
+    override fun coalesceOnto(previous: Delta): Delta? =
+        if (previous is PresenceEvolutionsDelta && previous.coalesceKey == coalesceKey) copy(changes = previous.changes.then(changes))
+        else null
+
+    override fun undo(state: SchedulerState): SchedulerState =
+        state.copy(presenceEvolutions = changes.applyToList(state.presenceEvolutions, forward = false) { it.id })
+
+    override fun redo(state: SchedulerState): SchedulerState =
+        state.copy(presenceEvolutions = changes.applyToList(state.presenceEvolutions, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(presenceEvolutions = changes.applyToList(state.presenceEvolutions, forward = true, exact = true) { it.id })
 }
 
 /** User rule 2026-11-01: a change to the account's **workplace setups**: [ChronosDelta]'s rule, the rows whole. */

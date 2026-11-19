@@ -90,6 +90,7 @@ val Delta.changedElements: Set<ChangedElement>
             is AlarmsDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Alarm, it)) }
             is TimersDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Timer, it)) }
             is ChronosDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Chrono, it)) }
+            is PresenceEvolutionsDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.PresenceEvolution, it)) }
             is WorkplaceSetupsDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.WorkplaceSetup, it)) }
             is MdElementsDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Md, it)) }
             is TreeAndMdDelta -> addAll(delta.tree.changedElements + delta.md.changedElements)

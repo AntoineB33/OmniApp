@@ -915,6 +915,12 @@ data class SchedulerState(
      */
     val mdElements: List<org.example.project.scheduler.domain.MdElement> = emptyList(),
 
+    /**
+     * User rule 2026-11-19: the account's **presence ratio target evolutions**
+     * ([org.example.project.scheduler.domain.PresenceEvolution]) - scheduling rules, persisted and synced like [mdElements].
+     */
+    val presenceEvolutions: List<org.example.project.scheduler.domain.PresenceEvolution> = emptyList(),
+
 
     /** User rule 2026-11-02: which element is a parent of which, a category of what it is carried by; synced like [chronos]. */
     val elementLinks: List<org.example.project.scheduler.domain.ElementLink> = emptyList(),

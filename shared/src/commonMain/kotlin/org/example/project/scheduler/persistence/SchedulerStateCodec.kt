@@ -44,6 +44,7 @@ import org.example.project.scheduler.state.ElementLinksDelta
 import org.example.project.scheduler.state.MdElementsDelta
 import org.example.project.scheduler.state.TreeAndMdDelta
 import org.example.project.scheduler.state.WorkplaceSetupsDelta
+import org.example.project.scheduler.state.PresenceEvolutionsDelta
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
 import org.example.project.scheduler.model.CategoryKind
@@ -237,6 +238,10 @@ object SchedulerStateCodec {
         }.let {
             // User rule 2026-11-19: a task's text is an md element associated with it — what an older build wrote is lifted.
             org.example.project.scheduler.domain.MdDomain.liftTaskTexts(it)
+        }.let {
+            // User rule 2026-11-19: a place's presence ratio target is an evolution element: what the build of that
+            // morning wrote on the cell is lifted.
+            org.example.project.scheduler.domain.PresenceEvolutions.liftCellFormulas(it)
         }.let(SchedulerReducer::settleDefaultSubtree)
 
     private fun migrateLegacyRoot(element: JsonElement): JsonElement =
@@ -592,6 +597,7 @@ object SchedulerStateCodec {
             chronos = chronos.map { it.toPersisted() },
             workplaceSetups = workplaceSetups.map { it.toPersisted() },
             mdElements = mdElements.map { PersistedMdElement(it.id, it.text, it.of) },
+            presenceEvolutions = presenceEvolutions.map { it.toPersisted() },
             elementLinks = elementLinks.map { it.toPersisted() },
             // Quotas (2026-10-03): the list whole; a quota's progression is derived and never written.
             quotas = quotas.map { it.toPersisted() },
@@ -960,6 +966,8 @@ object SchedulerStateCodec {
             is TreeAndMdDelta -> PersistedDelta.TreeAndMd(tree.toPersisted() as PersistedDelta.TreeMutation, md.toPersisted() as PersistedDelta.MdElements)
             is MdElementsDelta ->
                 PersistedDelta.MdElements(changes.before.values.map { PersistedMdElement(it.id, it.text, it.of) }, changes.after.values.map { PersistedMdElement(it.id, it.text, it.of) })
+            is PresenceEvolutionsDelta ->
+                PersistedDelta.PresenceEvolutions(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is WorkplaceSetupsDelta ->
                 PersistedDelta.WorkplaceSetups(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is ChronosDelta ->
@@ -1310,6 +1318,7 @@ object SchedulerStateCodec {
             timers = TimerDomain.assignTimerIds(timers.map { it.toTimerEntry() }).map(TimerDomain::healed),
             workplaceSetups = workplaceSetups.map { it.toWorkplaceSetup() },
             mdElements = mdElements.map { it.toMdElement() },
+            presenceEvolutions = presenceEvolutions.map { it.toPresenceEvolution() },
             elementLinks = elementLinks.map { it.toElementLink() },
             // PRD §18 Chronos: a payload written before chronos existed decodes to an empty list; every row healed.
             chronos = ChronoDomain.assignChronoIds(chronos.map { it.toChronoEntry() }).map(ChronoDomain::healed),
@@ -1599,6 +1608,8 @@ object SchedulerStateCodec {
             is PersistedDelta.ElementLinks -> ElementLinksDelta(before.map { it.toElementLink() }, after.map { it.toElementLink() })
             is PersistedDelta.TreeAndMd -> TreeAndMdDelta(tree.toDelta() as TreeMutationDelta, md.toDelta() as MdElementsDelta)
             is PersistedDelta.MdElements -> MdElementsDelta(before.map { it.toMdElement() }, after.map { it.toMdElement() })
+            is PersistedDelta.PresenceEvolutions ->
+                PresenceEvolutionsDelta(before.map { it.toPresenceEvolution() }, after.map { it.toPresenceEvolution() })
             is PersistedDelta.WorkplaceSetups ->
                 WorkplaceSetupsDelta(before.map { it.toWorkplaceSetup() }, after.map { it.toWorkplaceSetup() })
             is PersistedDelta.Chronos ->
@@ -1813,6 +1824,8 @@ private data class PersistedState(
     val workplaceSetups: List<PersistedWorkplaceSetup> = emptyList(),
     /** New 2026-11-19: absent from every older payload, whose task texts are lifted into md elements on decode. */
     val mdElements: List<PersistedMdElement> = emptyList(),
+    /** New 2026-11-19: absent from every older payload, which has none (a cell's presence formula is lifted on decode). */
+    val presenceEvolutions: List<PersistedPresenceEvolution> = emptyList(),
     /** New 2026-11-02: absent from every older payload, which has none. */
     val elementLinks: List<PersistedElementLink> = emptyList(),
     // User rule 2026-10-03: a missing quota list decodes to empty (payloads written before quotas existed).
@@ -2404,6 +2417,33 @@ private data class PersistedMdElement(
 private fun PersistedMdElement.toMdElement(): org.example.project.scheduler.domain.MdElement =
     org.example.project.scheduler.domain.MdElement(id, text, of.distinct())
 
+/** User rule 2026-11-19: one presence ratio target evolution ([org.example.project.scheduler.domain.PresenceEvolution]). */
+@Serializable
+private data class PersistedPresenceEvolution(
+    val id: String = "",
+    val taskIds: List<String> = emptyList(),
+    val relativeTask: String? = null,
+    val parentDistance: Int = 1,
+    val periods: List<PersistedEvolutionPeriod> = emptyList(),
+    val formula: String = "",
+)
+
+@Serializable
+private data class PersistedEvolutionPeriod(val from: Long? = null, val until: Long? = null)
+
+private fun org.example.project.scheduler.domain.PresenceEvolution.toPersisted(): PersistedPresenceEvolution =
+    PersistedPresenceEvolution(id, taskIds.map { it.value }, relativeTask?.value, parentDistance, periods.map { PersistedEvolutionPeriod(it.fromMillis, it.untilMillis) }, formula)
+
+private fun PersistedPresenceEvolution.toPresenceEvolution(): org.example.project.scheduler.domain.PresenceEvolution =
+    org.example.project.scheduler.domain.PresenceEvolution(
+        id = id,
+        taskIds = taskIds.filter { it.isNotBlank() }.distinct().map(::TaskId),
+        relativeTask = relativeTask?.takeIf { it.isNotBlank() }?.let(::TaskId),
+        parentDistance = parentDistance.coerceAtLeast(1),
+        periods = periods.map { org.example.project.scheduler.domain.EvolutionPeriod(it.from, it.until) },
+        formula = formula,
+    )
+
 /** User rule 2026-11-01: one workplace setup. Its OS by name: one a later build added reads as the first this one knows. */
 @Serializable
 private data class PersistedWorkplaceSetup(
@@ -2729,6 +2769,14 @@ private sealed interface PersistedDelta {
     data class MdElements(
         val before: List<PersistedMdElement>,
         val after: List<PersistedMdElement>,
+    ) : PersistedDelta
+
+    /** New 2026-11-19: the presence ratio target evolutions; an older build cannot read it and skips the unit. */
+    @Serializable
+    @SerialName("presenceEvolutions")
+    data class PresenceEvolutions(
+        val before: List<PersistedPresenceEvolution>,
+        val after: List<PersistedPresenceEvolution>,
     ) : PersistedDelta
 
     /** New 2026-11-01: the workplace setups; an older build cannot read it and skips the unit (`decodeUnit`). */

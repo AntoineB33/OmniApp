@@ -932,12 +932,12 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.TaskResilience -> ResilienceEditor(state, added, config, onConfigChange, run)
         SearchDomain.AddedAction.TaskScheduleUnit -> ScheduleUnitActionEditor(state, added, run)
         // User rule 2026-11-16: the evolution of a task's presence ratio target and minimum length, formulas of the instant.
-        // User rule 2026-11-19: the tasks, the task element it is relative to, the periods and their formulas, and
-        // what is incoherent — one editor for both numbers.
+        // User rule 2026-11-19: rows only — the evolutions, their tasks, what they are relative to, the periods, the
+        // formula, the categories; and what is incoherent.
         SearchDomain.AddedAction.TaskPresenceFormula ->
-            FormulaRuleEditor(state, FormulaTarget.Presence, taskIds, nowMillis()) { run(SearchDomain.AddedCommand.Raw(it)) }
+            PresenceEvolutionRows(state, added, rowId) { run(SearchDomain.AddedCommand.Raw(it)) }
         SearchDomain.AddedAction.TaskMinimumFormula ->
-            FormulaRuleEditor(state, FormulaTarget.Minimum, taskIds, nowMillis()) { run(SearchDomain.AddedCommand.Raw(it)) }
+            MinimumFormulaRows(state, taskIds) { run(SearchDomain.AddedCommand.Raw(it)) }
         // User rule 2026-11-13: the name of the tree(s) the added tasks belong to — the title of the task at its root.
         SearchDomain.AddedAction.TaskTreeName -> {
             val roots = SearchDomain.treeRootsOf(added).mapNotNull { state.tasks[it] }
@@ -1320,6 +1320,7 @@ private fun AddedActionBlocks(
         // The bin, over every added element of the kind; what it deleted leaves the added list too.
         SearchDomain.AddedAction.AlarmDelete, SearchDomain.AddedAction.TimerDelete, SearchDomain.AddedAction.ChronoDelete,
         SearchDomain.AddedAction.QuotaDelete, SearchDomain.AddedAction.WorkplaceDelete, SearchDomain.AddedAction.MdDelete,
+        SearchDomain.AddedAction.PresenceEvolutionDelete,
         SearchDomain.AddedAction.ReminderDelete, SearchDomain.AddedAction.CategoryDelete -> {
             val kind = action.section ?: return
             val keys = added.filter { it.kind == kind }.map(SearchDomain::keyOf)

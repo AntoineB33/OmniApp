@@ -248,6 +248,11 @@ class SearchPicker(
     val onNewTask: (() -> Unit)?,
     /** Leaves the Edit Mode, the draft abandoned: the ✕ of its head, once shown (user rule 2026-11-11). */
     val onCancel: () -> Unit = {},
+    /**
+     * A row drawn at the top of the list, before its first result (user rule 2026-11-19: the "relative to" window's
+     * "parent distance" row and its field).
+     */
+    val leading: (@Composable () -> Unit)? = null,
 )
 
 /** A press and release on a row of a [SearchPicker]'s list, taken before the row: nothing in the row answers it. */
@@ -415,6 +420,8 @@ data class SearchRowOpeners(
             SearchDomain.Kind.Action -> Unit
             // An md element is read and edited in its actions (user rule 2026-11-19).
             SearchDomain.Kind.Md -> Unit
+            // A presence ratio target evolution is edited in the actions of its tasks (user rule 2026-11-19).
+            SearchDomain.Kind.PresenceEvolution -> Unit
             SearchDomain.Kind.WorkplaceSetup -> onApplyWorkplaceSetup(item.id)
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }
@@ -1683,6 +1690,7 @@ fun SearchWindow(
                                 }
                             },
                     ) {
+                        picker?.leading?.let { lead -> item(key = "picker/leading") { lead() } }
                         itemsIndexed(results, key = { _, r -> resultKey(r) }) { index, result ->
                             val rowKey = resultKey(result)
                             // "Arrange by dragging": the row's press is the list's — selecting, dragging, never acting.

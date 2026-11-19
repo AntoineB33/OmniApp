@@ -3,7 +3,6 @@ package org.example.project.scheduler.domain
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
-import org.example.project.scheduler.model.CellId
 import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.state.SchedulerState
 
@@ -13,15 +12,17 @@ import org.example.project.scheduler.state.SchedulerState
  *
  * **What the formulas of the instant say together**, read at every instant they may change at (their dates, their
  * periods' bounds) and between them — never at "now", so the verdict does not move as time passes and never re-plans:
- * - a formula that does not read (one a sync brought in: the reducer refuses them);
- * - two periods of one formula overlapping;
- * - a presence ratio target below 0 % or above 100 %;
- * - the presence ratio targets under one parent adding up to more than 100 %, or to less with no other task there to
- *   take the rest;
- * - a minimum length target below 0.
+ * - a formula that does not read (one a sync brought in);
+ * - a presence ratio target evolution relative to a task that is not above one of its tasks, or to a parent distance
+ *   one of them has no ancestor at;
+ * - a presence ratio target below 0 % or above 100 %, or two evolutions giving one task a target relative to one task
+ *   at once, or a task and a task inside it both given one relative to the same task;
+ * - the presence ratio targets relative to one task adding up to more than 100 %, or to less with no other task under
+ *   it to take the rest;
+ * - two periods of one minimum length target overlapping, or a minimum below 0.
  *
  * While [problems] is not empty, [SchedulerDomain.fillSchedule] hands no task any time — the instant schedule and the
- * search alike — and the editor and the calendar say why.
+ * search alike — and the actions and the calendar say why.
  */
 object FormulaCoherence {
     data class Problem(val message: String, val taskIds: Set<TaskId>)
@@ -30,47 +31,26 @@ object FormulaCoherence {
     private const val EPS = 1e-9
 
     /** One slot keyed by the maps' identity: [SchedulerDomain.fillSchedule] and the UI ask on every state. */
-    private class Memo(val cells: Any, val lists: Any, val tasks: Any, val zone: String, val problems: List<Problem>)
+    private class Memo(val cells: Any, val lists: Any, val tasks: Any, val evolutions: Any, val zone: String, val problems: List<Problem>)
 
     private var memo: Memo? = null
 
     fun isCoherent(state: SchedulerState): Boolean = problems(state).isEmpty()
 
-    /**
-     * The task elements a presence ratio target of [taskIds] can be relative to: the parents of their places in the tree,
-     * by title. The editor's "Relative to" field.
-     */
-    fun parentsOf(state: SchedulerState, taskIds: Collection<TaskId>): List<TaskId> {
-        val ids = taskIds.toHashSet()
-        return state.cells.values.asSequence()
-            .filter { it.taskId in ids && SchedulerDomain.isPopulatedCell(state, it.id) }
-            .mapNotNull { SchedulerDomain.parentTaskIdOfList(state, it.parentListId) }
-            .distinct()
-            .sortedWith(compareBy<TaskId> { state.tasks[it]?.title.orEmpty() }.thenBy { it.value })
-            .toList()
-    }
-
-    /** The places of [taskIds] directly under [parent]: what a presence ratio target relative to [parent] is written on. */
-    fun placesUnder(state: SchedulerState, taskIds: Collection<TaskId>, parent: TaskId): List<CellId> {
-        val ids = taskIds.toHashSet()
-        return state.cells.values
-            .filter { it.taskId in ids && SchedulerDomain.isPopulatedCell(state, it.id) && SchedulerDomain.parentTaskIdOfList(state, it.parentListId) == parent }
-            .sortedBy { it.id.value }
-            .map { it.id }
-    }
-
     fun problems(state: SchedulerState, zone: TimeZone = TimeZone.currentSystemDefault()): List<Problem> {
         val known = memo
-        if (known != null && known.cells === state.cells && known.lists === state.lists && known.tasks === state.tasks && known.zone == zone.id) {
+        if (known != null && known.cells === state.cells && known.lists === state.lists && known.tasks === state.tasks &&
+            known.evolutions === state.presenceEvolutions && known.zone == zone.id
+        ) {
             return known.problems
         }
         val computed = compute(state, zone)
-        memo = Memo(state.cells, state.lists, state.tasks, zone.id, computed)
+        memo = Memo(state.cells, state.lists, state.tasks, state.presenceEvolutions, zone.id, computed)
         return computed
     }
 
     private fun compute(state: SchedulerState, zone: TimeZone): List<Problem> {
-        if (state.cells.values.none { it.presenceFormula.isNotBlank() } && state.tasks.values.none { it.minimumFormula.isNotBlank() }) {
+        if (state.presenceEvolutions.none { it.formula.isNotBlank() } && state.tasks.values.none { it.minimumFormula.isNotBlank() }) {
             return emptyList()
         }
         val out = ArrayList<Problem>()
@@ -80,58 +60,78 @@ object FormulaCoherence {
         }
         fun pct(v: Double) = "${kotlin.math.round(v * 1000.0) / 10.0} %"
 
-        // --- presence ratio targets, one parent's sub-list at a time
-        val populatedCells = state.cells.values.filter { it.taskId != null && SchedulerDomain.isPopulatedCell(state, it.id) }
-        val byList = populatedCells.groupBy { it.parentListId }
-        for ((listId, cells) in byList.entries.sortedBy { it.key.value }) {
-            val withFormula = cells.filter { it.presenceFormula.isNotBlank() }
-            if (withFormula.isEmpty()) continue
-            val parent = title(SchedulerDomain.parentTaskIdOfList(state, listId))
-            val parsed = HashMap<CellId, TimeFormula.Parsed>()
-            for (cell in withFormula.sortedBy { it.id.value }) {
-                val what = "The presence ratio target of “${title(cell.taskId)}” under “$parent”"
-                val problem = TimeFormula.problem(cell.presenceFormula, zone)
-                val p = TimeFormula.parse(cell.presenceFormula, zone)
-                if (problem != null || p == null) {
-                    out += Problem("$what does not read: ${problem ?: "not a formula"}", setOfNotNull(cell.taskId))
-                    continue
-                }
-                overlap(cell.presenceFormula, zone)?.let { out += Problem("$what has periods that overlap from ${when_(it)}", setOfNotNull(cell.taskId)) }
-                parsed[cell.id] = p
+        // --- presence ratio target evolutions
+        val index = PresenceEvolutions.TreeIndex(state)
+        val live = state.presenceEvolutions.filter { it.formula.isNotBlank() }
+        val parsed = HashMap<String, TimeFormula.Parsed>()
+        for (e in live.sortedBy { it.id }) {
+            val tasks = e.taskIds.filter { it in index.parents }
+            val what = "The presence ratio target evolution of " + tasks.joinToString(", ") { "“${title(it)}”" }.ifEmpty { "no task" }
+            val problem = TimeFormula.problem(e.formula, zone)
+            val p = TimeFormula.parse(PresenceEvolutions.effectiveText(e), zone)
+            if (problem != null || p == null) {
+                out += Problem("$what does not read: ${problem ?: "not a formula"}", tasks.toSet())
+                continue
             }
-            if (parsed.isEmpty()) continue
-            val freeExists = cells.any { it.presenceFormula.isBlank() }
-            val ids = withFormula.mapNotNull { it.taskId }.toSet()
-            val rangeReported = HashSet<CellId>()
-            var overReported = false
-            var underReported = false
-            for (at in samples(parsed.values)) {
-                var sum = 0.0
-                var any = false
-                for ((cellId, p) in parsed) {
-                    val v = p.at(at) ?: continue
-                    any = true
-                    if ((v < -EPS || v > 1.0 + EPS) && rangeReported.add(cellId)) {
-                        out += Problem(
-                            "The presence ratio target of “${title(state.cells[cellId]?.taskId)}” under “$parent” is ${pct(v)} on ${when_(at)}: a ratio is between 0 and 100 %",
-                            setOfNotNull(state.cells[cellId]?.taskId),
-                        )
+            parsed[e.id] = p
+            for (t in tasks) {
+                val above = index.ancestors(t)
+                val relatives = PresenceEvolutions.relativesOf(index, e, t)
+                when {
+                    e.relativeTask != null && e.relativeTask !in above ->
+                        out += Problem("“${title(e.relativeTask)}” is not above “${title(t)}”: its presence ratio target cannot be relative to it", setOf(t))
+                    e.relativeTask == null && relatives.isEmpty() ->
+                        out += Problem("“${title(t)}” has no task ${e.parentDistance} levels above it: its presence ratio target is relative to nothing", setOf(t))
+                }
+            }
+        }
+        if (parsed.isNotEmpty()) {
+            val samples = samples(parsed.values)
+            val reported = HashSet<String>()
+            fun report(key: String, problem: () -> Problem) {
+                if (reported.add(key)) out += problem()
+            }
+            for (at in samples) {
+                val targets = PresenceEvolutions.targetsAt(state, index, at).filter { it.evolutionId in parsed }
+                for (tg in targets) {
+                    if (tg.ratio < -EPS || tg.ratio > 1.0 + EPS) {
+                        report("range/${tg.evolutionId}") {
+                            Problem("The presence ratio target of “${title(tg.task)}” relative to “${title(tg.relative)}” is ${pct(tg.ratio)} on ${when_(at)}: a ratio is between 0 and 100 %", setOf(tg.task))
+                        }
                     }
-                    sum += v
                 }
-                if (!any) continue
-                if (sum > 1.0 + EPS && !overReported) {
-                    overReported = true
-                    out += Problem("The presence ratio targets under “$parent” add up to ${pct(sum)} on ${when_(at)}: more than 100 %", ids)
+                for ((rel, list) in targets.groupBy { it.relative }) {
+                    val byTask = list.groupBy { it.task }
+                    for ((t, same) in byTask) {
+                        if (same.map { it.evolutionId }.distinct().size > 1) {
+                            report("twice/$rel/$t") {
+                                Problem("Two evolutions give “${title(t)}” a presence ratio target relative to “${title(rel)}” on ${when_(at)}", setOf(t))
+                            }
+                        }
+                    }
+                    val subOf = byTask.keys.associateWith { index.descendants(it) }
+                    for (t in byTask.keys) for (other in byTask.keys) {
+                        if (other != t && t in subOf.getValue(other)) {
+                            report("nested/$rel/$t/$other") {
+                                Problem("“${title(t)}” is inside “${title(other)}”, and both have a presence ratio target relative to “${title(rel)}” on ${when_(at)}", setOf(t, other))
+                            }
+                        }
+                    }
+                    val sum = byTask.values.sumOf { same -> same.maxOf { it.ratio } }
+                    if (sum > 1.0 + EPS) {
+                        report("over/$rel") {
+                            Problem("The presence ratio targets relative to “${title(rel)}” add up to ${pct(sum)} on ${when_(at)}: more than 100 %", byTask.keys)
+                        }
+                    } else if (sum < 1.0 - EPS) {
+                        val inside = byTask.keys.flatMapTo(HashSet()) { subOf.getValue(it) + it }
+                        val freeLeaf = index.descendants(rel).any { it !in inside && index.isLeaf(it) }
+                        if (!freeLeaf) {
+                            report("under/$rel") {
+                                Problem("The presence ratio targets relative to “${title(rel)}” add up to ${pct(sum)} on ${when_(at)}, and no other task under it takes the rest", byTask.keys)
+                            }
+                        }
+                    }
                 }
-                if (sum < 1.0 - EPS && !freeExists && !underReported) {
-                    underReported = true
-                    out += Problem(
-                        "The presence ratio targets under “$parent” add up to ${pct(sum)} on ${when_(at)}, and no other task under it takes the rest",
-                        ids,
-                    )
-                }
-                if (overReported && (underReported || freeExists) && rangeReported.size == parsed.size) break
             }
         }
 

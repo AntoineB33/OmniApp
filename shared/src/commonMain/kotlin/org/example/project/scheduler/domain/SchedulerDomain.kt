@@ -860,16 +860,6 @@ object SchedulerDomain {
         return formula.at(atMillis)?.coerceAtLeast(0.0) ?: stored
     }
 
-    /**
-     * User rule 2026-11-19: [cell]'s presence ratio target relative to its parent at [atMillis] — its
-     * [org.example.project.scheduler.model.Cell.presenceFormula]'s value there, in `[0, 1]`; null where it has none
-     * (blank, outside its periods, or no finite number): the weights decide there.
-     */
-    fun presenceRatioAt(cell: org.example.project.scheduler.model.Cell, atMillis: Long): Double? {
-        if (cell.presenceFormula.isBlank()) return null
-        return TimeFormula.parse(cell.presenceFormula)?.at(atMillis)?.coerceIn(0.0, 1.0)
-    }
-
     /** User rule 2026-11-16 ([TimeFormula]): [task]'s minimum in minutes at [atMillis] — its formula's value, else [Task.minimumMinutes]. */
     fun minimumMinutesAt(task: Task, atMillis: Long): Double {
         val formula = TimeFormula.parse(task.minimumFormula) ?: return task.minimumMinutes.toDouble()
@@ -878,13 +868,21 @@ object SchedulerDomain {
 
     /** Whether any weight or minimum of [state] is a formula that moves with time ([TimeFormula.Parsed.constant]). */
     fun hasMovingFormulas(state: SchedulerState): Boolean =
-        state.cells.values.any { c -> listOf(c.weightFormula, c.presenceFormula).any { it.isNotBlank() && TimeFormula.parse(it)?.constant == false } } ||
-            state.tasks.values.any { it.minimumFormula.isNotBlank() && TimeFormula.parse(it.minimumFormula)?.constant == false }
+        formulaTexts(state).any { TimeFormula.parse(it)?.constant == false }
+
+    /**
+     * Every formula of the instant [state] holds, blank ones left out: the weights', the minimums' and the presence ratio
+     * target evolutions' (each as ONE formula, its periods included, [PresenceEvolutions.effectiveText]). The one list
+     * the timeline reads.
+     */
+    fun formulaTexts(state: SchedulerState): List<String> =
+        (state.cells.values.map { it.weightFormula } + state.tasks.values.map { it.minimumFormula } +
+            state.presenceEvolutions.map(PresenceEvolutions::effectiveText))
+            .filter { it.isNotBlank() }.distinct()
 
     /** Every instant a formula of [state] may change pace at ([TimeFormula.Parsed.breakpoints]), in order. */
     fun formulaBreakpoints(state: SchedulerState): List<Long> =
-        (state.cells.values.flatMap { listOf(it.weightFormula, it.presenceFormula) } + state.tasks.values.map { it.minimumFormula })
-            .filter { it.isNotBlank() }.distinct()
+        formulaTexts(state)
             .flatMap { TimeFormula.parse(it)?.breakpoints.orEmpty() }
             .distinct().sorted()
 
@@ -944,30 +942,6 @@ object SchedulerDomain {
             return absW.indices.sumOf { c -> if (colSums[c] > 0.0) absW[c] else 0.0 }
         }
 
-        // User rule 2026-11-19: a place whose presence ratio target reads as a number at [at] takes exactly that share of
-        // its parent; its free siblings share what is left by their weights ([presenceShares]).
-        val presenceCache = HashMap<CellListId, Map<CellId, Double>?>()
-        val anyPresence = state.cells.values.any { it.presenceFormula.isNotBlank() }
-        fun presenceShares(listId: CellListId): Map<CellId, Double>? =
-            if (!anyPresence) null else presenceCache.getOrPut(listId) {
-                val populated = state.lists[listId]?.cellIds?.filter { isPopulatedCell(state, it) }.orEmpty()
-                val fixed = populated.mapNotNull { id -> state.cells[id]?.let { c -> presenceRatioAt(c, at)?.let { id to it } } }.toMap()
-                if (fixed.isEmpty()) return@getOrPut null
-                val free = populated.filter { it !in fixed }
-                val (absW, _) = listInfo(listId)
-                val freeColSums = absW.indices.map { c -> free.sumOf { weightOf(state.cells[it]!!, c) } }
-                fun freeWeight(id: CellId): Double =
-                    absW.indices.sumOf { c -> if (freeColSums[c] == 0.0) 0.0 else weightOf(state.cells[id]!!, c) / freeColSums[c] * absW[c] }
-                val freeTotal = free.sumOf { freeWeight(it) }
-                val r = fixed.values.sum()
-                if (free.isNotEmpty() && freeTotal > 0.0 && r < 1.0) {
-                    fixed + free.associateWith { freeWeight(it) / freeTotal * (1.0 - r) }
-                } else {
-                    // Incoherent ([FormulaCoherence]: the schedulers wait) or exactly full: the fixed shares, made whole.
-                    fixed.mapValues { if (r > 0.0) it.value / r else 0.0 } + free.associateWith { 0.0 }
-                }
-            }
-
         val memo = HashMap<TaskId, Double>()
         val visiting = HashSet<TaskId>()
 
@@ -978,14 +952,9 @@ object SchedulerDomain {
             var sum = 0.0
             for (cellId in cellsByTask[taskId].orEmpty()) {
                 val cell = state.cells[cellId] ?: continue
-                val parent = parentTaskIdOfList(state, cell.parentListId) ?: continue
-                val presence = presenceShares(cell.parentListId)
-                if (presence != null) {
-                    sum += absolute(parent) * (presence[cellId] ?: 0.0)
-                    continue
-                }
                 val totalWeight = listWeightSum(cell.parentListId)
                 if (totalWeight == 0.0) continue
+                val parent = parentTaskIdOfList(state, cell.parentListId) ?: continue
                 sum += absolute(parent) * (cellWeight(cell) / totalWeight)
             }
             visiting.remove(taskId)
@@ -999,7 +968,9 @@ object SchedulerDomain {
         // second 1.0 beside the tasks that divide that 1.0 up, so anything summing this map (the category
         // rules' solve, the tests that assert the leaves fill the tree) would count
         // the whole tree twice.
-        return cellsByTask.keys.asSequence().filterNot(::isRootTask).associateWith { absolute(it) }
+        val byWeights = cellsByTask.keys.asSequence().filterNot(::isRootTask).associateWith { absolute(it) }
+        // User rule 2026-11-19: the presence ratio target evolutions in force at [at] — the one place they are read.
+        return if (state.presenceEvolutions.isEmpty()) byWeights else PresenceEvolutions.adjust(state, byWeights, at)
     }
 
     // ----- The tasks the tree holds ------------------------------------------------------------
@@ -1112,8 +1083,7 @@ object SchedulerDomain {
     private class FormulaTimeline(val state: SchedulerState, val leaves: List<TaskId>) : ScheduleFill.RuleStates {
         private val breakpoints = formulaBreakpoints(state)
         private val formulas =
-            (state.cells.values.flatMap { listOf(it.weightFormula, it.presenceFormula) } + state.tasks.values.map { it.minimumFormula })
-                .filter { it.isNotBlank() }.distinct().mapNotNull { TimeFormula.parse(it) }.filterNot { it.constant }
+            formulaTexts(state).mapNotNull { TimeFormula.parse(it) }.filterNot { it.constant }
 
         override fun at(x: Long): List<PlanTask> = ruleStateAt(state, leaves, x)
 
@@ -6847,6 +6817,8 @@ object SchedulerDomain {
         result = 31 * result + state.sleep.hashCode()
         result = 31 * result + state.screenBreaks.hashCode()
         result = treeSignature(result, state.lists, state.cells, state.tasks)
+        // User rule 2026-11-19: a presence ratio target evolution is a rule like the weights it moves.
+        for (e in state.presenceEvolutions.sortedBy { it.id }) result = 31 * result + e.hashCode()
         for (panel in state.panels.filterNot(::isRegeneratedPanel).sortedBy { it.id }) {
             result = 31 * result + panel.id.hashCode()
             result = 31 * result + (panel.taskId?.value?.hashCode() ?: 0)
@@ -6912,7 +6884,6 @@ object SchedulerDomain {
             result = 31 * result + cell.priorityWeights.hashCode()
             // User rule 2026-11-16: a weight given as a formula of the instant is a rule like the weight it replaces.
             result = 31 * result + cell.weightFormula.hashCode()
-            result = 31 * result + cell.presenceFormula.hashCode()
         }
         for (task in tasks.values.sortedBy { it.id.value }) {
             result = 31 * result + task.id.value.hashCode()

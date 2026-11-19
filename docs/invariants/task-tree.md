@@ -135,17 +135,31 @@ root of a task tree, child of the first task element."* — and, of the trees an
   fill, the fill walks the rule state piece by piece, a piece ending at a formula's date (`TimeFormula.Parsed.breakpoints`),
   run by run inside a moving piece (`ScheduleFill.RuleStates`). Where none moves, one rule state for the whole fill, as
   before. The tree's percentages read the formulas at now (`absoluteTaskPriorities` with no instant).
-- **A presence ratio target is a share, not a weight** (user rule 2026-11-19, `Cell.presenceFormula`,
-  `PresenceRatioFormulaTest`): where it reads as a number at an instant, the place takes exactly that fraction of its
-  parent, and the siblings without one share the rest by their weights; where it reads as none (blank, or outside every
-  `periods(…)` period) the weights decide. Read in `absoluteTaskPriorities` only — the one funnel.
-- **Edited in the task element's actions** ("Presence ratio target", "Minimum length target": `FormulaRuleEditor`): the
-  tasks selected (seeded from the added elements, others added by title), the task element it is relative to (a
-  parent of their places), the time periods (blank bound: open) and each one's formula, written as ONE formula per
-  place (`TimeFormula.FormulaPeriods`).
+- **A presence ratio target is an element: a presence ratio target evolution** (user rule 2026-11-19,
+  `PresenceEvolution`, `Kind.PresenceEvolution`, `PresenceEvolutions`, `PresenceRatioFormulaTest`): the tasks that get
+  it, what it is relative to — one task above them (`relativeTask`), or each one's own ancestor at a parent distance
+  (`parentDistance`, 1: its parent) —, its time periods (none: always), its formula (the ratio, a fraction of the
+  relative task's time) and its categories (its parents that are categories, `ElementTree`, as any element's). Persisted
+  and synced, a row each. Where it reads at an instant, the task takes exactly that fraction of the relative task's
+  share, spread over its sub-tree by the weights, and the rest of the relative task's sub-tree shares what is left by
+  the weights; outside its periods the weights decide. Read in ONE place, `PresenceEvolutions.adjust`, from
+  `absoluteTaskPriorities`. A presence formula the build of that morning wrote on a cell (`Cell.presenceFormula`) is
+  lifted into an evolution relative to the cell's parent on decode.
+- **Edited in rows only** (user rule 2026-11-19: *"I only want rows in the 3 sections of any Search window"*;
+  `PresenceEvolutionRows`): the task group's "Presence ratio target" holds six rows — the **evolutions** (a field whose
+  Search window lists those involving the group's tasks, its added elements list showing: what is added there, A, is what
+  the rows below edit; "New" makes one for the group's tasks and adds it), the **tasks that get it** (a field whose added
+  elements are A's tasks), **relative to** (a field listing the tasks above every task of A, with a "parent distance
+  [n]" row at the top), the **time periods**, the **formula**, the **categories** (a field whose added elements are the
+  categories A carries). Then each incoherence, a row. "Minimum length target" is rows too: the time periods and the
+  formula, written as ONE formula on the added tasks (`MinimumFormulaRows`).
 - **Incoherent formulas stop both schedulers** (`FormulaCoherence`): read at every breakpoint and between them, never
-  at now (so time passing never changes the verdict). While any problem holds, `fillSchedule` hands no task any time —
-  the instant schedule and the search alike — and the editor, the task tree window and the calendar list why.
+  at now (so time passing never changes the verdict). Over 100 % relative to one task at an instant; under 100 % with
+  nothing else under it to take the rest; a ratio outside [0, 1]; two evolutions giving one task a target relative to
+  one task at once; a task and a task inside it both given one; a relative task not above a task, or a parent distance it
+  has no ancestor at; a formula that does not read; a negative minimum or overlapping minimum periods. While any holds,
+  `fillSchedule` hands no task any time — the instant schedule and the search alike — and the actions, the task tree
+  window and the calendar list why.
 
 ### The tree has ONE root, and it is a real cell
 

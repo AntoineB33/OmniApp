@@ -155,6 +155,13 @@ object SearchDomain {
         Md("md element"),
 
         /**
+         * User rule 2026-11-19: a **presence ratio target evolution** ([org.example.project.scheduler.domain.PresenceEvolution]):
+         * the tasks it is given to, what it is relative to, its periods and its formula. Edited from the actions of the tasks
+         * it involves ("Presence ratio target").
+         */
+        PresenceEvolution("presence ratio target evolution"),
+
+        /**
          * A window of the app, open or not ([WindowEntry]): what the rows name is not in the account's state but
          * in `App`'s windows, which hands the list in ([results]'s `windows`).
          */
@@ -1928,6 +1935,7 @@ object SearchDomain {
         ShortcutSort(Kind.Shortcut, "Sort by", sorts = true),
         WorkplaceSetupSort(Kind.WorkplaceSetup, "Sort by", sorts = true),
         MdSort(Kind.Md, "Sort by", sorts = true),
+        PresenceEvolutionSort(Kind.PresenceEvolution, "Sort by", sorts = true),
         AppSettingSort(Kind.AppSetting, "Sort by", sorts = true),
         CalendarSort(Kind.Calendar, "Sort by", sorts = true),
         WindowSort(Kind.Window, "Sort by", sorts = true),
@@ -2204,6 +2212,7 @@ object SearchDomain {
             Kind.HistoryUnit -> "history"
             Kind.Shortcut -> "shortcuts"
             Kind.WorkplaceSetup -> "setups"
+            Kind.PresenceEvolution -> "evolutions"
             Kind.ClaudeReasoning -> "reasoning"
             Kind.SearchConfiguration -> "configurations"
             else -> kind.plural
@@ -3605,6 +3614,9 @@ object SearchDomain {
                 Kind.Md -> state.mdElements.map { md ->
                     ItemResult(kind, md.id, MdDomain.title(md).ifBlank { "Md element" }, mdDetail(state, md))
                 }
+                Kind.PresenceEvolution -> state.presenceEvolutions.map { e ->
+                    ItemResult(kind, e.id, PresenceEvolutions.title(state, e), PresenceEvolutions.detail(state, e))
+                }
                 Kind.Chrono -> state.chronos.map { chrono ->
                     val detail = when {
                         chrono.running -> "running"
@@ -4103,7 +4115,7 @@ object SearchDomain {
                         ))
             }
             is ItemResult -> when (result.kind) {
-                Kind.Task, Kind.WorkplaceSetup, Kind.Md, Kind.SearchConfiguration, Kind.Option, Kind.Integer, Kind.Action -> true
+                Kind.Task, Kind.WorkplaceSetup, Kind.Md, Kind.PresenceEvolution, Kind.SearchConfiguration, Kind.Option, Kind.Integer, Kind.Action -> true
                 Kind.Category ->
                     tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
                 Kind.RestrictivePeriod -> when (filters.periodOrigin) {
@@ -4429,7 +4441,7 @@ object SearchDomain {
     val HISTORY_CHANGED_KINDS: List<Kind> =
         listOf(
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.Shortcut, Kind.Window, Kind.WorkplaceSetup, Kind.Md,
+            Kind.Shortcut, Kind.Window, Kind.WorkplaceSetup, Kind.Md, Kind.PresenceEvolution,
         )
 
     /** Whether a unit that changed [changed] passes the two "changed" filters: one of the checked kinds, the one element. */
@@ -5070,6 +5082,8 @@ object SearchDomain {
         MdNew(Kind.Md, "New"),
         MdDuplicate(Kind.Md, "Duplicate"),
         MdDelete(Kind.Md, "Delete"),
+        /** User rule 2026-11-19: the bin of the added presence ratio target evolutions. */
+        PresenceEvolutionDelete(Kind.PresenceEvolution, "Delete"),
 
         /** The volume of Claude Code's own sounds ([AppSettingEntry.ClaudeSounds]). */
         ClaudeSoundsVolume(Kind.AppSetting, "Claude Code sounds volume"),
@@ -5153,7 +5167,7 @@ object SearchDomain {
             AddedAction.TaskResilience -> task?.resilience
             AddedAction.TaskScheduleUnit -> task?.scheduleUnit
             AddedAction.MdText -> state.mdElements.firstOrNull { it.id == id && row.kind == Kind.Md }?.text
-            AddedAction.TaskPresenceFormula -> task?.let { t -> state.cells.values.filter { it.taskId == t.id }.sortedBy { it.id.value }.map { it.presenceFormula to it.weightFormula } }
+            AddedAction.TaskPresenceFormula -> task?.let { t -> PresenceEvolutions.involving(state, listOf(t.id)).map { it.id }.toSet() }
             AddedAction.TaskMinimumFormula -> task?.minimumFormula
             AddedAction.TaskTreeName -> treeRootsOf(listOf(row)).map { state.tasks[it]?.title }
             AddedAction.AlarmTitle -> alarm()?.label
@@ -5636,8 +5650,8 @@ object SearchDomain {
             AddedAction.ElementMd -> "md markdown text notes note add associate dissociate"
             AddedAction.MdText -> "md markdown text notes edit"
             AddedAction.MdAssociated -> "associated with elements dissociate"
-            AddedAction.TaskPresenceFormula -> "presence ratio target weight priority formula evolution time ramp date apply"
-            AddedAction.TaskMinimumFormula -> "minimum length target time formula evolution ramp date apply"
+            AddedAction.TaskPresenceFormula -> "presence ratio target evolutions tasks relative to parent distance time periods formula categories new"
+            AddedAction.TaskMinimumFormula -> "minimum length target time periods formula evolution ramp date"
             AddedAction.TaskTreeName -> "rename tree name apply"
             AddedAction.AlarmOnOff, AddedAction.AlarmRepeat, AddedAction.TimerBelowZero -> "on off"
             AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow -> "now"
@@ -5677,7 +5691,7 @@ object SearchDomain {
             AddedAction.CategoryName -> "unique rename"
             AddedAction.CategoryRules, AddedAction.CategoryAddRule -> "rule label"
             AddedAction.AlarmDelete, AddedAction.TimerDelete, AddedAction.ChronoDelete, AddedAction.QuotaDelete,
-            AddedAction.WorkplaceDelete, AddedAction.MdDelete,
+            AddedAction.WorkplaceDelete, AddedAction.MdDelete, AddedAction.PresenceEvolutionDelete,
             AddedAction.ReminderDelete, AddedAction.CategoryDelete, AddedAction.PeriodDelete, AddedAction.ShortcutDelete -> "delete remove bin"
             AddedAction.TimerAlert, AddedAction.ReminderAlert, AddedAction.AlarmAlert -> "alert sound voice notify vibrate"
             AddedAction.ReminderConstraint -> "choose none"
@@ -7232,6 +7246,7 @@ object SearchDomain {
             Kind.Chrono -> state.chronos.mapTo(HashSet()) { it.id }
             Kind.WorkplaceSetup -> state.workplaceSetups.mapTo(HashSet()) { it.id }
             Kind.Md -> state.mdElements.mapTo(HashSet()) { it.id }
+            Kind.PresenceEvolution -> state.presenceEvolutions.mapTo(HashSet()) { it.id }
             Kind.Quota -> state.quotas.mapTo(HashSet()) { it.id }
             Kind.Reminder -> state.chores.mapTo(HashSet()) { it.id }
             else -> emptySet()
@@ -7410,6 +7425,10 @@ object SearchDomain {
                     Kind.Md -> {
                         val next = state.mdElements.filterNot { it.id in ids }
                         if (next.size == state.mdElements.size) emptyList() else listOf(SchedulerIntent.SetMdElements(next))
+                    }
+                    Kind.PresenceEvolution -> {
+                        val next = state.presenceEvolutions.filterNot { it.id in ids }
+                        if (next.size == state.presenceEvolutions.size) emptyList() else listOf(SchedulerIntent.SetPresenceEvolutions(next))
                     }
                     Kind.WorkplaceSetup -> {
                         val next = state.workplaceSetups.filterNot { it.id in ids }

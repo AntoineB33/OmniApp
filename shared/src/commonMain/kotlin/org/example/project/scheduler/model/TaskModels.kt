@@ -1136,6 +1136,8 @@ data class Cell(
      */
     val weightFormula: String = "",
     /**
+     * LEGACY (written only by the build of the morning of 2026-11-19, lifted into a
+     * [org.example.project.scheduler.domain.PresenceEvolution] and cleared on decode: read nowhere else).
      * User rule 2026-11-19: **this occurrence's presence ratio target relative to its parent**, a fraction in `[0, 1]`, as a
      * formula of the instant ([org.example.project.scheduler.domain.TimeFormula], `periods(…)` for time periods). Where it
      * reads as a number it IS the occurrence's share of its parent — the free siblings share what is left by their

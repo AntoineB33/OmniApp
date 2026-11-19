@@ -11,18 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
-### The formula of a presence ratio target, by periods, and its coherence — 2026-11-19
+### Presence ratio target evolutions, edited in rows — 2026-11-19
 
-- User rule: *"In the action section of a task element, the user must be able to change the formula for the evolution
-  of the presence (or minimum length) ratio target"* — the tasks selected (and a field adding others), the task element
-  it is relative to, the time periods, the formula; incoherent, a message says so and both schedulers do nothing.
-- `Cell.presenceFormula` (new, persisted and synced, blank by default): the place's share of its parent, a fraction;
-  where it reads, its free siblings share the rest by their weights. `TimeFormula` gains `periods(a, b, e, …)`, `inf`,
-  and `FormulaPeriods` (the editor's periods ↔ the text). `SetCellsPresenceFormula`.
-- `FormulaCoherence`: over 100 % under a parent at some instant, under 100 % with nobody to take the rest, a ratio out
-  of [0, 1], overlapping periods, a negative minimum, a formula that does not read. While any holds, `fillSchedule` and
-  `firstSecondsGapFillable` hand no task any time (the instant schedule and the search alike); the editor, the task tree
-  window and the calendar say why. `FormulaRuleEditor` replaces both actions' editors. `PresenceRatioFormulaTest`.
+- User rules: *"In the action section of a task element, the user must be able to change the formula for the evolution
+  of the presence (or minimum length) ratio target … If it is incoherent … the two scheduler do nothing until all
+  incoherences are resolved."* Then, the same evening: *"I only want rows in the 3 sections of any Search window"* — six
+  rows: the evolutions (a pop-up with its added elements list A), the tasks that get it, relative to (the tasks above
+  all of A's, "parent distance [n]" first), the time periods, the formula, the categories.
+- A new element kind, `PresenceEvolution` (synced as rows): tasks, relative task or parent distance, periods, formula;
+  categories through `ElementTree`. Read in `PresenceEvolutions.adjust` from `absoluteTaskPriorities`; in the signature
+  and the formula timeline (`SchedulerDomain.formulaTexts`). `TimeFormula` gains `periods(…)` and `inf`.
+- `FormulaCoherence`: while it lists a problem, `fillSchedule` and `firstSecondsGapFillable` place nothing; the actions,
+  the task tree window and the calendar say why.
+- The morning's `Cell.presenceFormula` (released for a few hours, never with this UI) is lifted into evolutions on decode.
+  `SetCellsPresenceFormula` is gone. `PresenceRatioFormulaTest`.
 
 ### Every selected row reaches the actions and the added elements — 2026-11-19
 

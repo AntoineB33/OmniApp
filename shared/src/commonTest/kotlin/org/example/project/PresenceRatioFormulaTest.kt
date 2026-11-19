@@ -7,130 +7,158 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.datetime.TimeZone
+import org.example.project.scheduler.domain.ElementTree
+import org.example.project.scheduler.domain.EvolutionPeriod
 import org.example.project.scheduler.domain.FormulaCoherence
+import org.example.project.scheduler.domain.PresenceEvolution
+import org.example.project.scheduler.domain.PresenceEvolutions
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.TimeFormula
 import org.example.project.scheduler.domain.TimeFormula.Period
+import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * User rule 2026-11-19: in the action section of a task element, the formula of the evolution of the presence ratio target
- * (or the minimum length) — over the tasks selected, relative to a task element, by time periods; incoherent, a message
- * says so and both schedulers do nothing until it is resolved.
+ * User rule 2026-11-19: a **presence ratio target evolution** is an element — the tasks that get it, what it is relative to
+ * (a task above them, or each one's ancestor at a parent distance), its time periods, its formula, its categories — edited
+ * from the rows of a task's "Presence ratio target" action. Incoherent, a message says so and both schedulers do nothing.
  */
 class PresenceRatioFormulaTest {
     private val utc = TimeZone.UTC
     private val DAY = 86_400_000L
 
-    /** "A", "B" and "C" at the top, constant weights 1. */
+    /** "P" holding "A", "B", "C"; and "Q" beside "P", both under the global root. All weights 1. */
     private fun account(): SchedulerState {
-        var s = SchedulerState.empty()
-        for (title in listOf("A", "B", "C")) {
-            s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds.last(), title))
-        }
-        return s.copy(sleep = null)
+        var s = SchedulerState.empty().copy(sleep = null)
+        fun freeRoot() = s.lists[s.rootListId]!!.cellIds.last()
+        fun freeChild(t: TaskId) = s.lists[s.tasks[t]!!.childListId!!]!!.cellIds.last()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(freeRoot(), "P"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(freeRoot(), "Q"))
+        for (title in listOf("A", "B", "C")) s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(freeChild(id(s, "P")), title))
+        return s
     }
 
     private fun id(s: SchedulerState, title: String) = s.tasks.values.first { it.title == title }.id
 
-    private fun place(s: SchedulerState, title: String) = s.cells.values.first { it.taskId == id(s, title) }.id
+    private fun with(s: SchedulerState, vararg es: PresenceEvolution) = SchedulerReducer.reduce(s, SchedulerIntent.SetPresenceEvolutions(s.presenceEvolutions + es))
 
-    private fun withPresence(s: SchedulerState, vararg pairs: Pair<String, String>): SchedulerState =
-        pairs.fold(s) { acc, (title, formula) -> SchedulerReducer.reduce(acc, SchedulerIntent.SetCellsPresenceFormula(listOf(place(acc, title)), formula)) }
+    private fun evo(id: String, tasks: List<TaskId>, formula: String, relative: TaskId? = null, distance: Int = 1, periods: List<EvolutionPeriod> = emptyList()) =
+        PresenceEvolution(id, tasks, relative, distance, periods, formula)
+
+    private fun share(s: SchedulerState, title: String, at: Long = 0L) = SchedulerDomain.absoluteTaskPriorities(s, at).getValue(id(s, title))
 
     @Test
-    fun periods_are_a_formula_and_read_back_into_the_editor() {
+    fun periods_are_a_formula_and_read_back() {
         val periods = listOf(Period("1970-01-11", "1970-01-21", "0.5"), Period("1970-01-21", "", "ramp(20, 30, 0.5, 0.2)"))
         val text = TimeFormula.FormulaPeriods.build(periods)
         assertEquals(periods, TimeFormula.FormulaPeriods.read(text))
         val f = TimeFormula.parse(text, utc)!!
-        assertNull(f.at(5 * DAY), "outside every period: no value, the weights decide")
+        assertNull(f.at(5 * DAY))
         assertEquals(0.5, f.at(15 * DAY))
         assertEquals(0.35, f.at(25 * DAY)!!, 1e-12)
-        assertEquals(listOf(10 * DAY, 20 * DAY, 30 * DAY), f.breakpoints)
-        assertEquals("0.3", TimeFormula.FormulaPeriods.build(listOf(Period("", "", "0.3"))), "one open period is the formula itself")
-        assertEquals(listOf(Period("", "", "ramp(1, 2, 3, 4)")), TimeFormula.FormulaPeriods.read("ramp(1, 2, 3, 4)"))
     }
 
     @Test
-    fun a_ratio_is_the_share_of_its_parent_and_the_free_siblings_share_the_rest() {
-        val s = withPresence(account(), "A" to "0.5")
-        val p = SchedulerDomain.absoluteTaskPriorities(s, 0L)
-        assertEquals(0.5, p.getValue(id(s, "A")), 1e-12)
-        assertEquals(0.25, p.getValue(id(s, "B")), 1e-12)
-        assertEquals(0.25, p.getValue(id(s, "C")), 1e-12)
+    fun a_ratio_of_the_parent_and_the_free_siblings_share_the_rest() {
+        val s0 = account()
+        val p = share(s0, "P")
+        val s = with(s0, evo("e1", listOf(id(s0, "A")), "0.5"))
+        assertEquals(p * 0.5, share(s, "A"), 1e-12)
+        assertEquals(p * 0.25, share(s, "B"), 1e-12)
+        assertEquals(p * 0.25, share(s, "C"), 1e-12)
+        assertEquals(p, share(s, "P"), 1e-12, "the parent keeps its share")
         assertTrue(FormulaCoherence.problems(s, utc).isEmpty())
     }
 
     @Test
-    fun outside_its_periods_the_weights_decide() {
-        val text = TimeFormula.FormulaPeriods.build(listOf(Period("1970-01-11", "1970-01-21", "0.6")))
-        val s = withPresence(account(), "A" to text)
-        assertEquals(1.0 / 3.0, SchedulerDomain.absoluteTaskPriorities(s, 5 * DAY).getValue(id(s, "A")), 1e-12)
-        assertEquals(0.6, SchedulerDomain.absoluteTaskPriorities(s, 15 * DAY).getValue(id(s, "A")), 1e-12)
+    fun relative_to_an_ancestor_further_up_by_task_or_by_parent_distance() {
+        val s0 = account()
+        val tree = org.example.project.scheduler.model.WellKnownIds.ROOT_TASK
+        val byTask = with(s0, evo("e1", listOf(id(s0, "A")), "0.6", relative = tree))
+        val byDistance = with(s0, evo("e1", listOf(id(s0, "A")), "0.6", distance = 2))
+        val whole = 1.0
+        assertEquals(whole * 0.6, share(byTask, "A"), 1e-12)
+        assertEquals(share(byTask, "A"), share(byDistance, "A"), 1e-12)
+        // The rest of the tree's share goes to what is free under it, by the weights: Q, B and C.
+        assertEquals(whole * 0.4, share(byTask, "Q") + share(byTask, "B") + share(byTask, "C"), 1e-12)
     }
 
     @Test
-    fun a_total_over_100_percent_at_some_point_is_incoherent_and_both_schedulers_do_nothing() {
-        // Each alone is fine; from day 10, A rises to 0.7 while B holds 0.4: 110 %.
-        val s = withPresence(account(), "A" to "step(10, 0.3, 0.7)", "B" to "0.4")
+    fun outside_its_periods_the_weights_decide() {
+        val s0 = account()
+        val s = with(s0, evo("e1", listOf(id(s0, "A")), "0.6", periods = listOf(EvolutionPeriod(10 * DAY, 20 * DAY))))
+        assertEquals(share(s0, "A", 5 * DAY), share(s, "A", 5 * DAY), 1e-12)
+        assertEquals(share(s0, "P", 15 * DAY) * 0.6, share(s, "A", 15 * DAY), 1e-12)
+        assertEquals(listOf(10 * DAY, 20 * DAY), SchedulerDomain.formulaBreakpoints(s))
+    }
+
+    @Test
+    fun over_100_percent_at_some_point_is_incoherent_and_both_schedulers_do_nothing() {
+        val s0 = account()
+        val s = with(s0, evo("e1", listOf(id(s0, "A")), "step(10, 0.3, 0.7)"), evo("e2", listOf(id(s0, "B")), "0.4"))
         val problems = FormulaCoherence.problems(s, utc)
         assertEquals(1, problems.size, problems.toString())
         assertTrue("110" in problems.single().message && "1970-01-11" in problems.single().message, problems.single().message)
-        assertFalse(FormulaCoherence.isCoherent(s))
-        val start = 0L
-        val deep = SchedulerDomain.fillSchedule(s, start, utc, horizonMillis = start + DAY).filter { it.auto }
-        val instant = SchedulerDomain.fillSchedule(s, start, utc, horizonMillis = start + DAY, instant = true).filter { it.auto }
-        assertTrue(deep.isEmpty() && instant.isEmpty(), "incoherent: nothing placed")
-        assertFalse(SchedulerDomain.firstSecondsGapFillable(s, start))
+        assertTrue(SchedulerDomain.fillSchedule(s, 0L, utc, horizonMillis = DAY).none { it.auto })
+        assertTrue(SchedulerDomain.fillSchedule(s, 0L, utc, horizonMillis = DAY, instant = true).none { it.auto })
+        assertFalse(SchedulerDomain.firstSecondsGapFillable(s, 0L))
 
-        // Resolved: the plan comes back.
-        val fixed = withPresence(s, "B" to "0.3")
+        val fixed = SchedulerReducer.reduce(s, SchedulerIntent.SetPresenceEvolutions(s.presenceEvolutions.map { if (it.id == "e2") it.copy(formula = "0.3") else it }))
         assertTrue(FormulaCoherence.problems(fixed, utc).isEmpty())
-        assertTrue(SchedulerDomain.fillSchedule(fixed, start, utc, horizonMillis = start + DAY).any { it.auto })
+        assertTrue(SchedulerDomain.fillSchedule(fixed, 0L, utc, horizonMillis = DAY).any { it.auto })
     }
 
     @Test
-    fun under_100_percent_with_nobody_to_take_the_rest_is_incoherent() {
-        val s = withPresence(account(), "A" to "0.3", "B" to "0.3", "C" to "0.3")
-        assertTrue(FormulaCoherence.problems(s, utc).single().message.contains("no other task"))
-        assertTrue(FormulaCoherence.problems(withPresence(s, "C" to "0.4"), utc).isEmpty())
+    fun the_other_incoherences() {
+        val s0 = account()
+        val (a, b, c, q) = listOf("A", "B", "C", "Q").map { id(s0, it) }
+        fun said(vararg es: PresenceEvolution) = FormulaCoherence.problems(with(s0, *es), utc).joinToString(" | ") { it.message }
+        assertTrue("no other task" in said(evo("e1", listOf(a, b, c), "0.3")))
+        assertTrue("between 0 and 100" in said(evo("e1", listOf(a), "1.5")))
+        assertTrue("is not above" in said(evo("e1", listOf(a), "0.2", relative = q)))
+        assertTrue("levels above" in said(evo("e1", listOf(a), "0.2", distance = 9)))
+        assertTrue("Two evolutions" in said(evo("e1", listOf(a), "0.2"), evo("e2", listOf(a), "0.3")))
+        assertTrue("does not read" in said(evo("e1", listOf(a), "ramp(1")))
     }
 
     @Test
-    fun a_ratio_out_of_range_overlapping_periods_and_a_negative_minimum_are_incoherent() {
-        assertTrue(FormulaCoherence.problems(withPresence(account(), "A" to "1.5"), utc).any { "between 0 and 100" in it.message })
-        val overlapping = TimeFormula.FormulaPeriods.build(listOf(Period("1970-01-11", "1970-01-21", "0.2"), Period("1970-01-15", "", "0.1")))
-        assertTrue(FormulaCoherence.problems(withPresence(account(), "A" to overlapping), utc).any { "overlap" in it.message })
-        val s = account()
-        val negative = SchedulerReducer.reduce(s, SchedulerIntent.SetTasksMinimumFormula(listOf(id(s, "A")), "ramp(10, 20, 30, -10)"))
-        assertTrue(FormulaCoherence.problems(negative, utc).any { "below 0" in it.message })
+    fun the_rows_read_the_tree_and_the_categories_are_links() {
+        val s0 = account()
+        val (a, b) = listOf("A", "B").map { id(s0, it) }
+        val above = PresenceEvolutions.commonAncestors(s0, listOf(a, b))
+        assertTrue(id(s0, "P") in above && id(s0, "Q") !in above)
+        val s = with(s0, evo("e1", listOf(a), "0.3"), evo("e2", listOf(id(s0, "Q")), "0.3", relative = null))
+        assertEquals(listOf("e1"), PresenceEvolutions.involving(s, listOf(a)).map { it.id })
+        assertEquals(listOf("e1"), SearchDomain.itemResults(s, SearchDomain.Kind.PresenceEvolution, "A:").map { it.id })
+        // A category is carried as any element carries one.
+        var withCategory = SchedulerReducer.reduce(s, SchedulerIntent.CreateCategory("Health"))
+        val category = ElementTree.categoryKey(withCategory.categories.single { it.title == "Health" }.id)
+        val key = SearchDomain.Kind.PresenceEvolution.name + "/e1"
+        ElementTree.parentIntents(withCategory, listOf(key), category, on = true).forEach { withCategory = SchedulerReducer.reduce(withCategory, it) }
+        assertTrue(category in ElementTree.parentsOf(withCategory, key))
     }
 
     @Test
-    fun the_editor_targets_the_places_under_the_element_chosen() {
-        val s = account()
-        val ids = listOf(id(s, "A"), id(s, "B"))
-        val parents = FormulaCoherence.parentsOf(s, ids)
-        assertEquals(1, parents.size)
-        assertEquals(listOf(place(s, "A"), place(s, "B")).sortedBy { it.value }, FormulaCoherence.placesUnder(s, ids, parents.single()))
-    }
-
-    @Test
-    fun a_ratio_is_a_rule_one_undo_and_survives_the_store_and_an_older_payload() {
-        val s = account()
-        val text = "ramp(10, 20, 0.2, 0.5)"
-        val with = withPresence(s, "A" to text)
-        assertNotEquals(SchedulerDomain.schedulingSignature(s), SchedulerDomain.schedulingSignature(with))
-        assertEquals(with, SchedulerReducer.reduce(with, SchedulerIntent.SetCellsPresenceFormula(listOf(place(with, "A")), "ramp(1")), "refused")
-        assertEquals("", SchedulerReducer.reduce(with, SchedulerIntent.Undo).cells.getValue(place(s, "A")).presenceFormula)
-        assertEquals(text, SchedulerStateCodec.decode(SchedulerStateCodec.encode(with))!!.cells.getValue(place(s, "A")).presenceFormula)
-        // Persisted-DB compatibility: a payload written before the field has none and loads with none.
-        val older = SchedulerStateCodec.encode(s)
-        assertFalse("presenceFormula" in older)
-        assertTrue(SchedulerStateCodec.decode(older)!!.cells.values.all { it.presenceFormula.isEmpty() })
+    fun an_evolution_is_a_rule_one_undo_and_survives_the_store_and_older_payloads() {
+        val s0 = account()
+        val e = evo("e1", listOf(id(s0, "A")), "ramp(10, 20, 0.2, 0.5)", periods = listOf(EvolutionPeriod(null, 30 * DAY)))
+        val s = with(s0, e)
+        assertNotEquals(SchedulerDomain.schedulingSignature(s0), SchedulerDomain.schedulingSignature(s))
+        assertEquals(emptyList(), SchedulerReducer.reduce(s, SchedulerIntent.Undo).presenceEvolutions)
+        assertEquals(listOf(e), SchedulerStateCodec.decode(SchedulerStateCodec.encode(s))!!.presenceEvolutions)
+        // Persisted-DB compatibility: a payload before the field has none…
+        val older = SchedulerStateCodec.encode(s0)
+        assertFalse("presenceEvolutions" in older)
+        assertTrue(SchedulerStateCodec.decode(older)!!.presenceEvolutions.isEmpty())
+        // …and one the morning build wrote, a presence formula on a cell, is lifted into an evolution relative to the parent.
+        val cell = s0.cells.values.first { it.taskId == id(s0, "A") }
+        val morning = SchedulerStateCodec.encode(s0.copy(cells = s0.cells + (cell.id to cell.copy(presenceFormula = "0.5"))))
+        val lifted = SchedulerStateCodec.decode(morning)!!
+        assertEquals(listOf(PresenceEvolution("presence-cell-" + cell.id.value, listOf(id(s0, "A")), id(s0, "P"), formula = "0.5")), lifted.presenceEvolutions)
+        assertTrue(lifted.cells.values.all { it.presenceFormula.isEmpty() })
     }
 }
