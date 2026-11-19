@@ -42,7 +42,7 @@ pushd "%SCRIPT_DIR%.." || (echo [x] Could not enter project root.& exit /b 1)
 set "APP_IMAGE=desktopApp\build\compose\binaries\main\app\%PACKAGE_NAME%"
 
 echo [1/6] Building the release app image (bundled JRE; can take a few minutes)...
-call gradlew.bat :desktopApp:createDistributable
+call .\gradlew.bat :desktopApp:createDistributable
 if errorlevel 1 (echo [x] Build failed.& popd & exit /b 1)
 if not exist "%APP_IMAGE%\%EXE_NAME%" (echo [x] App image / exe not found under %APP_IMAGE%.& popd & exit /b 1)
 

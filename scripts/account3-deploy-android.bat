@@ -82,7 +82,7 @@ if errorlevel 1 (
 )
 
 echo [2/6] Building the signed release APK (can take a few minutes)...
-call gradlew.bat :androidApp:assembleRelease
+call .\gradlew.bat :androidApp:assembleRelease
 if errorlevel 1 (echo [x] Build failed.& popd & exit /b 1)
 if not exist "%APK%" (echo [x] APK not found at %APK%.& popd & exit /b 1)
 

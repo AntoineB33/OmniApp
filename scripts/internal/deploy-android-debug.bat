@@ -53,7 +53,7 @@ where adb >nul 2>&1 || (
 if defined ANDROID_HOME if exist "%ANDROID_HOME%\platform-tools\adb.exe" set "ADB=%ANDROID_HOME%\platform-tools\adb.exe"
 
 echo [1/6] Building the debug APK (can take a few minutes)...
-call gradlew.bat :androidApp:assembleDebug
+call .\gradlew.bat :androidApp:assembleDebug
 if errorlevel 1 (echo [x] Build failed.& exit /b 1)
 if not exist "%APK%" (echo [x] APK not found at %APK%.& exit /b 1)
 

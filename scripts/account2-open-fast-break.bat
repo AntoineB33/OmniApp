@@ -58,7 +58,7 @@ call "%SCRIPT_DIR%internal\kill-app-by-match.bat" ".omniapp-acc2"
 
 REM ---- [3/3] Launch logged in as account 2 with the fast 5-min break --
 echo [3/3] Launching as "%ACC2_USER%" (state %STATE_DIR%) - 5-min break: %DURATION_S%s long, due %INTERVAL_S%s after a pause...
-start "OmniApp acc2 fast-break" cmd /c "gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC2_USER% -Pomniapp.loginPass=%ACC2_PASS% -Pomniapp.timeSim=false -Pomniapp.breakDurationMs=%DURATION_MS% -Pomniapp.breakIntervalMs=%INTERVAL_MS%"
+start "OmniApp acc2 fast-break" cmd /c ".\gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC2_USER% -Pomniapp.loginPass=%ACC2_PASS% -Pomniapp.timeSim=false -Pomniapp.breakDurationMs=%DURATION_MS% -Pomniapp.breakIntervalMs=%INTERVAL_MS%"
 
 popd
 endlocal

@@ -58,6 +58,10 @@ Launch logged in as account 2 (data preserved).
 
 Empty account 2 (local + remote); does not relaunch.
 
+**Gotcha (2026-11-19): call `gradlew.bat` by a path (`.\gradlew.bat`), never by its bare name.** A shell started by
+the Claude app has `NoDefaultCurrentDirectoryInExePath=1`, so cmd does not run a bare name from the current folder:
+`call gradlew.bat` said *"n'est pas reconnu"* while `where gradlew.bat` found it. Every script calls it so.
+
 ### `account3-deploy-windows.bat`
 
 Build the release app image, install it outside the tree, register it to auto-start at Windows login, and

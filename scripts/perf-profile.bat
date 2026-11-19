@@ -59,7 +59,7 @@ if defined ACC2_USER (
 call "%SCRIPT_DIR%internal\kill-app-by-match.bat" "%STATE_DIR%"
 
 echo [1/1] Launching with the perf overlay (state dir %STATE_DIR%, time-sim OFF)...
-start "OmniApp perf" cmd /c "gradlew.bat :desktopApp:run -Pomniapp.perf=true -Pomniapp.timeSim=false -Pomniapp.stateDir=%STATE_DIR% !LOGIN_ARGS!"
+start "OmniApp perf" cmd /c ".\gradlew.bat :desktopApp:run -Pomniapp.perf=true -Pomniapp.timeSim=false -Pomniapp.stateDir=%STATE_DIR% !LOGIN_ARGS!"
 
 popd
 endlocal

@@ -120,7 +120,7 @@ if defined OMNIAPP_POSE15_INTERVAL_MS set "BREAK_PROPS=!BREAK_PROPS! -Pomniapp.b
 REM ---- [5/5] Launch the desktop app logged in as account 1 -----------
 echo [5/5] Launching the desktop app logged in as "%ACC1_USER%" (state dir %STATE_DIR%)...
 call :diag "local DB wiped; launching desktop app"
-start "OmniApp acc1" cmd /c "gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC1_USER% -Pomniapp.loginPass=%ACC1_PASS%!BREAK_PROPS!"
+start "OmniApp acc1" cmd /c ".\gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC1_USER% -Pomniapp.loginPass=%ACC1_PASS%!BREAK_PROPS!"
 call :diag "account1-empty-and-open: DONE (desktop launch dispatched)"
 
 REM Clean completion: drop our PID lock so the next run doesn't target a dead/recycled PID.

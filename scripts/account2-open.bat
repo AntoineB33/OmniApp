@@ -25,7 +25,7 @@ call "%SCRIPT_DIR%internal\kill-app-by-match.bat" ".omniapp-acc2"
 
 REM ---- [2/2] Launch logged in as account 2 ---------------------------
 echo [2/2] Launching the app logged in as "%ACC2_USER%" (state dir %STATE_DIR%)...
-start "OmniApp acc2" cmd /c "gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC2_USER% -Pomniapp.loginPass=%ACC2_PASS%"
+start "OmniApp acc2" cmd /c ".\gradlew.bat :desktopApp:run -Pomniapp.stateDir=%STATE_DIR% -Pomniapp.loginUser=%ACC2_USER% -Pomniapp.loginPass=%ACC2_PASS%"
 
 popd
 endlocal
