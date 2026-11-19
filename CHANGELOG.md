@@ -22,6 +22,9 @@ child did not reach the row; the actions section pinned "Calendar: Calendar" AND
 - **`pinnedParent` / `pinnedListRow`** replace `pinnedChain`: the tree's direct-parent rule, one row, for the tree, the
   Search lists and the Life plan. `PinnedChainTest` → `PinnedParentTest`.
 - **↑/↓ cross a Search row and its sub-tree** (`TaskTreeView.onWalkPastEdge`, `SubtreeEnter`; `SearchSubtreeWalkTest`).
+- Same day, the two left over: **the actions section's "Children" trees walk with their action row** (`RowContentWalk`;
+  `ChildrenActionWalkTest`), a list leaving the arrows to a tree or field inside a row; **menu folders are pinned over
+  their items**.
 
 ### Every path of modes has an answer: the instant policy, laid at a flip — 2026-11-19
 

@@ -589,6 +589,8 @@ fun SearchWindow(
     // Anomaly 2026-11-19: down on an expanded task row, up on the row under one, walks INTO its sub-tree - the tree's
     // walk, which goes from a cell to its first child and from a row to the last row drawn above it ([SubtreeEnter]).
     var subtreeEnter by remember { mutableStateOf<Pair<TaskId, SubtreeEnter>?>(null) }
+    // The list itself holds the keyboard — not a field or a tree inside one of its rows.
+    var listSelfFocused by remember { mutableStateOf(false) }
     // Anomaly 2026-10-07 ("I click on a task cell in the sub-tree, then on the root task cell: both are selected"):
     // **ONE surface of the window shows a selection of cells at a time.** A sub-tree's selection is the state's
     // (`searchSelection`, shared by every sub-tree), a row's is the window's own; a press on either left the other
@@ -880,6 +882,8 @@ fun SearchWindow(
     fun subtreeShown(row: SearchDomain.TaskResult): Boolean =
         picker == null && row.taskId in expandedTasks &&
             state.tasks[row.taskId]?.childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
+    // The walks into the trees an open row's CONTENT draws (the actions section's "Children"), by the row's key.
+    val contentWalks = remember { HashMap<String, RowContentWalk>() }
     /** A press on a row: it becomes the selection, and the list — not the bar — holds the keyboard. */
     fun selectRow(index: Int) {
         if (editingTaskId != null && (results.getOrNull(index) as? SearchDomain.TaskResult)?.taskId != editingTaskId) {
@@ -890,6 +894,27 @@ fun SearchWindow(
         selectionSurface = null
         heldForMenu = emptyList()
         runCatching { listFocus.requestFocus() }
+    }
+    /**
+     * The walk leaving what is drawn under the row at [index] (its sub-tree, its content's trees): up (-1) to the row itself,
+     * its parent; down (+1) to the row drawn under it (anomaly 2026-11-19).
+     */
+    fun walkOutOf(index: Int, step: Int) {
+        if (step < 0) {
+            selectRow(index)
+            return
+        }
+        val order = shownRowOrder(state, results, expandedElements, windows, schedulerRuns, claudeLogs)
+        val at = order.indexOfFirst { it.child == null && it.index == index }
+        val target = order.getOrNull(at + 1)
+        when {
+            target == null -> Unit
+            target.child != null -> {
+                childSelection.selectOnly(target.child.rowKey, target.child.key)
+                runCatching { listFocus.requestFocus() }
+            }
+            else -> selectRow(target.index)
+        }
     }
     // Back in the search bar: a rename left open is committed, as it is when a tree cell is left.
     LaunchedEffect(fieldFocused) { if (fieldFocused) commitOpenEdit(refocusList = false) }
@@ -1382,7 +1407,11 @@ fun SearchWindow(
                             val info = listState.layoutInfo
                             listOfNotNull(pinnedListRow(
                                 info.visibleItemsInfo.map { PinItem(it.index, it.offset, it.size) }, info.viewportStartOffset, bandPx,
-                                depthOf = { i -> actionRows?.byKey?.get((results.getOrNull(i) as? SearchDomain.ItemResult)?.id)?.depth },
+                                // An action under its group, a menu item in its folder (anomaly 2026-11-19: folders were never pinned).
+                                depthOf = { i ->
+                                    val id = (results.getOrNull(i) as? SearchDomain.ItemResult)?.id
+                                    actionRows?.byKey?.get(id)?.depth ?: menuList?.byKey?.get(id)?.depth
+                                },
                                 pinnable = { i ->
                                     when (val row = results.getOrNull(i)) {
                                         is SearchDomain.TaskResult -> row.taskId in expandedTasks && row.taskId != resultNestedPin
@@ -1464,23 +1493,7 @@ fun SearchWindow(
                             },
                             subtreeEnter = subtreeEnter?.takeIf { it.first == result.taskId }?.second,
                             // Up on its first cell is this row; down on its last, the row drawn under it (anomaly 2026-11-19).
-                            onSubtreeWalkOut = { step ->
-                                if (step < 0) {
-                                    selectRow(index)
-                                } else {
-                                    val order = shownRowOrder(state, results, expandedElements, windows, schedulerRuns, claudeLogs)
-                                    val at = order.indexOfFirst { it.child == null && it.index == index }
-                                    val target = order.getOrNull(at + 1)
-                                    when {
-                                        target == null -> Unit
-                                        target.child != null -> {
-                                            childSelection.selectOnly(target.child.rowKey, target.child.key)
-                                            runCatching { listFocus.requestFocus() }
-                                        }
-                                        else -> selectRow(target.index)
-                                    }
-                                }
-                            },
+                            onSubtreeWalkOut = { step -> walkOutOf(index, step) },
                         )
                         }
                     }
@@ -1518,13 +1531,19 @@ fun SearchWindow(
                             .then(with(arrange) { Modifier.dropIndicator(dropColor, menuList?.levelStep ?: 0.dp) })
                             .shiftWheelScrolls(listState, listCut)
                             .focusRequester(listFocus)
-                            .onFocusChanged { listFocused = it.hasFocus }
+                            .onFocusChanged {
+                                listFocused = it.hasFocus
+                                listSelfFocused = it.isFocused
+                            }
                             .focusable()
                             .recordPressModifiers(pressModifiers)
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 // A row's sub-tree reads its own keys (it is the tree's own view).
                                 if (subtreeFocusOwner != null) return@onPreviewKeyEvent false
+                                // So does a tree or a field inside a row's content (an open action's "Children", its
+                                // fields): their arrows are theirs, never a move of this list (anomaly 2026-11-19).
+                                if (!listSelfFocused && editingTaskId == null) return@onPreviewKeyEvent false
                                 val current = results.getOrNull(selected)
                                 // In Edit Mode the row's field owns the keys; Escape abandons the rename.
                                 if (editingTaskId != null) {
@@ -1557,6 +1576,15 @@ fun SearchWindow(
                                                 step = if (event.key == Key.DirectionDown) 1 else -1,
                                                 tick = (subtreeEnter?.second?.tick ?: 0) + 1,
                                             )
+                                            return@onPreviewKeyEvent true
+                                        }
+                                        // The same walk into the trees an open action's content draws (its "Children").
+                                        val intoContent = into?.let { contentWalks[resultKeys.getOrNull(it.index)] }
+                                        if (intoContent != null && intoContent.enterAt(if (event.key == Key.DirectionDown) 1 else -1)) {
+                                            // The tree's cell is the one selection shown now: this list's rows show none,
+                                            // as after a press on that cell, until the walk comes back to one.
+                                            deselected = true
+                                            multiSelection = null
                                             return@onPreviewKeyEvent true
                                         }
                                         when {
@@ -1679,7 +1707,18 @@ fun SearchWindow(
                                                     .nestingGuideLines(actionRow.depth + 1, ACTION_ROW_INDENT, itemArrowCenter(result.kind, resultKindWidth))
                                                     .padding(start = ACTION_ROW_INDENT * (actionRow.depth + 1)),
                                             ) {
-                                                actionRows.content(actionRow)
+                                                val walk = remember { RowContentWalk() }
+                                                walk.out = { step -> walkOutOf(index, step) }
+                                                val walkKey = resultKeys.getOrNull(index)
+                                                if (walkKey != null) {
+                                                    androidx.compose.runtime.DisposableEffect(walkKey, walk) {
+                                                        contentWalks[walkKey] = walk
+                                                        onDispose { if (contentWalks[walkKey] === walk) contentWalks.remove(walkKey) }
+                                                    }
+                                                }
+                                                androidx.compose.runtime.CompositionLocalProvider(LocalRowContentWalk provides walk) {
+                                                    actionRows.content(actionRow)
+                                                }
                                             }
                                         }
                                     }
@@ -1762,6 +1801,27 @@ fun SearchWindow(
                     // view**. Pressed, a pinned row keeps its place: what it hid goes, and the list scrolls back to it.
                     for ((slot, index) in pinned.withIndex()) {
                         val row = results.getOrNull(index) ?: continue
+                        // A menu's folder: drawn by the menu, as its row is; pressed, the list scrolls back to it.
+                        val folder = (row as? SearchDomain.ItemResult)?.let { menuList?.byKey?.get(it.id) }
+                        if (menuList != null && folder != null) {
+                            Box(
+                                Modifier
+                                    .align(Alignment.TopStart)
+                                    .offset(y = RESULT_ROW_HEIGHT * slot)
+                                    .fillMaxWidth()
+                                    .padding(end = 12.dp)
+                                    .height(RESULT_ROW_HEIGHT)
+                                    .clipToBounds()
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .then(selectionLook(rowSelected(index), rowInSelection(index)))
+                                    .modifiedPressSelects(resultKeys.getOrNull(index) ?: "") { ctrl, shift ->
+                                        clickRow(index, ctrl, shift, keepIfSelected = false)
+                                        pinScope.launch { listState.animateScrollToItem(index) }
+                                    },
+                                contentAlignment = Alignment.CenterStart,
+                            ) { menuList.row(folder.key, false) }
+                            continue
+                        }
                         val action = (row as? SearchDomain.ItemResult)?.let { actionRows?.byKey?.get(it.id) }
                         val openElement = (row as? SearchDomain.ItemResult)?.takeIf { action == null }
                         if (row !is SearchDomain.TaskResult && action == null && openElement == null) continue
@@ -1854,7 +1914,18 @@ fun SearchWindow(
             // User rule 2026-11-12: the "Children" action draws a task's children as an expanded row does — tree cells,
             // with their own keyboard and selection surface ([ACTIONS_SURFACE]).
             val taskChildren: @Composable (TaskId, CellListId) -> Unit = { taskId, listId ->
+                // The walk of the action row this tree is drawn under (anomaly 2026-11-19: up on its first child is that
+                // row, its parent; down on its last, the next tree or the row under it).
+                val walk = LocalRowContentWalk.current
+                if (walk != null) {
+                    androidx.compose.runtime.DisposableEffect(walk, taskId) {
+                        walk.trees += taskId
+                        onDispose { walk.trees -= taskId }
+                    }
+                }
                 SearchSubtree(
+                    onWalkPastEdge = walk?.let { w -> { step -> w.outOf(taskId, step) } },
+                    enter = walk?.enter?.takeIf { it.first == taskId }?.second,
                     state = state,
                     listId = listId,
                     readOnly = remember(taskId, state.cells, state.lists, state.tasks) {
@@ -3357,6 +3428,35 @@ private fun SearchSubtree(
         onWalkPastEdge = onWalkPastEdge,
     )
 }
+
+/**
+ * Anomaly 2026-11-19: **the walk through the trees an open row's content draws** (the actions section's "Children": one
+ * tree per task it acts on), in their order. Up on a tree's first cell goes to the tree before it, or to the row, its
+ * parent; down on its last, to the next tree or to the row under ([out]). The list enters it from above at its first tree
+ * and from below at its last ([enterAt]).
+ */
+internal class RowContentWalk {
+    var out: (step: Int) -> Unit = {}
+    val trees = androidx.compose.runtime.mutableStateListOf<Any>()
+    var enter: Pair<Any, SubtreeEnter>? by mutableStateOf(null)
+    private var tick = 0
+
+    /** Into the first tree ([step] 1) or the last (-1); false where there is none. */
+    fun enterAt(step: Int): Boolean {
+        val key = (if (step > 0) trees.firstOrNull() else trees.lastOrNull()) ?: return false
+        enter = key to SubtreeEnter(step, ++tick)
+        return true
+    }
+
+    fun outOf(key: Any, step: Int) {
+        val at = trees.indexOf(key)
+        val next = at + step
+        if (at >= 0 && next in trees.indices) enter = trees[next] to SubtreeEnter(step, ++tick) else out(step)
+    }
+}
+
+/** The walk of the row whose content is being drawn ([RowContentWalk]); null outside one. */
+internal val LocalRowContentWalk = androidx.compose.runtime.compositionLocalOf<RowContentWalk?> { null }
 
 /** The list's walk going into a row's sub-tree: from above ([step] 1, its first cell) or below (-1, its last); [tick] repeats it. */
 internal data class SubtreeEnter(val step: Int, val tick: Int)

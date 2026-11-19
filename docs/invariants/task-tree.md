@@ -514,6 +514,12 @@ the child"*):
   `SearchSubtreeWalkTest`): ↓ on an expanded row selects its first cell, ↑ on the row under one its last; ↑ on the
   sub-tree's first cell selects the row, ↓ on its last the row under it. The tree's own walk goes through the same
   places; the window's ↑/↓ had skipped the sub-tree and the sub-tree's had stopped at its edges.
+- **The same walk through the trees an open row's CONTENT draws** (the actions section's "Children", one tree per task;
+  `RowContentWalk`, `LocalRowContentWalk`; `ChildrenActionWalkTest`; user, 2026-11-19: *"↑ on its first child must go
+  to the row above, which is the parent"*): ↓ on the open action row enters its first tree, ↑ on a tree's first cell
+  goes to the tree before or to the action row, ↓ on its last to the next tree or the row under. Entering, the list's
+  rows show no selection. **A list reads only the keys it holds itself** (`listSelfFocused`; the row being renamed
+  excepted): a tree or a field inside a row's content keeps its own arrows.
 
 ### The pinned parent row
 
@@ -529,6 +535,8 @@ drawings have it.
   of a smaller depth: an action under its group) and, when taller, its content (hanging under its head: an open
   action's fields, an open element's children). They had pinned a CHAIN — every open row above, then the open one —
   a second rule beside the tree's. Never stack the ancestors again. `PinnedParentTest`.
+- **A menu's folder is the parent of its items** (`MenuSearchRows`' depth): it is pinned over them as a tree row is,
+  drawn by the menu's own row, a press scrolling back to it.
 
 - **"Right below" is the first row whose bottom lies past the band**, so a row the band half covers still counts.
   It is never the first *fully* visible row. When a parent row straddles the band, the first fully visible row is
