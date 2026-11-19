@@ -326,7 +326,6 @@ private val VIEW_ROWS: Set<String> =
         org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID, CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID,
         CustomMenuButtons.SETTINGS_PLACEMENT_ID, CustomMenuButtons.TAB_ORDER_PLACEMENT_ID,
         org.example.project.ui.AppViewState.PLACEMENT_ID,
-        org.example.project.scheduler.domain.LifePlanDomain.PLACEMENT_ID,
         org.example.project.ui.PopupMemory.PLACEMENT_ID,
     )
 
@@ -524,8 +523,6 @@ private enum class FloatingWindow(val title: String) {
     ConfigSearch("Search configurations"),
     /** Opened from the Search window's actions; its name is its frame id ([ADDED_CONFIGURATION_FRAME_ID]). */
     AddedConfig("Added elements configurations"),
-    /** User rule 2026-11-02: its name is its frame id ([org.example.project.ui.LIFE_PLAN_WINDOW_ID]). */
-    LifePlan("Life plan"),
     TimeSim("Time simulation"),
 }
 
@@ -1713,14 +1710,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var defaultSubtreeWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.DefaultSubtree)) }
         // PRD §7 Keyboard shortcuts: whether the floating reference list of every chord is open (local UI state).
         var shortcutsWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.Shortcuts)) }
-        // User rule 2026-11-02: the life plan's window, and how each of its copies is looked at, by frame id (local-only).
-        var lifePlanWindowOpen by remember { mutableStateOf(savedVisible(FloatingWindow.LifePlan)) }
-        val lifePlanViews =
-            remember(placementStore) {
-                androidx.compose.runtime.mutableStateMapOf<String, org.example.project.scheduler.domain.LifePlanView>().apply {
-                    putAll(org.example.project.scheduler.domain.LifePlanDomain.decodeViews(placements[org.example.project.scheduler.domain.LifePlanDomain.PLACEMENT_ID]?.config))
-                }
-            }
 
         // The windows are siblings in one Box, so their paint order would be their declaration order. The
         // stacking order that overrides it is [WindowFrameHost.stackOrder] — ONE order for every window of
@@ -1744,7 +1733,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.ConfigSearch -> HistoryWindow.ConfigSearch
             FloatingWindow.AddedConfig -> HistoryWindow.AddedConfig
             FloatingWindow.Online -> HistoryWindow.Online
-            FloatingWindow.LifePlan -> HistoryWindow.LifePlan
             // The debug time-simulation panel is not a window of the app and commits nothing.
             FloatingWindow.TimeSim -> null
         }
@@ -1814,7 +1802,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             FloatingWindow.ConfigSearch -> configSearchWindowOpen
             FloatingWindow.AddedConfig -> addedConfigWindowOpen
             FloatingWindow.Online -> onlineWindowOpen
-            FloatingWindow.LifePlan -> lifePlanWindowOpen
             FloatingWindow.TimeSim -> DebugFlags.TIME_SIMULATION
         }
         // [isWindowOpen]'s other half, for the one caller that opens a window by name: the focus following a
@@ -1834,7 +1821,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 FloatingWindow.ConfigSearch -> configSearchWindowOpen = open
                 FloatingWindow.AddedConfig -> addedConfigWindowOpen = open
                 FloatingWindow.Online -> onlineWindowOpen = open
-                FloatingWindow.LifePlan -> lifePlanWindowOpen = open
                 FloatingWindow.TimeSim -> Unit
             }
         }
@@ -1872,7 +1858,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             configSearches[fromId]?.let { configSearches[id] = it }
             calendarConfigs.remove(id)
             calendarConfigs[fromId]?.let { calendarConfigs[id] = it }
-            lifePlanViews[fromId]?.let { lifePlanViews[id] = it }
             windowsAskedOn[fromId]?.let { windowsAskedOn[id] = it }
             windowCopies.add(id)
             windowFrames.focus(id)
@@ -1882,7 +1867,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // (`configTargetOf`).
             updatePlacementById(id) { it.copy(visible = false, minimized = false) }
             windowCopies.remove(id)
-            lifePlanViews.remove(id)
         }
         // An undone or redone change to what `App` keeps, put back — three-way: only while it is still as the unit
         // left it.
@@ -3034,8 +3018,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var defaultSubtreeSize by remember { mutableStateOf(savedSize(FloatingWindow.DefaultSubtree)) }
         var shortcutsOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Shortcuts, Offset(60f, 60f))) }
         var shortcutsSize by remember { mutableStateOf(savedSize(FloatingWindow.Shortcuts)) }
-        var lifePlanOffset by remember { mutableStateOf(savedOffset(FloatingWindow.LifePlan, Offset(120f, 40f))) }
-        var lifePlanSize by remember { mutableStateOf(savedSize(FloatingWindow.LifePlan)) }
         var searchOffset by remember { mutableStateOf(savedOffset(FloatingWindow.Search, Offset(-160f, -80f))) }
         var searchSize by remember { mutableStateOf(savedSize(FloatingWindow.Search)) }
         var configSearchOffset by remember { mutableStateOf(savedOffset(FloatingWindow.ConfigSearch, Offset(200f, -40f))) }
@@ -3057,9 +3039,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         LaunchedEffect(shortcutsWindowOpen) {
             persistPlacement(FloatingWindow.Shortcuts, shortcutsOffset, shortcutsSize, shortcutsWindowOpen)
-        }
-        LaunchedEffect(lifePlanWindowOpen) {
-            persistPlacement(FloatingWindow.LifePlan, lifePlanOffset, lifePlanSize, lifePlanWindowOpen)
         }
         LaunchedEffect(searchWindowOpen) {
             persistPlacement(FloatingWindow.Search, searchOffset, searchSize, searchWindowOpen)
@@ -5880,31 +5859,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
 
-                    // User rule 2026-11-02: the life plan. What is written is the account's, how it is looked at this device's.
-                    LateralWindow(FloatingWindow.LifePlan, lifePlanWindowOpen) {
-                        val lifePlanId = windowInstanceId(FloatingWindow.LifePlan.name)
-                        org.example.project.ui.LifePlanWindow(
-                            entries = schedulerState.lifePlan,
-                            view = lifePlanViews[lifePlanId] ?: org.example.project.scheduler.domain.LifePlanView(),
-                            onViewChange = { view ->
-                                lifePlanViews[lifePlanId] = view
-                                updatePlacementById(org.example.project.scheduler.domain.LifePlanDomain.PLACEMENT_ID) {
-                                    it.copy(config = org.example.project.scheduler.domain.LifePlanDomain.encodeViews(lifePlanViews.toMap()))
-                                }
-                            },
-                            onEntriesChange = { entries, editKey -> vm.dispatch(SchedulerIntent.SetLifePlan(entries, editKey)) },
-                            onDismiss = { lifePlanWindowOpen = false },
-                            initialOffset = lifePlanOffset,
-                            initialSize = lifePlanSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                lifePlanOffset = windowOffset
-                                lifePlanSize = windowSize
-                                persistPlacement(FloatingWindow.LifePlan, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.LifePlan) },
-                            modifier = Modifier.align(Alignment.Center),
-                        )
-                    }
 
                     // PRD §7 Search: every configuration of the Search window, in sections per kind. It edits
                     // the same `searchConfig` the Search window reads, so its filters narrow that list at once.

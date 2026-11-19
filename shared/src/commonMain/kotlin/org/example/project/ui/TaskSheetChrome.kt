@@ -150,6 +150,13 @@ internal val TaskCellOutline.borderColor: Color
 /** Indentation step (dp) per nesting level; also the spacing between hierarchy guide-lines. */
 internal const val INDENT_STEP_DP = 16
 
+/**
+ * **The one indent of a nesting level** (anomaly 2026-11-19: the tree stepped 16 dp, the actions section 14, an element's
+ * children 24, the menu's folders 9): every nested drawing of the app steps a level by it — tree cells, a Search row's
+ * sub-tree, an open element's children, actions under their group and an open action's content, menu folders.
+ */
+internal val NESTING_STEP: Dp = INDENT_STEP_DP.dp
+
 /** Horizontal offset (dp) of a level's guide-line, aligned under that ancestor's expand arrow. */
 internal const val GUIDE_LINE_OFFSET_DP = 14
 

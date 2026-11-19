@@ -191,7 +191,7 @@ means.
     (`AppSettingEntry`) with that ONE action (`APP_SETTING_CONTROL_ACTIONS`), drawn by `MenuControlItem` there too
     (`LocalMenuControlHost`, provided over every window). A new control needs its action (`MenuControlsAreActionsTest`).
   - **What the menu held is what it starts as** (`CustomMenuButtons.DEFAULTS`: the Search button, the three sound
-    switches together, Mute, Voice, Notifications (brought together once in a menu stored before), Task tree, Calendar, Life plan, Look
+    switches together, Mute, Voice, Notifications (brought together once in a menu stored before), Task tree, Calendar, Look
     away now, Switch task, Sleep / Work, I'm away; Online is the settings page's since 2026-11-04). A list stored before is given those
     ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
   - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename (a window's
@@ -260,16 +260,9 @@ means.
   still opens — and for the lateral menu's item (the action added to the menu IS `MenuControl.SleepSchedule`). A
   field re-reads a value written from another place, never under the hand typing it.
 
-- **The life plan is a lateral-menu window of the Schedule page** (user rule 2026-11-02; `ui/LifePlanWindow.kt`,
-  `CustomMenuButtons.LIFE_PLAN`, given ONCE under the Calendar button to a menu stored before, `Stored.lifePlanSeeded`). A
-  drop-down picks what it shows (`LifePlanSection`). "Steps" is a list of rows drawn as the Search window's result list
-  (`resultRowModifier`), each a step whose title is typed straight into, with its "+" (a sub-element) and its bin, and an
-  arrow where it has sub-elements. "Problems" is a text area under a field: the field holds the open tab's title, and its
-  ▾ lists every tab with a bin, then "+ New tab". "Career evolution" and "Crisis resilience" are named and not defined yet,
-  and store nothing. The window `claimsKeyboard`. What is written is the account's (`persistence.md`); the section, the open
-  tab and the steps expanded are local-only, per frame id, on the `LifePlanViews` row, so a window's ⧉ starts as it stands
-  and its windows have no configuration a menu button could tell apart. A field typed into is a `LiveFieldText`: its own
-  text coming back a frame late is ignored, any other (an undo, a sync) is taken.
+- **There is no life plan** (user rule 2026-11-19, *"Remove Life plan"*, its data included): its window, its menu
+  button (dropped from a menu stored before, `CustomMenuButtons.REMOVED_WINDOWS`), its state and its units are gone
+  (`LifePlanRemovedTest`). It was a lateral-menu window of the Schedule page from 2026-11-02.
 
 ### Maximized, resized, filled
 

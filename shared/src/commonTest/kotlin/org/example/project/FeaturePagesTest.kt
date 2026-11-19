@@ -92,10 +92,11 @@ class FeaturePagesTest {
         val gemini = claude.copy(id = "g1", title = "Gemini quota", config = """{"kinds":["Quota"],"added":["Quota/quota-1"]}""")
         assertTrue(CustomMenuButtons.wholeStateOn(claude) && CustomMenuButtons.wholeStateOn(gemini), "a button the user made: on")
         assertFalse(CustomMenuButtons.wholeStateOn(CustomMenuButtons.GLOBAL_SEARCH), "a default one: off")
-        assertFalse(CustomMenuButtons.wholeStateOn(CustomMenuButtons.LIFE_PLAN))
+        val calendar = CustomMenuButtons.DEFAULTS.single { it.id == "d-calendar" }
+        assertFalse(CustomMenuButtons.wholeStateOn(calendar))
         assertFalse(CustomMenuButtons.wholeStateOn(CustomMenuButtons.withWholeState(listOf(claude), "g2", false).single()))
         // A default made "all pages" takes a g… id, and stays off.
-        val (lists, newId) = CustomMenuButtons.withGlobal(mapOf("" to listOf(CustomMenuButtons.LIFE_PLAN)), "", CustomMenuButtons.LIFE_PLAN.id, true)
+        val (lists, newId) = CustomMenuButtons.withGlobal(mapOf("" to listOf(calendar)), "", calendar.id, true)
         assertFalse(CustomMenuButtons.wholeStateOn(lists.getValue("").single { it.id == newId }))
 
         val logs = SearchDomain.CLAUDE_LOGS_PAGE

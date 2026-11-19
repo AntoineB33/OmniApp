@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Life plan removed; ← → and one indent step in nested lists — 2026-11-19
+
+- **The Life plan is removed, its data with it** (user rule 2026-11-19; the user chose "remove everything" over keeping
+  the entries): `LifePlanWindow`, `LifePlanDomain`, `SchedulerState.lifePlan`, `SetLifePlan`, `LifePlanDelta`, the
+  persisted entry and delta types, `HistoryWindow.LifePlan` / `FloatingWindow.LifePlan` and the menu button. An older
+  payload's `lifePlan` is read past and not written again, so the next sync deletes the server's `lifePlan` rows; its
+  history units are skipped; a menu that kept the button drops it. Left behind: the local-only `LifePlan` /
+  `LifePlanViews` placement rows (no store API deletes a placement) and the old units still in `history_unit` until
+  their purge. `LifePlanRemovedTest`.
+- **← and → walk a Search list as ↑ and ↓**, the tree's keys (`SearchSubtreeWalkTest`).
+- **One indent step, `NESTING_STEP` (16 dp)**, for actions under their group, an element's children, menu folders and
+  the "Children" action's tree (was 14, 24, 9 and 24 dp).
+
 ### Nested rows: one guide-line drawing, one pinned row, one walk — 2026-11-19
 
 Anomalies 2026-11-19: the children of an expanded Search row had no guide-line (its grandchildren had one); ↑ on the first

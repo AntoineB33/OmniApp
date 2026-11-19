@@ -141,8 +141,8 @@ limit, and nothing here may exceed it.
   event-driven and throttled (`PUSH_WINDOW_MILLIS`), with no pull: `ServerQuotaTest` runs twice the user's busiest hour.
 - **Never rewrite a large row to change a small part of it.** That is the outage. A value that changes with editing
   goes in its own row, sized by what changed (`sync-and-accounts.md` § *Sync by rows*).
-  So a long text the user writes is rows too: a life plan tab is one row per line (`LifePlanDomain.withText`), and typing
-  in a line rewrites that line. A single line is still one row, however long it is typed.
+  So a long text the user writes is rows too: one row per line, and typing in a line rewrites that line (the life plan's
+  tabs were, until it was removed on 2026-11-19). A single line is still one row, however long it is typed.
 - **The links between elements grow by hand alone** (`ElementLink`, `sync-and-accounts.md`): one small row per link, made by a press and never by typing or by time, so they have no purge. A link to an element deleted stays, for an undo.
 - **A History Unit is a diff of what changed**, never a copy of the tree (`persistence.md` § *A History Unit is what
   changed*; `HistoryUnitSizeTest`: under 2 KB).

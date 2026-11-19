@@ -158,9 +158,6 @@ object SnapshotMerge {
                 timers = timers.map(org.example.project.scheduler.domain.TimerDomain::healed),
                 workplaceSetups = mergeKeyedList(base.workplaceSetups, local.workplaceSetups, remote.workplaceSetups, { it.id }) { b, l, r -> pick(b, l, r) },
                 // Row by row, a line of a tab being one: two devices writing in two lines of a tab keep both.
-                lifePlan = org.example.project.scheduler.domain.LifePlanDomain.healed(
-                    mergeKeyedList(base.lifePlan, local.lifePlan, remote.lifePlan, { it.id }) { b, l, r -> pick(b, l, r) },
-                ),
                 elementLinks = mergeKeyedList(base.elementLinks, local.elementLinks, remote.elementLinks, { it.id }) { b, l, r -> pick(b, l, r) },
                 chronos = chronos.map(org.example.project.scheduler.domain.ChronoDomain::healed),
                 quotas = quotas.map(org.example.project.scheduler.domain.QuotaDomain::healed),

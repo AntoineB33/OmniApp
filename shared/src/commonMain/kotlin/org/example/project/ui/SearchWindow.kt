@@ -1556,31 +1556,35 @@ fun SearchWindow(
                                 val ctrl = event.isCtrlPressed || event.isMetaPressed
                                 when {
                                     // The rows as drawn, the open elements' children included ([shownRowOrder]).
-                                    event.key == Key.DirectionDown || event.key == Key.DirectionUp -> {
+                                    // ← and → walk as ↑ and ↓, the tree's keys (anomaly 2026-11-19: the tree's sub-tree
+                                    // walked on them, the list holding it did nothing).
+                                    event.key == Key.DirectionDown || event.key == Key.DirectionUp ||
+                                        event.key == Key.DirectionRight || event.key == Key.DirectionLeft -> {
+                                        val down = event.key == Key.DirectionDown || event.key == Key.DirectionRight
                                         if (count == 0) return@onPreviewKeyEvent true
                                         val order = shownRowOrder(state, results, expandedElements, windows, schedulerRuns, claudeLogs)
                                         val at = childSelection.main?.let { main -> order.indexOfFirst { it.child?.rowKey == main } }?.takeIf { it >= 0 }
                                             ?: order.indexOfFirst { it.child == null && it.index == selected }
                                         // Nothing shown selected yet ([unselectedUntilChosen]): the first ↓ is the first row.
-                                        val next = if (unselectedUntilChosen && event.key == Key.DirectionDown) 0 else at + if (event.key == Key.DirectionDown) 1 else -1
+                                        val next = if (unselectedUntilChosen && down) 0 else at + if (down) 1 else -1
                                         val target = order.getOrNull(next)
                                         // The tree's walk through an expanded task row's sub-tree (anomaly 2026-11-19):
                                         // down goes from the row to its first cell, up from the row under it to its last.
                                         val into =
-                                            if (event.key == Key.DirectionDown) order.getOrNull(at)?.takeIf { it.child == null && !unselectedUntilChosen }
+                                            if (down) order.getOrNull(at)?.takeIf { it.child == null && !unselectedUntilChosen }
                                             else target?.takeIf { it.child == null }
                                         val intoTask = (into?.let { results.getOrNull(it.index) } as? SearchDomain.TaskResult)
                                             ?.takeIf { subtreeShown(it) }
                                         if (intoTask != null) {
                                             subtreeEnter = intoTask.taskId to SubtreeEnter(
-                                                step = if (event.key == Key.DirectionDown) 1 else -1,
+                                                step = if (down) 1 else -1,
                                                 tick = (subtreeEnter?.second?.tick ?: 0) + 1,
                                             )
                                             return@onPreviewKeyEvent true
                                         }
                                         // The same walk into the trees an open action's content draws (its "Children").
                                         val intoContent = into?.let { contentWalks[resultKeys.getOrNull(it.index)] }
-                                        if (intoContent != null && intoContent.enterAt(if (event.key == Key.DirectionDown) 1 else -1)) {
+                                        if (intoContent != null && intoContent.enterAt(if (down) 1 else -1)) {
                                             // The tree's cell is the one selection shown now: this list's rows show none,
                                             // as after a press on that cell, until the walk comes back to one.
                                             deselected = true
@@ -1704,8 +1708,8 @@ fun SearchWindow(
                                             // Hanging under the open action: its line, and its groups' (anomaly 2026-11-19).
                                             Box(
                                                 Modifier.fillMaxWidth()
-                                                    .nestingGuideLines(actionRow.depth + 1, ACTION_ROW_INDENT, itemArrowCenter(result.kind, resultKindWidth))
-                                                    .padding(start = ACTION_ROW_INDENT * (actionRow.depth + 1)),
+                                                    .nestingGuideLines(actionRow.depth + 1, NESTING_STEP, itemArrowCenter(result.kind, resultKindWidth))
+                                                    .padding(start = NESTING_STEP * (actionRow.depth + 1)),
                                             ) {
                                                 val walk = remember { RowContentWalk() }
                                                 walk.out = { step -> walkOutOf(index, step) }
@@ -2298,8 +2302,6 @@ internal const val NOT_ADDED_ALPHA = 0.5f
 /** The room between a pop-up's window surface and its search ([LocalPopupChrome]). */
 internal val POPUP_CONTENT_PADDING = 8.dp
 
-/** How far each level of the actions section's rows stands in: an action under its group, a group inside another. */
-internal val ACTION_ROW_INDENT = 14.dp
 
 /**
  * Where an [ItemResultRow]'s arrow has its middle, from the row's indent: the row's padding, its kind section and the gap
@@ -3406,7 +3408,9 @@ private fun SearchSubtree(
             .heightIn(max = SUBTREE_MAX_HEIGHT)
             // Under a row, its first level's line stands under that row's arrow: the row's leading section, then the
             // tree's own offset of a line in its gutter ([GUIDE_LINE_OFFSET_DP], the arrow's middle in a cell).
-            .padding(start = underRowLeading ?: 24.dp)
+            // Under no row of its own (an open action's "Children", whose content box stands a level in already): just
+            // right of the line the box draws under the action's arrow, as a cell's children stand right of theirs.
+            .padding(start = underRowLeading ?: 2.dp)
             .onFocusChanged { onFocus(it.hasFocus) },
         onSetWeightWindow = onSetWeightWindow,
         onSetRelativeWindow = onSetRelativeWindow,
@@ -3732,7 +3736,7 @@ private fun ItemResultRow(
     onPrimaryRelease: (() -> Unit)? = null,
     /** False: greyed, a menu entry that can do nothing now. */
     enabled: Boolean = true,
-    /** How many levels in the row stands: an action under its group in the actions section ([ACTION_ROW_INDENT]). */
+    /** How many levels in the row stands: an action under its group in the actions section ([NESTING_STEP]). */
     depth: Int = 0,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -3745,8 +3749,8 @@ private fun ItemResultRow(
         // User rule 2026-11-15: a row under an open one has its RECTANGLE moved right, not only what is in it —
         // the indent stands outside the row's background and selection outline, as a task cell's does.
         // Anomaly 2026-11-19: the guide-lines of the levels it hangs from, as a tree cell has ([nestingGuideLines]).
-        modifier = Modifier.nestingGuideLines(depth, ACTION_ROW_INDENT, itemArrowCenter(item.kind, kindWidth))
-            .padding(start = ACTION_ROW_INDENT * depth).then(resultRowModifier(selected, inSelection))
+        modifier = Modifier.nestingGuideLines(depth, NESTING_STEP, itemArrowCenter(item.kind, kindWidth))
+            .padding(start = NESTING_STEP * depth).then(resultRowModifier(selected, inSelection))
             .then(if (enabled) Modifier else Modifier.alpha(0.38f))
             .then(
                 if (onPrimaryRelease == null && onSecondaryRelease == null) Modifier
@@ -3819,8 +3823,6 @@ private fun ItemResultRow(
 private fun withCategories(detail: String, categories: List<String>): String =
     (listOf(detail).filter { it.isNotEmpty() } + categories).joinToString("  ·  ")
 
-/** How far each level of an element's children is indented. */
-private val ELEMENT_CHILD_INDENT: Dp = 24.dp
 
 
 /**
@@ -3850,8 +3852,8 @@ private fun ElementChildren(
     val children = elementChildRows(state, parent, surface, path, windows, schedulerRuns, claudeLogs)
     // Anomaly 2026-11-19: the guide-lines under the arrows of the rows these hang from, as under a tree cell's
     // ([nestingGuideLines]); a row's own indent after them, so they span the row.
-    val indent = Modifier.nestingGuideLines(depth, ELEMENT_CHILD_INDENT, RESULT_ROW_PADDING + kindWidth + RESULT_ROW_GAP + 10.dp)
-        .padding(start = ELEMENT_CHILD_INDENT * depth)
+    val indent = Modifier.nestingGuideLines(depth, NESTING_STEP, RESULT_ROW_PADDING + kindWidth + RESULT_ROW_GAP + 10.dp)
+        .padding(start = NESTING_STEP * depth)
     // A Shift+click's range runs over these siblings.
     val siblings by rememberUpdatedState(children.map { it.rowKey })
     for (child in children) {

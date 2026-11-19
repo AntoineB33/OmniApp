@@ -41,7 +41,6 @@ import org.example.project.scheduler.state.ExternalDelta
 import org.example.project.scheduler.state.EntryChanges
 import org.example.project.scheduler.state.SettingsDelta
 import org.example.project.scheduler.state.ElementLinksDelta
-import org.example.project.scheduler.state.LifePlanDelta
 import org.example.project.scheduler.state.WorkplaceSetupsDelta
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
@@ -587,7 +586,6 @@ object SchedulerStateCodec {
             // PRD §18 Chronos: the run state rides along, the timers' rule — the start instant is authoritative.
             chronos = chronos.map { it.toPersisted() },
             workplaceSetups = workplaceSetups.map { it.toPersisted() },
-            lifePlan = lifePlan.map { it.toPersisted() },
             elementLinks = elementLinks.map { it.toPersisted() },
             // Quotas (2026-10-03): the list whole; a quota's progression is derived and never written.
             quotas = quotas.map { it.toPersisted() },
@@ -953,8 +951,6 @@ object SchedulerStateCodec {
                 PersistedDelta.Timers(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is ElementLinksDelta ->
                 PersistedDelta.ElementLinks(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
-            is LifePlanDelta ->
-                PersistedDelta.LifePlan(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is WorkplaceSetupsDelta ->
                 PersistedDelta.WorkplaceSetups(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is ChronosDelta ->
@@ -1303,7 +1299,6 @@ object SchedulerStateCodec {
             // instant it is due at.
             timers = TimerDomain.assignTimerIds(timers.map { it.toTimerEntry() }).map(TimerDomain::healed),
             workplaceSetups = workplaceSetups.map { it.toWorkplaceSetup() },
-            lifePlan = org.example.project.scheduler.domain.LifePlanDomain.healed(lifePlan.map { it.toLifePlanEntry() }),
             elementLinks = elementLinks.map { it.toElementLink() },
             // PRD §18 Chronos: a payload written before chronos existed decodes to an empty list; every row healed.
             chronos = ChronoDomain.assignChronoIds(chronos.map { it.toChronoEntry() }).map(ChronoDomain::healed),
@@ -1591,7 +1586,6 @@ object SchedulerStateCodec {
                     TimerDomain.assignTimerIds(after.map { it.toTimerEntry() }).map(TimerDomain::healed),
                 )
             is PersistedDelta.ElementLinks -> ElementLinksDelta(before.map { it.toElementLink() }, after.map { it.toElementLink() })
-            is PersistedDelta.LifePlan -> LifePlanDelta(before.map { it.toLifePlanEntry() }, after.map { it.toLifePlanEntry() })
             is PersistedDelta.WorkplaceSetups ->
                 WorkplaceSetupsDelta(before.map { it.toWorkplaceSetup() }, after.map { it.toWorkplaceSetup() })
             is PersistedDelta.Chronos ->
@@ -1803,8 +1797,6 @@ private data class PersistedState(
     val chronos: List<PersistedChrono> = emptyList(),
     /** New 2026-11-01: absent from every older payload, which has none. */
     val workplaceSetups: List<PersistedWorkplaceSetup> = emptyList(),
-    /** New 2026-11-02: absent from every older payload, which has none. */
-    val lifePlan: List<PersistedLifePlanEntry> = emptyList(),
     /** New 2026-11-02: absent from every older payload, which has none. */
     val elementLinks: List<PersistedElementLink> = emptyList(),
     // User rule 2026-10-03: a missing quota list decodes to empty (payloads written before quotas existed).
@@ -2375,27 +2367,6 @@ private fun org.example.project.scheduler.domain.ElementLink.toPersisted(): Pers
 
 private fun PersistedElementLink.toElementLink(): org.example.project.scheduler.domain.ElementLink = org.example.project.scheduler.domain.ElementLink(id, parent, child, rank)
 
-/** User rule 2026-11-02: one row of the life plan. Its kind by name: one a later build added reads as a step. */
-@Serializable
-private data class PersistedLifePlanEntry(
-    val id: String = "",
-    val kind: String? = null,
-    val parent: String? = null,
-    val rank: Double = 0.0,
-    val text: String = "",
-)
-
-private fun org.example.project.scheduler.domain.LifePlanEntry.toPersisted(): PersistedLifePlanEntry =
-    PersistedLifePlanEntry(id, kind.name, parent, rank, text)
-
-private fun PersistedLifePlanEntry.toLifePlanEntry(): org.example.project.scheduler.domain.LifePlanEntry =
-    org.example.project.scheduler.domain.LifePlanEntry(
-        id,
-        org.example.project.scheduler.domain.LifePlanKind.entries.firstOrNull { it.name == kind }
-            ?: org.example.project.scheduler.domain.LifePlanKind.Step,
-        parent, rank, text,
-    )
-
 /** User rule 2026-11-01: one window of a workplace setup. */
 @Serializable
 private data class PersistedWorkplaceWindow(
@@ -2719,13 +2690,6 @@ private sealed interface PersistedDelta {
         val after: List<PersistedElementLink>,
     ) : PersistedDelta
 
-    /** New 2026-11-02: the life plan; an older build cannot read it and skips the unit (`decodeUnit`). */
-    @Serializable
-    @SerialName("lifePlan")
-    data class LifePlan(
-        val before: List<PersistedLifePlanEntry>,
-        val after: List<PersistedLifePlanEntry>,
-    ) : PersistedDelta
 
     /** New 2026-11-01: the workplace setups; an older build cannot read it and skips the unit (`decodeUnit`). */
     @Serializable

@@ -59,7 +59,7 @@ class PinnedParentTest {
         assertNull(pinned(285))
     }
 
-    /** The Life plan's steps: a step inside a step inside a step — the direct parent alone. */
+    /** A menu's folders: an item inside a folder inside a folder — the direct parent alone. */
     @Test
     fun a_deep_level_pins_its_own_parent_alone() {
         val depths = listOf(0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0)

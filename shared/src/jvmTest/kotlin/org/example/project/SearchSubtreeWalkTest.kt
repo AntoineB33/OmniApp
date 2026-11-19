@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.Density
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
@@ -28,7 +29,8 @@ import org.example.project.ui.SearchWindow
 /**
  * Anomaly 2026-11-19: *"I select the child of 'AI', then click the keyboard top arrow, but it doesn't select 'AI'.
  * However, it works from the grand-child to the child."* The expanded row's sub-tree is the tree's own drawing, and the
- * tree's walk goes on past its edges: ↓ on the row reaches its first child, ↑ on that child reaches the row again.
+ * tree's walk goes on past its edges: ↓ on the row reaches its first child, ↑ on that child reaches the row again — and ←
+ * / → walk as ↑ / ↓, as in the tree.
  */
 @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
 class SearchSubtreeWalkTest {
@@ -105,6 +107,14 @@ class SearchSubtreeWalkTest {
             assertEquals(kidCell, live.searchSelection.main, "↓ on 'AI' selects its first child")
             // ↑ on that first child: 'AI' again — a letter typed now renames 'AI', the row holding the keyboard.
             key(Key.DirectionUp)
+            // ← and → are the tree's ↑ and ↓, in the list as in the sub-tree (anomaly 2026-11-19).
+            key(Key.DirectionRight)
+            // In the sub-tree now: → again moves its own selection, off the first child, and ← brings it back.
+            key(Key.DirectionRight)
+            assertTrue(live.searchSelection.main != kidCell, "→ walked into the sub-tree and on along it")
+            key(Key.DirectionLeft)
+            assertEquals(kidCell, live.searchSelection.main, "← walks back up the sub-tree")
+            key(Key.DirectionLeft)
             key(Key.X, 'x'.code)
             val request = assertNotNull(popups.request, "↑ on the first child selected 'AI', which a letter renames")
             assertEquals("x", assertNotNull(request.rename).draft)

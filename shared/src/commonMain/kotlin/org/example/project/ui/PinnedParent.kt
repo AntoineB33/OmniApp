@@ -2,7 +2,7 @@ package org.example.project.ui
 
 /**
  * **THE pinned parent row** — the task tree's rule, and the one reading of it every list of the app makes (the tree's
- * three drawings, the Search window's result list and actions section, the Life plan). Over a band of one row height at
+ * three drawings, the Search window's result list and actions section, the menu's folders). Over a band of one row height at
  * the top of what is shown, the **direct parent** of the row appearing RIGHT BELOW the band (the first whose bottom lies
  * past it, so a row the band half covers still counts) is drawn, and only once that parent's own row has started to
  * leave the top. **One row, never a stack of its ancestors.**

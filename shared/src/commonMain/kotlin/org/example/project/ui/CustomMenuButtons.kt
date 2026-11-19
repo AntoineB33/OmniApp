@@ -342,8 +342,6 @@ object CustomMenuButtons {
         val claudeSoundsSeeded: Boolean = false,
         /** Whether a list of the scheduler's menu already had its sound switches brought together ([withSoundsTogether]), ONCE. */
         val soundsTogether: Boolean = false,
-        /** Whether a list of the scheduler's menu was already given the Life plan button ([LIFE_PLAN]), ONCE. */
-        val lifePlanSeeded: Boolean = false,
         /** Whether a list of the settings page's menu was already given the usage and the memory limits ([SERVER_USAGE]), ONCE. */
         val usageSeeded: Boolean = false,
         /** Whether a list of the settings page's menu was already given the online button ([SETTINGS_ONLINE]), ONCE. */
@@ -366,9 +364,6 @@ object CustomMenuButtons {
     val CLAUDE_SOUNDS: CustomMenuButton =
         CustomMenuButton("d-" + MenuControl.ClaudeSoundsVolume.name, "", "", control = MenuControl.ClaudeSoundsVolume.name)
 
-    /** User rule 2026-11-02: the button of the life plan's window, a default of the Schedule page's menu. */
-    val LIFE_PLAN: CustomMenuButton = CustomMenuButton("d-life-plan", LIFE_PLAN_WINDOW_ID, "Life plan")
-
     /** The id of the logs page's own Search button before the global one existed: the global one takes its place. */
     private const val OLD_CLAUDE_SEARCH_ID = "d-claude-search"
 
@@ -385,7 +380,6 @@ object CustomMenuButtons {
             CustomMenuButton("d-" + MenuControl.Voice.name, "", "", control = MenuControl.Voice.name),
             CustomMenuButton("d-" + MenuControl.Notifications.name, "", "", control = MenuControl.Notifications.name),
             CustomMenuButton("d-calendar", "Calendar", "Calendar"),
-            LIFE_PLAN,
         ) + listOf(
             // The online button moved to the settings page's menu (user rule 2026-11-04, [SETTINGS_ONLINE]).
             MenuControl.LookAwayNow, MenuControl.SwitchTask, MenuControl.SleepWork, MenuControl.Away,
@@ -468,7 +462,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, lifePlanSeeded = true, usageSeeded = true, onlineSeeded = true, serverSeeded = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, usageSeeded = true, onlineSeeded = true, serverSeeded = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -588,11 +582,12 @@ object CustomMenuButtons {
      * before those were items is given them on top, once ([Stored.seeded]).
      */
     fun decode(text: String?, defaults: List<CustomMenuButton> = DEFAULTS): List<CustomMenuButton> =
-        // User rule 2026-11-11: there is no task tree window any more — a button a list kept for it is gone.
-        decodeKept(text, defaults).filterNot { it.windowId.substringBefore('#') == REMOVED_TASK_TREE_WINDOW }
+        // User rule 2026-11-11: there is no task tree window any more — a button a list kept for it is gone; and none of
+        // the Life plan's (user rule 2026-11-19: the Life plan is removed).
+        decodeKept(text, defaults).filterNot { it.windowId.substringBefore('#') in REMOVED_WINDOWS }
 
-    /** The frame id the task tree window had, before it was removed (user rule 2026-11-11). */
-    private const val REMOVED_TASK_TREE_WINDOW = "TaskTree"
+    /** The frame ids of windows since removed: the task tree's (user rule 2026-11-11), the Life plan's (2026-11-19). */
+    private val REMOVED_WINDOWS = setOf("TaskTree", "LifePlan")
 
     private fun decodeKept(text: String?, defaults: List<CustomMenuButton>): List<CustomMenuButton> {
         val stored = text?.let { runCatching { json.decodeFromString(Stored.serializer(), it) }.getOrNull() } ?: return defaults
@@ -631,11 +626,7 @@ object CustomMenuButtons {
         val together =
             if (stored.serverSeeded || defaults != SETTINGS_DEFAULTS || together2.any { it.control == MenuControl.Server.name }) together2
             else together2 + SETTINGS_SERVER
-        // ...and, on the page it is a default of, the Life plan button, ONCE: under the Calendar button, where it stands.
-        if (stored.lifePlanSeeded || LIFE_PLAN !in defaults || together.any { it.id == LIFE_PLAN.id }) return together
-        val calendar = together.indexOfFirst { it.id == "d-calendar" }
-        return if (calendar < 0) together + LIFE_PLAN
-        else together.toMutableList().also { it.add(calendar + 1, LIFE_PLAN.copy(parent = together[calendar].parent)) }
+        return together
     }
 
     /**
@@ -1076,8 +1067,8 @@ private fun MenuItemRow(
             .fillMaxWidth()
             // One line per level, from the gap above the row to its bottom: with the next row's, a line that runs as long
             // as the folder does, and stops at its last item — under the folder's arrow, by the app's one drawing of them.
-            .nestingGuideLines(levels, MENU_LEVEL_STEP, MENU_ARROW_CENTER, above = MENU_ROW_GAP)
-            .padding(start = MENU_LEVEL_STEP * levels),
+            .nestingGuideLines(levels, NESTING_STEP, MENU_ARROW_CENTER, above = MENU_ROW_GAP)
+            .padding(start = NESTING_STEP * levels),
     ) {
         // While the menu is arranged the list takes every press first: the arrow too.
         if (button.folder) SectionArrow(button.collapsed) { onToggleFolder(button.id) }
@@ -1135,8 +1126,6 @@ private fun MenuItemRow(
 /** The gap between two rows of the menu, which a level's line crosses. */
 internal val MENU_ROW_GAP = 10.dp
 
-/** How far each level of a folder is indented, and where its line stands. */
-internal val MENU_LEVEL_STEP = 9.dp
 
 /** Where a folder's arrow ([SectionArrow], 20 dp) has its middle, from the folder row's indent: its items' line. */
 private val MENU_ARROW_CENTER = 10.dp

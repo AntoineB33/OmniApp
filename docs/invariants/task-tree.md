@@ -505,15 +505,17 @@ the child"*):
 
 - **The guide-lines are `nestingGuideLines`, the one drawing**: one vertical line per level above a row, under the
   arrow of the row that level hangs from. The tree's cells (`taskSheetGuideLines`), a Search row's sub-tree, an open
-  element's children, the actions section's actions under their group and an open action's content, the Life plan's
-  steps and the menu tree's folders all draw them through it.
+  element's children, the actions section's actions under their group and an open action's content and the menu tree's
+  folders all draw them through it, **each level one `NESTING_STEP` in** (the tree's 16 dp; anomaly 2026-11-19: the
+  actions stepped 14, an element's children 24, the menu's folders 9).
 - **A Search row's sub-tree hangs one level under its row** (`TaskTreeView`'s `baseDepth` = 1, `SearchSubtree`'s
   `underRowLeading`): its first level is indented and lined as a tree cell's children are, the line under the row's
   arrow. Drawn at depth 0 it had none, while its second level had one.
 - **The arrows walk across a row and its sub-tree** (`TaskTreeView.onWalkPastEdge`, `SubtreeEnter`;
   `SearchSubtreeWalkTest`): ↓ on an expanded row selects its first cell, ↑ on the row under one its last; ↑ on the
   sub-tree's first cell selects the row, ↓ on its last the row under it. The tree's own walk goes through the same
-  places; the window's ↑/↓ had skipped the sub-tree and the sub-tree's had stopped at its edges.
+  places; the window's ↑/↓ had skipped the sub-tree and the sub-tree's had stopped at its edges. **← and → walk as ↑
+  and ↓**, in a Search list as in the tree (anomaly 2026-11-19: the list ignored them while its sub-trees walked on them).
 - **The same walk through the trees an open row's CONTENT draws** (the actions section's "Children", one tree per task;
   `RowContentWalk`, `LocalRowContentWalk`; `ChildrenActionWalkTest`; user, 2026-11-19: *"↑ on its first child must go
   to the row above, which is the parent"*): ↓ on the open action row enters its first tree, ↑ on a tree's first cell
@@ -531,7 +533,7 @@ drawings have it.
 - **ONE row, by ONE function, in every list of the app** (`pinnedParent`, `PinnedParent.kt`; anomaly 2026-11-19:
   *"both 'Calendar: Calendar' and 'Calendar' are showing on the top … The correct behavior is shown in the children of
   the 'AI' task element, where only one element is stuck at the top"*). The Search window's result list and actions
-  section and the Life plan read it through `pinnedListRow`: an item is its head (hanging under the nearest item above
+  section read it through `pinnedListRow`: an item is its head (hanging under the nearest item above
   of a smaller depth: an action under its group) and, when taller, its content (hanging under its head: an open
   action's fields, an open element's children). They had pinned a CHAIN — every open row above, then the open one —
   a second rule beside the tree's. Never stack the ancestors again. `PinnedParentTest`.
@@ -1586,9 +1588,9 @@ suggestions before it was ever entered.
   grey, set back and deaf while disabled; never `FrameButton("✕")`, never a `Text("✕")` with its own click. The cross
   that CLOSES A WINDOW is another control, `WindowHeadButton` (a window's head and a pop-up's, `SearchPopupHead`); a
   tab's and the find bar's stay their own. A list of choices to pick ONE from is `ChoiceDropDown` (the alert's sound
-  and the recurrence unit were drawn by hand). Three faces stay hand-drawn, each for a reason the shared one cannot
-  give yet: the edit menu's mode selector (its list must not take the focus), the sleep time's (no frame, never the
-  keyboard) and the life plan's tab field (a field one types in, with an arrow).
+  and the recurrence unit were drawn by hand). Two faces stay hand-drawn, each for a reason the shared one cannot
+  give yet: the edit menu's mode selector (its list must not take the focus) and the sleep time's (no frame, never the
+  keyboard).
 - **THE ROOT OF THE ▾ TREE: WHAT THE USER IS AFTER IS ONE CATEGORY AWAY** (user rule 2026-11-14: *"it must be easy with
   a very intuitive navigation … directly have the children of 'task scheduler', and then an element called something
   like 'other feature pages'"*; `SearchDomain.configurationTree`, `TreeGroup`, `treeGroupOf`, `ConfigurationTreeTest`).

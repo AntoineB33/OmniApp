@@ -1824,7 +1824,7 @@ fun LateralMenu(
                     onArrange = given.onArrange,
                     onGroup = given.onGroup,
                     backgroundActions = ownActions,
-                    levelStep = MENU_LEVEL_STEP,
+                    levelStep = NESTING_STEP,
                     rowGap = MENU_ROW_GAP,
                     // The window bar is drawn OVER this menu along the bottom of the app (WindowBar), so the list ends a
                     // bar's height lower: scrolled to the end, the last item always clears the bar. Always, not only
