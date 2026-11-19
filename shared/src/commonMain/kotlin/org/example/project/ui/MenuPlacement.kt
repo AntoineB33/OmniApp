@@ -183,30 +183,3 @@ internal fun stuckTo(at: IntRect, anchor: IntRect, list: IntRect? = null): Boole
     val whole = IntRect(minOf(anchor.left, list.left), minOf(anchor.top, list.top), maxOf(anchor.right, list.right), maxOf(anchor.bottom, list.bottom))
     return touches(row) || touches(whole)
 }
-
-/** The side of a pop-up furthest from what it hangs from ([farSideOf]): where its rows' hover arrows stand. */
-enum class FarSide { Left, Right }
-
-/**
- * User rule 2026-11-19: *"When a row has an arrow that opens a window when hovered over, this arrow must be on the left or
- * right side, depending on which one is the furthest from the caller."* **The side of the pop-up at [popup] further from
- * the middle of its [anchor]**: a pop-up at its caller's left reads Left, at its right Right; below or above, the side
- * further from the caller's middle.
- */
-fun farSideOf(popup: IntRect, anchor: IntRect): FarSide {
-    val middle = (anchor.left + anchor.right) / 2
-    return if (kotlin.math.abs(popup.left - middle) > kotlin.math.abs(popup.right - middle)) FarSide.Left else FarSide.Right
-}
-
-/**
- * User rule 2026-11-19: **the far side of the pop-up a row stands in** ([farSideOf]), given by the pop-up as it is placed;
- * null where it is not known (outside a pop-up, or a platform drawing material's menu), the arrow then at the row's end.
- */
-val LocalPopupFarSide = androidx.compose.runtime.compositionLocalOf<FarSide?> { null }
-
-/** The sides a hover arrow's pop-up tries ([MenuSide.SUBMENU]'s order), its arrow's side first. */
-fun submenuSides(far: FarSide?): List<MenuSide> =
-    when (far) {
-        FarSide.Right -> listOf(MenuSide.Right, MenuSide.Left, MenuSide.Below, MenuSide.Above)
-        FarSide.Left, null -> MenuSide.SUBMENU
-    }

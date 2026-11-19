@@ -25,8 +25,9 @@ Check here before assuming the code matches the docs.
   rows"** (`Config.buttonFollowsExpansion`, on for it): the button that opened the window keeps its open rows
   (`CustomMenuButton.expandedRows`, no History Unit) and opens its window with them; "Update" saves them too.
   `RootMenuButtonTest`.
-- **A pop-up stays only while it touches its caller** (`stuckTo`); **a hover arrow stands on its pop-up's far side**
-  (`farSideOf`, `LocalPopupFarSide`, `submenuSides`). `MenuPlacementTest`.
+- **A pop-up stays only while it touches its caller** (`stuckTo`). `MenuPlacementTest`. A hover arrow on the side of its
+  pop-up furthest from the caller was built the same day and taken back at the user's word (*"I cancel my idea of
+  alternating between left and right for the arrow"*): the arrow stays at the row's end, the sides `MenuSide.SUBMENU`'s.
 - **The blank field under an element's children, double-clicked, is the bar of the window it opens** (`LinkedSearchBar`),
   its ✕ and ▾ in the row. `ElementChildrenTest`, `LinkedSearchBarTest`.
 

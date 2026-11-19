@@ -534,8 +534,6 @@ private fun TreeColumn(
                     val treeWindowHead = LocalTreeWindowHead.current
                     // The pop-up this row stands in: where a hover over it is read from ([MenuHoverTracker.hoverActs]).
                     val around = LocalMenuHover.current
-                    // Which of its sides is furthest from what it hangs from (user rule 2026-11-19).
-                    val far = LocalPopupFarSide.current
                     // A category's pop-up is a ▾ window too: its owner's id and the category.
                     val owner = LocalArrowOwner.current
                     val branchId = owner?.let { it + "/" + node.id }
@@ -559,23 +557,15 @@ private fun TreeColumn(
                                 }
                                 .padding(horizontal = 8.dp, vertical = 6.dp),
                         ) {
-                            // User rule 2026-11-19: the arrow stands on the side of this pop-up furthest from its caller, and the
-                            // category's pop-up opens on that side first ([LocalPopupFarSide], [submenuSides]).
-                            if (far == FarSide.Left) {
-                                Text("◂", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
-                            }
                             // User rule 2026-11-16: a category is a search configuration too; its description in an info bubble.
                             InfoHint(text = SearchDomain.nodeDescription(node.id.removePrefix(SearchDomain.FLAT_NODE_PREFIX)), modifier = Modifier.weight(1f)) {
                                 Text(node.label, style = MaterialTheme.typography.bodyMedium)
                             }
-                            if (far != FarSide.Left) {
-                                Text(if (far == FarSide.Right) "▸" else "◂", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                            Text("◂", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (revealing) {
                             androidx.compose.runtime.CompositionLocalProvider(
-                                LocalMenuSides provides submenuSides(far),
+                                LocalMenuSides provides MenuSide.SUBMENU,
                                 LocalCallerList provides { columnBounds[0] },
                                 LocalMenuHover provides branch,
                                 // The arrow in this pop-up's bar opens a tree standing at this category.

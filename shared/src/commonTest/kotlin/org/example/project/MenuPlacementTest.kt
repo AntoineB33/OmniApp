@@ -10,10 +10,7 @@ import kotlin.test.assertTrue
 import org.example.project.ui.MenuSide
 import org.example.project.ui.keepsSpot
 import org.example.project.ui.menuSpot
-import org.example.project.ui.FarSide
-import org.example.project.ui.farSideOf
 import org.example.project.ui.stuckTo
-import org.example.project.ui.submenuSides
 
 /**
  * User rule 2026-10-14: *"The right-click menu is hiding the field, even though there are spaces at the bottom. If
@@ -157,20 +154,5 @@ class MenuPlacementTest {
         // Placed again, it is.
         val placed = menuSpot(row, IntSize(150, 300), screen, MenuSide.SUBMENU)
         assertTrue(stuckTo(IntRect(placed.x, placed.y, placed.x + 150, placed.y + 300), row))
-    }
-
-    /**
-     * User rule 2026-11-19: *"When a row has an arrow that opens a window when hovered over, this arrow must be on the left or
-     * right side, depending on which one is the furthest from the caller."*
-     */
-    @Test
-    fun a_hover_arrow_stands_on_the_side_furthest_from_the_caller_and_its_pop_up_opens_there_first() {
-        val caller = IntRect(500, 100, 520, 120)
-        assertEquals(FarSide.Left, farSideOf(IntRect(300, 100, 500, 400), caller), "at its caller's left")
-        assertEquals(FarSide.Right, farSideOf(IntRect(520, 100, 720, 400), caller), "at its right")
-        assertEquals(FarSide.Left, farSideOf(IntRect(320, 120, 515, 400), caller), "below, reaching left")
-        assertEquals(MenuSide.Right, submenuSides(FarSide.Right).first())
-        assertEquals(MenuSide.Left, submenuSides(FarSide.Left).first())
-        assertEquals(MenuSide.SUBMENU, submenuSides(null))
     }
 }
