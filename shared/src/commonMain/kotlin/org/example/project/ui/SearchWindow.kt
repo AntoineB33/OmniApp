@@ -3302,7 +3302,7 @@ private fun SearchTaskRow(
                 scrollListBy = scrollListBy,
                 showSelection = subtreeShowsSelection,
                 onTakeSelection = { onSubtreeFocus(true) },
-                underRowLeading = kindWidth,
+                underRow = true,
                 onWalkPastEdge = onSubtreeWalkOut,
                 enter = subtreeEnter,
             )
@@ -3349,11 +3349,13 @@ private fun SearchSubtree(
     /** A gesture went to this sub-tree: it is the surface that shows the selection from now on. */
     onTakeSelection: () -> Unit = {},
     /**
-     * The width of what stands before the arrow of the ROW this sub-tree hangs under (its kind section; 0 for none), or
-     * null where it hangs under no row of its own. Given, its first level is drawn one level deep, as a tree cell's
-     * children are: indented under that row's arrow, the line under it (anomaly 2026-11-19, [TaskTreeView]'s `baseDepth`).
+     * Whether this sub-tree hangs under a ROW of its own (a result row, an id row): its first level is then drawn one
+     * level deep, as a tree cell's children are — ONE step in from the row ([NESTING_STEP]), its line in the gutter left
+     * of them (anomaly 2026-11-19, [TaskTreeView]'s `baseDepth`). Not under the row's arrow, which stands after the kind
+     * section: lined up there the children stood a whole kind section further right ("the children are too much to the
+     * right"). False under no row of its own (an open action's "Children", whose content box stands a level in already).
      */
-    underRowLeading: Dp? = null,
+    underRow: Boolean = false,
     /** ↑ on its first row, ↓ on its last: the list's walk goes on from the row it hangs under ([TaskTreeView]). */
     onWalkPastEdge: ((step: Int) -> Unit)? = null,
     /** The list's walk coming in: its first cell selected (from above) or its last (from below), and the keyboard. */
@@ -3406,11 +3408,9 @@ private fun SearchSubtree(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = SUBTREE_MAX_HEIGHT)
-            // Under a row, its first level's line stands under that row's arrow: the row's leading section, then the
-            // tree's own offset of a line in its gutter ([GUIDE_LINE_OFFSET_DP], the arrow's middle in a cell).
-            // Under no row of its own (an open action's "Children", whose content box stands a level in already): just
-            // right of the line the box draws under the action's arrow, as a cell's children stand right of theirs.
-            .padding(start = underRowLeading ?: 2.dp)
+            // Under no row of its own, just right of the line the content box draws under the action's arrow, as a cell's
+            // children stand right of theirs.
+            .padding(start = if (underRow) 0.dp else 2.dp)
             .onFocusChanged { onFocus(it.hasFocus) },
         onSetWeightWindow = onSetWeightWindow,
         onSetRelativeWindow = onSetRelativeWindow,
@@ -3428,7 +3428,7 @@ private fun SearchSubtree(
         // the tree — both read off the LIVE state, not off the sub-tree this row re-roots it at.
         colorSource = state,
         namingSource = state,
-        baseDepth = if (underRowLeading != null) 1 else 0,
+        baseDepth = if (underRow) 1 else 0,
         onWalkPastEdge = onWalkPastEdge,
     )
 }
@@ -3657,8 +3657,8 @@ internal fun TaskIdentityRow(
                 listId = childListId,
                 // Looked through, never modified: the row only names the task.
                 readOnly = true,
-                // Under the row's arrow, which nothing stands before (anomaly 2026-11-19).
-                underRowLeading = 0.dp,
+                // One step in from the row (anomaly 2026-11-19).
+                underRow = true,
                 priorities = emptyMap(),
                 focused = false,
                 onFocus = {},

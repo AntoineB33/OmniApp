@@ -11,6 +11,9 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -32,7 +35,7 @@ import org.example.project.ui.SearchWindow
  * tree's walk goes on past its edges: ↓ on the row reaches its first child, ↑ on that child reaches the row again — and ←
  * / → walk as ↑ / ↓, as in the tree.
  */
-@OptIn(androidx.compose.ui.InternalComposeUiApi::class)
+@OptIn(androidx.compose.ui.InternalComposeUiApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 class SearchSubtreeWalkTest {
 
     @Test
@@ -97,7 +100,16 @@ class SearchSubtreeWalkTest {
                 frame()
                 Thread.sleep(30)
             }
-            // Down from the bar along the rows ("AI", under a creation row where the list shows one) until the walk goes
+            // The children stand ONE step in from their row, as in the tree — not after the row's kind section ("the
+            // children are too much to the right"): the child's title starts left of its parent's, which a kind
+            // section and an arrow precede.
+            fun leftOf(text: String) = onEdt {
+                scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                    .first { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == text } == true }
+                    .boundsInWindow.left
+            }
+            assertTrue(leftOf("Kid") < leftOf("AI"), "Kid at ${leftOf("Kid")}, AI at ${leftOf("AI")}")
+                        // Down from the bar along the rows ("AI", under a creation row where the list shows one) until the walk goes
             // into the sub-tree: from the expanded row, its first child, as the tree goes from a cell to its first child.
             var steps = 0
             while (live.searchSelection.main == null && steps < 4) {

@@ -509,8 +509,10 @@ the child"*):
   folders all draw them through it, **each level one `NESTING_STEP` in** (the tree's 16 dp; anomaly 2026-11-19: the
   actions stepped 14, an element's children 24, the menu's folders 9).
 - **A Search row's sub-tree hangs one level under its row** (`TaskTreeView`'s `baseDepth` = 1, `SearchSubtree`'s
-  `underRowLeading`): its first level is indented and lined as a tree cell's children are, the line under the row's
-  arrow. Drawn at depth 0 it had none, while its second level had one.
+  `underRow`): its first level is indented and lined as a tree cell's children are — ONE `NESTING_STEP` in from the
+  row, its line in the gutter left of them. Drawn at depth 0 it had none, while its second level had one. Never lined up
+  under the row's arrow: that arrow stands after the row's kind section, so the children stood a whole kind section
+  further right (user, the same day: *"The children are too much to the right"*).
 - **The arrows walk across a row and its sub-tree** (`TaskTreeView.onWalkPastEdge`, `SubtreeEnter`;
   `SearchSubtreeWalkTest`): ↓ on an expanded row selects its first cell, ↑ on the row under one its last; ↑ on the
   sub-tree's first cell selects the row, ↓ on its last the row under it. The tree's own walk goes through the same
