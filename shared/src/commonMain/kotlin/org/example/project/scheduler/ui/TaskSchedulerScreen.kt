@@ -470,6 +470,8 @@ fun TaskSchedulerScreen(
                 remember(state.cells, state.lists, state.tasks, state.categories, state.priorityWeightPins) {
                     org.example.project.scheduler.domain.CategoryRules.pinnedRuleCells(state)
                 }
+            // User rule 2026-11-19: an incoherent formula of the instant stops both schedulers — said here too.
+            org.example.project.ui.FormulaProblems(state)
             if (pinnedRuleCells.isNotEmpty()) {
                 Text(
                     "⚠ Category rules move pinned weights",

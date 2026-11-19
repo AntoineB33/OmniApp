@@ -5153,7 +5153,7 @@ object SearchDomain {
             AddedAction.TaskResilience -> task?.resilience
             AddedAction.TaskScheduleUnit -> task?.scheduleUnit
             AddedAction.MdText -> state.mdElements.firstOrNull { it.id == id && row.kind == Kind.Md }?.text
-            AddedAction.TaskPresenceFormula -> task?.let { t -> state.cells.values.filter { it.taskId == t.id }.sortedBy { it.id.value }.map { it.weightFormula } }
+            AddedAction.TaskPresenceFormula -> task?.let { t -> state.cells.values.filter { it.taskId == t.id }.sortedBy { it.id.value }.map { it.presenceFormula to it.weightFormula } }
             AddedAction.TaskMinimumFormula -> task?.minimumFormula
             AddedAction.TaskTreeName -> treeRootsOf(listOf(row)).map { state.tasks[it]?.title }
             AddedAction.AlarmTitle -> alarm()?.label

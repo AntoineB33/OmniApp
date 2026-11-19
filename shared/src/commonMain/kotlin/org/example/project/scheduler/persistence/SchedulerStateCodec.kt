@@ -504,7 +504,7 @@ object SchedulerStateCodec {
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value), it.weightFormula)
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value), it.weightFormula, it.presenceFormula)
                 },
             tasks =
                 tasks.values.map {
@@ -1124,7 +1124,7 @@ object SchedulerStateCodec {
                 },
             cells =
                 cells.values.map {
-                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value), it.weightFormula)
+                    PersistedCell(it.id.value, it.parentListId.value, it.taskId?.value, it.priorityWeights, it.categoryIds.map(CategoryId::value), it.weightFormula, it.presenceFormula)
                 },
             tasks =
                 tasks.values.map {
@@ -1203,6 +1203,7 @@ object SchedulerStateCodec {
                         priorityWeights = p.priorityWeights,
                         categoryIds = p.categoryIds.distinct().map(::CategoryId),
                         weightFormula = p.weightFormula,
+                        presenceFormula = p.presenceFormula,
                     )
             }
         val lists =
@@ -1725,6 +1726,7 @@ object SchedulerStateCodec {
                         priorityWeights = p.priorityWeights,
                         categoryIds = p.categoryIds.distinct().map(::CategoryId),
                         weightFormula = p.weightFormula,
+                        presenceFormula = p.presenceFormula,
                     )
             }
         val lists =
@@ -3027,6 +3029,8 @@ private data class PersistedCell(
     val categoryIds: List<String> = emptyList(),
     /** User rule 2026-11-16: the weight as a formula of the instant; absent (blank) before it existed. */
     val weightFormula: String = "",
+    /** User rule 2026-11-19: the presence ratio target as a formula of the instant; absent (blank) before it existed. */
+    val presenceFormula: String = "",
 )
 
 /**

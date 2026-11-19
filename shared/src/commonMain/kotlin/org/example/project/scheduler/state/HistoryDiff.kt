@@ -262,6 +262,7 @@ data class TreeDiff(
                     taskId = rebaseField(c.taskId, f.taskId, t.taskId),
                     priorityWeights = rebaseField(c.priorityWeights, f.priorityWeights, t.priorityWeights),
                     weightFormula = rebaseField(c.weightFormula, f.weightFormula, t.weightFormula),
+                    presenceFormula = rebaseField(c.presenceFormula, f.presenceFormula, t.presenceFormula),
                 )
             }
         fun stripped(task: Task) = if (withRecords) task else task.copy(record = emptyList())

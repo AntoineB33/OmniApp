@@ -135,6 +135,17 @@ root of a task tree, child of the first task element."* — and, of the trees an
   fill, the fill walks the rule state piece by piece, a piece ending at a formula's date (`TimeFormula.Parsed.breakpoints`),
   run by run inside a moving piece (`ScheduleFill.RuleStates`). Where none moves, one rule state for the whole fill, as
   before. The tree's percentages read the formulas at now (`absoluteTaskPriorities` with no instant).
+- **A presence ratio target is a share, not a weight** (user rule 2026-11-19, `Cell.presenceFormula`,
+  `PresenceRatioFormulaTest`): where it reads as a number at an instant, the place takes exactly that fraction of its
+  parent, and the siblings without one share the rest by their weights; where it reads as none (blank, or outside every
+  `periods(…)` period) the weights decide. Read in `absoluteTaskPriorities` only — the one funnel.
+- **Edited in the task element's actions** ("Presence ratio target", "Minimum length target": `FormulaRuleEditor`): the
+  tasks selected (seeded from the added elements, others added by title), the task element it is relative to (a
+  parent of their places), the time periods (blank bound: open) and each one's formula, written as ONE formula per
+  place (`TimeFormula.FormulaPeriods`).
+- **Incoherent formulas stop both schedulers** (`FormulaCoherence`): read at every breakpoint and between them, never
+  at now (so time passing never changes the verdict). While any problem holds, `fillSchedule` hands no task any time —
+  the instant schedule and the search alike — and the editor, the task tree window and the calendar list why.
 
 ### The tree has ONE root, and it is a real cell
 

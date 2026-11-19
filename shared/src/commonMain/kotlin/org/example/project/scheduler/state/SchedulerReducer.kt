@@ -625,6 +625,21 @@ object SchedulerReducer {
                     commitDelta(state, priorityTreeDelta(state, "Presence ratio target", apply))
                 }
             }
+            is SchedulerIntent.SetCellsPresenceFormula -> {
+                val formula = intent.formula.trim()
+                if (org.example.project.scheduler.domain.TimeFormula.problem(formula) != null) {
+                    state
+                } else {
+                    val apply = { working: SchedulerState ->
+                        intent.cellIds.distinct().fold(working) { acc, id ->
+                            val cell = acc.cells[id]
+                            if (cell == null || cell.presenceFormula == formula) acc
+                            else acc.copy(cells = acc.cells + (id to cell.copy(presenceFormula = formula)))
+                        }
+                    }
+                    if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Presence ratio target", apply))
+                }
+            }
             is SchedulerIntent.SetTasksMinimumFormula -> {
                 val formula = intent.formula.trim()
                 if (org.example.project.scheduler.domain.TimeFormula.problem(formula) != null) {

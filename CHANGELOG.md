@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The formula of a presence ratio target, by periods, and its coherence — 2026-11-19
+
+- User rule: *"In the action section of a task element, the user must be able to change the formula for the evolution
+  of the presence (or minimum length) ratio target"* — the tasks selected (and a field adding others), the task element
+  it is relative to, the time periods, the formula; incoherent, a message says so and both schedulers do nothing.
+- `Cell.presenceFormula` (new, persisted and synced, blank by default): the place's share of its parent, a fraction;
+  where it reads, its free siblings share the rest by their weights. `TimeFormula` gains `periods(a, b, e, …)`, `inf`,
+  and `FormulaPeriods` (the editor's periods ↔ the text). `SetCellsPresenceFormula`.
+- `FormulaCoherence`: over 100 % under a parent at some instant, under 100 % with nobody to take the rest, a ratio out
+  of [0, 1], overlapping periods, a negative minimum, a formula that does not read. While any holds, `fillSchedule` and
+  `firstSecondsGapFillable` hand no task any time (the instant schedule and the search alike); the editor, the task tree
+  window and the calendar say why. `FormulaRuleEditor` replaces both actions' editors. `PresenceRatioFormulaTest`.
+
 ### Every selected row reaches the actions and the added elements — 2026-11-19
 
 - Anomaly: *"I select a task element, but nothing happens in the action section and 'added elements' list section"*.

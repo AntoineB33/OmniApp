@@ -26,6 +26,9 @@ import kotlinx.datetime.toInstant
  * - `+ - * / ^`, parentheses, numbers; `min`, `max` (any count), `clamp(x, lo, hi)`, `abs`, `sqrt`, `exp`, `ln`, `sin`,
  *   `cos`, `floor`; `ramp(t0, t1, a, b)` — `a` until `t0`, `b` from `t1`, the straight line between; `step(t0, a, b)` —
  *   `a` before `t0`, `b` from it.
+ * - `periods(a1, b1, e1, a2, b2, e2, …)` (user rule 2026-11-19, the time periods of a formula): `e1` from `a1` until
+ *   `b1`, `e2` from `a2` until `b2`… — the first period holding the instant; outside every period, no value (so the
+ *   constant applies there). A bound is an instant (`date(…)`), `-inf` or `inf` for an open one.
  *
  * A formula that does not read `t` is a constant ([Parsed.constant]). A value that is not a finite number is no value.
  */
@@ -84,6 +87,79 @@ object TimeFormula {
         }
     }
 
+    /** One period of a formula ([FormulaPeriods]): [from] / [until] a date as `date(…)` reads it, blank for an open bound. */
+    data class Period(val from: String, val until: String, val formula: String)
+
+    /**
+     * User rule 2026-11-19: a formula as the time periods the editor shows — `periods(…)` read back into its periods, any
+     * other formula as ONE period open on both sides. [build] writes them back; `read(build(x)) == x`.
+     */
+    object FormulaPeriods {
+        fun read(text: String): List<Period> {
+            val trimmed = text.trim()
+            if (trimmed.isEmpty()) return emptyList()
+            val inner = trimmed.takeIf { it.lowercase().startsWith("periods(") && it.endsWith(")") }
+                ?.substring("periods(".length, trimmed.length - 1)
+                ?: return listOf(Period("", "", trimmed))
+            val args = splitTopLevel(inner)
+            if (args.size % 3 != 0 || args.isEmpty()) return listOf(Period("", "", trimmed))
+            return args.chunked(3).map { (a, b, e) -> Period(boundText(a) ?: return listOf(Period("", "", trimmed)), boundText(b) ?: return listOf(Period("", "", trimmed)), unwrap(e)) }
+        }
+
+        fun build(periods: List<Period>): String {
+            val kept = periods.filter { it.formula.isNotBlank() }
+            if (kept.isEmpty()) return ""
+            val single = kept.singleOrNull()
+            if (single != null && single.from.isBlank() && single.until.isBlank()) return single.formula.trim()
+            return "periods(" + kept.joinToString(", ") { p ->
+                "${p.from.trim().let { if (it.isEmpty()) "-inf" else "date($it)" }}, ${p.until.trim().let { if (it.isEmpty()) "inf" else "date($it)" }}, (${p.formula.trim()})"
+            } + ")"
+        }
+
+        /** [bound] as millis: blank is open (null). Throws nothing: an unreadable date is null too — [problem] says why. */
+        fun millisOf(bound: String, zone: TimeZone = TimeZone.currentSystemDefault()): Long? =
+            if (bound.isBlank()) null else parse("date(${bound.trim()})", zone)?.at(0)?.let(::millisOf)
+
+        private fun boundText(arg: String): String? {
+            val a = arg.trim()
+            return when {
+                a == "-inf" || a == "inf" -> ""
+                a.lowercase().startsWith("date(") && a.endsWith(")") -> a.substring(5, a.length - 1).trim()
+                else -> null
+            }
+        }
+
+        private fun unwrap(e: String): String {
+            val x = e.trim()
+            if (!(x.startsWith("(") && x.endsWith(")"))) return x
+            var depth = 0
+            for ((i, c) in x.withIndex()) {
+                if (c == '(') depth++
+                if (c == ')') depth--
+                if (depth == 0 && i < x.length - 1) return x
+            }
+            return x.substring(1, x.length - 1).trim()
+        }
+
+        private fun splitTopLevel(s: String): List<String> {
+            val out = ArrayList<String>()
+            var depth = 0
+            var start = 0
+            for ((i, c) in s.withIndex()) {
+                when (c) {
+                    '(' -> depth++
+                    ')' -> depth--
+                    ',' -> if (depth == 0) {
+                        out += s.substring(start, i)
+                        start = i + 1
+                    }
+                }
+            }
+            out += s.substring(start)
+            return out
+        }
+    }
+
     internal class FormulaError(message: String) : Exception(message)
 
     internal sealed class Node {
@@ -139,6 +215,13 @@ object TimeFormula {
 
         class Call(val name: String, val args: List<Node>) : Node() {
             override fun eval(t: Double): Double {
+                if (name == "periods") {
+                    // Lazy: only the formula of the period holding [t] is read.
+                    for (i in args.indices step 3) {
+                        if (t >= args[i].eval(t) && t < args[i + 1].eval(t)) return args[i + 2].eval(t)
+                    }
+                    return Double.NaN
+                }
                 val v = args.map { it.eval(t) }
                 return when (name) {
                     "min" -> v.min()
@@ -164,7 +247,7 @@ object TimeFormula {
                 }
             }
 
-            override fun readsT() = name == "ramp" || name == "step" || super.readsT()
+            override fun readsT() = name == "ramp" || name == "step" || name == "periods" || super.readsT()
 
             override fun children() = args
 
@@ -173,16 +256,17 @@ object TimeFormula {
                 val bounds = when (name) {
                     "ramp" -> args.take(2)
                     "step" -> args.take(1)
+                    "periods" -> args.filterIndexed { i, _ -> i % 3 != 2 }
                     else -> emptyList()
                 }
-                for (b in bounds) if (!b.readsT()) out += b.eval(0.0)
+                for (b in bounds) if (!b.readsT()) b.eval(0.0).takeIf { it.isFinite() }?.let { out += it }
             }
         }
     }
 
     private val ARITY = mapOf(
         "clamp" to 3..3, "abs" to 1..1, "sqrt" to 1..1, "exp" to 1..1, "ln" to 1..1, "sin" to 1..1, "cos" to 1..1,
-        "floor" to 1..1, "ramp" to 4..4, "step" to 3..3, "min" to 1..64, "max" to 1..64,
+        "floor" to 1..1, "ramp" to 4..4, "step" to 3..3, "min" to 1..64, "max" to 1..64, "periods" to 3..300,
     )
 
     private class Parser(private val s: String, private val zone: TimeZone) {
@@ -267,6 +351,7 @@ object TimeFormula {
                 while (pos < s.length && (s[pos].isLetterOrDigit() || s[pos] == '_')) pos++
                 val name = s.substring(start, pos).lowercase()
                 if (name == "t") return Node.T
+                if (name == "inf") return Node.Num(Double.POSITIVE_INFINITY)
                 if (peek() != '(') throw FormulaError("\"$name\" is not known: t, date(…) or a function")
                 pos++
                 if (name == "date") return date()
@@ -281,6 +366,7 @@ object TimeFormula {
                 }
                 if (peek() != ')') throw FormulaError("a \")\" is missing after $name(…")
                 pos++
+                if (name == "periods" && args.size % 3 != 0) throw FormulaError("periods takes a start, an end and a formula for each period")
                 if (args.size !in arity) throw FormulaError("$name takes ${if (arity.first == arity.last) arity.first else "${arity.first} or more"} values")
                 return Node.Call(name, args)
             }

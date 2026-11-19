@@ -1135,6 +1135,14 @@ data class Cell(
      * payload written before it): the constant in [priorityWeights]. Authoritative: persisted and synced.
      */
     val weightFormula: String = "",
+    /**
+     * User rule 2026-11-19: **this occurrence's presence ratio target relative to its parent**, a fraction in `[0, 1]`, as a
+     * formula of the instant ([org.example.project.scheduler.domain.TimeFormula], `periods(…)` for time periods). Where it
+     * reads as a number it IS the occurrence's share of its parent — the free siblings share what is left by their
+     * weights; where it reads as none (blank, the default, or outside every period) the weights decide as before.
+     * Checked by [org.example.project.scheduler.domain.FormulaCoherence]. Authoritative: persisted and synced.
+     */
+    val presenceFormula: String = "",
 )
 
 /**
