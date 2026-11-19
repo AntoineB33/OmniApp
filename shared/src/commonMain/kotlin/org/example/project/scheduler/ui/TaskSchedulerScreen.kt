@@ -2158,7 +2158,7 @@ private fun quoted(title: String): String = "\"" + SchedulerDomain.taskTitleLabe
 /** The drop-down's label for a `t_r` choice: the conceptual root is named, every other task is its title. */
 private fun relativeToLabel(state: SchedulerState, taskId: TaskId): String =
     if (taskId == WellKnownIds.ROOT_TASK) {
-        "root"
+        SchedulerDomain.ROOT_LABEL
     } else {
         SchedulerDomain.taskTitleLabel(state, taskId)
     }

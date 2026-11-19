@@ -246,7 +246,7 @@ class RootCellTest {
         val applied = s.applyTree(stripped)
         assertEquals(WellKnownIds.ROOT_CELL, SchedulerDomain.rootCellId(applied))
         val root = assertNotNull(applied.tasks[WellKnownIds.ROOT_TASK])
-        assertEquals("root", root.title)
+        assertEquals(SchedulerDomain.ROOT_TASK_TITLE, root.title)
         assertEquals(WellKnownIds.ROOT_LIST, root.childListId)
         assertEquals(WellKnownIds.ROOT_CELL, SchedulerDomain.visibleCellOrder(applied).first())
         // The tree it swapped in is still all there under the row.

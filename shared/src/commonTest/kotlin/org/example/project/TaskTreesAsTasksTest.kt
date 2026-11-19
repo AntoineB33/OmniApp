@@ -60,7 +60,7 @@ class TaskTreesAsTasksTest {
             assertEquals(listOf(SearchDomain.taskKey(WellKnownIds.ROOT_TASK)), ElementTree.parentsOf(loaded, SearchDomain.taskKey(tree.id)))
             // Its sub-list is where the user types the first task.
             val withFirst = withTask(loaded, tree.childListId!!, "Alpha")
-            assertEquals(listOf(listOf("root", title)), SearchDomain.allPathsInAnyTree(withFirst).getValue(task(withFirst, "Alpha").id))
+            assertEquals(listOf(listOf(SchedulerDomain.ROOT_TASK_TITLE, title)), SearchDomain.allPathsInAnyTree(withFirst).getValue(task(withFirst, "Alpha").id))
             assertEquals(s0.histories.main.units.size, loaded.histories.main.units.size, "a default is no user action")
             // A reload never seeds a second tree.
             assertEquals(listOf(title), rootChildren(TaskSchedulerViewModel.loadInitialState(store = null, initial = withFirst)))
@@ -114,9 +114,9 @@ class TaskTreesAsTasksTest {
         assertEquals(1, task(s, "Only there").record.size)
         // The paths are the parents' titles, from the root.
         val paths = SearchDomain.allPathsInAnyTree(s)
-        assertEquals(listOf(listOf("root", "Open", "Shared")), paths.getValue(task(before, "Leaf").id))
-        assertEquals(listOf(listOf("root", "Old", "Shared")), paths.getValue(task(s, "Only there").id))
-        assertTrue(paths.values.flatten().none { it.firstOrNull() != "root" })
+        assertEquals(listOf(listOf(SchedulerDomain.ROOT_TASK_TITLE, "Open", "Shared")), paths.getValue(task(before, "Leaf").id))
+        assertEquals(listOf(listOf(SchedulerDomain.ROOT_TASK_TITLE, "Old", "Shared")), paths.getValue(task(s, "Only there").id))
+        assertTrue(paths.values.flatten().none { it.firstOrNull() != SchedulerDomain.ROOT_TASK_TITLE })
     }
 
     @Test
@@ -151,7 +151,7 @@ class TaskTreesAsTasksTest {
         val rows = SearchDomain.resolve(s, listOf(SearchDomain.taskKey(task(s, "Child").id)), { emptyMap() })
         val named = SearchDomain.addedIntents(s, rows, SearchDomain.AddedCommand.TreeName("Health"), 0L).fold(s, ::r)
         assertEquals(listOf("Health"), rootChildren(named))
-        assertEquals(listOf(listOf("root", "Health")), SearchDomain.allPathsInAnyTree(named).getValue(task(named, "Child").id))
+        assertEquals(listOf(listOf(SchedulerDomain.ROOT_TASK_TITLE, "Health")), SearchDomain.allPathsInAnyTree(named).getValue(task(named, "Child").id))
         assertNotEquals(s, named)
         assertEquals(listOf("Top"), rootChildren(r(named, SchedulerIntent.Undo)), "one undo")
     }

@@ -214,8 +214,12 @@ object SchedulerDomain {
         return tree.copy(tasks = tasks, titleToTaskIds = buildTitleIndex(tasks))
     }
 
-    /** The root task's title — the one name the tree's own root row, and every "root" label, print. */
-    const val ROOT_TASK_TITLE: String = "root"
+    /**
+     * The root task's title — the one name the tree's own root row, and every label of the root, print. User rule
+     * 2026-11-19: *"rename 'root' by something like task trees"*: it was `root`. Forced on every load ([withRoot],
+     * [withRootTask]), so an account that held `root` reads the new name.
+     */
+    const val ROOT_TASK_TITLE: String = "Task trees"
 
     /** True when the cell has no assigned task or its task title is blank (PRD §5). */
     fun isTextuallyEmptyCell(state: SchedulerState, cellId: CellId): Boolean {
@@ -1226,10 +1230,7 @@ object SchedulerDomain {
      * the task keeps its id and lingers while panels/records still point at it) are all excluded.
      */
     fun schedulableLeaves(state: SchedulerState): List<TaskId> =
-        state.tasks.keys.filter {
-            !isRootTask(it) && isInTreeOrFulfils(state, it) && isLeafTask(state, it) &&
-                state.tasks[it]?.title?.isNotBlank() == true
-        }
+        state.tasks.keys.filter { isPlaceableTask(state, it) && state.tasks[it]?.title?.isNotBlank() == true }
 
     /**
      * Whether [taskId] is a task the scheduler can hand time to by where it lives: a cell of the tree holds it, or — with
@@ -1312,10 +1313,7 @@ object SchedulerDomain {
     fun manualAddTaskId(state: SchedulerState): TaskId? {
         val absolute = absoluteTaskPriorities(state)
         val candidates =
-            state.tasks.keys.filter {
-                !isRootTask(it) && isInTreeOrFulfils(state, it) && isLeafTask(state, it) &&
-                    state.tasks[it]?.title?.isNotBlank() == true
-            }
+            state.tasks.keys.filter { isPlaceableTask(state, it) && state.tasks[it]?.title?.isNotBlank() == true }
         if (candidates.isEmpty()) return null
         // minWith over (priority desc, title asc): the minimum is the highest priority, and on a tie
         // the alphabetically-first title.
@@ -7710,7 +7708,9 @@ object SchedulerDomain {
      * it would then refuse.
      */
     fun isPlaceableTask(state: SchedulerState, taskId: TaskId): Boolean =
-        isLeafTask(state, taskId) && isInTreeOrFulfils(state, taskId)
+        // Never the global root (anomaly 2026-11-19: with an empty tree it was a leaf, and placeable here alone — the
+        // schedulable leaves and the manual add each said "not the root" on their own; they ask this now).
+        !isRootTask(taskId) && isLeafTask(state, taskId) && isInTreeOrFulfils(state, taskId)
 
     /**
      * The cell's id menu ([changeTaskMenuEntries]) for a field that names a task without being a cell: every task whose
@@ -7965,8 +7965,8 @@ object SchedulerDomain {
     /** The tree's own placeholder for a task with no title. */
     const val UNTITLED_LABEL: String = "(untitled)"
 
-    /** What the root is called where it is named at all — the relative-priority and category scope menus. */
-    const val ROOT_LABEL: String = "root"
+    /** What the root is called where it is named at all — the relative-priority and category scope menus: its title. */
+    const val ROOT_LABEL: String = ROOT_TASK_TITLE
 
     /** PRD §14: the reminder id of the first known reminder with this exact [title], if any. */
     fun reminderIdForTitle(state: SchedulerState, title: String): String? =
@@ -8015,7 +8015,10 @@ object SchedulerDomain {
      * Sort: similarity → alphabetical → taskId count → total occurrence count.
      */
     fun titleSuggestions(state: SchedulerState, input: String): List<String> =
-        state.titleToTaskIds.keys
+        state.titleToTaskIds
+            // The global root names no task a cell can hold (user rule 2026-11-19: renamed "Task trees", it was offered
+            // for every "a" or "e" typed): only a title some other task bears.
+            .filterValues { ids -> ids.any { !isRootTask(it) } }.keys
             .filter { it != input }
             .filter { input.isEmpty() || it.contains(input, ignoreCase = true) }
             .sortedWith(

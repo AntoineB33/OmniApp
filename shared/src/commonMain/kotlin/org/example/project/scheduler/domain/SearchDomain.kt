@@ -3094,7 +3094,7 @@ object SearchDomain {
      * as a path that starts with its second segment.
      */
     private fun liveRootLabel(state: SchedulerState): String =
-        state.tasks[WellKnownIds.ROOT_TASK]?.title?.takeIf { it.isNotBlank() } ?: "root"
+        state.tasks[WellKnownIds.ROOT_TASK]?.title?.takeIf { it.isNotBlank() } ?: SchedulerDomain.ROOT_TASK_TITLE
 
     /** The one tree (user rule 2026-11-16: every task tree is a task under the root, [TaskTreesAsTasks]). */
     private fun sources(state: SchedulerState): List<TreeSource> =

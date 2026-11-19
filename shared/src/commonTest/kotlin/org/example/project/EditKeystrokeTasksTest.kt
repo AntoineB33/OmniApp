@@ -1,5 +1,6 @@
 package org.example.project
 
+import org.example.project.scheduler.domain.SchedulerDomain
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -141,7 +142,7 @@ class EditKeystrokeTasksTest {
     @Test
     fun each_keystroke_is_its_own_task() = scenario {
         val t = typed()
-        assertEquals(setOf("A", "AB", "ABC"), t.state.tasks.values.map { it.title }.filter { it.isNotBlank() && it != "root" }.toSet())
+        assertEquals(setOf("A", "AB", "ABC"), t.state.tasks.values.map { it.title }.filter { it.isNotBlank() && it != SchedulerDomain.ROOT_TASK_TITLE }.toSet())
         assertEquals(2, t.state.editSession!!.draftTaskIds.size)
     }
 
@@ -152,7 +153,7 @@ class EditKeystrokeTasksTest {
         assertNull(s.editSession)
         s = plan(s)
         assertEquals(listOf("A" to (0L to 20L)), behindTheLine(s))
-        assertEquals(setOf("A"), s.tasks.values.map { it.title }.filter { it.isNotBlank() && it != "root" }.toSet())
+        assertEquals(setOf("A"), s.tasks.values.map { it.title }.filter { it.isNotBlank() && it != SchedulerDomain.ROOT_TASK_TITLE }.toSet())
     }
 
     @Test
@@ -165,7 +166,7 @@ class EditKeystrokeTasksTest {
         s = plan(s)
         assertEquals(listOf("A" to (0L to 35L)), behindTheLine(s))
         assertEquals("A", s.tasks[s.cells[t.cell]!!.taskId!!]!!.title)
-        assertEquals(setOf("A"), s.tasks.values.map { it.title }.filter { it.isNotBlank() && it != "root" }.toSet())
+        assertEquals(setOf("A"), s.tasks.values.map { it.title }.filter { it.isNotBlank() && it != SchedulerDomain.ROOT_TASK_TITLE }.toSet())
     }
 
     @Test

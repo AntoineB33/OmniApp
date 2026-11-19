@@ -1,5 +1,6 @@
 package org.example.project
 
+import org.example.project.scheduler.domain.SchedulerDomain
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -210,7 +211,7 @@ class TaskTreeSearchTest {
         assertEquals(
             setOf("PEAR", "PEAR pie", "PinePEAR", "Banana"),
             after.tasks.values.map { it.title }.filter { it.isNotEmpty() }.toSet() -
-                setOf("root", "main"),
+                setOf(SchedulerDomain.ROOT_TASK_TITLE, "main"),
         )
         assertEquals(before + 1, after.histories.forCategory(HistoryCategory.Main).units.size)
         // One Ctrl+Z takes the whole replacement back.

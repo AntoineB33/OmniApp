@@ -388,7 +388,10 @@ object CustomMenuButtons {
      * closed ([SearchDomain.Config.buttonFollowsExpansion], on).
      */
     val ROOT_SEARCH: CustomMenuButton by lazy {
-        CustomMenuButton("d-root", "Search", "Root", config = SearchDomain.rootSearchConfig().encode())
+        CustomMenuButton(
+            "d-root", "Search", org.example.project.scheduler.domain.SchedulerDomain.ROOT_TASK_TITLE,
+            config = SearchDomain.rootSearchConfig().encode(),
+        )
     }
 
     /** User rule 2026-10-18: *"add by default the switch button to remove all sound"* — in every page's menu. */
@@ -660,11 +663,12 @@ object CustomMenuButtons {
                 else together1.toMutableList().also { it.add(usageAt, SETTINGS_ONLINE.copy(parent = together1[usageAt].parent)) }
             }
         // ...and, on the settings page, the server's fields, ONCE, at the bottom (user rule 2026-11-04).
-        val together3 =
+        val seeded3 =
             if (stored.serverSeeded || defaults != SETTINGS_DEFAULTS || together2.any { it.control == MenuControl.Server.name }) together2
             else together2 + SETTINGS_SERVER
         // ...and, on the scheduler's page, the global root's button, ONCE: just above the calendar's where it stands, else at
-        // the bottom.
+        // the bottom. One given it under its first name, "Root", reads the root's name now (user rule 2026-11-19).
+        val together3 = seeded3.map { if (it.id == ROOT_SEARCH.id && it.title == "Root") it.copy(title = ROOT_SEARCH.title) else it }
         if (stored.rootSeeded || ROOT_SEARCH !in defaults || together3.any { it.id == ROOT_SEARCH.id }) return together3
         val calendarAt = together3.indexOfFirst { it.id == "d-calendar" }
         return if (calendarAt < 0) together3 + ROOT_SEARCH

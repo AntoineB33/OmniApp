@@ -55,9 +55,9 @@ class SchedulerReducerTest {
         val s = SchedulerState.empty()
         assertEquals(WellKnownIds.ROOT_LIST, s.rootListId)
         val root = assertNotNull(s.tasks[WellKnownIds.ROOT_TASK])
-        assertEquals("root", root.title)
+        assertEquals(SchedulerDomain.ROOT_TASK_TITLE, root.title)
         assertEquals(WellKnownIds.ROOT_LIST, root.childListId)
-        assertEquals(listOf(WellKnownIds.ROOT_TASK), s.titleToTaskIds["root"])
+        assertEquals(listOf(WellKnownIds.ROOT_TASK), s.titleToTaskIds[SchedulerDomain.ROOT_TASK_TITLE])
         // The one task the account starts with: no `task/main` beside it.
         assertEquals(setOf(WellKnownIds.ROOT_TASK), s.tasks.keys)
         assertEquals(1, s.lists[s.rootListId]!!.cellIds.size)
@@ -2490,7 +2490,7 @@ class SchedulerReducerTest {
 
     @Test
     fun typing_in_empty_child_keeps_task_menu_collapsed_and_shows_title_suggestion() {
-        // Anomaly repro continued: typing "r" must surface the "root" title suggestion
+        // Anomaly repro continued: typing "y" must surface the "yu" title suggestion
         // and must NOT surface any existing-task row.
         var s = SchedulerState.empty()
         val firstCell = s.lists[s.rootListId]!!.cellIds.first()
@@ -2501,9 +2501,9 @@ class SchedulerReducerTest {
         val gChild = s.lists[s.tasks[gTaskId]!!.childListId!!]!!.cellIds.first()
 
         s = SchedulerReducer.reduce(s, SchedulerIntent.BeginEdit(gChild))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("r"))
+        s = SchedulerReducer.reduce(s, SchedulerIntent.UpdateEditText("y"))
         val session = s.editSession!!
-        assertEquals("r", session.draftText)
+        assertEquals("y", session.draftText)
 
         val entries =
             SchedulerDomain.changeTaskMenuEntries(
@@ -2514,8 +2514,8 @@ class SchedulerReducerTest {
             )
         assertTrue(entries.isEmpty())
 
-        val suggestions = SchedulerDomain.titleSuggestions(s, "r")
-        assertEquals(listOf("root"), suggestions)
+        val suggestions = SchedulerDomain.titleSuggestions(s, "y")
+        assertEquals(listOf("yu"), suggestions)
     }
 
     @Test
@@ -2570,10 +2570,10 @@ class SchedulerReducerTest {
 
     @Test
     fun title_suggestions_on_empty_db_list_the_root() {
-        // Entering Edit Mode on a fresh DB with an empty draft must surface the existing titles (PRD §4
-        // Menu 2). A fresh account holds exactly one: the root's own.
+        // A fresh account holds one title, the root's own, which names no task a cell can hold (user rule 2026-11-19,
+        // renamed "Task trees"): no suggestion.
         val s = SchedulerState.empty()
-        assertEquals(listOf("root"), SchedulerDomain.titleSuggestions(s, ""))
+        assertEquals(emptyList(), SchedulerDomain.titleSuggestions(s, ""))
     }
 
     @Test
@@ -2582,13 +2582,14 @@ class SchedulerReducerTest {
         val cellId = s.lists[s.rootListId]!!.cellIds.first()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(cellId, "Alpha"))
 
-        assertEquals(listOf("Alpha", "root"), SchedulerDomain.titleSuggestions(s, ""))
+        assertEquals(listOf("Alpha"), SchedulerDomain.titleSuggestions(s, ""))
     }
 
     @Test
     fun title_suggestions_show_single_match() {
         // Single suggestion must still be returned (no "only one element" rule for Menu 2).
-        val s = SchedulerState.empty()
+        var s = SchedulerState.empty()
+        s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[s.rootListId]!!.cellIds.first(), "root"))
         assertEquals(listOf("root"), SchedulerDomain.titleSuggestions(s, "r"))
         assertEquals(listOf("root"), SchedulerDomain.titleSuggestions(s, "oo"))
     }

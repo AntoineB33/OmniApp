@@ -75,9 +75,9 @@ class RootTaskMigrationTest {
     fun a_pre_rename_payload_loads_with_one_root_task_and_keeps_its_tree() {
         val s = assertNotNull(SchedulerStateCodec.decode(legacyPayload()))
 
-        // ONE well-known task, at the surviving id, titled "root", owning the tree's top-level list.
+        // ONE well-known task, at the surviving id, titled as the root is ([SchedulerDomain.ROOT_TASK_TITLE]), owning the tree's top-level list.
         val root = assertNotNull(s.tasks[WellKnownIds.ROOT_TASK])
-        assertEquals("root", root.title)
+        assertEquals(SchedulerDomain.ROOT_TASK_TITLE, root.title)
         assertEquals(WellKnownIds.ROOT_LIST, root.childListId)
         assertEquals(WellKnownIds.ROOT_LIST, s.rootListId)
         // The conceptual level is gone — nothing is left calling itself `main`.

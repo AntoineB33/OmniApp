@@ -227,7 +227,7 @@ the relative-priority window's number said once and then **kept**.
   - **task cell** (`distance == null`): relative to ONE cell (`null` = the whole tree), every **top-most** carrier
     under it counted together (`CategoryRules.chainsUnder`: a carrier's whole sub-tree is its own, so one nested inside
     another is not counted twice; the walk enters a list only from the cell that owns it). Its picker
-    (`taskCellEntries`) offers the whole tree — "root", first — and every cell a carrier sits under, along every path,
+    (`taskCellEntries`) offers the whole tree — the root ("Task trees"), first — and every cell a carrier sits under, along every path,
     by path, ONLY those: the scope picker it replaced offered any cell, so a rule could govern nothing, and its first
     replacement offered only the ancestors at a distance, so "root" was missing (both 2026-10-03).
   - **parent distance** (`distance` ≥ 1, no cell): relative to the cell that many levels above EACH carrier (`1` = the

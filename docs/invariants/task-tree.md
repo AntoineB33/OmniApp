@@ -60,6 +60,10 @@ children, I couldn't select them and up/down arrow keys don't work as well"*; `R
 - **A read-only sub-tree's gesture is held against its projection, not the live tree** (`reduceInSearchSubtree`): the
   root's projection cuts its list's link to the root cell, so against the live tree every gesture there, a selection
   included, read as a change and was dropped.
+- **The root is in no title suggestion** (`titleSuggestions`): it names no task a cell can hold, and renamed "Task trees"
+  it was offered for every "a" or "e" typed. **Nor is it ever placeable** (`isPlaceableTask`, which the schedulable
+  leaves and the manual add now ask instead of each saying "not the root" on its own): with an empty tree it was a
+  leaf, and the calendar's menus offered it.
 - **`SearchDomain.isInTaskTree` is the one answer to "is this task in a tree"** (`TaskResult.inTaskTree`): the root, or a
   task some tree's path reaches. The edit menus' id rows (`TaskIdentityRow`) said it by their own rule and called the root
   in no tree. Their sub-tree takes the keyboard once pressed into, as every row's does.
@@ -90,7 +94,7 @@ have a task element, acting as the root where all different task trees diverge, 
 root of a task tree, child of the first task element."* — and, of the trees an older build stored beside the live one,
 *"Why deleting them? I just want a unified logic."* (`TaskTreesAsTasks`, `TaskTreesAsTasksTest`).
 
-- **One structure.** The global root task (`ROOT_TASK`, titled `root`) is where the trees diverge; each tree is a task
+- **One structure.** The global root task (`ROOT_TASK`, titled `Task trees` — `root` until user rule 2026-11-19: *"rename 'root' by something like task trees"*; `SchedulerDomain.ROOT_TASK_TITLE`, forced on every load so an account that said `root` reads the new name, and `ROOT_LABEL` is it) is where the trees diverge; each tree is a task
   directly under it, its tasks the ones under that task. There is no "task tree" kind of element, no selector above the
   tree, no "new task tree", no "All task trees" window, no stored tree beside the live one. A tree is created, copied,
   renamed and removed as a task is; its name is its task's title (the "Tree name" action renames that task).
@@ -138,7 +142,7 @@ root of a task tree, child of the first task element."* — and, of the trees an
   cells lived in `list/main`. The second level existed so sibling trees could hang beside `main`; named task
   trees held the account's several trees then, so it answered nothing and went. Since 2026-11-16 the trees ARE
   the tasks under the root (§ *A task tree IS a task under the root*). The survivor is
-  `WellKnownIds.ROOT_TASK` (`task/root`, titled `root`), and its child list `ROOT_LIST` (`list/root`) is the
+  `WellKnownIds.ROOT_TASK` (`task/root`, titled `Task trees`), and its child list `ROOT_LIST` (`list/root`) is the
   tree's top-level list — the one `SchedulerState.rootListId` names.
 - **`SchedulerDomain.withRoot` is the ONE definition of that shape**: `SchedulerState.empty` builds through it,
   the codec heals every decoded payload with it, `SnapshotMerge.repair` repairs with it, and

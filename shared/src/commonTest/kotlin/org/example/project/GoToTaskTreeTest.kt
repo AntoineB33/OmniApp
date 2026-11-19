@@ -149,8 +149,8 @@ class GoToTaskTreeTest {
         s = r(s, SchedulerIntent.AssignTaskId(s.lists[bananaList]!!.cellIds.first(), pieTask))
 
         // Both parents hold it; the shortest path is the one the BFS reaches first, and it is a real path.
-        assertEquals("root / Apple / Pie", SchedulerDomain.taskPathLabel(s, pieTask))
-        assertEquals("root / Apple", SchedulerDomain.taskPathLabel(s, taskWithTitle(s, "Apple")))
+        assertEquals("Task trees / Apple / Pie", SchedulerDomain.taskPathLabel(s, pieTask))
+        assertEquals("Task trees / Apple", SchedulerDomain.taskPathLabel(s, taskWithTitle(s, "Apple")))
     }
 
     /**

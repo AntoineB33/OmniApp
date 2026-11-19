@@ -57,4 +57,32 @@ class RootMenuButtonTest {
         assertEquals(setOf("task/root", "task/a"), opened.expandedResults)
         assertEquals(0.7f, opened.left)
     }
+
+    /**
+     * User, 2026-11-19: *"Should I find the search configuration element that automatically updates the button only for row
+     * expansions status in 'Currently on' from the down arrow of the window from the default 'Root' button?"* Yes.
+     */
+    @Test
+    fun the_root_windows_down_arrow_shows_the_setting_currently_on() {
+        val tree = SearchDomain.configurationTree(SearchDomain.rootSearchConfig())
+        val on = tree.filterIsInstance<SearchDomain.ConfigurationCategory>().single { it.label == "Currently on" }
+        assertTrue(on.children.any { (it as? SearchDomain.ConfigurationLeaf)?.setting == SearchDomain.Setting.ButtonFollowsExpansion })
+    }
+
+    /** User rule 2026-11-19: *"rename 'root' by something like task trees"* — the global root, and its button. */
+    @Test
+    fun the_global_root_is_called_task_trees_and_an_account_that_said_root_reads_it() {
+        assertEquals("Task trees", SchedulerState.empty().tasks.getValue(WellKnownIds.ROOT_TASK).title)
+        assertEquals("Task trees", CustomMenuButtons.ROOT_SEARCH.title)
+        val stored = org.example.project.scheduler.persistence.SchedulerStateCodec.encode(SchedulerState.empty())
+            .replace("\"Task trees\"", "\"root\"")
+        assertTrue("\"root\"" in stored)
+        val decoded = org.example.project.scheduler.persistence.SchedulerStateCodec.decode(stored)!!
+        assertEquals("Task trees", decoded.tasks.getValue(WellKnownIds.ROOT_TASK).title, "healed on load")
+        // A menu given the button as "Root" earlier the same day reads the new name; one the user renamed keeps theirs.
+        val given = CustomMenuButtons.encode(CustomMenuButtons.DEFAULTS.map { if (it.id == "d-root") it.copy(title = "Root") else it })
+        assertEquals("Task trees", CustomMenuButtons.decode(given).single { it.id == "d-root" }.title)
+        val renamed = CustomMenuButtons.encode(CustomMenuButtons.DEFAULTS.map { if (it.id == "d-root") it.copy(title = "Mine") else it })
+        assertEquals("Mine", CustomMenuButtons.decode(renamed).single { it.id == "d-root" }.title)
+    }
 }

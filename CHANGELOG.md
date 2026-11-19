@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The global root is "Task trees" — 2026-11-19
+
+- User rule: *"rename 'root' by something like task trees"*. `ROOT_TASK_TITLE` is `Task trees` (forced on load: an
+  account that said `root` reads it; `ROOT_LABEL` is it), and the menu's button with it (a menu given it as "Root" the
+  same day reads the new name unless renamed). Paths start with it.
+- The root is in no title suggestion, and never placeable: `isPlaceableTask` says "not the root" for the schedulable
+  leaves and the manual add, which each said it apart (an empty tree's root was placeable through the third copy).
+
 ### The Root window's sub-tree, the left-side menu built as a Search window, one "in a tree" — 2026-11-19
 
 - **Anomaly: the Root button's window could not open, select or walk the root's children.** The root's sub-tree was

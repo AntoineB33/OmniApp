@@ -590,7 +590,7 @@ class CategoryRulesTest {
         assertEquals(SchedulerDomain.ROOT_LABEL, labels.first(), "the whole tree first")
         assertEquals(setOf(SchedulerDomain.ROOT_LABEL, "Book", "Notes", "Notes / Book"), labels.toSet())
         assertTrue(labels.none { it.endsWith("Chapter") || it.endsWith("Read") }, "nothing no carrier sits under:\n$labels")
-        assertEquals(listOf(null), CategoryRules.taskCellEntries(s, listOf(deep), "root").map { it.cellId }, "typing root finds it")
+        assertEquals(listOf(null), CategoryRules.taskCellEntries(s, listOf(deep), "task trees").map { it.cellId }, "typing its name finds the root")
         // Each row is a task element with ITS path: Book twice, the same task id under two different paths.
         val books = CategoryRules.taskCellEntries(s, listOf(deep), "").filter { it.taskId == f.book }
         assertEquals(2, books.size)
