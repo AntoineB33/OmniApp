@@ -103,10 +103,18 @@ private fun spotOff(
  * shrank its list: the field left the pointer, which was then over nothing, and the configurations tree vanished
  * ([MenuHoverTracker]). Where it no longer fits, or would cover its anchor, it is placed again ([menuSpot]).
  */
-internal fun keepsSpot(current: IntOffset, size: IntSize, anchor: IntRect, area: IntRect, list: IntRect? = null): Boolean {
+internal fun keepsSpot(
+    current: IntOffset,
+    size: IntSize,
+    anchor: IntRect,
+    area: IntRect,
+    list: IntRect? = null,
+    /** User rule 2026-11-19: a pop-up (not a right-click's menu) stays only where it still touches its caller ([stuckTo]). */
+    stuck: Boolean = false,
+): Boolean {
     val at = IntRect(current.x, current.y, current.x + size.width, current.y + size.height)
     val onScreen = at.left >= area.left && at.top >= area.top && at.right <= area.right && at.bottom <= area.bottom
-    return onScreen && !at.overlaps(anchor) && (list == null || !at.overlaps(list))
+    return onScreen && !at.overlaps(anchor) && (list == null || !at.overlaps(list)) && (!stuck || stuckTo(at, anchor, list))
 }
 
 /** A side of its anchor a menu opens on ([menuSpot]), tried in the order a menu is given. */
@@ -155,3 +163,50 @@ val LocalMenuSides = androidx.compose.runtime.compositionLocalOf { MenuSide.DEFA
  * window's result list, a column of the configurations tree); null outside one.
  */
 val LocalCallerList = androidx.compose.runtime.compositionLocalOf<(() -> androidx.compose.ui.geometry.Rect?)?> { null }
+
+/**
+ * User rule 2026-11-19: *"Make sure every window that appears by hovering over something, the caller, is always stuck to the
+ * caller."* **Whether a pop-up at [at] still touches what it hangs from**: one of its sides on one of [anchor]'s, or — a row
+ * of a [list] — on the list's edge at the row's height, or its bottom or top ([menuSpot]'s anchors), the two overlapping
+ * along that side. A pixel of rounding is no gap.
+ */
+internal fun stuckTo(at: IntRect, anchor: IntRect, list: IntRect? = null): Boolean {
+    fun near(a: Int, b: Int) = kotlin.math.abs(a - b) <= 1
+    fun touches(r: IntRect): Boolean {
+        val acrossY = at.top < r.bottom && r.top < at.bottom || (r.height == 0 && at.top <= r.top && r.top <= at.bottom)
+        val acrossX = at.left < r.right && r.left < at.right || (r.width == 0 && at.left <= r.left && r.left <= at.right)
+        return (acrossY && (near(at.right, r.left) || near(at.left, r.right))) || (acrossX && (near(at.bottom, r.top) || near(at.top, r.bottom)))
+    }
+    if (touches(anchor)) return true
+    list ?: return false
+    val row = IntRect(minOf(anchor.left, list.left), anchor.top, maxOf(anchor.right, list.right), anchor.bottom)
+    val whole = IntRect(minOf(anchor.left, list.left), minOf(anchor.top, list.top), maxOf(anchor.right, list.right), maxOf(anchor.bottom, list.bottom))
+    return touches(row) || touches(whole)
+}
+
+/** The side of a pop-up furthest from what it hangs from ([farSideOf]): where its rows' hover arrows stand. */
+enum class FarSide { Left, Right }
+
+/**
+ * User rule 2026-11-19: *"When a row has an arrow that opens a window when hovered over, this arrow must be on the left or
+ * right side, depending on which one is the furthest from the caller."* **The side of the pop-up at [popup] further from
+ * the middle of its [anchor]**: a pop-up at its caller's left reads Left, at its right Right; below or above, the side
+ * further from the caller's middle.
+ */
+fun farSideOf(popup: IntRect, anchor: IntRect): FarSide {
+    val middle = (anchor.left + anchor.right) / 2
+    return if (kotlin.math.abs(popup.left - middle) > kotlin.math.abs(popup.right - middle)) FarSide.Left else FarSide.Right
+}
+
+/**
+ * User rule 2026-11-19: **the far side of the pop-up a row stands in** ([farSideOf]), given by the pop-up as it is placed;
+ * null where it is not known (outside a pop-up, or a platform drawing material's menu), the arrow then at the row's end.
+ */
+val LocalPopupFarSide = androidx.compose.runtime.compositionLocalOf<FarSide?> { null }
+
+/** The sides a hover arrow's pop-up tries ([MenuSide.SUBMENU]'s order), its arrow's side first. */
+fun submenuSides(far: FarSide?): List<MenuSide> =
+    when (far) {
+        FarSide.Right -> listOf(MenuSide.Right, MenuSide.Left, MenuSide.Below, MenuSide.Above)
+        FarSide.Left, null -> MenuSide.SUBMENU
+    }

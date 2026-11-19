@@ -337,8 +337,16 @@ data class SearchRowOpeners(
     val onOpenCalendar: () -> Unit = {},
     /** A workplace setup's row, by id: it is applied (user rule 2026-11-01), a command like a "creation" row. */
     val onApplyWorkplaceSetup: (String) -> Unit = {},
-    /** The blank field under an element's children, double-clicked: a Search window coming from it ([ElementTree.childSearchConfig]). */
-    val onOpenChildSearch: (parent: String) -> Unit = {},
+    /**
+     * The blank field under an element's children, double-clicked: a Search window coming from it
+     * ([ElementTree.childSearchConfig]). Its frame id, the field being its search bar from then on (user rule 2026-11-19).
+     */
+    val onOpenChildSearch: (parent: String) -> String? = { null },
+    /**
+     * User rule 2026-11-19: **the Search window [windowId] a row's field is the search bar of**, while it is open — its
+     * configuration and what sets it; null once it is closed, the field blank again.
+     */
+    val linkedWindow: (windowId: String) -> LinkedSearchWindow? = { null },
 ) {
     companion object {
         /** The kinds a double-click on a result row opens: commands. Every other is added ([doubleClickOpens] false). */
@@ -368,7 +376,11 @@ data class SearchRowOpeners(
             onOpenCalendarAt = { around { onOpenCalendarAt(it) } },
             onOpenCalendar = { around { onOpenCalendar() } },
             onApplyWorkplaceSetup = { around { onApplyWorkplaceSetup(it) } },
-            onOpenChildSearch = { around { onOpenChildSearch(it) } },
+            onOpenChildSearch = { parent ->
+                var opened: String? = null
+                around { opened = onOpenChildSearch(parent) }
+                opened
+            },
         )
 
     /** Open [result]: a task only while the account still holds it (a task only a stored tree holds has no editor). */
@@ -3919,10 +3931,61 @@ private fun ElementChildren(
     // a ROW of that list, drawn as its siblings are: their full-width box, nothing in it (anomaly 2026-11-03: a box of its
     // own inside the indent stood one level deeper, so it read as the last child's, which was not expanded). Since its
     // siblings' rectangles stand at the indent (user rule 2026-11-15), so does its own.
-    Box(
-        modifier = indent.then(resultRowModifier(selected = false))
-            .resultRowGestures(surface + parent + "/blank", onSelect = {}, onSecondarySelect = {}, onOpen = { openers.onOpenChildSearch(parent) }, onOpenMenu = {}),
-    )
+    // User rule 2026-11-19: double-clicked, it is the search bar of the window it opens, its ✕ and ▾ beside it in the row,
+    // until that window is closed.
+    var barOf by remember(parent, surface) { mutableStateOf<String?>(null) }
+    val linked = barOf?.let(openers.linkedWindow)
+    if (linked != null) {
+        LinkedSearchBar(linked, state, windows, claudeLogs, indent.then(resultRowModifier(selected = false)))
+    } else {
+        Box(
+            modifier = indent.then(resultRowModifier(selected = false))
+                .resultRowGestures(surface + parent + "/blank", onSelect = {}, onSecondarySelect = {}, onOpen = { barOf = openers.onOpenChildSearch(parent) }, onOpenMenu = {}),
+        )
+    }
+}
+
+/**
+ * User rule 2026-11-19: a Search window whose search bar is a field of a row elsewhere ([SearchRowOpeners.linkedWindow]):
+ * what it searches ([config]), what it opened with ([opened], its Reset's), and what sets it.
+ */
+class LinkedSearchWindow(
+    val id: String,
+    val config: SearchDomain.Config,
+    val opened: SearchDomain.Config,
+    val set: (SearchDomain.Config) -> Unit,
+)
+
+/**
+ * User rule 2026-11-19: *"The search bar with the cross button and the down arrow are supposed to be elements of a row. Some
+ * rows can get the down arrow as well when one of their field is double clicked, and the field gets the search bar function
+ * for the window that opens."* **A row's field that is the search bar of [window]**: what is typed is that window's search,
+ * its ✕ empties it, and the ▾ beside it — an element of the row, as on the Search window's own bar — opens that window's
+ * configurations.
+ */
+@Composable
+internal fun LinkedSearchBar(
+    window: LinkedSearchWindow,
+    state: SchedulerState,
+    windows: List<SearchDomain.WindowEntry>,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    modifier: Modifier = Modifier,
+) {
+    val focus = remember { FocusRequester() }
+    // Double-clicked into, it takes the caret: what is typed next is the window's search.
+    LaunchedEffect(window.id) { runCatching { focus.requestFocus() } }
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        SearchBar(
+            window.config.query,
+            { window.set(window.config.copy(query = it)) },
+            "Search",
+            modifier = Modifier.weight(1f).focusRequester(focus),
+        )
+        // Its ▾ is the window's own ([ArrowSearches]).
+        androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides window.id) {
+            ConfigurationTreeArrow(state, window.config, window.opened, window.set, LocalAppNowMillis.current, windows, claudeLogs)
+        }
+    }
 }
 
 /** One row under an element's arrow: where it is drawn ([rowKey]: surface and path), the element, its row. */

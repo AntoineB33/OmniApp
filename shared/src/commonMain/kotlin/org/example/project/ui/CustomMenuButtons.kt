@@ -409,11 +409,13 @@ object CustomMenuButtons {
     val DEFAULTS: List<CustomMenuButton> =
         listOf(
             GLOBAL_SEARCH,
-            ROOT_SEARCH,
             // The three sound switches together (user rule 2026-11-01).
             GLOBAL_MUTE,
             CustomMenuButton("d-" + MenuControl.Voice.name, "", "", control = MenuControl.Voice.name),
             CustomMenuButton("d-" + MenuControl.Notifications.name, "", "", control = MenuControl.Notifications.name),
+            // The global root's Search window (user rule 2026-11-19), with the windows' buttons: the sound switches stay
+            // just under the global Search button.
+            ROOT_SEARCH,
             CustomMenuButton("d-calendar", "Calendar", "Calendar"),
         ) + listOf(
             // The online button moved to the settings page's menu (user rule 2026-11-04, [SETTINGS_ONLINE]).
@@ -661,10 +663,12 @@ object CustomMenuButtons {
         val together3 =
             if (stored.serverSeeded || defaults != SETTINGS_DEFAULTS || together2.any { it.control == MenuControl.Server.name }) together2
             else together2 + SETTINGS_SERVER
-        // ...and, on the scheduler's page, the global root's button, ONCE: just under the global Search button where it stands.
+        // ...and, on the scheduler's page, the global root's button, ONCE: just above the calendar's where it stands, else at
+        // the bottom.
         if (stored.rootSeeded || ROOT_SEARCH !in defaults || together3.any { it.id == ROOT_SEARCH.id }) return together3
-        val searchAt = together3.indexOfFirst { it.id == GLOBAL_SEARCH.id }
-        return together3.toMutableList().also { it.add(searchAt + 1, ROOT_SEARCH.copy(parent = together3.getOrNull(searchAt)?.parent)) }
+        val calendarAt = together3.indexOfFirst { it.id == "d-calendar" }
+        return if (calendarAt < 0) together3 + ROOT_SEARCH
+        else together3.toMutableList().also { it.add(calendarAt, ROOT_SEARCH.copy(parent = together3[calendarAt].parent)) }
     }
 
     /**

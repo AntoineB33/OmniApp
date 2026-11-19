@@ -452,7 +452,17 @@ means.
     take it too, and are no positions of their own (`TreeKeeper.focused`) — recorded, they cut off the rest of the walk.
     A tree's own pop-up comes back showing no category: each category it showed is a position of its own.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
-    (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree.
+    (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree. **A
+    pop-up (not a right-click's menu) stays only while it still touches its caller** (user rule 2026-11-19: *"Make sure
+    every window that appears by hovering over something, the caller, is always stuck to the caller."*; `stuckTo`,
+    `keepsSpot`'s `stuck`): one of its sides on the caller's, or on the edge of the caller's list at the row's height. A
+    pop-up at a caller's left that grew narrower left a gap; it is placed again against it.
+  - **A row's hover arrow stands on the side of its pop-up furthest from that pop-up's caller, and what it opens tries
+    that side first** (user rule 2026-11-19: *"this arrow must be on the left or right side, depending on which one is the
+    furthest from the caller"*; `farSideOf`, `LocalPopupFarSide` given by the desktop's `MenuSession` as it places the
+    pop-up, `submenuSides`): the configurations tree's category rows — ◂ before the label in a pop-up at its caller's
+    left, ▸ after it at its right. Where no pop-up says it (a phone's material menu), the arrow stays at the row's end and
+    the sides are `MenuSide.SUBMENU`'s.
   - **A pop-up opened from a field or a button opens at its left hanging down, else above reaching left, else below
     reaching left, else at its right hanging down** (user rule 2026-11-15: *"A pop-up window opened from a field/button
     must adjust its position on four choices …, depending on the available space, then on its size, when the pop-up

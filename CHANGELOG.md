@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### md elements, "Add a parent"'s creation row, the Root button, hover pop-ups stuck to their caller — 2026-11-19
+
+- **md elements** (user rule 2026-11-19): `Kind.Md`, `MdElement` (text + the keys it is associated with — no parent, no
+  child), `SchedulerState.mdElements` synced as rows, `SetMdElements` / `MdElementsDelta`, the persisted `mdElements` and
+  its unit. "Md elements" on every element; Text, Associated with, New, Duplicate, Delete on an md element. **A task's
+  text is gone**: lifted into an md element on decode and on a paste or the default sub-tree (`MdDomain.liftTaskTexts`);
+  the task "Text" action, the edit window's text field, `SetTaskText` / `SetTasksText` removed; `SchedulerTaskTextTest`
+  → `MdElementTest`. A tree change that made md elements is one unit, `TreeAndMdDelta` (persisted `treeAndMd`).
+- **"Add a parent" lists the task creation row first** (anomaly 2026-11-19, `AddedCommand.NewParentTask`).
+- **The scheduler's menu holds a "Root" button** (`CustomMenuButtons.ROOT_SEARCH`, given once to an older menu,
+  `rootSeeded`): the global root alone (`SearchDomain.rootSearchConfig`). **New search configuration "Menu keeps open
+  rows"** (`Config.buttonFollowsExpansion`, on for it): the button that opened the window keeps its open rows
+  (`CustomMenuButton.expandedRows`, no History Unit) and opens its window with them; "Update" saves them too.
+  `RootMenuButtonTest`.
+- **A pop-up stays only while it touches its caller** (`stuckTo`); **a hover arrow stands on its pop-up's far side**
+  (`farSideOf`, `LocalPopupFarSide`, `submenuSides`). `MenuPlacementTest`.
+- **The blank field under an element's children, double-clicked, is the bar of the window it opens** (`LinkedSearchBar`),
+  its ✕ and ▾ in the row. `ElementChildrenTest`, `LinkedSearchBarTest`.
+
 ### The Life plan removed; ← → and one indent step in nested lists — 2026-11-19
 
 - **The Life plan is removed, its data with it** (user rule 2026-11-19; the user chose "remove everything" over keeping

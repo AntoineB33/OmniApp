@@ -34,7 +34,13 @@ class ElementChildrenTest {
     private val account =
         QuotaScenario.account().copy(chronos = listOf(ChronoEntry(id = "a", label = "First"), ChronoEntry(id = "b", label = "Second")))
 
-    private fun scene(links: List<ElementLink>, splits: SearchSplits, onSplits: (SearchSplits) -> Unit, opened: MutableList<String>) =
+    private fun scene(
+        links: List<ElementLink>,
+        splits: SearchSplits,
+        onSplits: (SearchSplits) -> Unit,
+        opened: MutableList<String>,
+        linked: androidx.compose.runtime.MutableState<SearchDomain.Config>? = null,
+    ) =
         ImageComposeScene(1200, 620, density = Density(1f)) {
             var state by remember { mutableStateOf(account.copy(elementLinks = links)) }
             var config by remember { mutableStateOf(SearchDomain.Config(kinds = setOf(Kind.Chrono), query = "First")) }
@@ -42,7 +48,10 @@ class ElementChildrenTest {
                 state = state,
                 openers = SearchRowOpeners(
                     onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {},
-                    onOpenChildSearch = { opened += it },
+                    onOpenChildSearch = { opened += it; if (linked != null) "Search#9" else null },
+                    linkedWindow = { id ->
+                        linked?.let { held -> org.example.project.ui.LinkedSearchWindow(id, held.value, SearchDomain.Config()) { held.value = it } }
+                    },
                 ),
                 onStartTaskNow = {},
                 onGoToTaskTree = { _, _ -> },
@@ -149,6 +158,32 @@ class ElementChildrenTest {
         val scene = onEdt { scene(links, SearchSplits(expandedElements = open), {}, ArrayList()) }
         try {
             repeat(6) { i -> onEdt { scene.render((i + 1) * 16_000_000L) } }
+        } finally {
+            onEdt { scene.close() }
+        }
+    }
+
+    /**
+     * User rule 2026-11-19: *"Some rows can get the down arrow as well when one of their field is double clicked, and the field
+     * gets the search bar function for the window that opens."* Double-clicked, the blank field is that window's bar.
+     */
+    @Test
+    fun the_double_clicked_field_is_the_bar_of_the_window_it_opened() {
+        val opened = ArrayList<String>()
+        val linked = mutableStateOf(SearchDomain.Config())
+        val scene = onEdt { scene(emptyList(), SearchSplits(expandedElements = setOf("result/Chrono/a")), {}, opened, linked) }
+        try {
+            repeat(4) { i -> onEdt { scene.render((i + 1) * 16_000_000L) } }
+            for ((i, y) in (130..260 step 17).withIndex()) {
+                if (opened.isNotEmpty()) break
+                doubleClick(scene, Offset(300f, y.toFloat()), 1000L + i * 1000L)
+            }
+            assertEquals(listOf("Chrono/a"), opened)
+            // It is the window's bar now, no blank field: the same double-click opens no other window.
+            linked.value = linked.value.copy(query = "abc")
+            repeat(2) { i -> onEdt { scene.render((50 + i) * 16_000_000_000L) } }
+            for ((i, y) in (130..260 step 17).withIndex()) doubleClick(scene, Offset(300f, y.toFloat()), 90_000L + i * 1000L)
+            assertEquals(listOf("Chrono/a"), opened, "a bar, not a blank field: nothing opened again")
         } finally {
             onEdt { scene.close() }
         }

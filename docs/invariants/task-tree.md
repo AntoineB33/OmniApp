@@ -20,11 +20,17 @@ second copy of it on a kind of element.
 - **Every row of the Search window but a "creation" row has an arrow** (`ElementChildren`, a task's row keeps `SearchSubtree`,
   whose blank cell is typed into). Under it stand the element's children, each with its arrow and a ✕ taking it out of this
   parent, then a blank field. **A double-click on the blank field opens a Search window coming from the element**
-  (`SearchRowOpeners.onOpenChildSearch`, `Config.elementSource`), linked to the window it was asked from. **A child row's
+  (`SearchRowOpeners.onOpenChildSearch`, `Config.elementSource`), linked to the window it was asked from, **and the field
+  becomes that window's search bar** (user rule 2026-11-19: *"The search bar with the cross button and the down arrow are
+  supposed to be elements of a row. Some rows can get the down arrow as well when one of their field is double clicked, and
+  the field gets the search bar function for the window that opens."*; `LinkedSearchBar`, `SearchRowOpeners.linkedWindow`):
+  its text is that window's search, its ✕ in it and the window's ▾ beside it in the row, until the window closes. **A child row's
   RECTANGLE stands at its indent** — its background and selection outline, the blank field's too — not only what is in it
   (user rule 2026-11-15), as a task cell's indent stands outside its background; the actions section's rows under a group
   likewise (`ItemResultRow`'s `depth`). "Add a parent" has an
-  element selector and, beside it, a button adding that element. The open rows are kept with the window's sections
+  element selector and, beside it, a button adding that element. **Its list starts with the task kind's creation row**
+  (anomaly 2026-11-19, `AddedCommand.NewParentTask`): a task titled as typed (a unique "New task" when blank), made the
+  parent of every added element it may be one of, in the same click. The open rows are kept with the window's sections
   (`SearchSplits.expandedElements`), by surface and path.
 - **That window starts with its parent excluded** (`Filters.excludedElements`). "Excluded elements" and "Included elements"
   are filters of the "Every element" group, about any element. **An included element is in the list whatever would keep it
@@ -40,6 +46,25 @@ second copy of it on a kind of element.
   its siblings, its menu's "add" on the selected children; selecting one takes the result list's selection away.
   The result list's ↑ and ↓ walk the rows as drawn, children included (`shownRowOrder`, over `elementChildRows`, what
   `ElementChildren` draws: one reading).
+
+### An md element is a markdown text associated with elements
+
+User rule 2026-11-19: *"Add the md element type. In the action section for an element (like a task element), the user can
+add md elements. It replaces the current text of a task element. Association between elements doesn't mean one is the
+child of the other."* (`MdDomain`, `MdElementTest`).
+
+- **An md element (`Kind.Md`, `MdElement`) is a text and the keys of the elements it is associated with (`of`).** An
+  association is no link of `ElementTree`: neither stands above the other, nothing of the tree reads it, and it is kept on
+  the md element alone. Found in Search by its whole text, named by its first line that says something.
+- **Every element's actions hold "Md elements"** (`AddedAction.ElementMd`, `MdElementsEditor`): the md elements associated
+  with the added ones, each drawn as markdown and turned into its field by a click (`MdBlock`, written as typed, one
+  History Unit per field), its ✕ dissociating it (the md element stays); and "Add an md element", associated with them all.
+  An md element's own: Text, Associated with, New, Duplicate, Delete.
+- **A task has no text of its own any more.** `MdDomain.liftTaskTexts` is the one place a task's text becomes an md
+  element: on decode (what an older build wrote; the id `md-task-<task id>`, so two devices lift into one row) and wherever
+  a task is made with a text (a paste, the default sub-tree). A copy carries a task's md texts as its `text:` (`copiedText`);
+  a duplicated task is associated with what the original is. **A tree change that made md elements is ONE History Unit**
+  (`TreeAndMdDelta`, through `treeChangeDelta`): the tree's diff carries no md element, and one Ctrl+Z takes both back.
 
 ### A task tree IS a task under the root
 

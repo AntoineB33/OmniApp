@@ -787,6 +787,8 @@ class SearchWindowTest {
                 SearchDomain.Setting.SearchSortsOnly,
                 SearchDomain.Setting.MenuCustomizing,
                 SearchDomain.Setting.DropButtons,
+                // User rule 2026-11-19: the menu button that opened the window keeps its open rows.
+                SearchDomain.Setting.ButtonFollowsExpansion,
                 SearchDomain.Setting.SortResults,
             ),
             sections.first().second,

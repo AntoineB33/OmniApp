@@ -1912,7 +1912,7 @@ object SearchDomain {
         /** User rule 2026-11-12: a button on every element to drop it ([Config.dropButtons]). */
         DropButtons(null, "A drop button per element"),
         /** User rule 2026-11-19: the menu button that opened the window keeps its open rows ([Config.buttonFollowsExpansion]). */
-        ButtonFollowsExpansion(null, "Menu button keeps the open rows"),
+        ButtonFollowsExpansion(null, "Menu keeps open rows"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -1927,6 +1927,7 @@ object SearchDomain {
         RelationSort(Kind.TaskRelation, "Sort by", sorts = true),
         ShortcutSort(Kind.Shortcut, "Sort by", sorts = true),
         WorkplaceSetupSort(Kind.WorkplaceSetup, "Sort by", sorts = true),
+        MdSort(Kind.Md, "Sort by", sorts = true),
         AppSettingSort(Kind.AppSetting, "Sort by", sorts = true),
         CalendarSort(Kind.Calendar, "Sort by", sorts = true),
         WindowSort(Kind.Window, "Sort by", sorts = true),

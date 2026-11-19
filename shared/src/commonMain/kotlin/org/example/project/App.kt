@@ -5559,6 +5559,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 val from = searchSource()?.let(::searchConfigOf)?.page.orEmpty()
                                 openLinkedSearch(org.example.project.scheduler.domain.ElementTree.childSearchConfig(parent, from))
                             },
+                            // User rule 2026-11-19: the window a row's field is the bar of, while it is open.
+                            linkedWindow = { id ->
+                                val config = searchConfigs[id]
+                                if (config == null || id !in openSearchFrames()) null
+                                else org.example.project.ui.LinkedSearchWindow(id, config, searchOpenedConfigs[id] ?: config) { setSearchConfig(id, it) }
+                            },
                         )
                     // What the actions on the added elements open or draw — the cell menu's handlers, and the Alarms
                     // window's and the reminder editor's components embedded over the same callbacks.

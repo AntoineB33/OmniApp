@@ -518,6 +518,7 @@ private class MenuSession(
                 // Its rows are in no list of the caller's: a list inside it says so itself.
                 LocalCallerList provides null,
                 LocalPopupWindowControl provides control,
+                LocalPopupFarSide provides farSide.value,
             ) {
                 MenuSurface(owner, modifier.value, content.value, ::fit)
             }
@@ -569,13 +570,29 @@ private class MenuSession(
         if (size == null) return
         // Dragged by its head: where the hand left it ([control]).
         if (heldByHand && window.isShowing) return
-        val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow())
+        val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow(), stuck = avoidsList)
         if (window.location != at) {
             window.location = at
         }
+        noteFarSide(at)
     }
 
-    private fun location(): Point = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow())
+    private fun location(): Point =
+        menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow(), stuck = avoidsList).also(::noteFarSide)
+
+    /**
+     * User rule 2026-11-19: the side of this pop-up furthest from its caller ([farSideOf]), told to its rows
+     * ([LocalPopupFarSide]): where an arrow opening a pop-up on hover stands, and the side that pop-up opens on first.
+     */
+    private val farSide = androidx.compose.runtime.mutableStateOf<FarSide?>(null)
+
+    private fun noteFarSide(at: Point) {
+        val shown = size ?: return
+        if (at.x <= OFF_SCREEN || at.y <= OFF_SCREEN) return
+        val caller = rectOnScreen(owner, anchor ?: Rect.Zero, offsetPx)
+        val next = farSideOf(IntRect(at.x, at.y, at.x + shown.width, at.y + shown.height), caller)
+        if (farSide.value != next) farSide.value = next
+    }
 
     fun close() {
         closed = true
@@ -815,25 +832,31 @@ private fun menuPlacement(
     /** Where the menu is shown, kept if it still may stand there ([keepsSpot]); null for a menu placed afresh. */
     keeping: Point? = null,
     list: Rect? = null,
+    /** User rule 2026-11-19: a pop-up is kept only where it still touches its caller ([stuckTo]). */
+    stuck: Boolean = false,
 ): Point {
+    val on = rectOnScreen(owner, anchor, offsetPx)
+    val listOn = list?.let { rectOnScreen(owner, it, Offset.Zero) }
+    val area = appArea(owner)
+        ?: workAreaAt(ScreenPoint(on.left, on.top))?.let { IntRect(it.x, it.y, it.x + it.width, it.y + it.height) }
+        ?: return keeping ?: Point(on.left, on.bottom)
+    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn, stuck)) return keeping
+    val spot = menuSpot(on, IntSize(size.width, size.height), area, sides, listOn)
+    return Point(spot.x, spot.y)
+}
+
+/** [r] (pixels of [owner]'s content, moved by [by]) on the screen, in AWT units. */
+private fun rectOnScreen(owner: AwtWindow, r: Rect, by: Offset): IntRect {
     val pane = (owner as? RootPaneContainer)?.contentPane
     val origin = runCatching { (pane ?: owner).locationOnScreen }.getOrNull() ?: owner.location
     val scale = owner.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
     fun screen(px: Float) = (px / scale).roundToInt()
-    fun onScreen(r: Rect, by: Offset) = IntRect(
+    return IntRect(
         left = origin.x + screen(r.left + by.x),
         top = origin.y + screen(r.top + by.y),
         right = origin.x + screen(r.right + by.x),
         bottom = origin.y + screen(r.bottom + by.y),
     )
-    val on = onScreen(anchor, offsetPx)
-    val listOn = list?.let { onScreen(it, Offset.Zero) }
-    val area = appArea(owner)
-        ?: workAreaAt(ScreenPoint(on.left, on.top))?.let { IntRect(it.x, it.y, it.x + it.width, it.y + it.height) }
-        ?: return keeping ?: Point(on.left, on.bottom)
-    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn)) return keeping
-    val spot = menuSpot(on, IntSize(size.width, size.height), area, sides, listOn)
-    return Point(spot.x, spot.y)
 }
 
 /**

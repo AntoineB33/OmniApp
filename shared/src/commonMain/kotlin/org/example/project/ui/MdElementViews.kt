@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,7 +54,7 @@ internal fun MdElementsEditor(
         for (md in shown) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 MdBlock(md, Modifier.weight(1f)) { text -> run(SearchDomain.AddedCommand.MdSetText(md.id, text, editKey = "md/" + md.id)) }
-                FrameButton("✕") { run(SearchDomain.AddedCommand.MdDissociate(md.id)) }
+                CrossButton { run(SearchDomain.AddedCommand.MdDissociate(md.id)) }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -106,7 +105,7 @@ internal fun MdAssociatedEditor(
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                FrameButton("✕") { shown.filter { key in it.of }.forEach { run(SearchDomain.AddedCommand.MdDissociate(it.id, listOf(key))) } }
+                CrossButton { shown.filter { key in it.of }.forEach { run(SearchDomain.AddedCommand.MdDissociate(it.id, listOf(key))) } }
             }
         }
     }

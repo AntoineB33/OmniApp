@@ -10,6 +10,10 @@ import kotlin.test.assertTrue
 import org.example.project.ui.MenuSide
 import org.example.project.ui.keepsSpot
 import org.example.project.ui.menuSpot
+import org.example.project.ui.FarSide
+import org.example.project.ui.farSideOf
+import org.example.project.ui.stuckTo
+import org.example.project.ui.submenuSides
 
 /**
  * User rule 2026-10-14: *"The right-click menu is hiding the field, even though there are spaces at the bottom. If
@@ -131,5 +135,42 @@ class MenuPlacementTest {
         // Shown where it hides the list, it is placed again.
         assertFalse(keepsSpot(IntOffset(400, 430), menu, row, screen, list), "over the list: placed again")
         assertTrue(keepsSpot(IntOffset(150, 400), menu, row, screen, list), "off the list: it stays")
+    }
+
+    /**
+     * User rule 2026-11-19: *"Make sure every window that appears by hovering over something, the caller, is always stuck to
+     * the caller."* A pop-up whose size changed stays only where it still touches its caller ([stuckTo]): at its left, a
+     * narrower one left a gap between it and the row, and is placed again.
+     */
+    @Test
+    fun a_pop_up_stays_only_where_it_still_touches_its_caller() {
+        val row = IntRect(703, 400, 903, 430)
+        val shown = IntOffset(503, 177)
+        assertTrue(keepsSpot(shown, IntSize(200, 457), row, screen, stuck = true), "shrunk in height, against the row still: it stays")
+        assertFalse(keepsSpot(shown, IntSize(150, 457), row, screen, stuck = true), "narrower: a gap off the row, placed again")
+        assertFalse(keepsSpot(IntOffset(503, 500), IntSize(200, 100), row, screen, stuck = true), "below the row's height: not against it")
+        assertTrue(stuckTo(IntRect(703, 430, 853, 730), row), "below it")
+        // A row of a list: against the list's edge, at the row's height.
+        val list = IntRect(600, 100, 950, 700)
+        assertTrue(stuckTo(IntRect(450, 400, 600, 700), row, list))
+        assertFalse(stuckTo(IntRect(440, 400, 590, 700), row, list))
+        // Placed again, it is.
+        val placed = menuSpot(row, IntSize(150, 300), screen, MenuSide.SUBMENU)
+        assertTrue(stuckTo(IntRect(placed.x, placed.y, placed.x + 150, placed.y + 300), row))
+    }
+
+    /**
+     * User rule 2026-11-19: *"When a row has an arrow that opens a window when hovered over, this arrow must be on the left or
+     * right side, depending on which one is the furthest from the caller."*
+     */
+    @Test
+    fun a_hover_arrow_stands_on_the_side_furthest_from_the_caller_and_its_pop_up_opens_there_first() {
+        val caller = IntRect(500, 100, 520, 120)
+        assertEquals(FarSide.Left, farSideOf(IntRect(300, 100, 500, 400), caller), "at its caller's left")
+        assertEquals(FarSide.Right, farSideOf(IntRect(520, 100, 720, 400), caller), "at its right")
+        assertEquals(FarSide.Left, farSideOf(IntRect(320, 120, 515, 400), caller), "below, reaching left")
+        assertEquals(MenuSide.Right, submenuSides(FarSide.Right).first())
+        assertEquals(MenuSide.Left, submenuSides(FarSide.Left).first())
+        assertEquals(MenuSide.SUBMENU, submenuSides(null))
     }
 }

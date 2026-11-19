@@ -123,7 +123,8 @@ class CustomMenuFoldersTest {
         val shut = CustomMenuButtons.toggled(list, "f1")
         assertEquals(shut, CustomMenuButtons.decode(CustomMenuButtons.encode(shut)))
         val older = """{"buttons":[{"id":"a","window":"Search","title":"a"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"lifePlanSeeded":true}"""
-        val read = CustomMenuButtons.decode(older).single()
+        // A menu made before the global root's button is given it (user rule 2026-11-19).
+        val read = CustomMenuButtons.decode(older).single { it.id == "a" }
         assertFalse(read.folder)
         assertNull(read.parent)
         assertFalse(read.collapsed)
