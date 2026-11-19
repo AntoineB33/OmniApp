@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Sub-tree rows per window, "Button saves open rows", every configuration described, ▾ pop-ups held — 2026-11-19
+
+- Anomaly: with "Menu keeps open rows" off, a window reopened from the Task trees button still showed the task rows
+  expanded since. Those rows were the cells of the root's sub-tree, whose open state was ONE set for every Search window
+  (`searchExpanded`), held by no window's open rows nor its button. It is now each window's own, by its id
+  (`SchedulerState.searchExpanded: Map`, `InSearchSubtree.window`, `SetSearchExpanded`), kept with the window's open rows
+  (`SearchSplits.expandedCells`, `WindowSections.expandedCells`) and by its button (`ButtonExpandedRows.cells`); a window
+  opened from a button takes the button's, a closed one's are dropped. `RootWindowSubtreeTest`.
+- User: the setting was the right one but its name confusing. Renamed **"Button saves open rows"**, its bubble saying
+  what on and off do. **Every search configuration's bubble now says more than its name**: the ~37 type filters read
+  "Keeps the tasks by 'In a task tree'" and now say what they keep. `RootMenuButtonTest`.
+- Anomaly: a ▾ pop-up sometimes closed as the pointer reached it. A hover pop-up that changed size was placed afresh —
+  in its first 600 ms always, and after them since the "stuck to its caller" rule of the same day — and moved from under
+  the pointer (seen in `diagnostics.log` on 2026-11-16). It is now put back against its caller by the edge the pointer
+  crossed (`reStuck`), placed afresh only where that spot does not hold it. `MenuPlacementTest`. Not reproduced live.
+
 ### "Update" after a restart, the page selector's right-click — 2026-11-19
 
 - Anomaly: "Menu keeps open rows" was in "Currently on" and not in "Default for this". The two read the window's own

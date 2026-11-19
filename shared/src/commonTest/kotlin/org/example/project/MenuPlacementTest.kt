@@ -11,6 +11,7 @@ import org.example.project.ui.MenuSide
 import org.example.project.ui.keepsSpot
 import org.example.project.ui.menuSpot
 import org.example.project.ui.stuckTo
+import org.example.project.ui.reStuck
 import org.example.project.ui.FarSide
 import org.example.project.ui.arrowTreeSides
 import org.example.project.ui.farSideOf
@@ -172,5 +173,22 @@ class MenuPlacementTest {
         assertEquals(MenuSide.RightTop, arrowTreeSides(FarSide.Right).first())
         assertEquals(MenuSide.POPUP, arrowTreeSides(FarSide.Left))
         assertEquals(MenuSide.POPUP.toSet(), arrowTreeSides(FarSide.Right).toSet())
+    }
+
+    /**
+     * Anomaly 2026-11-19: *"sometimes I click on the down arrow, hovers over the newly open window which rapidly closes"*. A
+     * pop-up at its caller's left that grew narrower is put back by its right edge — the one the pointer crossed — not
+     * placed afresh, which could move it from under the pointer.
+     */
+    @Test
+    fun a_pop_up_whose_size_changed_stays_against_its_caller_by_the_edge_the_pointer_crossed() {
+        val arrow = IntRect(700, 100, 720, 120)
+        val shown = IntOffset(400, 100) // 300 wide: its right edge on the arrow's left
+        val narrower = reStuck(shown, IntSize(250, 400), arrow, screen)
+        assertEquals(IntOffset(450, 100), narrower, "its right edge kept on the arrow")
+        assertEquals(IntOffset(720, 100), reStuck(IntOffset(720, 100), IntSize(250, 400), arrow, screen), "at its right: unmoved")
+        val above = reStuck(IntOffset(600, 0), IntSize(200, 80), IntRect(600, 200, 700, 230), screen)
+        assertEquals(IntOffset(600, 120), above, "above: its bottom edge kept on the caller's top")
+        assertEquals(null, reStuck(IntOffset(400, 100), IntSize(250, 900), arrow, screen), "no longer on the screen: placed afresh")
     }
 }

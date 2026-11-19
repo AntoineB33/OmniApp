@@ -556,21 +556,25 @@ private class MenuSession(
             // Shown already: it stays where it is if it can ([keepsSpot]) — a menu never moves under the eye. Not while it
             // settles: a pop-up fitted to its content in its first moments (the ▾ tree) is placed for the size it ends
             // at, never left where its first size put it (anomaly 2026-11-15: *"appear too far to the top"*).
-            val shownAt = window.location.takeIf {
-                window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN && System.nanoTime() - openedAt >= SETTLE_NANOS
-            }
+            val shown = window.location.takeIf { window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN }
+            val settled = System.nanoTime() - openedAt >= SETTLE_NANOS
             if (window.size != fitted) window.size = fitted
-            place(keeping = shownAt)
+            // Settling, it is not kept where its first size put it — but a pop-up is put back against its caller by the edge
+            // the pointer crossed rather than placed afresh, which moved it from under the pointer (anomaly 2026-11-19).
+            place(keeping = shown, settling = !settled)
         }
     }
 
-    /** Placed by its anchor, or kept at [keeping] (where it is shown) if it still may stand there ([keepsSpot]). */
-    private fun place(keeping: Point? = null) {
+    /**
+     * Placed by its anchor, or kept at [keeping] (where it is shown) if it still may stand there ([keepsSpot]). [settling]:
+     * in its first moments it is never kept as it stands, only put back against its caller ([reStuck]).
+     */
+    private fun place(keeping: Point? = null, settling: Boolean = false) {
         val window = dialog ?: return
         if (size == null) return
         // Dragged by its head: where the hand left it ([control]).
         if (heldByHand && window.isShowing) return
-        val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow(), stuck = avoidsList)
+        val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow(), stuck = avoidsList, settling = settling)
         if (window.location != at) {
             window.location = at
         }
@@ -834,13 +838,17 @@ private fun menuPlacement(
     list: Rect? = null,
     /** User rule 2026-11-19: a pop-up is kept only where it still touches its caller ([stuckTo]). */
     stuck: Boolean = false,
+    /** In its first moments: never kept as it stands, only put back against its caller ([reStuck]). */
+    settling: Boolean = false,
 ): Point {
     val on = rectOnScreen(owner, anchor, offsetPx)
     val listOn = list?.let { rectOnScreen(owner, it, Offset.Zero) }
     val area = appArea(owner)
         ?: workAreaAt(ScreenPoint(on.left, on.top))?.let { IntRect(it.x, it.y, it.x + it.width, it.y + it.height) }
         ?: return keeping ?: Point(on.left, on.bottom)
-    if (keeping != null && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn, stuck)) return keeping
+    if (keeping != null && !settling && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn, stuck)) return keeping
+    // A pop-up come off its caller by a change of size: back against it by the edge the pointer crossed (anomaly 2026-11-19).
+    if (keeping != null && stuck) reStuck(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn)?.let { return Point(it.x, it.y) }
     val spot = menuSpot(on, IntSize(size.width, size.height), area, sides, listOn)
     return Point(spot.x, spot.y)
 }

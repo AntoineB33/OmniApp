@@ -1072,8 +1072,13 @@ data class SchedulerState(
      * ([projectSearchSubtree]) — facts about that window, not about the tree, so a cell open or selected there
      * is not open or selected in the tree. **Deliberately not persisted and not synced**, for the reason
      * [defaultSubtreeSelection] is not: a selection — and here an expansion — is local view state (CLAUDE.md).
+     *
+     * **The cells open are each Search window's own, by its id** (anomaly 2026-11-19: *"I turned 'Menu keeps open rows'
+     * off, expanded some task rows, closed the window and clicked on 'Task trees' again, but the task rows are expanded as
+     * when I closed the window"* — one set for every window, which no window's open rows nor its button held). "" is a
+     * sub-tree drawn in no window with an id. Each window keeps its own with its open rows ([SchedulerIntent.SetSearchExpanded]).
      */
-    val searchExpanded: Set<CellId> = emptySet(),
+    val searchExpanded: Map<String, Set<CellId>> = emptyMap(),
     val searchSelection: SchedulerSelection = SchedulerSelection(),
     val searchEditSession: SchedulerEditSession? = null,
     /**

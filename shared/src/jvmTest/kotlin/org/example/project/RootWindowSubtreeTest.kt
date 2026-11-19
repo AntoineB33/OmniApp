@@ -28,6 +28,7 @@ import org.example.project.ui.LocalCellEditPopupHost
 import org.example.project.ui.SearchRowOpeners
 import org.example.project.ui.SearchSplits
 import org.example.project.ui.SearchWindow
+import org.example.project.scheduler.state.projectSearchSubtree
 
 /**
  * Anomaly 2026-11-19: *"I clicked on the 'root' button in the left-side menu, expanded the root, but couldn't expand the
@@ -122,10 +123,33 @@ class RootWindowSubtreeTest {
         fun inRoot(state: SchedulerState, intent: SchedulerIntent) = SchedulerReducer.reduce(state, SchedulerIntent.InSearchSubtree(intent, list, readOnly = false))
         val selected = inRoot(s, SchedulerIntent.RevealCell(tree))
         assertEquals(tree, selected.searchSelection.main)
-        assertTrue(tree in inRoot(selected, SchedulerIntent.ToggleExpand(tree)).searchExpanded, "its children open")
+        assertTrue(tree in inRoot(selected, SchedulerIntent.ToggleExpand(tree)).searchExpanded[""].orEmpty(), "its children open")
         assertEquals(s.lists[list]!!.parentCellId, selected.lists[list]!!.parentCellId, "the root cell's link is put back")
         // Read-only (a task cut from the tree), a look still selects: held against the projection.
         val looked = SchedulerReducer.reduce(s, SchedulerIntent.InSearchSubtree(SchedulerIntent.RevealCell(tree), list, readOnly = true))
         assertEquals(tree, looked.searchSelection.main)
+    }
+
+    /**
+     * Anomaly 2026-11-19: *"I turned 'Menu keeps open rows' off, expanded some task rows, closed the window and clicked on
+     * 'Task trees' again, but the task rows are expanded as when I closed the window"*. The cells a sub-tree opens are its
+     * window's own: another window shows none of them, and a window opened afresh shows what it is given.
+     */
+    @Test
+    fun the_cells_a_sub_tree_opens_are_its_windows_own() {
+        val s = org.example.project.scheduler.domain.TaskTreesAsTasks.seeded(SchedulerState.empty(), "tree-x")
+        val list = s.tasks[org.example.project.scheduler.model.WellKnownIds.ROOT_TASK]!!.childListId!!
+        val tree = s.lists[list]!!.cellIds.first()
+        val opened = SchedulerReducer.reduce(s, SchedulerIntent.InSearchSubtree(SchedulerIntent.ToggleExpand(tree), list, readOnly = false, window = "Search#5"))
+        assertTrue(tree in opened.searchExpanded["Search#5"].orEmpty())
+        assertTrue(opened.searchExpanded["Search#6"].isNullOrEmpty(), "another window opens none of it")
+        assertTrue(tree !in opened.projectSearchSubtree(list, "Search#6").expanded)
+        // Closed (or opened afresh from a button that keeps none): none.
+        val closed = SchedulerReducer.reduce(opened, SchedulerIntent.SetSearchExpanded("Search#5", emptySet()))
+        assertTrue(closed.searchExpanded["Search#5"].orEmpty().isEmpty())
+        // What a button kept is what its window opens with, and what the window keeps with its rows.
+        val rows = org.example.project.ui.ButtonExpandedRows.of(org.example.project.ui.SearchSplits(expandedCells = setOf(tree.value)))
+        assertEquals(listOf(tree.value), rows.cells)
+        assertEquals(setOf(tree.value), rows.applyTo(org.example.project.ui.SearchSplits()).expandedCells)
     }
 }

@@ -117,6 +117,28 @@ internal fun keepsSpot(
     return onScreen && !at.overlaps(anchor) && (list == null || !at.overlaps(list)) && (!stuck || stuckTo(at, anchor, list))
 }
 
+/**
+ * Anomaly 2026-11-19 (*"sometimes I click on the down arrow, hovers over the newly open window which rapidly closes"*): **a
+ * pop-up whose size changed, put back against its caller by the edge that touched it** — the edge the pointer crosses
+ * coming from the caller — the rest of it growing or shrinking away. Placed afresh ([menuSpot]) it could move from under the
+ * pointer, and a hover pop-up the pointer has left closes ([MenuHoverTracker]). [current] is where it stands, [size] its new
+ * size. Null where that spot does not hold it (off the screen, over its caller or its list): it is then placed afresh.
+ */
+internal fun reStuck(current: IntOffset, size: IntSize, anchor: IntRect, area: IntRect, list: IntRect? = null): IntOffset? {
+    val row = list?.let { IntRect(minOf(anchor.left, it.left), anchor.top, maxOf(anchor.right, it.right), anchor.bottom) } ?: anchor
+    val whole = list?.let { IntRect(minOf(anchor.left, it.left), minOf(anchor.top, it.top), maxOf(anchor.right, it.right), maxOf(anchor.bottom, it.bottom)) } ?: anchor
+    val at =
+        when {
+            // At its caller's left: its right edge back on the caller's left edge.
+            current.x < row.left && current.y < row.bottom && current.y + size.height > row.top -> IntOffset(row.left - size.width, current.y)
+            // Above it: its bottom edge back on the caller's top edge.
+            current.y < whole.top -> IntOffset(current.x, whole.top - size.height)
+            // At its right, or below: the touching edge (its left, its top) has not moved.
+            else -> current
+        }
+    return at.takeIf { keepsSpot(it, size, anchor, area, list, stuck = true) }
+}
+
 /** A side of its anchor a menu opens on ([menuSpot]), tried in the order a menu is given. */
 enum class MenuSide {
     Below, Above, Right, Left,

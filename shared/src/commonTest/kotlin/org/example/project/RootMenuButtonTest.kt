@@ -136,4 +136,19 @@ class RootMenuButtonTest {
         val switchedOff = SearchDomain.rootSearchConfig().copy(buttonFollowsExpansion = false).encode()
         assertTrue(CustomMenuButtons.needsUpdate(button, config, switchedOff, opened, kept["d-root"]), "switched off: it is offered")
     }
+
+    /**
+     * User, 2026-11-19: *"If it was the right one the name is confusing and deserves a description in a bubble info. Add
+     * description bubble info for all the search configuration elements as well."* Every configuration has one that says
+     * more than its name: none is its label again, nor a filter's "Keeps the … by 'its name'".
+     */
+    @Test
+    fun every_search_configuration_has_a_description_that_says_more_than_its_name() {
+        assertEquals("Button saves open rows", SearchDomain.Setting.ButtonFollowsExpansion.label)
+        assertTrue("Off" in SearchDomain.settingDescription(SearchDomain.Setting.ButtonFollowsExpansion), "it says what off does")
+        for (setting in SearchDomain.Setting.entries) {
+            val text = SearchDomain.settingDescription(setting)
+            assertTrue(text.isNotBlank() && text != setting.label + "." && !text.startsWith("Keeps the "), "$setting: $text")
+        }
+    }
 }

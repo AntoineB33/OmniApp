@@ -1272,7 +1272,15 @@ sealed interface SchedulerIntent {
         val inner: SchedulerIntent,
         val listId: CellListId,
         val readOnly: Boolean,
+        /** The Search window the sub-tree is drawn in, by id: whose open cells it reads and writes ([SchedulerState.searchExpanded]). */
+        val window: String = "",
     ) : SchedulerIntent
+
+    /**
+     * Anomaly 2026-11-19: the cells open in the sub-trees of the Search window [window], as that window opens with them —
+     * its kept open rows (after a restart, or from the menu button that opened it), or none. View state: no History Unit.
+     */
+    data class SetSearchExpanded(val window: String, val cells: Set<CellId>) : SchedulerIntent
 
     /**
      * PRD §4/§7: turn the default-sub-tree policy on/off (the switch left of the lateral-menu button). Off

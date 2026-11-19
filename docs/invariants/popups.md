@@ -469,7 +469,10 @@ means.
     pop-up (not a right-click's menu) stays only while it still touches its caller** (user rule 2026-11-19: *"Make sure
     every window that appears by hovering over something, the caller, is always stuck to the caller."*; `stuckTo`,
     `keepsSpot`'s `stuck`): one of its sides on the caller's, or on the edge of the caller's list at the row's height. A
-    pop-up at a caller's left that grew narrower left a gap; it is placed again against it.
+    pop-up at a caller's left that grew narrower left a gap; it is placed again against it — **by the edge that touched
+    its caller, the rest growing or shrinking away** (`reStuck`, in its first moments too; anomaly 2026-11-19: placed
+    afresh, a ▾ pop-up moved from under the pointer that had just reached it, which closed it). Afresh only where that
+    spot is off the screen or over the caller.
   - **The ▾ of a window that appears stands on its side furthest from its caller, and its tree opens on that side
     first** (user rule 2026-11-19: *"I want it for the down arrow of the appearing window"*; `farSideOf`,
     `LocalPopupFarSide` given by the desktop's `MenuSession` as it places the pop-up, `arrowTreeSides`): before the bar

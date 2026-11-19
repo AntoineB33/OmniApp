@@ -140,14 +140,20 @@ data class ButtonExpandedRows(
     val results: List<String> = emptyList(),
     val added: List<String> = emptyList(),
     val elements: List<String> = emptyList(),
+    /** The cells open in its sub-trees (anomaly 2026-11-19), absent from what was kept before. */
+    val cells: List<String> = emptyList(),
 ) {
     /** [splits] with these rows open, and no other. */
     fun applyTo(splits: SearchSplits): SearchSplits =
-        splits.copy(expandedResults = results.toSet(), expandedAdded = added.toSet(), expandedElements = elements.toSet())
+        splits.copy(
+            expandedResults = results.toSet(), expandedAdded = added.toSet(), expandedElements = elements.toSet(), expandedCells = cells.toSet(),
+        )
 
     companion object {
         fun of(splits: SearchSplits): ButtonExpandedRows =
-            ButtonExpandedRows(splits.expandedResults.sorted(), splits.expandedAdded.sorted(), splits.expandedElements.sorted())
+            ButtonExpandedRows(
+                splits.expandedResults.sorted(), splits.expandedAdded.sorted(), splits.expandedElements.sorted(), splits.expandedCells.sorted(),
+            )
     }
 }
 
@@ -339,6 +345,8 @@ data class WindowSections(
     val expandedAdded: List<String> = emptyList(),
     /** The element rows that are open, of both lists ([SearchSplits.expandedElements]), absent from what an older build wrote. */
     val expandedElements: List<String> = emptyList(),
+    /** The cells open in its sub-trees ([SearchSplits.expandedCells]), absent from what an older build wrote. */
+    val expandedCells: List<String> = emptyList(),
     /** Where its lists are scrolled ([WindowLayout.scrolls]), absent from what an older build wrote. */
     val scrolls: List<Int> = emptyList(),
 )

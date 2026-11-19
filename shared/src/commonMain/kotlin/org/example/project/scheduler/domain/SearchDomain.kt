@@ -1912,7 +1912,7 @@ object SearchDomain {
         /** User rule 2026-11-12: a button on every element to drop it ([Config.dropButtons]). */
         DropButtons(null, "A drop button per element"),
         /** User rule 2026-11-19: the menu button that opened the window keeps its open rows ([Config.buttonFollowsExpansion]). */
-        ButtonFollowsExpansion(null, "Menu keeps open rows"),
+        ButtonFollowsExpansion(null, "Button saves open rows"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -2583,7 +2583,46 @@ object SearchDomain {
             Setting.MenuCustomizing -> "A press selects a row and activates nothing; a held press drags the selected rows into the order kept."
             Setting.DropButtons -> "A button on every element to drop it from the list."
             Setting.ButtonFollowsExpansion ->
-                "The left-side menu button that opened this window keeps which rows are open, as they are opened and closed."
+                "On: the left-side menu button that opened this window saves which rows are open (sub-tree rows included) each " +
+                    "time one is opened or closed, and opens this window with them next time. Off: the button keeps the open " +
+                    "rows it last saved; its right-click \"Update\" saves them, with the rest of the window."
+            // Anomaly 2026-11-19 (*"Add description bubble info for all the search configuration elements as well"*): each
+            // type's filter says what it keeps; it read "Keeps the tasks by 'In a task tree'", its own name again.
+            Setting.TaskInTree -> "Yes: only the tasks a task tree holds. No: only the tasks no tree holds any more, kept for what was done."
+            Setting.TaskTreeRoot -> "Yes: only the tasks at the root of a task tree, directly under \"Task trees\". No: every other task."
+            Setting.TaskSchedulable -> "Yes: only the tasks the scheduler can place — a task with no sub-task, still in a tree. No: the others."
+            Setting.TaskCategory -> "Only the tasks carrying the category chosen."
+            Setting.TaskOnCalendar -> "Yes: only the tasks with at least one block on the calendar. No: the tasks with none."
+            Setting.TaskBoxesFrom -> "Only the tasks with a block on the calendar still running at this instant (with \"until\", one block doing both)."
+            Setting.TaskBoxesUntil -> "Only the tasks with a block on the calendar starting by this instant (with \"from\", one block doing both)."
+            Setting.CategoryHasRules -> "Yes: only the categories with at least one rule. No: those with none."
+            Setting.PeriodOriginSetting -> "Yes: only the periods the app comes with. No: only the periods you made."
+            Setting.PeriodDrawingSetting -> "Only the periods drawn on the calendar the way chosen."
+            Setting.PeriodResilienceSetting -> "Only the periods the task chosen has this much resilience to: none (it may not run there), some, or all."
+            Setting.PeriodOnCalendar -> "Yes: only the periods with at least one block on the calendar. No: those with none."
+            Setting.PeriodBoxesFrom -> "Only the periods with a block on the calendar still running at this instant."
+            Setting.PeriodBoxesUntil -> "Only the periods with a block on the calendar starting by this instant."
+            Setting.AlarmStateSetting -> "Only the alarms that are on, or only those that are off."
+            Setting.AlarmDays -> "Only the alarms that ring on at least one of the days checked."
+            Setting.TimerStateSetting -> "Only the timers that are idle, running or paused, as chosen."
+            Setting.ChronoStateSetting -> "Only the chronos that are idle, running or paused, as chosen."
+            Setting.QuotaRepeatsSetting -> "Yes: only the quotas whose loop repeats. No: only those that run once."
+            Setting.ReminderRepeatsSetting -> "Only the one-off reminders, or only the repeating ones."
+            Setting.BlockElements -> "Only the calendar blocks of the elements chosen."
+            Setting.HistoryCategorySetting -> "Only the history units of one stack: edits, selections, the calendar, the main one, window moves."
+            Setting.HistoryWindowSetting -> "Only the history units made in the window chosen, or by the scheduler engine."
+            Setting.HistoryUndoneSetting -> "Yes: only the history units undone on their device (still redoable there). No: those not undone."
+            Setting.HistoryChangedKindsSetting -> "Only the history units that changed an element of one of the types checked."
+            Setting.HistoryChangedElementSetting -> "Only the history units that changed the element chosen, even one deleted since."
+            Setting.NotificationSourceSetting -> "Only the notifications that came from what is checked: a task to do now, a screen break, an alarm…"
+            Setting.RelationSectionSetting -> "Only the task relations of one section of the task relations list."
+            Setting.ShortcutReboundSetting -> "Yes: only the keyboard shortcuts bound to another chord than the one they come with. No: the others."
+            Setting.WindowStatusSetting -> "Only the windows that are open, minimized to the window bar, or not open."
+            Setting.WindowDuplicatesSetting -> "Hidden: one row per type of window rather than one per window."
+            Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject ->
+                "Only the Claude Code log entries of the project chosen."
+            Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom -> "Only the Claude Code log entries written from this instant on."
+            Setting.PromptUntil, Setting.AnswerUntil, Setting.ReasoningUntil -> "Only the Claude Code log entries written until this instant."
             else -> {
                 val kind = setting.section
                 when {

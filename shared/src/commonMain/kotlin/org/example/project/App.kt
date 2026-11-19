@@ -732,6 +732,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val calendarCopySections = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowSections>() }
         var calendarConfigurationWidth by remember { mutableStateOf<Float?>(null) }
         var calendarSectionsHidden by remember { mutableStateOf<List<Boolean>?>(null) }
+        // Anomaly 2026-11-19: the cells open in the sub-trees of the Search window [id] ([SchedulerState.searchExpanded]
+        // under its id) as it opens — its kept open rows, or a button's — or closes (none). View state: no History Unit.
+        fun seedSubtreeCells(id: String, cells: Set<String>) {
+            vm.dispatch(SchedulerIntent.SetSearchExpanded(id, cells.mapTo(HashSet()) { org.example.project.scheduler.model.CellId(it) }))
+        }
         fun updatePlacementById(id: String, change: (WindowPlacement) -> WindowPlacement) {
             val previous = placements[id] ?: WindowPlacement(x = 0f, y = 0f, visible = false)
             val next = change(previous)
@@ -753,8 +758,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     menuButtonWindows.remove(it.key)
                     menuButtonOpenedLayouts.remove(it.key)
                 }
-                // …and its lines are not the next window's under that id, nor its actions section's parts.
+                // …and its lines are not the next window's under that id, nor its actions section's parts, nor the cells its
+                // sub-trees had open (anomaly 2026-11-19).
                 searchSplits.remove(id)
+                seedSubtreeCells(id, emptySet())
                 searchSplits.keys.filter { it.startsWith("$id/") }.forEach { searchSplits.remove(it) }
                 calendarCopySections.remove(id)
             }
@@ -1442,7 +1449,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         searchSplits[id] =
                             org.example.project.ui.SearchSplits.of(kept.splits[0], kept.splits[1], kept.hidden).copy(
                                 expandedResults = kept.expanded.toSet(), expandedAdded = kept.expandedAdded.toSet(),
-                                expandedElements = kept.expandedElements.toSet(), scrolls = kept.scrolls,
+                                expandedElements = kept.expandedElements.toSet(), expandedCells = kept.expandedCells.toSet(),
+                                scrolls = kept.scrolls,
                             )
                     }
                 }
@@ -1454,7 +1462,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     searchSplits.mapValues { (_, s) ->
                         org.example.project.ui.WindowSections(
                             listOf(s.left, s.topRight), s.hiddenFlags,
-                            s.expandedResults.sorted(), s.expandedAdded.sorted(), s.expandedElements.sorted(), s.scrolls,
+                            s.expandedResults.sorted(), s.expandedAdded.sorted(), s.expandedElements.sorted(),
+                            expandedCells = s.expandedCells.sorted(), scrolls = s.scrolls,
                         )
                     }
                 val calendar =
@@ -2827,6 +2836,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         searchSplits[id] = rows.applyTo(searchSplits[id] ?: org.example.project.ui.SearchSplits())
                         saveWindowSections()
                     }
+                    // Its sub-trees' open cells: the button's, else none — never what a closed window under that id had.
+                    seedSubtreeCells(id, button.expandedRows?.cells.orEmpty().toSet())
                 }
             }
             engineScope.launch {

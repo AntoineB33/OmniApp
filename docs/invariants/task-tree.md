@@ -997,7 +997,9 @@ suggestions before it was ever entered.
 - **An expanded task row shows its sub-tree as the tree's own cells**: `TaskTreeView` over
   `projectSearchSubtree(childList)` — the live tree re-rooted at the task's real sub-list, with the window's own
   `searchExpanded` / `searchSelection` / `searchEditSession` (in memory only), wrapped in
-  `InSearchSubtree`. **A task with no live cell (cut, kept by the timeline) has a read-only sub-tree**: the
+  `InSearchSubtree`. **The cells open there are each window's own** (`searchExpanded` by window id, `subtreeWindowKey`;
+  anomaly 2026-11-19: one set for every window, which a window reopened from its menu button showed whatever it kept),
+  kept with the window's open rows (`SearchSplits.expandedCells`) and so by a restart and by "Button saves open rows". **A task with no live cell (cut, kept by the timeline) has a read-only sub-tree**: the
   reducer refuses Edit Mode there and any gesture that would change the tree. Bounded in height, it scrolls
   inside the list. A task only a stored tree holds has no live sub-tree to open. **The global root's row draws the
   top-level tasks themselves**, not the inert root cell the tree is drawn under (anomaly 2026-11-16: a nameless short

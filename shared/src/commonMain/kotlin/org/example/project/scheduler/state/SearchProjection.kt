@@ -20,10 +20,11 @@ import org.example.project.scheduler.model.CellListId
  *  - the colours ([org.example.project.scheduler.domain.TaskColorSpace]) are read off the **live** state by the
  *    window (`TaskTreeView`'s `colorSource`), so a task is the same colour here, in the tree and on the calendar.
  */
-fun SchedulerState.projectSearchSubtree(listId: CellListId): SchedulerState =
+fun SchedulerState.projectSearchSubtree(listId: CellListId, window: String = ""): SchedulerState =
     copy(
         rootListId = listId,
-        expanded = searchExpanded,
+        // The window's own open cells (anomaly 2026-11-19): never another window's.
+        expanded = searchExpanded[window].orEmpty(),
         selection = searchSelection,
         editSession = searchEditSession,
         lists = withoutRootCellAbove(listId),
@@ -48,7 +49,7 @@ private fun SchedulerState.withoutRootCellAbove(listId: CellListId): Map<CellLis
  * state and the histories put back (the caller commits the gesture as one unit), the window's view state taken
  * from where the reduction left it.
  */
-fun SchedulerState.withSearchSubtreeCapturedFrom(projected: SchedulerState): SchedulerState =
+fun SchedulerState.withSearchSubtreeCapturedFrom(projected: SchedulerState, window: String = ""): SchedulerState =
     projected.copy(
         rootListId = rootListId,
         // The root cell's link the projection cut ([withoutRootCellAbove]), put back.
@@ -59,16 +60,16 @@ fun SchedulerState.withSearchSubtreeCapturedFrom(projected: SchedulerState): Sch
         expanded = expanded,
         selection = selection,
         editSession = editSession,
-        searchExpanded = projected.expanded.filterTo(mutableSetOf()) { it in projected.cells },
+        searchExpanded = searchExpanded + (window to projected.expanded.filterTo(mutableSetOf()) { it in projected.cells }),
         searchSelection = projected.selection,
         searchEditSession = projected.editSession,
         histories = histories,
     )
 
 /** [withSearchSubtreeCapturedFrom] keeping ONLY the window's view state — a read-only sub-tree's gesture. */
-fun SchedulerState.withSearchViewStateFrom(projected: SchedulerState): SchedulerState =
+fun SchedulerState.withSearchViewStateFrom(projected: SchedulerState, window: String = ""): SchedulerState =
     copy(
-        searchExpanded = projected.expanded.filterTo(mutableSetOf()) { it in projected.cells },
+        searchExpanded = searchExpanded + (window to projected.expanded.filterTo(mutableSetOf()) { it in projected.cells }),
         searchSelection = projected.selection,
         searchEditSession = null,
     )

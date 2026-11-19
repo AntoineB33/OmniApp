@@ -783,7 +783,10 @@ object SchedulerReducer {
                 if (intent.before == intent.after) state
                 else commitDelta(state, ExternalDelta(intent.key, intent.before, intent.after, intent.label, intent.coalesceKey))
             is SchedulerIntent.InDefaultSubtree -> reduceInDefaultSubtree(state, intent.inner)
-            is SchedulerIntent.InSearchSubtree -> reduceInSearchSubtree(state, intent.inner, intent.listId, intent.readOnly)
+            is SchedulerIntent.InSearchSubtree -> reduceInSearchSubtree(state, intent.inner, intent.listId, intent.readOnly, intent.window)
+            is SchedulerIntent.SetSearchExpanded ->
+                if (state.searchExpanded[intent.window].orEmpty() == intent.cells) state
+                else state.copy(searchExpanded = state.searchExpanded + (intent.window to intent.cells))
             is SchedulerIntent.RenameTask -> reduceRenameTask(state, intent.taskId, intent.title)
             is SchedulerIntent.SetDefaultSubtreeCellBound ->
                 reduceSetDefaultSubtreeCellBound(state, intent.cellId, intent.bound)
@@ -1855,6 +1858,7 @@ object SchedulerReducer {
         inner: SchedulerIntent,
         listId: CellListId,
         readOnly: Boolean,
+        window: String = "",
     ): SchedulerState {
         if (inner is SchedulerIntent.InSearchSubtree) return state
         if (
@@ -1868,7 +1872,7 @@ object SchedulerReducer {
         }
         if (readOnly && inner is SchedulerIntent.BeginEdit) return state
         if (state.lists[listId] == null) return state
-        val projected = state.projectSearchSubtree(listId)
+        val projected = state.projectSearchSubtree(listId, window)
         val reduced = reduceIntent(projected, inner)
         if (reduced === projected) return state
         val before = state.captureTree()
@@ -1877,11 +1881,11 @@ object SchedulerReducer {
             // not the live tree: a projection is a tree of its own (the root's list has its link to the root cell cut,
             // [projectSearchSubtree]), and against the live one every gesture there read as a change (anomaly 2026-11-19).
             if (reduced.captureTree() != projected.captureTree()) return state
-            val looked = state.withSearchViewStateFrom(reduced)
+            val looked = state.withSearchViewStateFrom(reduced, window)
             return withViewSelectionUnit(looked, HistoryWindow.Search, state.searchSelection, looked.searchSelection)
         }
         val folded =
-            state.withSearchSubtreeCapturedFrom(reduced).let {
+            state.withSearchSubtreeCapturedFrom(reduced, window).let {
                 withViewSelectionUnit(it, HistoryWindow.Search, state.searchSelection, it.searchSelection)
             }
         val after = folded.captureTree()

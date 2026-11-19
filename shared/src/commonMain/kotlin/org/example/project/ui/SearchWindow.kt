@@ -185,6 +185,12 @@ data class SearchSplits(
     /** User rule 2026-11-02: the rows of other kinds that are open, of both lists: [RESULT_SURFACE] or [ADDED_SURFACE] + the row's key. */
     val expandedElements: Set<String> = emptySet(),
     /**
+     * Anomaly 2026-11-19: the cells open in this window's sub-trees, by cell id — the window's own
+     * ([SchedulerState.searchExpanded] under its id, [subtreeWindowKey]), kept here with its other open rows so a restart
+     * and the menu button that opened it put them back.
+     */
+    val expandedCells: Set<String> = emptySet(),
+    /**
      * User rule 2026-11-05: where the result list and the added elements are scrolled, each its first row shown and how
      * far under the top ([WindowLayout.scrolls]'s order): a menu button keeps them with the window, and puts them back.
      */
@@ -1177,10 +1183,19 @@ fun SearchWindow(
       }
       // The added elements' scroll, told by their list ([AddedSearchRows]).
       var addedScroll by remember { mutableStateOf((splits?.scrolls?.getOrNull(2) ?: 0) to (splits?.scrolls?.getOrNull(3) ?: 0)) }
+      // The cells open in this window's sub-trees (anomaly 2026-11-19): the window's own, mirrored into its open rows. None
+      // in the state yet (a window come back at a restart): its kept ones, which it gives the state — never the other way.
+      val cellsKey = subtreeWindowKey()
+      val stateCells = state.searchExpanded[cellsKey]
+      val ownCells = stateCells ?: splits?.expandedCells.orEmpty().mapTo(HashSet()) { CellId(it) }
+      LaunchedEffect(cellsKey, stateCells == null) {
+          if (stateCells == null && ownCells.isNotEmpty()) onIntent(SchedulerIntent.SetSearchExpanded(cellsKey, ownCells))
+      }
       fun splitsNow() =
           SearchSplits(
               leftShare, topRightShare, searchCollapsed, actionsCollapsed, addedCollapsed,
               expandedTasks.mapTo(HashSet()) { it.value }, expandedAdded.mapTo(HashSet()) { it.value }, expandedElements,
+              expandedCells = ownCells.mapTo(HashSet()) { it.value },
               scrolls = listOf(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, addedScroll.first, addedScroll.second),
               headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved,
               barRemoved = barRemoved,
@@ -1189,7 +1204,7 @@ fun SearchWindow(
       // dragged line is (user rule 2026-11-05: the scrolls are the window's state too). Event-driven: on the scroll's end.
       LaunchedEffect(
           searchCollapsed, actionsCollapsed, addedCollapsed, expandedTasks, expandedAdded, expandedElements, addedScroll,
-          headerRemoved, searchRemoved, actionsRemoved, addedRemoved, barRemoved,
+          headerRemoved, searchRemoved, actionsRemoved, addedRemoved, barRemoved, ownCells,
       ) { onSplitsChange(splitsNow()) }
       LaunchedEffect(listState) {
           androidx.compose.runtime.snapshotFlow {
@@ -3385,12 +3400,14 @@ private fun SearchSubtree(
     /** The list's walk coming in: its first cell selected (from above) or its last (from below), and the keyboard. */
     enter: SubtreeEnter? = null,
 ) {
+    // The window this sub-tree is drawn in: whose open cells it shows and opens (anomaly 2026-11-19).
+    val window = subtreeWindowKey()
     val projected =
         remember(
-            state.cells, state.lists, state.tasks, state.searchExpanded, state.searchSelection, state.searchEditSession, listId,
+            state.cells, state.lists, state.tasks, state.searchExpanded, state.searchSelection, state.searchEditSession, listId, window,
             showSelection,
         ) {
-            state.projectSearchSubtree(listId).let { shown ->
+            state.projectSearchSubtree(listId, window).let { shown ->
                 if (showSelection) shown else shown.copy(selection = org.example.project.scheduler.state.SchedulerSelection())
             }
         }
@@ -3401,7 +3418,7 @@ private fun SearchSubtree(
             val target = if (enter.step > 0) order.firstOrNull() else order.lastOrNull()
             if (target != null) {
                 onTakeSelection()
-                onIntent(SchedulerIntent.InSearchSubtree(SchedulerIntent.RevealCell(target), listId, readOnly))
+                onIntent(SchedulerIntent.InSearchSubtree(SchedulerIntent.RevealCell(target), listId, readOnly, window))
             }
             withFrameNanos { }
             runCatching { treeFocus.requestFocus() }
@@ -3424,7 +3441,7 @@ private fun SearchSubtree(
                 else -> {
                     // By the gesture, not by the focus: a sub-tree that already holds the keyboard gains none.
                     onTakeSelection()
-                    onIntent(SchedulerIntent.InSearchSubtree(intent, listId, readOnly))
+                    onIntent(SchedulerIntent.InSearchSubtree(intent, listId, readOnly, window))
                 }
             }
         },
@@ -4001,6 +4018,14 @@ internal fun LinkedSearchBar(
         }
     }
 }
+
+/**
+ * Anomaly 2026-11-19: **the Search window a sub-tree is drawn in, as [SchedulerState.searchExpanded] keys its open cells** —
+ * the window's id ([LocalArrowOwner], what every window of the app, a section and a field's window are named by), "" in
+ * none. The one key a sub-tree's gestures and the window's kept open rows both use.
+ */
+@Composable
+internal fun subtreeWindowKey(): String = LocalArrowOwner.current.orEmpty()
 
 /** One row under an element's arrow: where it is drawn ([rowKey]: surface and path), the element, its row. */
 internal class ElementChildRow(val rowKey: String, val key: String, val row: SearchDomain.Result)
