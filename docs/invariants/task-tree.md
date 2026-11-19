@@ -1057,6 +1057,10 @@ suggestions before it was ever entered.
   actions section or added elements list keeps the result rows selected** (they are what those sections show and act
   on: `outsidePressPart(resultRows)`); a press anywhere else takes them away, as above. Not in the added list itself, the
   actions section, a drop-down's options, the left-side menu nor a cell's picker, whose rows add nowhere or elsewhere.
+  **A row is any row of the list** (anomaly 2026-11-19: *"I select a task element, but nothing happens in the action
+  section and 'added elements' list section"*): a result row, a cell of an open row's sub-tree (its task, while that
+  sub-tree holds the window's selection), a child row under an open element (`subtreeSelected`, `childSelected`). Only
+  the result rows counted, so in the Task trees window — every task a cell under the root — no selection reached them.
 - **A double-click on a result row never opens a window** (user rule 2026-10-01): on a task row's title it enters
   Edit Mode (the tree's rule), on any other row it ADDS the element to the added elements (`addKeys`) — a "creation"
   row and a workplace setup excepted, which are commands: a creation row makes its element, a workplace setup is

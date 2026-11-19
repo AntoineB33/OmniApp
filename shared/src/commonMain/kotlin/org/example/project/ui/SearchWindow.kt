@@ -994,18 +994,30 @@ fun SearchWindow(
     val selectionShowsAdded = addedList == null && actionRows == null && options == null && picker == null
     // The left-side menu's own items are no elements: never added ([menuItemRows]).
     val menuItemKeys = remember(menuItemRows) { menuItemRows.mapTo(HashSet<String>()) { SearchDomain.keyOf(it) } }
+    // Anomaly 2026-11-19 (*"I select a task element, but nothing happens in the action section and 'added elements' list
+    // section"*): **every row of the list the user selected is one**, not the result rows alone — a cell of an open row's
+    // sub-tree (every task under the root, in the Task trees window) and a child row under an open element too.
+    val subtreeSelected =
+        if (selectionSurface?.startsWith(RESULT_SURFACE) != true) emptyList()
+        else state.searchSelection.let { sel -> (listOfNotNull(sel.main) + sel.selected).distinct() }
+            .mapNotNull { state.cells[it]?.taskId }.map(SearchDomain::taskKey)
+    val childSelected = childSelection.selected.mapNotNull { childSelection.elements[it] }
+    fun shownAsAdded(key: String) = key !in config.added && key !in menuItemKeys && !key.startsWith(SearchDomain.Kind.Creation.name + "/")
     val selectedOnly =
-        if (!selectionShowsAdded || !userSelected) emptyList()
-        else selectedShown.filter { it !in config.added && it !in menuItemKeys && !it.startsWith(SearchDomain.Kind.Creation.name + "/") }
+        if (!selectionShowsAdded) emptyList()
+        else ((if (userSelected) selectedShown else emptyList()) + subtreeSelected + childSelected).distinct().filter(::shownAsAdded)
     val notAdded = remember(selectedOnly) { selectedOnly.toSet() }
     val shownAddedRows =
-        remember(addedRows, selectedOnly, results) {
+        remember(addedRows, selectedOnly, results, state.tasks, state.cells) {
             if (selectedOnly.isEmpty()) {
                 addedRows
             } else {
-                // Read off the rows listed, as they are drawn there.
+                // Read off the rows listed, as they are drawn there; a row of no list of results (a sub-tree's cell, an
+                // element's child) as the added elements read it.
                 val byKey = results.associateBy(::resultKey)
-                addedRows + selectedOnly.mapNotNull { byKey[it] }
+                val missing = selectedOnly.filter { it !in byKey }
+                val resolved = if (missing.isEmpty()) emptyMap() else SearchDomain.resolve(state, missing, { emptyMap() }, windows, schedulerRuns, claudeLogs).associateBy(SearchDomain::keyOf)
+                addedRows + selectedOnly.mapNotNull { byKey[it] ?: resolved[it] }
             }
         }
     /**

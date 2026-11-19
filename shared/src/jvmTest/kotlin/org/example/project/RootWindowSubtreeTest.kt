@@ -101,6 +101,14 @@ class RootWindowSubtreeTest {
                 steps++
             }
             assertEquals(tree, live.searchSelection.main, "↓ on the root's row selects its first child, the tree")
+            // Anomaly 2026-11-19: *"I select a task element, but nothing happens in the action section and 'added elements'
+            // list section"* — the cell selected is a selected row: its task is in the added elements while it is.
+            val treeTitle = live.tasks.getValue(treeTask).title
+            val shown = onEdt {
+                scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                    .count { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == treeTitle } == true }
+            }
+            assertTrue(shown >= 2, "the cell in the sub-tree, and its task in the added elements: $shown")
             // On along the root's children, and back, as in the tree.
             key(Key.DirectionDown)
             assertTrue(live.searchSelection.main != tree, "↓ walks on along the root's children")

@@ -11,6 +11,12 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every selected row reaches the actions and the added elements — 2026-11-19
+
+- Anomaly: *"I select a task element, but nothing happens in the action section and 'added elements' list section"*.
+  Only result rows counted as selected; a cell of an open row's sub-tree (every task in the Task trees window) and a
+  child row under an open element did not. Both do now (`SearchWindow`'s `selectedOnly`). `RootWindowSubtreeTest`.
+
 ### A quick click on ▾ keeps its pop-up — 2026-11-19
 
 - Anomaly: *"I clicked on the down arrow, and the window appeared and disappeared rapidly... slower it worked."* The
