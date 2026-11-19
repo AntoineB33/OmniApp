@@ -189,18 +189,13 @@ class PerfBenchmarkTest {
             medianNanos(times = 5) {
                 SchedulerDomain.fillSchedule(state, now, tz, horizonMillis = now + 7 * day)
             }
-        // What every plan reduction adds beside the plan: the plan for the other mode class, found fresh (a re-plan).
-        // An extension only fills its tail, as the plan's own stages do.
-        // At a screen the other class is the covered one, which only tasks resilient to "no on-screen task" may run in;
-        // covered, it is the at-screen plan — a whole plan's cost.
-        for ((label, mode) in listOf("covered" to DynamicPeriods.MODE_AT_SCREEN, "at-screen" to DynamicPeriods.MODE_AWAY)) {
-            rows += "otherModePlan $label 168h" to
+        // A mode flip (user rule 2026-11-18): the instant schedule's policy laid from the line to the plan's front, on
+        // the thread the flip is reduced on. At a screen the flip is to the covered class, which only tasks resilient to
+        // "no on-screen task" may run in; covered, it is to the at-screen class — a whole week decided.
+        for ((label, mode) in listOf("to covered" to DynamicPeriods.MODE_AWAY, "to at-screen" to DynamicPeriods.MODE_AT_SCREEN)) {
+            rows += "mode flip $label 168h" to
                 medianNanos(times = 5) {
-                    SchedulerDomain.otherModePlan(
-                        state, now, liveRest = null, noScreenEvidence = emptyList(), frozenBreaks = null,
-                        tpMode = mode, horizonMillis = now + 7 * day,
-                        lineModeUntilMillis = now + 7 * day, timeZone = tz,
-                    )
+                    SchedulerDomain.fillSchedule(state, now, tz, horizonMillis = now + 7 * day, tpMode = mode, instant = true)
                 }
         }
 

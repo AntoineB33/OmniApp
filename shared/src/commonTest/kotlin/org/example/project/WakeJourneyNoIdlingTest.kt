@@ -3,7 +3,6 @@ package org.example.project
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,8 +26,9 @@ import org.example.project.time.AppClock
  * available during this period and the current set of rules output … is used to define the schedule as the $now line$
  * does its fast move, while no better set of rules output was found."*
  *
- * So the journey walks the rules ALREADY HELD for its mode — the plan found for the covered class with the last plan
- * ([SchedulerState.otherModePlan]), laid rather than searched — and searches nothing on the way; the landing re-plans.
+ * So the journey walks the rules ALREADY HELD for its mode — their answer for a path the plan was not made for, the
+ * instant schedule's policy, laid rather than searched ([SchedulerIntent.SwitchTpMode]) — and searches nothing on the
+ * way; the landing re-plans.
  * (It used to make a mode-2 plan at the journey's first instant and extend it as it went: computing that the
  * requirements say did not happen.)
  */
@@ -74,9 +74,8 @@ class WakeJourneyNoIdlingTest {
             )
         SchedulerReducer.tpMode = { engine.tpModeNow() }
         SchedulerReducer.scheduleHorizonEndMillis = { it + 3 * HOUR }
-        // The plan in force before the sleep, made at the screen — and with it, the plan for the covered class.
+        // The plan in force before the sleep, made at the screen.
         vm.dispatch(SchedulerIntent.RefreshSchedule(sleepStart))
-        assertNotNull(vm.state.value.otherModePlan, "every plan reduction finds the plan for the other mode class")
 
         val runs = mutableListOf<SchedulerRunEntry>()
         SchedulerReducer.recordSchedulerRun = { runs += it }
@@ -88,7 +87,7 @@ class WakeJourneyNoIdlingTest {
             journeyRuns.none { it.kind == SchedulerRunEntry.Kind.Replan },
             "the journey searches nothing: ${journeyRuns.map { it.kind to (it.nowMillis - sleepStart) / MIN }}",
         )
-        assertTrue(journeyRuns.any { it.kind == SchedulerRunEntry.Kind.ModeSwitch }, "it LAYS the rules held for mode 2")
+        assertTrue(journeyRuns.any { it.kind == SchedulerRunEntry.Kind.ModeSwitch }, "it LAYS the rules' answer for mode 2, the instant policy")
 
         val st = vm.state.value
         val walk = st.tasks.values.single { it.title == "Walk" }

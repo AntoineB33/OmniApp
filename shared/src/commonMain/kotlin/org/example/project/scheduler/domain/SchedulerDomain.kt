@@ -2632,8 +2632,8 @@ object SchedulerDomain {
      *   a line that does reaches it in mode 1 — so what the rules say for that (x, mode 1) has to be the task
      *   panels its passing creates, found now. Planned around instead, it left the line nobody to run when it got
      *   there, and the check at the line re-planned, rewriting a schedule § *Progressive Calculation* had made
-     *   definitive. The covered modes' plan ([otherModePlan]) keeps every one of them, so a lock before it lays
-     *   the plan that does; the display hides what the line has not reached.
+     *   definitive. A lock before it lays the rules' answer for the covered path (the instant policy, at the flip);
+     *   the display hides what the line has not reached.
      * - It is empty in **modes 2 and 3**, whose clause is the opposite one — the line must BE covered — which is
      *   why the fill covers the continuation with "no screen" in them and why nothing here may fire in them.
      */
@@ -4092,8 +4092,8 @@ object SchedulerDomain {
      * - **Modes 2 & 3**: the line is covered from now on, one stretch of "no screen": each break is taken once, where it
      *   falls, and mode 2 drags the look-away, which never happens.
      *
-     * A break the line drags is never returned: it obstructs nothing. A flip is an edge the engine lays the other
-     * class's plan at ([otherModePlan], found without any break).
+     * A break the line drags is never returned: it obstructs nothing. A flip is an edge the engine lays the rules'
+     * answer for the new path at (the instant policy, `SchedulerReducer.reduceSwitchTpMode`).
      */
     fun breaksTheLineWillMeet(
         screenBreaks: List<ScreenBreak>,
@@ -5791,11 +5791,6 @@ object SchedulerDomain {
         // `docs/scheduler_requirements.md` § *frozen past*: the screen breaks the line has already banked
         // ([FrozenScreenBreaks]); the three are placed continuing from them. Null re-derives the past.
         frozenBreaks: FrozenScreenBreaks? = null,
-        // False for the plan of the OTHER mode class ([otherModePlan]): no dynamic period obstructs it. Where the three
-        // fall depends on when the line changes mode (the bars count from the stretch it starts), which that plan
-        // cannot know — so it runs straight through them, and the flip that lays it lays it on the schedulable clock of
-        // the timeline it lands on, where every one of them suspends a run instead of leaving a hole nothing decided.
-        breaksObstruct: Boolean = true,
         // `docs/scheduler_requirements.md` § *Two paces*, Example 3: a DISPLAY fill of a stretch far past the definitive
         // front ([instantDisplayPlan]) starts at [nowMillis] with every lag at its target — no frozen past replayed, no
         // forced switch or start — so what it costs is bounded by the stretch, not by its distance from the line.
@@ -5812,7 +5807,7 @@ object SchedulerDomain {
                     keepExistingUntilMillis, tpMode, if (rulesSink == null) null else ({ ruleState = it }), cycleSink,
                     adoptedPlacements, adoptedCycle, searchBudget = searchBudget, extraSeeds = extraSeeds,
                     searchSink = searchSink, frozenBreaks = frozenBreaks,
-                    breaksObstruct = breaksObstruct, idleSink = idleSink, unrollOnly = unrollOnly, instant = instant,
+                    idleSink = idleSink, unrollOnly = unrollOnly, instant = instant,
                     noPast = noPast,
                 )
             }
@@ -5915,115 +5910,6 @@ object SchedulerDomain {
                 )
             }
             .toList()
-
-    /** Id prefix of the other mode class's held runs while [otherModePlan] extends them (never published). */
-    private const val OTHER_MODE_PANEL_ID_PREFIX = "other-mode/"
-
-    /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* and § *Progressive Calculation*: **the plan for the mode
-     * class the line is NOT in**, found beside the plan [state]'s panels hold for the class it is in ([tpMode]), out to
-     * the same [horizonMillis].
-     *
-     * The set of rules is *"parameterized by $now line$ and $now line$ mode"*, and a schedule is definitive when every
-     * later set of rules *"indicate[s] the same schedule rules for any t < t₁ (… parameterized by now line and now
-     * line mode …)"*. Re-planning at a flip answered the mode only once it had changed, with a search whose answer
-     * depends on the time it was given — so a flip and a flip back could rewrite a schedule already published as
-     * definitive. The answer for the other class is therefore found here, ahead of the flip, and a flip lays it
-     * ([org.example.project.scheduler.state.SchedulerIntent.SwitchTpMode]).
-     *
-     * Three properties make it that answer:
-     * - **It is definitive as far as it reaches.** The runs held for these rules ([SchedulerState.otherModePlan],
-     *   same class, same [schedulingSignature]) are KEPT and only the tail past them is filled — an extension, like
-     *   the plan's own stages. Under other rules nothing held is kept.
-     * - **It is read on the schedulable clock of the timeline it lands on.** Where the three dynamic periods fall
-     *   depends on when the line changes mode, which this plan cannot know, so none of them obstructs it
-     *   (`breaksObstruct = false`); the flip lays it through the timeline it finds, where each of them suspends a run
-     *   — nobody may run in one — instead of leaving a hole.
-     * - **It is the step-bounded passes only** (no wall-time search): `docs/scheduler_requirements.md` § *Strict
-     *   Requirements*' first exception covers what that leaves on the table, and a flip must find the plan already
-     *   made, not wait for one.
-     *
-     * The frozen past it continues from is the line's own: the run the line is in is cut at the line (its elapsed
-     * head is served history) and the other class's plan starts there.
-     */
-    fun otherModePlan(
-        state: SchedulerState,
-        nowMillis: Long,
-        liveRest: LiveRest?,
-        noScreenEvidence: List<TaskTimeRange>,
-        frozenBreaks: FrozenScreenBreaks?,
-        tpMode: Int,
-        horizonMillis: Long,
-        lineModeUntilMillis: Long,
-        timeZone: TimeZone = TimeZone.currentSystemDefault(),
-        // Whether the plan reduction this belongs to has been superseded ([SearchBudget.checkAbandoned]).
-        abandoned: () -> Boolean = { false },
-    ): org.example.project.scheduler.model.OtherModePlan {
-        val covered = !DynamicPeriods.lineIsCoveredAt(tpMode)
-        val rulesKey = schedulingSignature(state)
-        val horizon = maxOf(horizonMillis, nowMillis)
-        val held = state.otherModePlan?.takeIf { it.covered == covered && it.rulesKey == rulesKey && it.untilMillis > nowMillis }
-        val heldAhead = held?.placements.orEmpty().filter { it.endMillis > nowMillis }
-        // Already as far as asked: the same instance, so a reduction that changed nothing else publishes nothing (its
-        // runs behind the line are harmless — every reader starts at the line).
-        if (held != null && held.untilMillis >= horizon) {
-            return if (held.lineModeUntilMillis == lineModeUntilMillis) held else held.copy(lineModeUntilMillis = lineModeUntilMillis)
-        }
-        val base =
-            state.panels.mapNotNull { panel ->
-                when {
-                    !isPlanRun(panel) || panel.endEpochMillis <= nowMillis -> panel
-                    // The run the line is in: what has elapsed of it is the frozen past, whatever the mode.
-                    panel.startEpochMillis < nowMillis -> panel.copy(endEpochMillis = nowMillis)
-                    else -> null
-                }
-            }
-        val heldPanels =
-            heldAhead.mapIndexed { i, p ->
-                TaskPanel(
-                    id = "$OTHER_MODE_PANEL_ID_PREFIX$i",
-                    taskId = p.taskId,
-                    title = state.tasks[p.taskId]?.title.orEmpty(),
-                    startEpochMillis = maxOf(p.startMillis, nowMillis),
-                    endEpochMillis = p.endMillis,
-                    pinned = false,
-                    auto = true,
-                    alternativeTaskId = p.alternativeTaskId,
-                    alternativeSpans = p.alternativeSpans,
-                )
-            }
-        val filled =
-            fillSchedule(
-                state.copy(panels = base + heldPanels, scheduleCycle = null, plannedIdle = emptyList(), otherModePlan = null),
-                nowMillis,
-                timeZone,
-                liveRest = liveRest,
-                noScreenEvidence = noScreenEvidence,
-                horizonMillis = horizon,
-                keepExistingUntilMillis = held?.untilMillis,
-                tpMode = if (covered) DynamicPeriods.MODE_AWAY else DynamicPeriods.MODE_AT_SCREEN,
-                frozenBreaks = frozenBreaks,
-                searchBudget = SearchBudget.of(0L, abandoned),
-                breaksObstruct = false,
-            )
-        return org.example.project.scheduler.model.OtherModePlan(
-            covered = covered,
-            placements = placementsAhead(filled, nowMillis),
-            untilMillis = horizon,
-            lineModeUntilMillis = lineModeUntilMillis,
-            rulesKey = rulesKey,
-        )
-    }
-
-    /**
-     * Whether [plan] is the answer for a line that has just moved into [tpMode]'s class at [nowMillis] under
-     * [state]'s rules — the one test the engine (lay or re-plan?) and the reducer ask.
-     */
-    fun otherModePlanFor(state: SchedulerState, tpMode: Int, nowMillis: Long): org.example.project.scheduler.model.OtherModePlan? =
-        state.otherModePlan?.takeIf {
-            it.covered == DynamicPeriods.lineIsCoveredAt(tpMode) && it.untilMillis > nowMillis &&
-                it.rulesKey == schedulingSignature(state)
-        }
 
     /**
      * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **does a flip from [from] to [to] change the plan?** Only
@@ -6268,7 +6154,6 @@ object SchedulerDomain {
         extraSeeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
         searchSink: ((SearchReport, Double?) -> Unit)? = null,
         frozenBreaks: FrozenScreenBreaks? = null,
-        breaksObstruct: Boolean = true,
         idleSink: ((List<TaskTimeRange>) -> Unit)? = null,
         noPast: Boolean = false,
     ): List<TaskPanel> {
@@ -6462,18 +6347,14 @@ object SchedulerDomain {
         // at its due, a pose left a hole the line then swept with no task at all, which no score chose: the pose had gone
         // on ahead, and nothing re-plans on time passing.
         val obstructingSidePanels =
-            if (breaksObstruct) {
-                breaksTheLineWillMeet(state.screenBreaks, nowMillis, searchEnd, dynamicBase, tpMode, frozenBreaks)
-            } else {
-                emptyList()
-            }
+            breaksTheLineWillMeet(state.screenBreaks, nowMillis, searchEnd, dynamicBase, tpMode, frozenBreaks)
         // `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **modes 2 & 3**: *"$now line$ must be covered by
         // the period 'no on-screen task'"*, and its own consequence example — *"the gap between the end of the 15min
         // period and $now line$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero
         // resilience to the kind 'no on-screen task', or no task if none have such resilience"*.
         //
         // The rules this fill returns are the answer for the line going on in the mode it is in NOW; the answer for
-        // the other mode class is found beside it ([otherModePlan]) and laid at a flip
+        // any other path of modes is the instant schedule's policy, laid at a flip
         // ([org.example.project.scheduler.state.SchedulerIntent.SwitchTpMode]). So in an away mode the whole continuation is covered, from the line on: the line is covered at
         // EVERY instant the mode holds, not only at the one this fill ran at. The cover was the zero-wide `[now, now]`
         // until 2026-09-27 — it chose the first run and nothing more, so once that run ended the line walked into the
@@ -6827,6 +6708,9 @@ object SchedulerDomain {
                         budget = SearchBudget.NONE,
                         ruleStates = timeline,
                         minimumWeight = minimumWeight,
+                        // User rule 2026-11-18: the answer for a path the plan was not made for is the instant
+                        // schedule's policy — the same one a mode flip lays (`SchedulerReducer.reduceSwitchTpMode`).
+                        instant = true,
                     ),
                 )
             for (p in branch.placements) {

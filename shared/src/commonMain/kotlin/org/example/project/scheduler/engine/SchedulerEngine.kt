@@ -1822,6 +1822,10 @@ class SchedulerEngine(
         val coveredSpans =
             if (atScreenSpans.isEmpty()) listOf(TaskTimeRange(sleepStart, sleepEnd))
             else SchedulerDomain.subtractRegions(listOf(TaskTimeRange(sleepStart, sleepEnd)), atScreenSpans)
+        // How far the rules reached before the sleep is reported: the report drops the plan's runs inside it, and a flip
+        // of the journey lays the rules' answer for its path out to here ([layHeldModePlan]).
+        journeyPlanFrontMillis =
+            vm.state.value.panels.asSequence().filter { SchedulerDomain.isPlanRun(it) }.maxOfOrNull { it.endEpochMillis }
         if (atScreenSpans.none { it.startEpochMillis <= sleepStart && sleepStart < it.endEpochMillis }) {
             vm.dispatch(SchedulerIntent.ReportDeviceSleep(sleepStart, sleepEnd))
         }
@@ -1845,8 +1849,15 @@ class SchedulerEngine(
                 (if (awaySpans.isEmpty()) "" else " (${awaySpans.size} stretch(es) of it in mode 3: a declared break)") +
                 (if (atScreenSpans.isEmpty()) "" else " (${atScreenSpans.size} stretch(es) of it in mode 1: the device unlocked)"),
         )
-        sweepNowLineTo(sleepStart, sleepEnd, DynamicPeriods.MODE_AWAY, awaySpans, atScreenSpans)
+        try {
+            sweepNowLineTo(sleepStart, sleepEnd, DynamicPeriods.MODE_AWAY, awaySpans, atScreenSpans)
+        } finally {
+            journeyPlanFrontMillis = null
+        }
     }
+
+    /** Where the plan reached when the journey in flight began ([reportTimeGap]); null outside one. */
+    private var journeyPlanFrontMillis: Long? = null
 
     /**
      * `side-dev/README.md` § *$now line$*: **move the line to [toMillis], CONTINUOUSLY** — the one way it ever
@@ -1869,8 +1880,8 @@ class SchedulerEngine(
      * beyond the definitive schedule, then it is similar to a case where no CPU were available during this
      * period and the current set of rules output, parameterized by now line and now line mode, is used to define
      * the schedule as the now line does its fast move, while no better set of rules output was found."* So the line
-     * walks the rules it already holds: for a journey in the other mode class, the plan found for that class with the
-     * last one ([SchedulerState.otherModePlan], laid, never searched); past the front, the repeating part of the rules
+     * walks the rules it already holds: for a journey in the other mode class, their answer for that path (the instant
+     * schedule's policy, laid, never searched — [SchedulerIntent.SwitchTpMode]); past the front, the repeating part of the rules
      * unrolled ([SchedulerIntent.ExtendSchedule.unrollOnly]) — and where no rule reaches, nothing is placed. Each step
      * is an ordinary advance of the interpreter; the re-plan that follows belongs to the landing, through
      * [requestReschedule] like every other one.
@@ -1966,14 +1977,13 @@ class SchedulerEngine(
     }
 
     /**
-     * The journey's rules for its own mode class: when the plan in force was made for the other class, the plan held
-     * for this one ([SchedulerDomain.otherModePlanFor], found with the last plan) is LAID — never searched for. With
-     * none held, the plan in force is walked as it is.
+     * The journey's rules for its own mode class: when the plan in force was made for the other class, the rules' answer
+     * for this path — the instant schedule's policy from the line ([SchedulerIntent.SwitchTpMode]) — is LAID, never
+     * searched for.
      */
     private fun layHeldModePlan(lineMillis: Long, planMode: Int, journeyMode: Int) {
         if (!SchedulerDomain.tpModeFlipChangesPlan(planMode, journeyMode)) return
-        if (SchedulerDomain.otherModePlanFor(vm.state.value, journeyMode, lineMillis) == null) return
-        vm.dispatch(SchedulerIntent.SwitchTpMode(lineMillis))
+        vm.dispatch(SchedulerIntent.SwitchTpMode(lineMillis, journeyPlanFrontMillis?.takeIf { it > lineMillis }))
     }
 
     /**
@@ -3551,15 +3561,13 @@ class SchedulerEngine(
      * the class the line is in NOW applies from the flip — at once, on this device. It is not a rule change: no
      * election (whose deadline would leave the old mode's plan standing for seconds), no debounce.
      *
-     * The plan for the new class was found with the last plan ([SchedulerState.otherModePlan]), so the flip LAYS it
-     * ([SchedulerIntent.SwitchTpMode]) — re-planning here rewrote a schedule already published as definitive with a
-     * search whose answer depends on the time it is given, and a flip and a flip back could land somewhere else. With
-     * nothing found for these rules (a restart, a pull, a rule change still debouncing), it re-plans as before.
+     * The rules' answer for a path of modes the plan was not made for is the instant schedule's policy from the line
+     * (user rule 2026-11-18, [SchedulerIntent.SwitchTpMode]): the flip LAYS it — re-planning here rewrote a schedule
+     * already published as definitive with a search whose answer depends on the time it is given.
      */
     private fun switchTpModePlan() {
         val now = clock.nowMillis()
-        val state = vm.state.value
-        if (!state.automaticSchedule || SchedulerDomain.otherModePlanFor(state, planTpModeNow(now), now) == null) {
+        if (!vm.state.value.automaticSchedule) {
             requestReschedule(now, local = true)
             return
         }

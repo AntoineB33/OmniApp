@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every path of modes has an answer: the instant policy, laid at a flip — 2026-11-19
+
+User rule 2026-11-18: *"The schedule must take all the infinite branches (e.g.: if mode 1 at [t0, t1] then ... else
+...)"*. The modes switch at any instant, so the rules' answer for every path is the searched plan for the path it was made
+for and **the instant schedule's policy** for every other.
+
+- **A mode-class flip lays the policy** (`SchedulerIntent.SwitchTpMode` → `reduceSwitchTpMode`): `fillSchedule(instant =
+  true)` from the line out to where the plan's own runs reached; a wake passes where the plan reached before its sleep was
+  reported (`SwitchTpMode.untilMillis`). Nothing searched, the same on every device, legal by construction.
+- **The plan for the other mode class is gone** (`otherModePlan`, `OtherModePlan`, `withOtherModePlan`,
+  `fillSchedule(breaksObstruct)`): it covered one path per class, cost ~220 ms on every plan reduction (12 tasks), and
+  fell back to a searched re-plan where it was no legal continuation. A flip now costs ~18 ms (to at-screen) / ~2 ms (to
+  covered) over 168 h. A flip and a flip back no longer return to the schedule published before the first.
+- **The mode-1 line branches over the nights ahead use the same policy** (`lineBranchPanels`, `instant = true`).
+- `TpModeSwitchTest` rewritten; `WakeJourneyNoIdlingTest` and `PerfBenchmarkTest` follow.
+
 ### A run plans to now + 168 h, its search paced by q — 2026-11-18
 
 User rule: *"Make sure there is the 10 minute per 10 seconds minimum scheduler from now to now + 168h with a pace varying

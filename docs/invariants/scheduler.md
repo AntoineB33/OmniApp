@@ -283,7 +283,7 @@ model exists to prevent.
     `lineBranchPanels`): the mode-1 fill searches each carrier ahead once more from its start, the carrier given up as
     it is to a line inside it, the plan before it as its past — read back by `ScheduleFill.pastLookbackMillis` from the
     carrier's OWN start, never from the line's, or every night re-replays the whole plan before it and a fill costs
-    O(nights × distance) (2026-11-12) — (step-bounded passes only), and lays those runs held at
+    O(nights × distance) (2026-11-12) — (the instant schedule's policy since 2026-11-18, the one a flip lays; the step-bounded passes before), and lays those runs held at
     the line where the plan left nobody. They are never a seed, never published, never the plan a flip leaves — every
     mode-1 fill makes them again, the one laid at a flip included — and nothing is drawn of them before the line gets
     there. Account 3, 2026-11-06: without them the line walked into the wind-down hour at 00:07 with no run, nothing
@@ -639,15 +639,18 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
 
 → `docs/scheduler_requirements.md` § *$now line$ 3 modes* against § *Progressive Calculation*, 2026-09-28.
 
-- **What is definitive is definitive for EVERY mode.** *"… they will all indicate the same schedule rules for any
-  t < t₁ (task panel scheduling parameterized by now line and now line mode …)"*. A flip used to re-plan from the
-  line: a search whose answer depends on the time it is given, so locking and unlocking again rewrote the at-screen
-  schedule already published (`TpModeSwitchTest`, whose control shows the re-plan does not come back to it).
-- **So every plan reduction also finds the plan for the mode CLASS the line is not in** (`SchedulerDomain.otherModePlan`
-  → `SchedulerState.otherModePlan`, `SchedulerReducer.withOtherModePlan`), to the same front: a re-plan, an extension
-  and an adoption all end there. The classes are two, not three — modes 2 and 3 place everything identically and
-  differ in the cue alone (`DynamicPeriods.breaksAreNotifiedAt`), so **a 2↔3 flip changes nothing**
-  (`SchedulerDomain.tpModeFlipChangesPlan`; the engine does not even dispatch).
+- **What is definitive is definitive for EVERY mode, and there are infinitely many paths of modes** (user rule
+  2026-11-18: *"The schedule must take all the infinite branches (e.g.: if mode 1 at [t0, t1] then ... else ...)"*).
+  The modes switch at any instant, so the rules' answer for every path cannot be a list of plans: it is **the searched
+  plan for the path it was made for, and the instant schedule's POLICY for every other** (`InstantSchedule`, the
+  score's own policy rolled by parts, nothing searched) — a function of the line as it was served up to the switch and
+  of the mode at it. The same on every device (no wall time, no search), legal by construction (it obeys the
+  constraints at each instant it decides). A flip used to re-plan from the line, a search whose answer depends on the
+  time it is given; 2026-09-28 → 2026-11-18 the plan for the other mode CLASS was found beside every plan
+  (`otherModePlan`, for a path in ONE class from the line on, ~220 ms per reduction on 12 tasks) and laid at a flip,
+  with a searched re-plan where it was no legal continuation. Both gone. The classes are two, not three — modes 2 and 3
+  place everything identically and differ in the cue alone (`DynamicPeriods.breaksAreNotifiedAt`), so **a 2↔3 flip
+  changes nothing** (`SchedulerDomain.tpModeFlipChangesPlan`; the engine does not even dispatch).
 - **A SWITCH TO MODE 3 CHANGES NOTHING** (user rule 2026-10-08: *"Switching to $now line$ mode 3 doesn't change the
   input in itself … The previous set of rules output is therefore still applied and the schedule in the future doesn't
   change"*; `SchedulerDomain.planModeAfter`, `SchedulerEngine.heldPlanMode`, `PlanModeTest`,
@@ -656,30 +659,20 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   covered plan and rewrote the future — and the line then crosses the plan as it stands: a panel whose task has no
   resilience to "no screen" is retracted as the line moves through it, by the readings that already apply the mode
   where the question is asked (`currentPanel` with the mode for the cue, the display's clip, the bank's refusal),
-  never by a fill. A plan of the other class is laid only where the line ARRIVES in mode 1 or 2 under the other's plan
+  never by a fill. The other class's answer is laid only where the line ARRIVES in mode 1 or 2 under the other's plan
   (1 → 3 → 1: nothing; 2 → 3 → 1: at the last step; 1 → 3 → 2: at the last step). `planTpModeNow` — the mode every
   fill is given (`SchedulerReducer.tpMode`) — is therefore never 3, in a journey as live. The break machine is NOT
   under this: it walks in the line's real mode (`machineMode`). A launch into mode 3 keeps the at-screen plan.
-- **It is extended exactly as the plan is**: the runs held for these rules (same class, same `schedulingSignature`)
-  are kept and only the tail past them is filled. Under other rules nothing held is kept.
-- **No dynamic period obstructs it** (`fillSchedule(breaksObstruct = false)`): where the three fall depends on when
-  the line changes mode, which it cannot know. A flip lays it on the schedulable clock of the timeline it lands on,
-  where each of them suspends a run — nobody may run in one — rather than leaving a hole nothing decided.
-- **It is the step-bounded passes only**, no wall-time search: the flip must find it made. The score it leaves is the
-  first exception of § *Strict Requirements*; the definitive clause is the constraint the score is optimized under.
-- **A class flip LAYS it** (`SchedulerIntent.SwitchTpMode` → `reduceSwitchTpMode`), the way a follower lays a
-  leader's rules (`adoptedPlacements`, the same legality check), and the plan the line leaves becomes the other
-  class's — so a flip and a flip back return to the schedule already published, both fronts swapped. **The hard
-  constraints still win**: where the runs are no legal continuation on this timeline (a period retracting at the line
-  that did not at the plan's own instant, § *Resilience*), the fill plans from the line with them as a seed and the
-  History row (`ModeSwitch`) carries the search it made. With none found for these rules (a restart, a pull, a rule
-  change still debouncing) the flip re-plans as it always did.
-- **Derived and in memory only**, like `scheduleCycle`: not in the codec, not in the sync fingerprint, not in the
-  signature.
-- **What it costs** (`PerfBenchmarkTest`, 2026-09-28, 12 tasks): the at-screen plan found from a covered line is
-  ~220 ms for a fresh week against ~115 ms for the plan itself; the covered plan found from the screen is ~2 ms when
-  no task is resilient to `no screen`. It runs on plan reductions only, never on a tick, and the pace cap measures
-  the whole reduction (`notePlanRate`), so the stages shrink to what the device can do.
+- **A class flip LAYS the policy** (`SchedulerIntent.SwitchTpMode` → `SchedulerReducer.reduceSwitchTpMode`, History
+  row `ModeSwitch`): `fillSchedule(instant = true)` under the new mode, from the line out to where the plan's own runs
+  reached (`isPlanRun`; never the chain of panels from the line, which the first stretch nobody may run in ends). A
+  wake's journey passes where the plan reached BEFORE the device's sleep was reported (`SwitchTpMode.untilMillis`,
+  `SchedulerEngine.journeyPlanFrontMillis`): the report drops the runs inside the sleep. A flip and a flip back do not
+  return to the schedule published before the first: the path is another one, and so is its answer (`TpModeSwitchTest`).
+- **The mode-1 line branches over the nights ahead are the same policy** (`lineBranchPanels`, `ScheduleFill.Input.instant`):
+  the answer for a line that reaches bedtime still at a screen, held in reserve.
+- **What it costs** (`PerfBenchmarkTest`, 2026-11-19, 12 tasks): a flip over 168 h, ~18 ms to the at-screen class and
+  ~2 ms to the covered one, on the thread the flip is reduced on — and nothing on any other plan reduction.
 
 ### The rules repeat
 

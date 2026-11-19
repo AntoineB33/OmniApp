@@ -1073,13 +1073,18 @@ sealed interface SchedulerIntent {
 
     /**
      * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the now-line has just changed mode CLASS (at a screen
-     * vs covered) at [nowMillis]. The rules are parameterized by the mode, so the plan for the new class was found
-     * with the last one ([SchedulerState.otherModePlan]) and is laid from the line — not searched again, which would
-     * rewrite a schedule § *Progressive Calculation* has already made definitive. Where there is none for these
-     * rules, or it is no legal continuation on this timeline, it re-plans from the line as before.
+     * vs covered) at [nowMillis]. The rules are parameterized by the mode, and their answer for a path of modes the
+     * plan was not made for is the instant schedule's policy (user rule 2026-11-18): laid from the line out to where the
+     * plan reached, nothing searched — the same on every device, and never a rewrite by a search of a schedule
+     * § *Progressive Calculation* has already made definitive.
      */
     data class SwitchTpMode(
         val nowMillis: Long,
+        /**
+         * How far the policy is laid: null — a live flip — as far as the plan's own runs reach. A wake passes where the
+         * plan reached BEFORE the device's sleep was reported, which drops the runs inside it.
+         */
+        val untilMillis: Long? = null,
     ) : SchedulerIntent
 
     /**

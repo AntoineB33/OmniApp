@@ -516,8 +516,8 @@ data class SchedulerRunEntry(
         Adopted("Rules adopted from a peer"),
 
         /**
-         * The now-line changed mode class: the rules already found for the new one were laid
-         * ([org.example.project.scheduler.model.OtherModePlan]), or re-planned where they were no legal answer.
+         * The now-line changed mode class: the rules' answer for the new path, the instant schedule's policy, was laid
+         * from the line (user rule 2026-11-18).
          */
         ModeSwitch("Now-line mode switch"),
 
@@ -805,12 +805,6 @@ data class SchedulerState(
      * and the next fill finds it again.
      */
     val scheduleCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
-    /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **the rules for the mode class the line is not in**,
-     * found beside [panels] to the same front so a mode flip lays them instead of re-planning
-     * ([org.example.project.scheduler.model.OtherModePlan]). Derived and **in memory only**, like [scheduleCycle].
-     */
-    val otherModePlan: org.example.project.scheduler.model.OtherModePlan? = null,
     /**
      * `docs/scheduler_requirements.md` asks for no task anywhere, so the plan may leave schedulable time to nobody:
      * **the stretches ahead of the line the last fill decided to leave empty** (`ScheduleFill.Result.idle`). What tells

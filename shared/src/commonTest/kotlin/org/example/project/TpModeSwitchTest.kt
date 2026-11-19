@@ -5,9 +5,6 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.DynamicPeriods
 import org.example.project.scheduler.domain.PeriodKinds
@@ -15,7 +12,6 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.RulePlacement
 import org.example.project.scheduler.model.SleepSchedule
 import org.example.project.scheduler.model.TaskId
-import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
@@ -26,10 +22,11 @@ import org.example.project.scheduler.state.SchedulerState
  *
  * *"When the schedule is definitive for any t < t₁, it means that for all the next set of rules the scheduler will
  * return until it is done, they will all indicate the same schedule rules for any t < t₁ (task panel scheduling
- * parameterized by now line and now line mode …)"*. A flip used to re-plan from the line — a search whose answer
- * depends on the time it is given — so the line locking and unlocking again could hand it a different schedule from
- * the one already published for the mode it came back to. The plan for the other mode class is now found beside
- * the line's own ([SchedulerState.otherModePlan]) and a flip LAYS it ([SchedulerIntent.SwitchTpMode]).
+ * parameterized by now line and now line mode …)"*. The modes switch at any instant, so the rules' answer for every
+ * path of modes cannot be a list of plans (user rule 2026-11-18: *"The schedule must take all the infinite
+ * branches"*): it is the searched plan for the path it was made for, and **the instant schedule's policy** for every
+ * other — laid from the line at a flip ([SchedulerIntent.SwitchTpMode]), nothing searched, the same on every device.
+ * (2026-09-28 → 2026-11-18 the plan for the other mode class was found beside each plan and laid instead.)
  */
 class TpModeSwitchTest {
 
@@ -99,58 +96,37 @@ class TpModeSwitchTest {
     }
 
     @Test
-    fun a_plan_is_found_for_the_other_mode_class_to_the_same_front() {
+    fun a_flip_lays_the_instant_policy_from_the_line_to_the_plans_front() {
         val s = planned()
-        val other = assertNotNull(s.otherModePlan, "no plan was found for the covered modes")
-        assertTrue(other.covered, "the line is at a screen: the other class is the covered one")
-        assertEquals(UNTIL, other.untilMillis)
-        assertEquals(UNTIL, other.lineModeUntilMillis)
-        assertEquals(SchedulerDomain.schedulingSignature(s), other.rulesKey)
-        assertTrue(other.placements.isNotEmpty(), "a task resilient to no-screen may run: the covered plan is not empty")
-        assertEquals(
-            setOf(id(s, "Read")),
-            other.placements.map { it.taskId }.toSet(),
-            "a covered line may only be given a task resilient to 'no on-screen task'",
-        )
-        val own = SchedulerDomain.placementsAhead(s.panels, NOW).map { it.taskId }.toSet()
-        assertTrue(id(s, "Code") in own && id(s, "Mail") in own, "the line's own plan is the at-screen one")
-    }
-
-    @Test
-    fun a_flip_lays_the_plan_found_for_the_new_class() {
-        val s = planned()
-        val found = s.otherModePlan!!.placements
         val x = NOW + 37 * MIN
-        val away = switchTo(s, DynamicPeriods.MODE_AWAY, x)
-        val laid = SchedulerDomain.placementsAhead(away.panels, x)
-        val (compared, wrong) = agreeing(laid, found, x, UNTIL)
-        assertTrue(compared > 200, "too little of the span compared ($compared minutes) for this to be about anything")
-        assertTrue(wrong.isEmpty(), "the flip did not lay the rules already found for mode 2: differs at ${wrong.take(5)}")
-        assertEquals(setOf(id(s, "Read")), laid.map { it.taskId }.toSet())
+        val runs = mutableListOf<org.example.project.scheduler.state.SchedulerRunEntry>()
+        SchedulerReducer.recordSchedulerRun = { runs += it }
+        try {
+            val away = switchTo(s, DynamicPeriods.MODE_AWAY, x)
+            val laid = SchedulerDomain.placementsAhead(away.panels, x)
+            assertEquals(setOf(id(s, "Read")), laid.map { it.taskId }.toSet(), "a covered line may only be given a resilient task")
+            assertTrue(laid.maxOf { it.endMillis } >= UNTIL - 30 * MIN, "the policy is laid out to where the plan reached")
+            val run = runs.single()
+            assertEquals(org.example.project.scheduler.state.SchedulerRunEntry.Kind.ModeSwitch, run.kind)
+        } finally {
+            SchedulerReducer.recordSchedulerRun = { }
+        }
     }
 
     @Test
-    fun a_flip_and_a_flip_back_return_to_the_schedule_already_published() {
+    fun a_flip_is_the_same_answer_on_every_device() {
+        // Nothing searched, no wall time read: the same state and the same switch give the same line, wherever.
         val s = planned()
-        val published = SchedulerDomain.placementsAhead(s.panels, NOW)
-        val away = switchTo(s, DynamicPeriods.MODE_AWAY, NOW + 37 * MIN)
-        val leftBehind = assertNotNull(away.otherModePlan)
-        assertFalse(leftBehind.covered, "the plan the line left is the at-screen one")
-        val back = NOW + 71 * MIN
-        val atScreen = switchTo(away, DynamicPeriods.MODE_AT_SCREEN, back)
-        val (compared, wrong) = agreeing(SchedulerDomain.placementsAhead(atScreen.panels, back), published, back, UNTIL)
-        assertTrue(compared > 200, "too little of the span compared ($compared minutes) for this to be about anything")
-        assertTrue(
-            wrong.isEmpty(),
-            "locking and unlocking rewrote the at-screen schedule already published as definitive: differs at ${wrong.take(5)}",
+        val x = NOW + 37 * MIN
+        val one = switchTo(s, DynamicPeriods.MODE_AWAY, x)
+        val two = switchTo(s, DynamicPeriods.MODE_AWAY, x)
+        assertEquals(SchedulerDomain.placementsAhead(one.panels, x), SchedulerDomain.placementsAhead(two.panels, x))
+        val backOne = switchTo(one, DynamicPeriods.MODE_AT_SCREEN, x + 34 * MIN)
+        val backTwo = switchTo(two, DynamicPeriods.MODE_AT_SCREEN, x + 34 * MIN)
+        assertEquals(
+            SchedulerDomain.placementsAhead(backOne.panels, x + 34 * MIN),
+            SchedulerDomain.placementsAhead(backTwo.panels, x + 34 * MIN),
         )
-        // … and the covered plan is held again, for the next lock.
-        assertTrue(assertNotNull(atScreen.otherModePlan).covered)
-        // Control: what a flip used to do — re-plan from the line — does NOT come back to it. The half hour away
-        // served the resilient task, so the lags the search reads have moved.
-        val replanned = SchedulerReducer.reduce(away.copy(otherModePlan = null), SchedulerIntent.RefreshSchedule(back, horizonCapMillis = UNTIL))
-        val (_, rewritten) = agreeing(SchedulerDomain.placementsAhead(replanned.panels, back), published, back, UNTIL)
-        assertTrue(rewritten.isNotEmpty(), "control: a re-plan at the flip back happens to reproduce the published plan")
     }
 
     @Test
@@ -175,33 +151,6 @@ class TpModeSwitchTest {
     }
 
     @Test
-    fun under_other_rules_the_plan_held_is_no_answer_and_the_flip_re_plans() {
-        val s = planned()
-        val edited = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskMinimumTime(id(s, "Read"), 35))
-        assertNotEquals(s.otherModePlan!!.rulesKey, SchedulerDomain.schedulingSignature(edited))
-        assertNull(SchedulerDomain.otherModePlanFor(edited, DynamicPeriods.MODE_AWAY, NOW + MIN))
-        val away = switchTo(edited, DynamicPeriods.MODE_AWAY, NOW + MIN)
-        val plan = assertNotNull(away.otherModePlan, "the re-plan finds the other class's plan for the new rules")
-        assertEquals(SchedulerDomain.schedulingSignature(away), plan.rulesKey)
-        assertFalse(plan.covered, "the line is covered now: the plan found beside it is the at-screen one")
-    }
-
-    @Test
-    fun an_extension_keeps_what_the_other_class_already_had_and_reaches_the_new_front() {
-        SchedulerReducer.tpMode = { DynamicPeriods.MODE_AT_SCREEN }
-        val first = SchedulerReducer.reduce(account(), SchedulerIntent.RefreshSchedule(NOW, horizonCapMillis = NOW + HOUR))
-        val before = first.otherModePlan!!
-        assertEquals(NOW + HOUR, before.untilMillis)
-        val later = NOW + 10 * MIN
-        val extended = SchedulerReducer.reduce(first, SchedulerIntent.ExtendSchedule(later, horizonCapMillis = NOW + 3 * HOUR))
-        val after = assertNotNull(extended.otherModePlan)
-        assertEquals(NOW + 3 * HOUR, after.untilMillis)
-        val (compared, wrong) = agreeing(after.placements, before.placements, later, NOW + HOUR)
-        assertTrue(compared > 30, "too little compared ($compared)")
-        assertTrue(wrong.isEmpty(), "an extension rewrote the other class's definitive plan at ${wrong.take(5)}")
-    }
-
-    @Test
     fun only_a_change_of_class_changes_the_plan() {
         // Modes 2 and 3 differ in the cue alone (DynamicPeriods.breaksAreNotifiedAt).
         assertFalse(SchedulerDomain.tpModeFlipChangesPlan(DynamicPeriods.MODE_AWAY, DynamicPeriods.MODE_ON_BREAK))
@@ -212,18 +161,5 @@ class TpModeSwitchTest {
         val locked = planned(DynamicPeriods.MODE_AWAY)
         val onBreak = planned(DynamicPeriods.MODE_ON_BREAK)
         assertEquals(SchedulerDomain.placementsAhead(locked.panels, NOW), SchedulerDomain.placementsAhead(onBreak.panels, NOW))
-    }
-
-    @Test
-    fun the_other_mode_plan_is_in_memory_only() {
-        val s = planned()
-        assertNotNull(s.otherModePlan)
-        val decoded = assertNotNull(SchedulerStateCodec.decode(SchedulerStateCodec.encode(s)))
-        assertNull(decoded.otherModePlan, "derived: never persisted")
-        assertEquals(
-            SchedulerStateCodec.syncFingerprint(s),
-            SchedulerStateCodec.syncFingerprint(s.copy(otherModePlan = null)),
-            "derived: never on the wire",
-        )
     }
 }

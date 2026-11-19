@@ -725,7 +725,7 @@ object SchedulerReducer {
                     )
                 }
             is SchedulerIntent.AdoptScheduleRules -> reduceAdoptScheduleRules(state, intent)
-            is SchedulerIntent.SwitchTpMode -> reduceSwitchTpMode(state, intent.nowMillis)
+            is SchedulerIntent.SwitchTpMode -> reduceSwitchTpMode(state, intent.nowMillis, intent.untilMillis)
             is SchedulerIntent.AdvanceSchedule ->
                 commitRecordChanges(state, advanceSchedule(state, intent.nowMillis, noScreenEvidence()))
             is SchedulerIntent.ForceTaskSwitch -> reduceForceTaskSwitch(state, intent.nowMillis, intent.rules)
@@ -3520,6 +3520,7 @@ object SchedulerReducer {
         seeds: List<List<RulePlacement>> = emptyList(),
         generation: Long = 0L,
         instant: Boolean = false,
+        kind: SchedulerRunEntry.Kind = SchedulerRunEntry.Kind.Replan,
     ): SchedulerState {
         // Superseded before it even got the CPU (a burst of edits, a stage queued behind a longer one):
         // stop before the advance rather than at the first checkpoint inside the search.
@@ -3553,10 +3554,9 @@ object SchedulerReducer {
                     score = cost
                 },
             )
-        val planned = withPlan(advanced, filled, cycle, idle, nowMillis)
-        val result = withOtherModePlan(planned, nowMillis, mode, horizon, horizon) { abandoned(generation) }
+        val result = withPlan(advanced, filled, cycle, idle, nowMillis)
         // A run on a HELD input (a negative generation, `SchedulerEngine.planHeld`) is nobody's set of rules yet.
-        if (generation >= 0L) recordRun(SchedulerRunEntry.Kind.Replan, nowMillis, mode, horizon, result, rules, search, score)
+        if (generation >= 0L) recordRun(kind, nowMillis, mode, horizon, result, rules, search, score)
         return result
     }
 
@@ -3609,8 +3609,7 @@ object SchedulerReducer {
                 adoptedPlacements = intent.placements,
                 adoptedCycle = intent.cycle,
             )
-        val adopted = withPlan(advanced, filled, cycle, idle, nowMillis)
-        val result = withOtherModePlan(adopted, nowMillis, mode, horizon, horizon)
+        val result = withPlan(advanced, filled, cycle, idle, nowMillis)
         recordRun(SchedulerRunEntry.Kind.Adopted, nowMillis, mode, horizon, result, rules)
         return result
     }
@@ -3641,95 +3640,36 @@ object SchedulerReducer {
     }
 
     /**
-     * `docs/invariants/scheduler.md` § *The rules are parameterized by the mode*: the plan for the mode class the line
-     * is NOT in, found beside [state]'s own ([SchedulerDomain.otherModePlan]) out to [horizon] — every plan reduction
-     * ends here, so the two classes' plans reach the same front stage by stage. [lineModeUntilMillis] is how far the
-     * line's own plan now reaches.
-     */
-    private fun withOtherModePlan(
-        state: SchedulerState,
-        nowMillis: Long,
-        mode: Int,
-        horizon: Long,
-        lineModeUntilMillis: Long,
-        abandoned: () -> Boolean = { false },
-    ): SchedulerState {
-        val plan =
-            SchedulerDomain.otherModePlan(
-                state,
-                nowMillis,
-                liveRest = liveRestGap(),
-                noScreenEvidence = noScreenEvidence(),
-                frozenBreaks = frozenScreenBreaks(),
-                tpMode = mode,
-                horizonMillis = horizon,
-                lineModeUntilMillis = lineModeUntilMillis,
-                abandoned = abandoned,
-            )
-        return if (plan == state.otherModePlan) state else state.copy(otherModePlan = plan)
-    }
-
-    /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* ([SchedulerIntent.SwitchTpMode]): the line has moved into
-     * the other mode CLASS, so the plan found for it ([SchedulerState.otherModePlan]) is **laid from the line**, and the
-     * plan the line leaves becomes the other class's — a flip and a flip back return to the schedule already published
-     * (§ *Progressive Calculation*: what is definitive stays so, for every mode).
+     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, § *Progressive Calculation* ([SchedulerIntent.SwitchTpMode],
+     * user rule 2026-11-18: *"The schedule must take all the infinite branches (e.g.: if mode 1 at [t0, t1] then ... else
+     * ...)"*): the line has moved into the other mode CLASS, so **the rules' answer for every path of modes the plan was
+     * not made for is laid from the line: the instant schedule's policy** (`InstantSchedule`, the score's own policy
+     * rolled by parts, nothing searched) under the mode the line is now in, out to where the plan already reached.
      *
-     * It is laid exactly as a peer's rules are ([SchedulerDomain.fillSchedule]'s `adoptedPlacements`): through this
-     * timeline's own environment, where a dynamic period the plan could not know about suspends a run, and only when
-     * that is a legal continuation here. Where it is not — a hard constraint the path to this instant made (a period
-     * retracting at the line that did not at the plan's own instant) — the hard constraint wins: the fill plans from the
-     * line with those runs as a seed, and the History row carries the search it made. With no plan found for these
-     * rules (a restart, a pull, a rule change not planned yet) it is the re-plan it always was.
+     * A set of rules is *"definitive up to x when every next script of the same run gives the same resulting line for
+     * the chip's positions before x, whatever the modes"*: the modes switch at any instant, so the answer for every one
+     * of those infinitely many paths cannot be a list of plans — it is a POLICY, a function of the line as it was
+     * served up to the switch and of the mode at it. The searched plan answers the path it was made for; the policy
+     * answers every other, the same on every device (no wall time, no search), legal by construction (it obeys the
+     * constraints at each instant it decides). Until 2026-11-18 the plan for the other class was found beside every plan
+     * (`otherModePlan`, for a path in ONE mode class from the line on, at ~twice a plan's cost) and laid here, a search
+     * from the line answering where it was no legal continuation — the time-dependent answer the definitive clause
+     * forbids.
      */
-    private fun reduceSwitchTpMode(state: SchedulerState, nowMillis: Long): SchedulerState {
-        val advanced = commitRecordChanges(state, advanceSchedule(state, nowMillis, noScreenEvidence()))
-        if (!advanced.automaticSchedule) return advanced
-        val mode = tpMode()
-        val plan =
-            SchedulerDomain.otherModePlanFor(advanced, mode, nowMillis)
-                ?: return reduceRefreshSchedule(
-                    state,
-                    nowMillis,
-                    horizonCapMillis = nowMillis + SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS,
-                )
-        val leaving =
-            org.example.project.scheduler.model.OtherModePlan(
-                covered = !plan.covered,
-                placements = SchedulerDomain.placementsAhead(advanced.panels, nowMillis),
-                untilMillis = plan.lineModeUntilMillis,
-                lineModeUntilMillis = plan.untilMillis,
-                rulesKey = plan.rulesKey,
-            )
-        var rules = SchedulerRunRules.EMPTY
-        var cycle: ScheduleCycle? = null
-        var idle: List<TaskTimeRange> = emptyList()
-        var search: SearchReport? = null
-        var score: Double? = null
-        val filled =
-            SchedulerDomain.fillSchedule(
-                advanced,
-                nowMillis,
-                liveRest = liveRestGap(),
-                noScreenEvidence = noScreenEvidence(),
-                frozenBreaks = frozenScreenBreaks(),
-                tpMode = mode,
-                horizonMillis = plan.untilMillis,
-                rulesSink = { rules = it },
-                cycleSink = { cycle = it },
-                idleSink = { idle = it },
-                adoptedPlacements = plan.placements,
-                // Laid runs report no score; a score is the fill having planned for itself instead.
-                searchSink = { report, cost ->
-                    if (cost != null) {
-                        search = report
-                        score = cost
-                    }
-                },
-            )
-        val result = advanced.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle, otherModePlan = leaving)
-        recordRun(SchedulerRunEntry.Kind.ModeSwitch, nowMillis, mode, plan.untilMillis, result, rules, search, score)
-        return result
+    private fun reduceSwitchTpMode(state: SchedulerState, nowMillis: Long, untilMillis: Long? = null): SchedulerState {
+        return reduceRefreshSchedule(
+            state,
+            nowMillis,
+            // As far as the plan's own runs reach (the engine's extension front), never the chain of panels from the
+            // line, which the first stretch nobody may run in ends.
+            horizonCapMillis =
+                maxOf(
+                    untilMillis ?: state.panels.asSequence().filter { SchedulerDomain.isPlanRun(it) }.maxOfOrNull { it.endEpochMillis } ?: nowMillis,
+                    nowMillis + SchedulerDomain.FIRST_DEFINITIVE_MILLIS,
+                ),
+            instant = true,
+            kind = SchedulerRunEntry.Kind.ModeSwitch,
+        )
     }
 
     /**
@@ -3969,8 +3909,7 @@ object SchedulerReducer {
         val extended =
             if (filled == advanced.panels && cycle == advanced.scheduleCycle && idle == advanced.plannedIdle) advanced
             else advanced.copy(panels = filled, scheduleCycle = cycle, plannedIdle = idle)
-        val result =
-            withOtherModePlan(extended, nowMillis, mode, horizon, maxOf(horizon, materializedUntil)) { abandoned(generation) }
+        val result = extended
         if (generation >= 0L) recordRun(SchedulerRunEntry.Kind.Extension, nowMillis, mode, horizon, result, rules, search, score)
         return result
     }
