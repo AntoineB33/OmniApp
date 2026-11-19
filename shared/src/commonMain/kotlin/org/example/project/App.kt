@@ -1027,6 +1027,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // told here once made, at every pass (they close over the state of that pass).
         val menuActionContext =
             remember { mutableStateOf<Pair<AddedActionHandlers, (SearchDomain.Result) -> Unit>?>(null) }
+        // The builder of the Search windows drawn inside something ([embeddedSearchOf]), told here once made, as the
+        // context above is: the left-side menu is one of them (anomaly 2026-11-19).
+        val menuSearch =
+            remember { mutableStateOf<(@Composable (org.example.project.ui.EmbeddedSearchRequest, Modifier) -> Unit)?>(null) }
         fun menuButtonShown(button: CustomMenuButton): Boolean =
             if (button.folder) true
             else if (button.action != null) SearchDomain.AddedAction.entries.any { it.name == button.action }
@@ -4453,6 +4457,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     org.example.project.ui.LocalArrowRoot provides org.example.project.ui.LATERAL_MENU_ID,
                 ) {
                 LateralMenu(
+                    // Read inside the menu's scope: a new builder recomposes the menu alone.
+                    search = { request, searchModifier -> menuSearch.value?.invoke(request, searchModifier) },
                     config = menuSearchConfig,
                     onConfigChange = { setSearchConfig(org.example.project.ui.LATERAL_MENU_ID, it, follow = false) },
                     page = page,
@@ -5728,9 +5734,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 canDrop = request.canDrop,
                                 picker = request.picker,
                                 barOutside = request.barOutside,
+                                menuList = request.menuList,
+                                relevantSettings = request.relevantSettings,
                                 modifier = embeddedModifier,
                             )
                         }
+                    // Anomaly 2026-11-19: the left-side menu is built as every Search window inside another is — the account's
+                    // state, the openers, the actions' handlers, its gestures committed — not over nothing.
+                    val menuEmbeddedSearch = embeddedSearchOf(null)
+                    // Told at every pass, as [menuActionContext] is: it closes over that pass. Read in the menu's own scope, never App's.
+                    androidx.compose.runtime.SideEffect { menuSearch.value = menuEmbeddedSearch }
                     // Anomaly 2026-11-15 (*"it doesn't open a window, even though it should use the same code as the first list
                     // of parents field … find code duplicates like this in the whole app"*): **what is drawn inside the
                     // Search window [ownerId] is given ONE set of locals**, here — the calendar element, a field's Search

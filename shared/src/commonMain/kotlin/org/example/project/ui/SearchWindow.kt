@@ -657,9 +657,6 @@ fun SearchWindow(
         if (treeList != null) {
             // The tree draws what it finds itself ([SearchTreeList]): no row of a list to select.
             emptyList()
-        } else if (menuList != null) {
-            // The left-side menu's items, as its bar keeps them ([MenuSearchRows]): rows of this list like any other.
-            remember(menuList.rows) { menuList.rows.map { SearchDomain.ItemResult(SearchDomain.Kind.Option, it.key, it.title, "") } }
         } else if (options?.integers != null) {
             // User rule 2026-11-13: a list of integers, with no end ([SearchDomain.integerResults]).
             val integers = options.integers
@@ -716,9 +713,12 @@ fun SearchWindow(
     // selected rows, and the order they are dragged into is kept — the menu's by the menu, any other list's in
     // [SearchDomain.Config.arranged]. Not for a drop-down's options nor the actions section: their order is their own.
     val arranging = config.menuCustomizing && options == null && actionRows == null && picker == null
+    // The left-side menu's items, as its bar keeps them ([MenuSearchRows]), then what its own search finds, as any Search
+    // window's (anomaly 2026-11-19: *"only the background color is the only difference in the logic"*). Its items keep the
+    // order the user gave them; what the search finds keeps the window's.
+    val menuItemRows = remember(menuList?.rows) { menuList?.rows.orEmpty().map { SearchDomain.ItemResult(SearchDomain.Kind.Option, it.key, it.title, "") } }
     val results: List<SearchDomain.Result> =
-        if (arranging && menuList == null) remember(listed, config.arranged) { SearchDomain.arrangedResults(listed, config.arranged) }
-        else listed
+        menuItemRows + if (arranging) remember(listed, config.arranged) { SearchDomain.arrangedResults(listed, config.arranged) } else listed
     val count = results.size
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
     // among the results (the question changed, the thing was deleted) reads as the first row.
@@ -947,7 +947,7 @@ fun SearchWindow(
     // field's window — shows no row selected until the user selects one in it. The row a new question starts at is where
     // its keys start, not a selection: two sections each showing theirs read as two selections in one window. A
     // drop-down's list, the left-side menu and a picker keep theirs: it is the one Enter takes.
-    val unselectedUntilChosen = embedded && !userSelected && options == null && menuList == null && picker == null
+    val unselectedUntilChosen = embedded && !userSelected && options == null && picker == null
     val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null && rowsSelectable && !deselected && !unselectedUntilChosen
     // User rule 2026-11-03: the rows are added from the row menu's "add" alone, on the SELECTED rows — Ctrl+A selects them
     // all. The check boxes, "Select all" and "Add" were the same thing a second way.
@@ -985,10 +985,12 @@ fun SearchWindow(
      * the result rows the user selected (not the row a new question starts at), each once; only "add" keeps one once it is no longer selected. Where a row's "add" adds to
      * this window's list: not the added list itself, the actions section, a drop-down's options or the left-side menu.
      */
-    val selectionShowsAdded = addedList == null && actionRows == null && options == null && menuList == null && picker == null
+    val selectionShowsAdded = addedList == null && actionRows == null && options == null && picker == null
+    // The left-side menu's own items are no elements: never added ([menuItemRows]).
+    val menuItemKeys = remember(menuItemRows) { menuItemRows.mapTo(HashSet<String>()) { SearchDomain.keyOf(it) } }
     val selectedOnly =
         if (!selectionShowsAdded || !userSelected) emptyList()
-        else selectedShown.filter { it !in config.added && !it.startsWith(SearchDomain.Kind.Creation.name + "/") }
+        else selectedShown.filter { it !in config.added && it !in menuItemKeys && !it.startsWith(SearchDomain.Kind.Creation.name + "/") }
     val notAdded = remember(selectedOnly) { selectedOnly.toSet() }
     val shownAddedRows =
         remember(addedRows, selectedOnly, results) {
@@ -1951,9 +1953,7 @@ fun SearchWindow(
                     enter = walk?.enter?.takeIf { it.first == taskId }?.second,
                     state = state,
                     listId = listId,
-                    readOnly = remember(taskId, state.cells, state.lists, state.tasks) {
-                        SchedulerDomain.firstTaskOccurrence(state, taskId) == null
-                    },
+                    readOnly = remember(taskId, state.cells, state.lists, state.tasks) { !SchedulerDomain.hasLiveSubtree(state, taskId) },
                     priorities = priorities,
                     focused = actionsSubtreeFocus == taskId,
                     onFocus = { focused ->
@@ -2469,6 +2469,10 @@ class EmbeddedSearchRequest(
     val openedConfig: SearchDomain.Config? = null,
     /** Its head's ✕. */
     val onDismiss: () -> Unit = {},
+    /** The left-side menu's items, its list's first rows ([MenuSearchRows]); null for any other window. */
+    val menuList: MenuSearchRows? = null,
+    /** What its ▾'s "Relevant here" leads with. */
+    val relevantSettings: List<SearchDomain.Setting> = emptyList(),
 )
 
 /**
@@ -3184,8 +3188,9 @@ private fun SearchTaskRow(
     // when the tree changes, never per keystroke or per tick.
     val occurrence =
         remember(taskId, state.cells, state.lists, state.tasks) { SchedulerDomain.firstTaskOccurrence(state, taskId) }
-    // A task cut from the tree and kept by the timeline: its sub-tree can be looked through, not modified.
-    val readOnlySubtree = occurrence == null
+    // A task cut from the tree and kept by the timeline: its sub-tree can be looked through, not modified. Never the
+    // global root, which has no place of its own and holds the whole tree ([SchedulerDomain.hasLiveSubtree]).
+    val readOnlySubtree = remember(taskId, state.cells, state.lists, state.tasks) { !SchedulerDomain.hasLiveSubtree(state, taskId) }
     val childListId = live?.childListId
     val hasChildren = !picking && childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
     val menu = remember(taskId, result.shownPath, state.cells, state.lists, state.tasks) { actions(result.shownPath.takeIf { it.isNotEmpty() }) }
@@ -3595,12 +3600,16 @@ internal fun TaskIdentityRow(
     val title = task?.title?.takeIf { it.isNotBlank() } ?: item.label
     // The row's own path when it stands for one place of the task (a task cell picker), else the task's first.
     val paths = item.taskPath?.let { listOf(it) } ?: allPaths[taskId].orEmpty().take(1)
-    val result = SearchDomain.TaskResult(taskId, title, paths, inTaskTree = paths.isNotEmpty())
+    // In a tree as every task row says it ([SearchDomain.isInTaskTree]): the global root is, with no path above it.
+    val result = SearchDomain.TaskResult(taskId, title, paths, inTaskTree = SearchDomain.isInTaskTree(taskId, allPaths))
     // One task id may be listed several times, once per path: the row's own state is keyed on both.
     val rowKey = taskId.value + "@" + item.taskPath?.joinToString("/").orEmpty()
     val childListId = task?.childListId
     val hasChildren = childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
     var expanded by remember(rowKey) { mutableStateOf(false) }
+    // Its sub-tree holds the keyboard as every row's does once it is pressed into (anomaly 2026-11-19: it never did, so
+    // its arrows walked nothing).
+    var subtreeFocused by remember(rowKey) { mutableStateOf(false) }
     var menuOpen by remember(rowKey) { mutableStateOf(false) }
     val pick by rememberUpdatedState(item.onClick)
     // BOUNDED in width, whatever the parent offers. A tree cell's edit menus sit in a tree that scrolls sideways, so
@@ -3679,8 +3688,8 @@ internal fun TaskIdentityRow(
                 // One step in from the row (anomaly 2026-11-19).
                 underRow = true,
                 priorities = emptyMap(),
-                focused = false,
-                onFocus = {},
+                focused = subtreeFocused,
+                onFocus = { subtreeFocused = it },
                 onIntent = onIntent,
                 onSetWeightWindow = {},
                 onSetRelativeWindow = {},

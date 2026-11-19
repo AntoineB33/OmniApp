@@ -116,7 +116,13 @@ means.
     a row they go into a folder with it, between two before the lower, at the depth the line shows. The same drag
     arranges **any** Search window's list, which keeps the order in `Config.arranged` (`SearchDomain.arrangedResults`,
     `arrangedAfterDrop`, `ArrangedOrderTest`) while the setting is on; not a drop-down's options nor the actions
-    section. Its background is the menu's (`CalColors.menuBackground`), not the windows'. Its
+    section. Its background is the menu's (`CalColors.menuBackground`), not the windows'. **It is built by the app's one
+    builder of a Search window drawn inside something** (anomaly 2026-11-19: *"only the background color is the only
+    difference in the logic"*; `App.embeddedSearchOf`, `LateralMenu`'s `search`, `EmbeddedSearchRequest.menuList`,
+    `LateralMenuIsASearchWindowTest`): the account's state, the rows' openers, the actions' handlers, its gestures
+    committed — it had been drawn over an empty account with openers and handlers that did nothing. **Its list is its
+    items, then what its own search finds** (a type checked in its ▾ lists that type's elements under the items, opened,
+    selected, expanded and added as in any window); its items are no elements and are never added. Its
     configuration is kept by `App` as any Search window's (`searchConfigs[LATERAL_MENU_ID]`, its placement row, its
     History Units), its ▾ windows are named after it (`LateralMenu▾`), and "State in each window" lists it. Which of
     its parts are shown is not kept across a restart.

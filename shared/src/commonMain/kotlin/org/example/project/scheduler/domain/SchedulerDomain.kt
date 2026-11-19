@@ -66,6 +66,16 @@ object SchedulerDomain {
     fun isRootTask(taskId: TaskId?): Boolean = taskId == WellKnownIds.ROOT_TASK
 
     /**
+     * **Whether [taskId]'s sub-tree, opened in a Search window, is the live tree** (edited, its cells selected and opened
+     * as the tree's) rather than looked through: a task with a place in the tree — and the global root, which stands
+     * above every place and so has none of its own ([firstTaskOccurrence] skips its inert cell). Anomaly 2026-11-19 (*"I
+     * clicked on the 'root' button …, expanded the root, but couldn't expand the children, I couldn't select them"*):
+     * the root was taken for a task cut from the tree. The ONE answer every Search sub-tree asks.
+     */
+    fun hasLiveSubtree(state: SchedulerState, taskId: TaskId): Boolean =
+        isRootTask(taskId) || firstTaskOccurrence(state, taskId) != null
+
+    /**
      * The id shape [SchedulerState.allocateTaskId] mints — the only one a clipboard payload may name
      * (ADR 0012), so a pasted id can never land on the tree's own root task or on an id the counter
      * will never walk past.

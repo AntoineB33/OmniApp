@@ -1873,8 +1873,10 @@ object SchedulerReducer {
         if (reduced === projected) return state
         val before = state.captureTree()
         if (readOnly) {
-            // Looked through, never modified: whatever the gesture did to the tree is dropped.
-            if (reduced.captureTree() != before) return state
+            // Looked through, never modified: whatever the gesture did to the tree is dropped. Held against the PROJECTION,
+            // not the live tree: a projection is a tree of its own (the root's list has its link to the root cell cut,
+            // [projectSearchSubtree]), and against the live one every gesture there read as a change (anomaly 2026-11-19).
+            if (reduced.captureTree() != projected.captureTree()) return state
             val looked = state.withSearchViewStateFrom(reduced)
             return withViewSelectionUnit(looked, HistoryWindow.Search, state.searchSelection, looked.searchSelection)
         }

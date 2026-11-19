@@ -1755,6 +1755,13 @@ fun LateralMenu(
      */
     config: org.example.project.scheduler.domain.SearchDomain.Config? = null,
     onConfigChange: (org.example.project.scheduler.domain.SearchDomain.Config) -> Unit = {},
+    /**
+     * Anomaly 2026-11-19 (*"The left-side menu doesn't seem like a normal search window, even though I asked that only the
+     * background color is the only difference in the logic"*): **the app's one builder of a Search window drawn inside
+     * something** (`App.embeddedSearchOf`) — the account's state, the rows' openers, the actions' handlers, its gestures
+     * committed. Null where the app gives none (a test): a Search window over nothing.
+     */
+    search: (@Composable (EmbeddedSearchRequest, Modifier) -> Unit)? = null,
 ) {
     var backgroundMenu by remember { mutableStateOf(false) }
     val ownActions = listOf(MenuAction("Reset") { onReset() })
@@ -1787,25 +1794,9 @@ fun LateralMenu(
         // Anomaly 2026-11-14: the parts its background menu shows or hides are kept across a restart ([rememberKeptParts]).
         // User rule 2026-11-14: its header is never shown, whatever was kept.
         var splits by rememberKeptParts(LATERAL_MENU_ID, EMBEDDED_SEARCH_SPLITS, fixed = { it.copy(headerRemoved = true) })
-        val nothing = remember { org.example.project.scheduler.state.SchedulerState.empty() }
-        SearchWindow(
-            state = nothing,
-            openers = OPTION_OPENERS,
-            onStartTaskNow = {},
-            onGoToTaskTree = { _, _ -> },
-            onDeepCopyCell = {},
-            actionHandlers = OPTION_HANDLERS,
-            onIntent = {},
-            onDismiss = {},
-            config = config ?: held,
-            onConfigChange = { if (config == null) held = it else onConfigChange(it) },
-            openedConfig = LATERAL_MENU_SEARCH,
-            relevantSettings = LATERAL_MENU_RELEVANT,
-            onOpenConfigurations = {},
-            splits = splits,
-            onSplitsChange = { splits = it },
-            embedded = true,
-            menuList = run {
+        val shownConfig = config ?: held
+        val setConfig: (org.example.project.scheduler.domain.SearchDomain.Config) -> Unit = { if (config == null) held = it else onConfigChange(it) }
+        val menuRows = run {
                 val query = (config ?: held).query
                 val given = items(query)
                 // User rule 2026-11-14: *"The feature page selector must be an element, so it must appear below the
@@ -1832,10 +1823,46 @@ fun LateralMenu(
                     bottomPadding = 12.dp + MINIMIZED_BAR_HEIGHT,
                     scrollToEnd = scrollToEnd,
                 )
-            },
-            // The Search window's section has its own margin: with this much more, its items stand under the page button.
-            modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 2.dp),
-        )
+            }
+        // The Search window's section has its own margin: with this much more, its items stand under the page button.
+        val menuModifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 2.dp)
+        if (search != null) {
+            search(
+                EmbeddedSearchRequest(
+                    config = shownConfig,
+                    onConfigChange = setConfig,
+                    onDrop = null,
+                    splits = splits,
+                    onSplitsChange = { splits = it },
+                    openedConfig = LATERAL_MENU_SEARCH,
+                    menuList = menuRows,
+                    relevantSettings = LATERAL_MENU_RELEVANT,
+                ),
+                menuModifier,
+            )
+        } else {
+            val nothing = remember { org.example.project.scheduler.state.SchedulerState.empty() }
+            SearchWindow(
+                state = nothing,
+                openers = OPTION_OPENERS,
+                onStartTaskNow = {},
+                onGoToTaskTree = { _, _ -> },
+                onDeepCopyCell = {},
+                actionHandlers = OPTION_HANDLERS,
+                onIntent = {},
+                onDismiss = {},
+                config = shownConfig,
+                onConfigChange = setConfig,
+                openedConfig = LATERAL_MENU_SEARCH,
+                relevantSettings = LATERAL_MENU_RELEVANT,
+                onOpenConfigurations = {},
+                splits = splits,
+                onSplitsChange = { splits = it },
+                embedded = true,
+                menuList = menuRows,
+                modifier = menuModifier,
+            )
+        }
     }
 }
 

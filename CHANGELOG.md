@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Root window's sub-tree, the left-side menu built as a Search window, one "in a tree" — 2026-11-19
+
+- **Anomaly: the Root button's window could not open, select or walk the root's children.** The root's sub-tree was
+  read-only (`firstTaskOccurrence` skips the root's inert cell), and a read-only gesture was compared with the live tree
+  instead of its projection, so even a selection was dropped. `SchedulerDomain.hasLiveSubtree`, the projection compare.
+  `RootWindowSubtreeTest`.
+- **Anomaly: the left-side menu was a Search window over an empty account**, with openers, handlers and gestures that
+  did nothing. It is now drawn by `App.embeddedSearchOf` like every embedded Search window, its items first, then what
+  its own search finds; the menu-only exceptions to the selection rules are gone (its items still never added).
+  `LateralMenuIsASearchWindowTest`.
+- **Found in the same audit:** "is this task in a tree" had a second rule in the edit menus' id rows (root: in no tree),
+  now `SearchDomain.isInTaskTree`; those rows' sub-tree never took the keyboard. `InTaskTreeAnswerTest`.
+
 ### md elements, "Add a parent"'s creation row, the Root button, hover pop-ups stuck to their caller — 2026-11-19
 
 - **md elements** (user rule 2026-11-19): `Kind.Md`, `MdElement` (text + the keys it is associated with — no parent, no

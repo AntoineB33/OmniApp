@@ -47,6 +47,23 @@ second copy of it on a kind of element.
   The result list's ↑ and ↓ walk the rows as drawn, children included (`shownRowOrder`, over `elementChildRows`, what
   `ElementChildren` draws: one reading).
 
+### The global root's sub-tree is the live tree
+
+Anomaly 2026-11-19 (*"I clicked on the 'root' button in the left-side menu, expanded the root, but couldn't expand the
+children, I couldn't select them and up/down arrow keys don't work as well"*; `RootWindowSubtreeTest`,
+`InTaskTreeAnswerTest`).
+
+- **`SchedulerDomain.hasLiveSubtree` is the one answer to "is this row's sub-tree the live tree"**: a task with a place
+  in a tree, and the global root, which has none of its own (its cell is the inert root cell `firstTaskOccurrence` skips).
+  The result rows and the actions section's "Children" each asked `firstTaskOccurrence == null` and took the root for a
+  task cut from the tree: read-only.
+- **A read-only sub-tree's gesture is held against its projection, not the live tree** (`reduceInSearchSubtree`): the
+  root's projection cuts its list's link to the root cell, so against the live tree every gesture there, a selection
+  included, read as a change and was dropped.
+- **`SearchDomain.isInTaskTree` is the one answer to "is this task in a tree"** (`TaskResult.inTaskTree`): the root, or a
+  task some tree's path reaches. The edit menus' id rows (`TaskIdentityRow`) said it by their own rule and called the root
+  in no tree. Their sub-tree takes the keyboard once pressed into, as every row's does.
+
 ### An md element is a markdown text associated with elements
 
 User rule 2026-11-19: *"Add the md element type. In the action section for an element (like a task element), the user can

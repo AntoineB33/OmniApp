@@ -3424,6 +3424,14 @@ object SearchDomain {
      * because it is a walk of every tree and the window computes it once per change of the trees, not once per keystroke
      * in the search bar.
      */
+    /**
+     * **Whether [taskId] is in a task tree**, as every task row says it ([TaskResult.inTaskTree]): the global root, which
+     * holds them all and has no path above it, or a task some tree's path reaches ([paths]: a task's paths, by id — what
+     * [shortestPathsInAnyTree] or [allPathsInAnyTree] answers). Anomaly 2026-11-19: the id rows of the edit menus said it
+     * again by their own rule, and called the root "in no tree".
+     */
+    fun isInTaskTree(taskId: TaskId, paths: Map<TaskId, *>): Boolean = SchedulerDomain.isRootTask(taskId) || taskId in paths
+
     fun taskResults(
         state: SchedulerState,
         query: String,
@@ -3439,8 +3447,8 @@ object SearchDomain {
             .filter { (withRoot || !SchedulerDomain.isRootTask(it.id)) && it.title.isNotBlank() }
             .mapNotNull { task -> matchRank(task.title, query)?.let { rank -> rank to task } }
             .map { (rank, task) ->
-                if (SchedulerDomain.isRootTask(task.id)) return@map rank to TaskResult(task.id, task.title, emptyList(), inTaskTree = true)
-                val held = task.id in inTree
+                if (SchedulerDomain.isRootTask(task.id)) return@map rank to TaskResult(task.id, task.title, emptyList(), inTaskTree = isInTaskTree(task.id, inTree))
+                val held = isInTaskTree(task.id, inTree)
                 val paths =
                     if (held) {
                         allPaths[task.id]?.takeIf { it.isNotEmpty() } ?: listOf(inTree.getValue(task.id))
