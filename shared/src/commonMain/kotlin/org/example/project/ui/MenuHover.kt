@@ -47,10 +47,14 @@ class MenuHoverTracker(
     var pinned: Boolean by androidx.compose.runtime.mutableStateOf(false)
         private set
 
+    /** When it was last pinned ([windowLeft]'s late report of the press that pinned it). */
+    private var pinnedAt: kotlin.time.TimeMark? = null
+
     /** Pinned ([pinned]), it and its ancestors. A wait already running for the pointer gone is dropped. */
     fun pin() {
         parent?.pin()
         pinned = true
+        pinnedAt = kotlin.time.TimeSource.Monotonic.markNow()
         pending?.cancel()
         pending = null
     }
@@ -91,6 +95,12 @@ class MenuHoverTracker(
     fun windowLeft(goneTo: ((Set<Any>) -> Boolean)? = null) {
         if (focused === this) focused = null
         if (!pinned) return
+        // Anomaly 2026-11-19 (*"I clicked on the down arrow, and the window appeared and disappeared rapidly ... slower it
+        // worked"*): a quick click on the ▾ pinned the pop-up its hover had just opened, and the press's activation of the
+        // app's window reached AWT only after the pop-up had taken the keyboard — read as the keyboard gone elsewhere. The
+        // pointer still on a part of it, just pinned: that press, not another. (A pop-up pinned before, its ▾ clicked,
+        // still closes: the toggle.)
+        if (held && pinnedAt?.let { it.elapsedNow() < LATE_PRESS_REPORT } == true) return
         val target = walkingTo ?: goneTo?.let { test -> generateSequence(parent) { it.parent }.firstOrNull { test(it.windows) } }
         var at: MenuHoverTracker? = this
         while (at != null && at !== target) {
@@ -161,6 +171,9 @@ class MenuHoverTracker(
          * (anomaly 2026-11-04).
          */
         const val GRACE_MILLIS: Long = 80
+
+        /** How late the platform reports the press that pinned a pop-up, at most, as the keyboard leaving it ([windowLeft]). */
+        val LATE_PRESS_REPORT: kotlin.time.Duration = kotlin.time.Duration.parse("500ms")
 
         /** The hover pop-up whose window holds the keyboard, null while none does. One app, one keyboard. */
         var focused: MenuHoverTracker? = null

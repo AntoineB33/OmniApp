@@ -333,4 +333,33 @@ class MenuHoverTrackerTest {
         assertTrue(positions.back())
         assertEquals(first + listOf(emptyList()), keeper.wanted)
     }
+
+    /**
+     * Anomaly 2026-11-19: *"I clicked on the down arrow, and the window appeared and disappeared rapidly... I then tried again
+     * slower and it worked."* The quick click's press reached the platform as the keyboard leaving the pop-up only after the
+     * click had pinned it: with the pointer still on the arrow, just pinned, that is no press elsewhere. Pinned for longer,
+     * a press on the arrow still closes it (the toggle), and a press away from it always does.
+     */
+    @Test
+    fun the_late_report_of_the_click_that_pinned_it_does_not_close_it() = runTest {
+        var left = 0
+        val tracker = MenuHoverTracker(this) { left++ }
+        val arrow = Any()
+        tracker.enter(arrow)
+        tracker.pin()
+        tracker.windowLeft()
+        assertEquals(0, left, "the pointer on the arrow, just pinned: the click's own late report")
+        assertTrue(tracker.pinned)
+        // The pointer gone from it: a press elsewhere closes it.
+        tracker.exit(arrow)
+        tracker.windowLeft()
+        assertEquals(1, left)
+        // Pinned long before, its arrow pressed again: the toggle closes it.
+        val toggled = MenuHoverTracker(this) { left++ }
+        toggled.enter(arrow)
+        toggled.pin()
+        Thread.sleep(MenuHoverTracker.LATE_PRESS_REPORT.inWholeMilliseconds + 50)
+        toggled.windowLeft()
+        assertEquals(2, left, "pinned long before: the press on its arrow closes it")
+    }
 }

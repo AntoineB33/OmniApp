@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A quick click on ▾ keeps its pop-up — 2026-11-19
+
+- Anomaly: *"I clicked on the down arrow, and the window appeared and disappeared rapidly... slower it worked."* The
+  click pinned the pop-up the hover had just opened; the press's activation of the app's window reached AWT after the
+  pop-up took the keyboard, read as a press elsewhere. Ignored while the pointer is on the pop-up's parts and it was
+  pinned under 500 ms ago (`MenuHoverTracker.LATE_PRESS_REPORT`). `MenuHoverTrackerTest`. Not reproduced live: the
+  pop-up trace that would show it was removed from the code.
+
 ### Sub-tree rows per window, "Button saves open rows", every configuration described, ▾ pop-ups held — 2026-11-19
 
 - Anomaly: with "Menu keeps open rows" off, a window reopened from the Task trees button still showed the task rows

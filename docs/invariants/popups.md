@@ -394,6 +394,11 @@ means.
   - **A hover pop-up vanishes once the pointer has left it and all of its descendants** (`MenuHoverTracker`,
     `LocalMenuHover`: the configurations tree's), the menus opened inside it being its descendants — a category's
     child pop-up and the arrow in a pop-up's bar each a branch of the pop-up they stand in (`parent`).
+  - **The late report of the click that pinned a pop-up does not close it** (anomaly 2026-11-19: a quick click on the ▾
+    pinned the pop-up its hover had just opened, and AWT reported the press's activation of the app's window only after
+    the pop-up had taken the keyboard — "appeared and disappeared rapidly"; `MenuHoverTracker.windowLeft`,
+    `LATE_PRESS_REPORT`): the pointer still on a part of it, pinned under half a second ago, it stays. Pinned before, a
+    press on its ▾ still closes it.
   - **A press in a hover pop-up pins it and its ancestors** (user rule 2026-11-11, `MenuHoverTracker.pin`, read by
     `reportsHover`): the pointer leaving no longer closes them; the keyboard going to a window outside the tree does.
     **User rule 2026-11-14** (*"Clicking, right-clicking or typing pins the currently focused Search windows (clicking or
