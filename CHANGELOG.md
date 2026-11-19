@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Nested rows: one guide-line drawing, one pinned row, one walk — 2026-11-19
+
+Anomalies 2026-11-19: the children of an expanded Search row had no guide-line (its grandchildren had one); ↑ on the first
+child did not reach the row; the actions section pinned "Calendar: Calendar" AND "Calendar" where the tree pins one row.
+
+- **`nestingGuideLines`** is the one drawing of the lines: tree cells, a Search row's sub-tree (now one level deep under
+  its row, `TaskTreeView.baseDepth`), open elements' children, actions under their group and an open action's content,
+  Life plan steps, menu folders (their own `drawBehind` removed).
+- **`pinnedParent` / `pinnedListRow`** replace `pinnedChain`: the tree's direct-parent rule, one row, for the tree, the
+  Search lists and the Life plan. `PinnedChainTest` → `PinnedParentTest`.
+- **↑/↓ cross a Search row and its sub-tree** (`TaskTreeView.onWalkPastEdge`, `SubtreeEnter`; `SearchSubtreeWalkTest`).
+
 ### Every path of modes has an answer: the instant policy, laid at a flip — 2026-11-19
 
 User rule 2026-11-18: *"The schedule must take all the infinite branches (e.g.: if mode 1 at [t0, t1] then ... else

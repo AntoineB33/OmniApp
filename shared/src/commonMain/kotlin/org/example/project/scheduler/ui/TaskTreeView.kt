@@ -213,6 +213,18 @@ internal fun TaskTreeView(
      * the PRD §4 template is a different tree and gets its own.
      */
     hueMemo: TaskHueMemo = TaskHueMemo.account,
+    /**
+     * How many levels this drawing's first rows already hang under (anomaly 2026-11-19): 1 for a Search row's sub-tree,
+     * whose first level hangs under that ROW — so it is indented and draws its guide-line as a child row of the tree
+     * does, the line under the row's arrow. 0 for a tree of its own.
+     */
+    baseDepth: Int = 0,
+    /**
+     * ↑ (or ←) on this drawing's FIRST row, ↓ (or →) on its LAST, without Shift: the row the list holding it walks to next
+     * (-1: up, +1: down), the tree's own walk carried past its edges (anomaly 2026-11-19: ↑ on the first child of a
+     * Search row did not reach that row, while ↑ on a grandchild reached the child). Null: the walk stops there.
+     */
+    onWalkPastEdge: ((step: Int) -> Unit)? = null,
 ) {
     Perf.count("recompose.TaskTreeView")
     // The callbacks this tree hands its rows read the state through HERE, never by capturing it — see the
@@ -405,21 +417,16 @@ internal fun TaskTreeView(
             // What the user sees of this tree starts where the list holding it cuts it ([clipTopWindowY]).
             val top = maxOf(viewport.start, clipTopWindowY?.invoke() ?: viewport.start)
             if (top >= viewport.endInclusive) return@derivedStateOf null
-            val bandBottom = top + rowHeightPx
+            // The one rule ([org.example.project.ui.pinnedParent]) every list of the app reads it by.
             val rows = currentVisibleRows
-            // The row appearing RIGHT BELOW the band: the first whose bottom lies past it, so a row the band
-            // half covers is still that row. Never the first FULLY visible one — when a half-covered parent
-            // row straddles the band, that one is its child, and the copy would name the half-covered row
-            // above it instead of what that row itself hangs under.
-            val first =
-                rows.firstOrNull { row ->
-                    rowBounds[row.path]?.let { it.endInclusive > bandBottom + 0.5f } == true
-                } ?: return@derivedStateOf null
-            if (first.parent == null) return@derivedStateOf null
-            val parentPath = first.path.dropLast(1)
-            val parentTop = rowBounds[parentPath]?.start ?: return@derivedStateOf null
-            if (parentTop >= top - 0.5f) return@derivedStateOf null
-            rows.firstOrNull { it.path == parentPath }
+            org.example.project.ui.pinnedParent(
+                rows, top, rowHeightPx,
+                bandOf = { row -> rowBounds[row.path] },
+                parentOf = { row ->
+                    if (row.parent == null) null
+                    else row.path.dropLast(1).let { parentPath -> rows.firstOrNull { it.path == parentPath } }
+                },
+            )
         }
     }
     if (onPinnedParent != null) {
@@ -639,7 +646,7 @@ internal fun TaskTreeView(
         selectionEnds?.let { (first, last) ->
             val top = rowBounds[first.path] ?: return@let null
             val bottom = rowBounds[last.path] ?: return@let null
-            Offset(inside(first.depth * indentPx - treeHorizontalScroll.value), top.start - treeBoxWindowTop) to
+            Offset(inside((first.depth + baseDepth) * indentPx - treeHorizontalScroll.value), top.start - treeBoxWindowTop) to
                 Offset(inside(treeContentWidthPx.toFloat() - treeHorizontalScroll.value), bottom.endInclusive - treeBoxWindowTop)
         }
     val showHandles = touchSelecting && handleCenters != null && state.editSession == null && !moveDragActive
@@ -850,6 +857,21 @@ internal fun TaskTreeView(
                     onIntent(SchedulerIntent.PasteTree(text))
                     return@onPreviewKeyEvent true
                 }
+                // The walk past this drawing's edges, to the list holding it ([onWalkPastEdge]).
+                if (onWalkPastEdge != null && !event.isShiftPressed && state.selection.selected.size <= 1) {
+                    val step =
+                        when (event.key) {
+                            Key.DirectionUp, Key.DirectionLeft -> -1
+                            Key.DirectionDown, Key.DirectionRight -> 1
+                            else -> 0
+                        }
+                    val main = state.selection.main
+                    val edge = if (step < 0) visibleOrder.firstOrNull() else visibleOrder.lastOrNull()
+                    if (step != 0 && (main == null || main == edge)) {
+                        onWalkPastEdge(step)
+                        return@onPreviewKeyEvent true
+                    }
+                }
                 when (event.key) {
                     Key.DirectionUp, Key.DirectionLeft -> {
                         onIntent(
@@ -954,7 +976,7 @@ internal fun TaskTreeView(
                 // (the §4 template, §7's Search sub-trees) fall back to their own root list here.
                 listId = SchedulerDomain.displayRootListId(state),
                 renderVia = null,
-                depth = 0,
+                depth = baseDepth,
                 visibleOrder = visibleOrder,
                 priorities = priorities,
                 taskColors = taskColors,
@@ -1027,7 +1049,7 @@ internal fun TaskTreeView(
                         state = state,
                         listId = pinnedListId,
                         renderVia = pinned.occurrence.renderVia,
-                        depth = pinned.depth,
+                        depth = pinned.depth + baseDepth,
                         visibleOrder = visibleOrder,
                         priorities = priorities,
                         taskColors = taskColors,

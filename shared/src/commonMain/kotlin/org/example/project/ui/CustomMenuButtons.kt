@@ -1070,19 +1070,13 @@ private fun MenuItemRow(
     onToggleFolder: (id: String) -> Unit,
 ) {
     val levels = minOf(depth, MAX_MENU_LEVELS)
-    val treeColor = CalColors.grid
     androidx.compose.foundation.layout.Row(
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .drawBehind {
-                // One line per level, from the gap above the row to its bottom: with the next row's, a line that runs as
-                // long as the folder does, and stops at its last item.
-                for (level in 0 until levels) {
-                    val x = (level + 0.5f) * MENU_LEVEL_STEP.toPx()
-                    drawLine(treeColor, Offset(x, -MENU_ROW_GAP.toPx()), Offset(x, size.height), strokeWidth = 1f)
-                }
-            }
+            // One line per level, from the gap above the row to its bottom: with the next row's, a line that runs as long
+            // as the folder does, and stops at its last item — under the folder's arrow, by the app's one drawing of them.
+            .nestingGuideLines(levels, MENU_LEVEL_STEP, MENU_ARROW_CENTER, above = MENU_ROW_GAP)
             .padding(start = MENU_LEVEL_STEP * levels),
     ) {
         // While the menu is arranged the list takes every press first: the arrow too.
@@ -1143,6 +1137,9 @@ internal val MENU_ROW_GAP = 10.dp
 
 /** How far each level of a folder is indented, and where its line stands. */
 internal val MENU_LEVEL_STEP = 9.dp
+
+/** Where a folder's arrow ([SectionArrow], 20 dp) has its middle, from the folder row's indent: its items' line. */
+private val MENU_ARROW_CENTER = 10.dp
 
 /** How many levels a row is indented for: there is no limit to the depth, and past this the levels above are out of view. */
 internal const val MAX_MENU_LEVELS: Int = 6

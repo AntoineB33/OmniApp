@@ -586,6 +586,9 @@ fun SearchWindow(
     childSelection.editor = rememberOutsidePressEditor(active = childSelection.selected.isNotEmpty(), rowSelection = true) { childSelection.clear() }
     val elementCategories = remember(state.elementLinks, state.categories) { ElementTree.categoryTitles(state) }
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
+    // Anomaly 2026-11-19: down on an expanded task row, up on the row under one, walks INTO its sub-tree - the tree's
+    // walk, which goes from a cell to its first child and from a row to the last row drawn above it ([SubtreeEnter]).
+    var subtreeEnter by remember { mutableStateOf<Pair<TaskId, SubtreeEnter>?>(null) }
     // Anomaly 2026-10-07 ("I click on a task cell in the sub-tree, then on the root task cell: both are selected"):
     // **ONE surface of the window shows a selection of cells at a time.** A sub-tree's selection is the state's
     // (`searchSelection`, shared by every sub-tree), a row's is the window's own; a press on either left the other
@@ -598,7 +601,7 @@ fun SearchWindow(
     var selectionSurface by surfaceState
     // The "Children" action's sub-tree holding the keyboard (user rule 2026-11-12), apart from the rows' own.
     var actionsSubtreeFocus by remember { mutableStateOf<TaskId?>(null) }
-    // The pinned parent row of the result list ([pinnedChain]): the list's top in the window, which an expanded
+    // The pinned parent row of the result list ([pinnedListRow]): the list's top in the window, which an expanded
     // row's sub-tree reckons its own pinned row from, and the row whose sub-tree is pinning a deeper parent there.
     var resultListTop by remember { mutableStateOf<Float?>(null) }
     var resultNestedPin by remember { mutableStateOf<TaskId?>(null) }
@@ -873,6 +876,10 @@ fun SearchWindow(
         val row = results.firstOrNull { it is SearchDomain.TaskResult && it.taskId == id } as SearchDomain.TaskResult?
         if (row == null) editingTaskId = null else endEdit(row, cancel = false, refocusList = refocusList)
     }
+    /** Whether [row] is a task row showing its sub-tree under it ([SearchTaskRow]'s own test). */
+    fun subtreeShown(row: SearchDomain.TaskResult): Boolean =
+        picker == null && row.taskId in expandedTasks &&
+            state.tasks[row.taskId]?.childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
     /** A press on a row: it becomes the selection, and the list — not the bar — holds the keyboard. */
     fun selectRow(index: Int) {
         if (editingTaskId != null && (results.getOrNull(index) as? SearchDomain.TaskResult)?.taskId != editingTaskId) {
@@ -1365,17 +1372,15 @@ fun SearchWindow(
                     val rowInSelection = { index: Int ->
                         index != selected && !otherSurfaceShows && resultKeys.getOrNull(index)?.let { it in selectedShown } == true
                     }
-                    // The pinned parent row ([pinnedChain]): which item, and the sub-tree that pins a deeper one.
                     val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
-                    // Anomaly 2026-11-16 (*"'Task: chalazion' expanded … When I scroll down on the children, 'Task:
-                    // chalazion' gets hidden at the top. The correct logic however is used with the child 'Parents'"*):
-                    // the pinned rows are a CHAIN ([pinnedChain]) — every open row above the one at the top (an action
-                    // group over its actions), then the open row whose own content is being scrolled through — one rule
-                    // for the task rows and the actions section's, stacked one row height each.
+                    // The pinned parent row ([pinnedListRow], the task tree's one rule): which item, and the sub-tree that
+                    // pins a deeper one. ONE row (anomaly 2026-11-19: "Calendar: Calendar" and "Calendar" were stacked —
+                    // a chain of every open row above, a second rule beside the tree's): the direct parent of what shows
+                    // right below the band — an action's group over its actions, an open row over its own content.
                     val pinned by remember(listState, bandPx, results, actionRows, expandedElements) {
                         derivedStateOf {
                             val info = listState.layoutInfo
-                            pinnedChain(
+                            listOfNotNull(pinnedListRow(
                                 info.visibleItemsInfo.map { PinItem(it.index, it.offset, it.size) }, info.viewportStartOffset, bandPx,
                                 depthOf = { i -> actionRows?.byKey?.get((results.getOrNull(i) as? SearchDomain.ItemResult)?.id)?.depth },
                                 pinnable = { i ->
@@ -1388,7 +1393,7 @@ fun SearchWindow(
                                         else -> false
                                     }
                                 },
-                            )
+                            ))
                         }
                     }
                     val pinScope = rememberCoroutineScope()
@@ -1457,6 +1462,25 @@ fun SearchWindow(
                                 if (on) resultNestedPin = result.taskId
                                 else if (resultNestedPin == result.taskId) resultNestedPin = null
                             },
+                            subtreeEnter = subtreeEnter?.takeIf { it.first == result.taskId }?.second,
+                            // Up on its first cell is this row; down on its last, the row drawn under it (anomaly 2026-11-19).
+                            onSubtreeWalkOut = { step ->
+                                if (step < 0) {
+                                    selectRow(index)
+                                } else {
+                                    val order = shownRowOrder(state, results, expandedElements, windows, schedulerRuns, claudeLogs)
+                                    val at = order.indexOfFirst { it.child == null && it.index == index }
+                                    val target = order.getOrNull(at + 1)
+                                    when {
+                                        target == null -> Unit
+                                        target.child != null -> {
+                                            childSelection.selectOnly(target.child.rowKey, target.child.key)
+                                            runCatching { listFocus.requestFocus() }
+                                        }
+                                        else -> selectRow(target.index)
+                                    }
+                                }
+                            },
                         )
                         }
                     }
@@ -1521,6 +1545,20 @@ fun SearchWindow(
                                         // Nothing shown selected yet ([unselectedUntilChosen]): the first ↓ is the first row.
                                         val next = if (unselectedUntilChosen && event.key == Key.DirectionDown) 0 else at + if (event.key == Key.DirectionDown) 1 else -1
                                         val target = order.getOrNull(next)
+                                        // The tree's walk through an expanded task row's sub-tree (anomaly 2026-11-19):
+                                        // down goes from the row to its first cell, up from the row under it to its last.
+                                        val into =
+                                            if (event.key == Key.DirectionDown) order.getOrNull(at)?.takeIf { it.child == null && !unselectedUntilChosen }
+                                            else target?.takeIf { it.child == null }
+                                        val intoTask = (into?.let { results.getOrNull(it.index) } as? SearchDomain.TaskResult)
+                                            ?.takeIf { subtreeShown(it) }
+                                        if (intoTask != null) {
+                                            subtreeEnter = intoTask.taskId to SubtreeEnter(
+                                                step = if (event.key == Key.DirectionDown) 1 else -1,
+                                                tick = (subtreeEnter?.second?.tick ?: 0) + 1,
+                                            )
+                                            return@onPreviewKeyEvent true
+                                        }
                                         when {
                                             next < 0 -> runCatching { fieldFocus.requestFocus() }
                                             target == null -> Unit
@@ -1635,7 +1673,12 @@ fun SearchWindow(
                                             depth = actionRow.depth,
                                         )
                                         if (actionRow.open && actionRow.action != null) {
-                                            Box(Modifier.fillMaxWidth().padding(start = ACTION_ROW_INDENT * (actionRow.depth + 1))) {
+                                            // Hanging under the open action: its line, and its groups' (anomaly 2026-11-19).
+                                            Box(
+                                                Modifier.fillMaxWidth()
+                                                    .nestingGuideLines(actionRow.depth + 1, ACTION_ROW_INDENT, itemArrowCenter(result.kind, resultKindWidth))
+                                                    .padding(start = ACTION_ROW_INDENT * (actionRow.depth + 1)),
+                                            ) {
                                                 actionRows.content(actionRow)
                                             }
                                         }
@@ -2186,6 +2229,13 @@ internal val POPUP_CONTENT_PADDING = 8.dp
 
 /** How far each level of the actions section's rows stands in: an action under its group, a group inside another. */
 internal val ACTION_ROW_INDENT = 14.dp
+
+/**
+ * Where an [ItemResultRow]'s arrow has its middle, from the row's indent: the row's padding, its kind section and the gap
+ * after it when it shows one, half the arrow. The guide-line of the rows hanging from it ([nestingGuideLines]).
+ */
+internal fun itemArrowCenter(kind: SearchDomain.Kind, kindWidth: Dp): Dp =
+    RESULT_ROW_PADDING + (if (!SearchDomain.isPickedRow(kind) && kind != SearchDomain.Kind.Action) kindWidth + RESULT_ROW_GAP else 0.dp) + 10.dp
 
 /** What a drop-down's Search window opens on nothing: it opens no element ([OptionSearchMenu]). */
 internal val OPTION_OPENERS =
@@ -2948,7 +2998,13 @@ internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false):
         // Said to accessibility, and to the tests that read which rows show as selected.
         .semantics { this.selected = selected }
         .then(selectionLook(selected, inSelection))
-        .padding(horizontal = 6.dp)
+        .padding(horizontal = RESULT_ROW_PADDING)
+
+/** A result row's own padding, at each side of what it shows. */
+internal val RESULT_ROW_PADDING: Dp = 6.dp
+
+/** The gap between the sections of an element's row ([ItemResultRow], [ElementChildren]). */
+internal val RESULT_ROW_GAP: Dp = 10.dp
 
 /**
  * A selected row's look, whatever draws the row (a result's, a menu item's): the TASK TREE's selection, not a look of its
@@ -3015,7 +3071,7 @@ private fun SearchTaskRow(
     onSubtreeFocus: (Boolean) -> Unit,
     /** Whether this row's sub-tree is the surface showing the cells' selection (the window's `selectionSurface`). */
     subtreeShowsSelection: Boolean = true,
-    /** The list's PINNED copy of this row ([pinnedChain]): the head alone, its sub-tree is under the real one. */
+    /** The list's PINNED copy of this row ([pinnedListRow]): the head alone, its sub-tree is under the real one. */
     headOnly: Boolean = false,
     /** The list's kind section's width ([rememberKindSectionWidth]). */
     kindWidth: Dp = KIND_SECTION_WIDTH,
@@ -3025,6 +3081,10 @@ private fun SearchTaskRow(
     clipTop: (() -> Float?)? = null,
     onNestedPin: ((Boolean) -> Unit)? = null,
     scrollListBy: (suspend (Float) -> Unit)? = null,
+    /** The list's walk going into the sub-tree ([SubtreeEnter]), null while it does not. */
+    subtreeEnter: SubtreeEnter? = null,
+    /** The sub-tree's walk going out of it, up (-1) to this row or down (+1) to the row under it. */
+    onSubtreeWalkOut: ((step: Int) -> Unit)? = null,
 ) {
     val taskId = result.taskId
     val live = state.tasks[taskId]
@@ -3169,65 +3229,14 @@ private fun SearchTaskRow(
                 scrollListBy = scrollListBy,
                 showSelection = subtreeShowsSelection,
                 onTakeSelection = { onSubtreeFocus(true) },
+                underRowLeading = kindWidth,
+                onWalkPastEdge = onSubtreeWalkOut,
+                enter = subtreeEnter,
             )
         }
     }
 }
 
-/**
- * User rule 2026-10-07: **the task tree's pinned parent row, in a list of the Search window** — *"when a task element
- * is expanded, the logic of the top task cell showing up in the task tree window must also be applied there"*. The
- * tree's rule ([TaskTreeView]'s `pinnedRow`), read off the list's own layout: over a band of one row height at the
- * top, the item whose content appears RIGHT BELOW the band (the first whose bottom lies past it) is pinned when its
- * own row has started to leave the top. Only an expanded row is taller than the band, so only one can be the answer;
- * the caller draws its head there — unless its sub-tree is pinning a deeper parent in that same band, which is the
- * direct parent of what shows and so the one the rule names.
- */
-internal class PinItem(val index: Int, val offset: Int, val size: Int)
-
-/**
- * The rows pinned over the top of a list, outermost first, each one [band] tall from [top]: **every open row above the
- * row at the top** whose own row is out of full view — the rows of a list nested by [depthOf] (an action group over its
- * actions, a group inside one; null: a row of no nesting) — **then that row itself** when it is [pinnable] (open, with
- * its content under it in the same item) and its head is hidden while its content is not over. Anomaly 2026-11-16: the
- * second alone was pinned, so an open group scrolled away while an open action ("Parents") stayed. Reckoned again with
- * the room the pins take until it holds, at most a few times.
- */
-internal fun pinnedChain(
-    items: List<PinItem>,
-    top: Int,
-    band: Float,
-    depthOf: (Int) -> Int?,
-    pinnable: (Int) -> Boolean,
-): List<Int> {
-    var chain = emptyList<Int>()
-    repeat(4) {
-        val edge = top + chain.size * band
-        val below = items.firstOrNull { it.offset + it.size > edge + band + 0.5f } ?: return chain
-        val next = ArrayList<Int>()
-        depthOf(below.index)?.let { start ->
-            val ancestors = ArrayList<Int>()
-            var depth = start
-            var i = below.index - 1
-            while (i >= 0 && depth > 0) {
-                val d = depthOf(i)
-                if (d != null && d < depth) {
-                    ancestors += i
-                    depth = d
-                }
-                i--
-            }
-            for (a in ancestors.asReversed()) {
-                val at = items.firstOrNull { it.index == a }
-                if (at == null || at.offset < top + next.size * band) next += a
-            }
-        }
-        if (below.offset < top + next.size * band && pinnable(below.index)) next += below.index
-        if (next == chain) return chain
-        chain = next
-    }
-    return chain
-}
 
 /**
  * An expanded task row's sub-tree: the TASK TREE's own view ([TaskTreeView]) over the live tree re-rooted at
@@ -3266,6 +3275,16 @@ private fun SearchSubtree(
     showSelection: Boolean = true,
     /** A gesture went to this sub-tree: it is the surface that shows the selection from now on. */
     onTakeSelection: () -> Unit = {},
+    /**
+     * The width of what stands before the arrow of the ROW this sub-tree hangs under (its kind section; 0 for none), or
+     * null where it hangs under no row of its own. Given, its first level is drawn one level deep, as a tree cell's
+     * children are: indented under that row's arrow, the line under it (anomaly 2026-11-19, [TaskTreeView]'s `baseDepth`).
+     */
+    underRowLeading: Dp? = null,
+    /** ↑ on its first row, ↓ on its last: the list's walk goes on from the row it hangs under ([TaskTreeView]). */
+    onWalkPastEdge: ((step: Int) -> Unit)? = null,
+    /** The list's walk coming in: its first cell selected (from above) or its last (from below), and the keyboard. */
+    enter: SubtreeEnter? = null,
 ) {
     val projected =
         remember(
@@ -3276,8 +3295,22 @@ private fun SearchSubtree(
                 if (showSelection) shown else shown.copy(selection = org.example.project.scheduler.state.SchedulerSelection())
             }
         }
+    val treeFocus = remember { FocusRequester() }
+    if (enter != null) {
+        LaunchedEffect(enter) {
+            val order = SchedulerDomain.selectableVisibleOrder(projected)
+            val target = if (enter.step > 0) order.firstOrNull() else order.lastOrNull()
+            if (target != null) {
+                onTakeSelection()
+                onIntent(SchedulerIntent.InSearchSubtree(SchedulerIntent.RevealCell(target), listId, readOnly))
+            }
+            withFrameNanos { }
+            runCatching { treeFocus.requestFocus() }
+        }
+    }
     TaskTreeView(
         state = projected,
+        focusRequester = treeFocus,
         priorities = priorities,
         onIntent = { intent ->
             when (intent) {
@@ -3300,7 +3333,9 @@ private fun SearchSubtree(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = SUBTREE_MAX_HEIGHT)
-            .padding(start = 24.dp)
+            // Under a row, its first level's line stands under that row's arrow: the row's leading section, then the
+            // tree's own offset of a line in its gutter ([GUIDE_LINE_OFFSET_DP], the arrow's middle in a cell).
+            .padding(start = underRowLeading ?: 24.dp)
             .onFocusChanged { onFocus(it.hasFocus) },
         onSetWeightWindow = onSetWeightWindow,
         onSetRelativeWindow = onSetRelativeWindow,
@@ -3318,8 +3353,13 @@ private fun SearchSubtree(
         // the tree — both read off the LIVE state, not off the sub-tree this row re-roots it at.
         colorSource = state,
         namingSource = state,
+        baseDepth = if (underRowLeading != null) 1 else 0,
+        onWalkPastEdge = onWalkPastEdge,
     )
 }
+
+/** The list's walk going into a row's sub-tree: from above ([step] 1, its first cell) or below (-1, its last); [tick] repeats it. */
+internal data class SubtreeEnter(val step: Int, val tick: Int)
 
 /** The most an expanded row's sub-tree takes of the list before it scrolls inside itself. */
 private val SUBTREE_MAX_HEIGHT: Dp = 320.dp
@@ -3513,6 +3553,8 @@ internal fun TaskIdentityRow(
                 listId = childListId,
                 // Looked through, never modified: the row only names the task.
                 readOnly = true,
+                // Under the row's arrow, which nothing stands before (anomaly 2026-11-19).
+                underRowLeading = 0.dp,
                 priorities = emptyMap(),
                 focused = false,
                 onFocus = {},
@@ -3602,7 +3644,9 @@ private fun ItemResultRow(
     Box(
         // User rule 2026-11-15: a row under an open one has its RECTANGLE moved right, not only what is in it —
         // the indent stands outside the row's background and selection outline, as a task cell's does.
-        modifier = Modifier.padding(start = ACTION_ROW_INDENT * depth).then(resultRowModifier(selected, inSelection))
+        // Anomaly 2026-11-19: the guide-lines of the levels it hangs from, as a tree cell has ([nestingGuideLines]).
+        modifier = Modifier.nestingGuideLines(depth, ACTION_ROW_INDENT, itemArrowCenter(item.kind, kindWidth))
+            .padding(start = ACTION_ROW_INDENT * depth).then(resultRowModifier(selected, inSelection))
             .then(if (enabled) Modifier else Modifier.alpha(0.38f))
             .then(
                 if (onPrimaryRelease == null && onSecondaryRelease == null) Modifier
@@ -3622,7 +3666,7 @@ private fun ItemResultRow(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(RESULT_ROW_GAP),
         ) {
             // A drop-down lists options alone, the actions section actions: no column saying so on each row.
             if (!SearchDomain.isPickedRow(item.kind) && item.kind != SearchDomain.Kind.Action) KindSection(item.kind, kindWidth)
@@ -3704,7 +3748,10 @@ private fun ElementChildren(
     selection: ElementChildSelection,
 ) {
     val children = elementChildRows(state, parent, surface, path, windows, schedulerRuns, claudeLogs)
-    val indent = Modifier.padding(start = ELEMENT_CHILD_INDENT * depth)
+    // Anomaly 2026-11-19: the guide-lines under the arrows of the rows these hang from, as under a tree cell's
+    // ([nestingGuideLines]); a row's own indent after them, so they span the row.
+    val indent = Modifier.nestingGuideLines(depth, ELEMENT_CHILD_INDENT, RESULT_ROW_PADDING + kindWidth + RESULT_ROW_GAP + 10.dp)
+        .padding(start = ELEMENT_CHILD_INDENT * depth)
     // A Shift+click's range runs over these siblings.
     val siblings by rememberUpdatedState(children.map { it.rowKey })
     for (child in children) {
@@ -3738,7 +3785,7 @@ private fun ElementChildren(
                         onOpenMenu = { menuOpen = true },
                     ),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(RESULT_ROW_GAP),
             ) {
                 KindSection(row.kind, kindWidth)
                 SectionArrow(rowKey !in expanded) { onToggle(rowKey) }

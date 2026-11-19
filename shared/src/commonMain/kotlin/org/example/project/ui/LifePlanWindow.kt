@@ -226,15 +226,15 @@ private fun ColumnScope.StepsSection(
             }
         }
         // Anomaly 2026-11-16: an open step stays at the top while its sub-steps scroll under it, as an open row of the
-        // Search window does — the one rule ([pinnedChain]), each step's depth its nesting.
+        // Search window does — the task tree's one rule ([pinnedListRow]: the direct parent alone), each step's depth its nesting.
         val bandPx = with(LocalDensity.current) { RESULT_ROW_HEIGHT.toPx() }
         val pinned by remember(list, bandPx, rows) {
             derivedStateOf {
                 val info = list.layoutInfo
-                pinnedChain(
+                listOfNotNull(pinnedListRow(
                     info.visibleItemsInfo.map { PinItem(it.index, it.offset, it.size) }, info.viewportStartOffset, bandPx,
                     depthOf = { rows.getOrNull(it)?.depth }, pinnable = { false },
-                )
+                ))
             }
         }
         val pinScope = rememberCoroutineScope()
@@ -287,7 +287,9 @@ private fun StepRow(
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = resultRowModifier(selected = false).padding(start = STEP_INDENT * row.depth),
+        // Anomaly 2026-11-19: the guide-lines under the arrows of the steps it hangs from, the tree's ([nestingGuideLines]).
+        modifier = Modifier.nestingGuideLines(row.depth, STEP_INDENT, RESULT_ROW_PADDING + 10.dp)
+            .then(resultRowModifier(selected = false)).padding(start = STEP_INDENT * row.depth),
     ) {
         // The box is there with or without sub-elements, so the titles of one level line up.
         TaskSheetExpandArrow(row.hasChildren, row.expanded, onToggle, MaterialTheme.colorScheme.primary)
@@ -308,14 +310,15 @@ private fun StepRow(
 }
 
 /**
- * A step's PINNED copy ([pinnedChain]): its arrow and its title, read only — the title is typed into on its row, one field
+ * A step's PINNED copy ([pinnedListRow]): its arrow and its title, read only — the title is typed into on its row, one field
  * a step. Pressed, the list scrolls back to the row.
  */
 @Composable
 private fun PinnedStepRow(row: LifePlanStepRow, onToggle: () -> Unit, onShow: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = resultRowModifier(selected = false).padding(start = STEP_INDENT * row.depth).clickable(onClick = onShow),
+        modifier = Modifier.nestingGuideLines(row.depth, STEP_INDENT, RESULT_ROW_PADDING + 10.dp)
+            .then(resultRowModifier(selected = false)).padding(start = STEP_INDENT * row.depth).clickable(onClick = onShow),
     ) {
         TaskSheetExpandArrow(row.hasChildren, row.expanded, onToggle, MaterialTheme.colorScheme.primary)
         Text(

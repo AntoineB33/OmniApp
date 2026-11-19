@@ -496,12 +496,39 @@ the SAME two scroll states (`treeScroll`, `treeHorizontalScroll`), in the direct
 Never make the column `fillMaxSize` to get this: that stretches every row. One rule, so all three drawings of
 the tree (the tree window, a Search sub-tree, the default sub-tree) have it.
 
+### Every nested drawing draws the tree's guide-lines and walks as the tree does
+
+Anomaly 2026-11-19 (*"I expand the task element 'AI' in the default search window. I don't see the vertical line on
+the left for children rows. However, the vertical line shows when I expand the child task element"*; *"I select the
+child of 'AI', then click the keyboard top arrow, but it doesn't select 'AI'. However, it works from the grand-child to
+the child"*):
+
+- **The guide-lines are `nestingGuideLines`, the one drawing**: one vertical line per level above a row, under the
+  arrow of the row that level hangs from. The tree's cells (`taskSheetGuideLines`), a Search row's sub-tree, an open
+  element's children, the actions section's actions under their group and an open action's content, the Life plan's
+  steps and the menu tree's folders all draw them through it.
+- **A Search row's sub-tree hangs one level under its row** (`TaskTreeView`'s `baseDepth` = 1, `SearchSubtree`'s
+  `underRowLeading`): its first level is indented and lined as a tree cell's children are, the line under the row's
+  arrow. Drawn at depth 0 it had none, while its second level had one.
+- **The arrows walk across a row and its sub-tree** (`TaskTreeView.onWalkPastEdge`, `SubtreeEnter`;
+  `SearchSubtreeWalkTest`): ↓ on an expanded row selects its first cell, ↑ on the row under one its last; ↑ on the
+  sub-tree's first cell selects the row, ↓ on its last the row under it. The tree's own walk goes through the same
+  places; the window's ↑/↓ had skipped the sub-tree and the sub-tree's had stopped at its edges.
+
 ### The pinned parent row
 
 At the top of the viewport, the **direct parent** of the row appearing right below a band of one normal row
 height (`TASK_ROW_MIN_HEIGHT`) is drawn over that band, and only once the parent's own row has started to leave
 the top. A multi-line parent shows its **bottom** band only. All of this lives in `TaskTreeView`, so all three
 drawings have it.
+
+- **ONE row, by ONE function, in every list of the app** (`pinnedParent`, `PinnedParent.kt`; anomaly 2026-11-19:
+  *"both 'Calendar: Calendar' and 'Calendar' are showing on the top … The correct behavior is shown in the children of
+  the 'AI' task element, where only one element is stuck at the top"*). The Search window's result list and actions
+  section and the Life plan read it through `pinnedListRow`: an item is its head (hanging under the nearest item above
+  of a smaller depth: an action under its group) and, when taller, its content (hanging under its head: an open
+  action's fields, an open element's children). They had pinned a CHAIN — every open row above, then the open one —
+  a second rule beside the tree's. Never stack the ancestors again. `PinnedParentTest`.
 
 - **"Right below" is the first row whose bottom lies past the band**, so a row the band half covers still counts.
   It is never the first *fully* visible row. When a parent row straddles the band, the first fully visible row is

@@ -189,20 +189,32 @@ internal val TIGHT_PERCENT_WIDTH = 44.dp
  *
  * Applied *before* the row's own `padding(start = depth * INDENT_STEP_DP)`, so it spans the whole row.
  */
-internal fun Modifier.taskSheetGuideLines(depth: Int): Modifier = drawBehind {
-    val step = INDENT_STEP_DP.dp.toPx()
-    val offset = GUIDE_LINE_OFFSET_DP.dp.toPx()
-    val stroke = 1.dp.toPx()
-    for (level in 0 until depth) {
-        val x = level * step + offset
-        drawLine(
-            color = SheetColors.guideLine,
-            start = Offset(x, 0f),
-            end = Offset(x, size.height),
-            strokeWidth = stroke,
-        )
+internal fun Modifier.taskSheetGuideLines(depth: Int): Modifier =
+    nestingGuideLines(depth, INDENT_STEP_DP.dp, GUIDE_LINE_OFFSET_DP.dp)
+
+/**
+ * **THE guide-lines of every nested drawing of the app** (anomaly 2026-11-19: *"I expand the task element 'AI' in the
+ * default search window. I don't see the vertical line on the left for children rows. However, the vertical line shows
+ * when I expand the child task element"* — the tree drew them, the Search window's first level, its open elements'
+ * children and its action groups did not, and the menu tree drew its own): one vertical line per level above the row,
+ * each under the arrow of the row that level hangs from — the first at [firstX], the next [step] further — spanning the
+ * whole row (and [above] more, across a gap between rows). Applied before the row's own indent.
+ */
+internal fun Modifier.nestingGuideLines(depth: Int, step: Dp, firstX: Dp, above: Dp = 0.dp): Modifier =
+    if (depth <= 0) this
+    else drawBehind {
+        val stroke = 1.dp.toPx()
+        val top = -above.toPx()
+        for (level in 0 until depth) {
+            val x = firstX.toPx() + level * step.toPx()
+            drawLine(
+                color = SheetColors.guideLine,
+                start = Offset(x, top),
+                end = Offset(x, size.height),
+                strokeWidth = stroke,
+            )
+        }
     }
-}
 
 /**
  * The expand/collapse arrow at the head of a task-sheet row — a fixed 20 dp box either way, so rows with and
