@@ -126,7 +126,30 @@ data class CustomMenuButton(
      * the window changed. Null: its default — on for a button the user made, off for a default one ([wholeStateOn]).
      */
     val wholeState: Boolean? = null,
+    /**
+     * User rule 2026-11-19: **the rows a Search window this button opens has open** ([SearchSplits]' expanded sets), put
+     * back on a window it opens anew. Kept up to date as they are opened and closed while the window's configuration says so
+     * ([org.example.project.scheduler.domain.SearchDomain.Config.buttonFollowsExpansion]). Null: none, as before.
+     */
+    val expandedRows: ButtonExpandedRows? = null,
 )
+
+/** User rule 2026-11-19: a Search window's open rows as a menu button keeps them ([CustomMenuButton.expandedRows]). */
+@Serializable
+data class ButtonExpandedRows(
+    val results: List<String> = emptyList(),
+    val added: List<String> = emptyList(),
+    val elements: List<String> = emptyList(),
+) {
+    /** [splits] with these rows open, and no other. */
+    fun applyTo(splits: SearchSplits): SearchSplits =
+        splits.copy(expandedResults = results.toSet(), expandedAdded = added.toSet(), expandedElements = elements.toSet())
+
+    companion object {
+        fun of(splits: SearchSplits): ButtonExpandedRows =
+            ButtonExpandedRows(splits.expandedResults.sorted(), splits.expandedAdded.sorted(), splits.expandedElements.sorted())
+    }
+}
 
 /**
  * User rule 2026-10-08: **a control of the app that can stand in the lateral menu** — *"There can be any kind of button
@@ -348,6 +371,8 @@ object CustomMenuButtons {
         val onlineSeeded: Boolean = false,
         /** Whether a list of the settings page's menu was already given the server's fields ([SETTINGS_SERVER]), ONCE. */
         val serverSeeded: Boolean = false,
+        /** Whether a list of the scheduler's menu was already given the global root's button ([ROOT_SEARCH]), ONCE. */
+        val rootSeeded: Boolean = false,
     )
 
     /**
@@ -356,6 +381,15 @@ object CustomMenuButtons {
      * one of another page's, or none).
      */
     val GLOBAL_SEARCH: CustomMenuButton = CustomMenuButton("g-search", "Search", "Search", global = true)
+
+    /**
+     * User rule 2026-11-19: *"By default, there is a button in the left-side menu of the 'task scheduler' feature page to show
+     * the search window with only the global root task cell."* Its window keeps the button's open rows as they are opened and
+     * closed ([SearchDomain.Config.buttonFollowsExpansion], on).
+     */
+    val ROOT_SEARCH: CustomMenuButton by lazy {
+        CustomMenuButton("d-root", "Search", "Root", config = SearchDomain.rootSearchConfig().encode())
+    }
 
     /** User rule 2026-10-18: *"add by default the switch button to remove all sound"* — in every page's menu. */
     val GLOBAL_MUTE: CustomMenuButton = CustomMenuButton("g-mute", "", "", control = MenuControl.MuteAll.name, global = true)
@@ -375,6 +409,7 @@ object CustomMenuButtons {
     val DEFAULTS: List<CustomMenuButton> =
         listOf(
             GLOBAL_SEARCH,
+            ROOT_SEARCH,
             // The three sound switches together (user rule 2026-11-01).
             GLOBAL_MUTE,
             CustomMenuButton("d-" + MenuControl.Voice.name, "", "", control = MenuControl.Voice.name),
@@ -462,7 +497,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, usageSeeded = true, onlineSeeded = true, serverSeeded = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, usageSeeded = true, onlineSeeded = true, serverSeeded = true, rootSeeded = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -623,10 +658,13 @@ object CustomMenuButtons {
                 else together1.toMutableList().also { it.add(usageAt, SETTINGS_ONLINE.copy(parent = together1[usageAt].parent)) }
             }
         // ...and, on the settings page, the server's fields, ONCE, at the bottom (user rule 2026-11-04).
-        val together =
+        val together3 =
             if (stored.serverSeeded || defaults != SETTINGS_DEFAULTS || together2.any { it.control == MenuControl.Server.name }) together2
             else together2 + SETTINGS_SERVER
-        return together
+        // ...and, on the scheduler's page, the global root's button, ONCE: just under the global Search button where it stands.
+        if (stored.rootSeeded || ROOT_SEARCH !in defaults || together3.any { it.id == ROOT_SEARCH.id }) return together3
+        val searchAt = together3.indexOfFirst { it.id == GLOBAL_SEARCH.id }
+        return together3.toMutableList().also { it.add(searchAt + 1, ROOT_SEARCH.copy(parent = together3.getOrNull(searchAt)?.parent)) }
     }
 
     /**
@@ -912,8 +950,24 @@ object CustomMenuButtons {
     }
 
     /** [buttons] with [id] holding its window's state as it stands: [config] and [layout]. */
-    fun updated(buttons: List<CustomMenuButton>, id: String, config: String?, layout: WindowLayout?): List<CustomMenuButton> =
-        buttons.map { if (it.id != id) it else it.copy(config = config ?: it.config, layout = layout?.let(::encodeLayout) ?: it.layout) }
+    fun updated(
+        buttons: List<CustomMenuButton>,
+        id: String,
+        config: String?,
+        layout: WindowLayout?,
+        expandedRows: ButtonExpandedRows? = null,
+    ): List<CustomMenuButton> =
+        buttons.map {
+            if (it.id != id) it
+            else it.copy(config = config ?: it.config, layout = layout?.let(::encodeLayout) ?: it.layout, expandedRows = expandedRows ?: it.expandedRows)
+        }
+
+    /**
+     * User rule 2026-11-19: every page's menu with the buttons [ids] keeping [rows] as their window's open rows: what a window
+     * whose configuration follows its button's expansion writes as its rows are opened and closed. Unchanged where they hold them.
+     */
+    fun withExpandedRows(lists: Map<String, List<CustomMenuButton>>, ids: Set<String>, rows: ButtonExpandedRows): Map<String, List<CustomMenuButton>> =
+        lists.mapValues { (_, list) -> list.map { if (it.id in ids && it.expandedRows != rows) it.copy(expandedRows = rows) else it } }
 
     /**
      * [buttons] with every button that has no [CustomMenuButton.config] given [configOf] its window — once, when the

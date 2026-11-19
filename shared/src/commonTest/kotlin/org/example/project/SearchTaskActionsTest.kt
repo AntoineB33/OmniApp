@@ -121,8 +121,10 @@ class SearchTaskActionsTest {
         s = r(s, SchedulerIntent.SetTaskMinimumTime(taskWithTitle(s, "Basket"), 5))
         val list = added(s, "Banana", "Basket")
         val before = units(s)
-        val texted = apply(s, list, SearchDomain.AddedCommand.Text("shared notes"))
-        assertEquals(listOf("shared notes", "shared notes"), list.map { texted.tasks[(it as SearchDomain.TaskResult).taskId]!!.text })
+        // User rule 2026-11-19: a task's text is an md element — one, associated with both.
+        val texted = apply(s, list, SearchDomain.AddedCommand.MdAdd("shared notes"))
+        assertEquals(listOf("shared notes"), texted.mdElements.map { it.text })
+        assertEquals(list.map(SearchDomain::keyOf), texted.mdElements.single().of)
         assertEquals(before + 1, units(texted))
 
         val steps = listOf(ScheduleUnitEntry("warm up", 10), ScheduleUnitEntry("work", 10))
@@ -229,7 +231,7 @@ class SearchTaskActionsTest {
         var s = tree()
         val pie = taskWithTitle(s, "Pie")
         s = r(s, SchedulerIntent.SetTaskMinimumTime(pie, 40))
-        s = r(s, SchedulerIntent.SetTaskText(pie, "notes"))
+        s = withMd(s, pie, "notes")
         s = r(s, SchedulerIntent.SetTaskResilience(pie, PeriodKinds.SLEEP, 0.25))
         val before = units(s)
         val list = added(s, "Pie")
@@ -239,7 +241,7 @@ class SearchTaskActionsTest {
         val copy = after.tasks[copyId]!!
         assertEquals("Pie copy", copy.title)
         assertEquals(40, copy.minimumMinutes)
-        assertEquals("notes", copy.text)
+        assertEquals(listOf("notes"), org.example.project.scheduler.domain.MdDomain.associatedWith(after, SearchDomain.taskKey(copyId)).map { it.text }, "the copy is associated with the md elements")
         assertEquals(0.25, copy.resilienceFor(PeriodKinds.SLEEP))
         assertEquals(listOf("Apple"), TaskPathsDomain.occurrences(after, copyId).map { it.label }, "in the original's list")
         assertEquals("Pie", after.tasks[pie]!!.title, "the original is untouched")

@@ -82,6 +82,23 @@ class ElementTreeTest {
     }
 
     /**
+     * Anomaly 2026-11-19: *"in 'add a parent', there must be the creation task element in the first place."* Its row makes a
+     * task titled as typed and puts every added element under it — a task in its sub-list, any other element by a link.
+     */
+    @Test
+    fun the_creation_row_of_add_a_parent_makes_the_new_task_the_parent() {
+        val s = withTasks("One")
+        val one = taskKey(s, "One")
+        val added = SearchDomain.resolve(s, listOf(one, a), { emptyMap() })
+        val made = run(s, SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.NewParentTask("Above"), 0L))
+        val above = taskKey(made, "Above")
+        assertEquals(listOf(above), ElementTree.parentsOf(made, a))
+        assertTrue(one in ElementTree.childrenOf(made, above), "the task is in the new task's sub-list")
+        val blank = run(s, SearchDomain.addedIntents(s, added, SearchDomain.AddedCommand.NewParentTask(" "), 0L))
+        assertEquals(listOf(taskKey(blank, "New task")), ElementTree.parentsOf(blank, a), "blank: a unique \"New task\"")
+    }
+
+    /**
      * User rule 2026-11-12: *"The task element can only have other task elements as children, but in the action section,
      * any element can be linked to any element."* The tree holds tasks alone; any other element under a task is a link.
      */

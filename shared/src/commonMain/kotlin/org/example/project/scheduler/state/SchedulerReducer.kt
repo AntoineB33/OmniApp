@@ -594,8 +594,6 @@ object SchedulerReducer {
             is SchedulerIntent.ResetPeriodKinds -> settingsUnit(state, "Reset periods") { reduceResetPeriodKinds(it, intent.kinds) }
             is SchedulerIntent.SetScheduleUnit ->
                 commitDelta(state, priorityTreeDelta(state, "Schedule unit") { applySetScheduleUnit(it, intent.taskId, intent.entries) })
-            is SchedulerIntent.SetTaskText ->
-                commitDelta(state, priorityTreeDelta(state, "Task text") { applySetTaskText(it, intent.taskId, intent.text) })
             is SchedulerIntent.DuplicateTasks ->
                 if (state.editSession != null) {
                     state
@@ -642,12 +640,6 @@ object SchedulerReducer {
                     if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Minimum length target", apply))
                 }
             }
-            is SchedulerIntent.SetTasksText -> {
-                val apply = { working: SchedulerState ->
-                    intent.taskIds.distinct().fold(working) { acc, id -> applySetTaskText(acc, id, intent.text) }
-                }
-                if (apply(state) === state) state else commitDelta(state, priorityTreeDelta(state, "Task text", apply))
-            }
             is SchedulerIntent.SetTasksScheduleUnit -> {
                 val apply = { working: SchedulerState ->
                     intent.taskIds.distinct()
@@ -683,6 +675,9 @@ object SchedulerReducer {
             is SchedulerIntent.SetElementLinks ->
                 if (state.elementLinks == intent.entries) state
                 else commitDelta(state, ElementLinksDelta(state.elementLinks, intent.entries))
+            is SchedulerIntent.SetMdElements ->
+                if (state.mdElements == intent.entries) state
+                else commitDelta(state, MdElementsDelta(state.mdElements, intent.entries, intent.editKey))
             is SchedulerIntent.SetWorkplaceSetups ->
                 if (state.workplaceSetups == intent.entries) state
                 else commitDelta(state, WorkplaceSetupsDelta(state.workplaceSetups, intent.entries, intent.editKey))
@@ -1803,7 +1798,7 @@ object SchedulerReducer {
         val pasted = pasteTreeAtCell(state.copy(clipboard = text.split('\n')), main, nodes)
         val after = pasted.captureTree()
         if (before == after) return state
-        return commitDelta(pasted, TreeMutationDelta(before = before, after = after, label = "Paste"))
+        return commitDelta(pasted, treeChangeDelta(state, pasted, "Paste"))
     }
 
     /**
@@ -1846,7 +1841,7 @@ object SchedulerReducer {
             // The rows land at the bottom of the cell's own sub-list, so a collapsed cell would fold away
             // the very thing it was just asked for.
             working.copy(expanded = state.expanded + targets),
-            TreeMutationDelta(before = before, after = after, label = "Add default sub-tree"),
+            treeChangeDelta(state, working, "Add default sub-tree"),
         )
     }
 
@@ -2158,7 +2153,7 @@ object SchedulerReducer {
         if (paid === state) return state
         val after = paid.captureTree()
         if (after == before) return paid
-        return commitDelta(paid, TreeMutationDelta(before = before, after = after, label = "Default sub-tree"))
+        return commitDelta(paid, treeChangeDelta(state, paid, "Default sub-tree"))
     }
 
     /**
@@ -4796,6 +4791,8 @@ private fun pasteNodeInto(
                 )
             ),
         )
+        // User rule 2026-11-19: the text a copy carried is an md element associated with the pasted task.
+        working = org.example.project.scheduler.domain.MdDomain.liftTaskTexts(working, listOf(taskId))
         // PRD §5: the clipboard names categories by TITLE, so they land the way typing a name into the
         // row's field does — on the category of that name where the account has one, on a new one where it
         // has not. That is what makes a copy carry the labels between two trees of one account without the
@@ -5221,11 +5218,7 @@ private fun priorityTreeDelta(
     state: SchedulerState,
     label: String = "Tree change",
     mutate: (SchedulerState) -> SchedulerState,
-): Delta {
-    val before = state.captureTree()
-    val after = mutate(state).captureTree()
-    return TreeMutationDelta(before = before, after = after, label = label)
-}
+): Delta = treeChangeDelta(state, mutate(state), label)
 
 /**
  * PRD §5: the default value of a weight field by column — the first column's fields default to 1,
@@ -6081,12 +6074,11 @@ private fun applyDuplicateTask(state: SchedulerState, taskId: TaskId): Scheduler
             copyId to copy.copy(
                 minimumMinutes = task.minimumMinutes,
                 scheduleUnit = task.scheduleUnit,
-                text = task.text,
                 resilience = task.resilience,
                 categoryIds = task.categoryIds,
             )
         ),
-    )
+    ).let { org.example.project.scheduler.domain.MdDomain.withCopyAssociated(it, taskId, copyId) }
 }
 
 /** [SchedulerIntent.DuplicateCategory]. */
@@ -6203,16 +6195,6 @@ private fun applySetScheduleUnit(
     if (!SchedulerDomain.canSaveScheduleUnit(entries, task.minimumMinutes)) return state
     if (task.scheduleUnit == entries) return state
     return state.copy(tasks = state.tasks + (taskId to task.copy(scheduleUnit = entries)))
-}
-
-private fun applySetTaskText(
-    state: SchedulerState,
-    taskId: TaskId,
-    text: String,
-): SchedulerState {
-    val task = state.tasks[taskId] ?: return state
-    if (task.text == text) return state
-    return state.copy(tasks = state.tasks + (taskId to task.copy(text = text)))
 }
 
 /**
@@ -6802,6 +6784,8 @@ private fun applyDefaultSubtreeTemplate(
                                     )
                                 ),
                 )
+            // User rule 2026-11-19: the template's text is an md element associated with the task it made.
+            working = org.example.project.scheduler.domain.MdDomain.liftTaskTexts(working, listOf(newTaskId))
         }
         // What this row owes in turn: the template row's own children, then the template's root rows,
         // because a row the graft writes is a new task id and the policy is about every one of them.
@@ -7637,6 +7621,65 @@ internal data class ElementLinksDelta(
         state.copy(elementLinks = changes.applyToList(state.elementLinks, forward = true, exact = true) { it.id })
 }
 
+
+/**
+ * User rule 2026-11-19: **a tree change that made md elements as well** — a paste, a copy or the default sub-tree bringing a
+ * task's text, which is an md element now ([org.example.project.scheduler.domain.MdDomain.liftTaskTexts]). ONE History Unit,
+ * so one Ctrl+Z takes both back: the tree's diff carries no md element.
+ */
+internal data class TreeAndMdDelta(val tree: TreeMutationDelta, val md: MdElementsDelta) : Delta {
+    override val label: String get() = tree.label
+
+    override val details: List<String> get() = tree.details + md.details
+
+    override fun undo(state: SchedulerState): SchedulerState = md.undo(tree.undo(state))
+
+    override fun redo(state: SchedulerState): SchedulerState = md.redo(tree.redo(state))
+
+    override fun commit(state: SchedulerState): SchedulerState = md.commit(tree.commit(state))
+}
+
+/**
+ * The History Unit of a tree change from [before] to [after]: the tree's diff, and the md elements with it where they moved
+ * ([TreeAndMdDelta]). Every tree change that can make a task with a text records through here.
+ */
+internal fun treeChangeDelta(before: SchedulerState, after: SchedulerState, label: String, drafts: EditDrafts? = null): Delta {
+    val tree = TreeMutationDelta(before = before.captureTree(), after = after.captureTree(), label = label, drafts = drafts)
+    return if (before.mdElements == after.mdElements) tree else TreeAndMdDelta(tree, MdElementsDelta(before.mdElements, after.mdElements))
+}
+
+/** User rule 2026-11-19: a change to the account's **md elements**: [ChronosDelta]'s rule, the rows whole. */
+internal data class MdElementsDelta(
+    val changes: EntryChanges<String, org.example.project.scheduler.domain.MdElement>,
+    override val coalesceKey: String? = null,
+) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.domain.MdElement>,
+        after: List<org.example.project.scheduler.domain.MdElement>,
+        coalesceKey: String? = null,
+    ) : this(EntryChanges.ofList(before, after) { it.id }, coalesceKey)
+
+    override val label: String
+        get() = listLabel(changes.before.keys.toList(), changes.after.keys.toList(), "md element")
+
+    override val details: List<String>
+        get() = changes.touched.map { id ->
+            "md element: " + (changes.after[id] ?: changes.before[id])?.let(org.example.project.scheduler.domain.MdDomain::title).orEmpty().ifBlank { id }
+        }
+
+    override fun coalesceOnto(previous: Delta): Delta? =
+        if (previous is MdElementsDelta && previous.coalesceKey == coalesceKey) copy(changes = previous.changes.then(changes))
+        else null
+
+    override fun undo(state: SchedulerState): SchedulerState =
+        state.copy(mdElements = changes.applyToList(state.mdElements, forward = false) { it.id })
+
+    override fun redo(state: SchedulerState): SchedulerState =
+        state.copy(mdElements = changes.applyToList(state.mdElements, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(mdElements = changes.applyToList(state.mdElements, forward = true, exact = true) { it.id })
+}
 
 /** User rule 2026-11-01: a change to the account's **workplace setups**: [ChronosDelta]'s rule, the rows whole. */
 internal data class WorkplaceSetupsDelta(

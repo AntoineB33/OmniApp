@@ -1042,7 +1042,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var menuButtonAdded by remember { mutableIntStateOf(0) }
         // Every page's menu at once (user rule 2026-10-18: a global item stands in all of them): the rows that changed are
         // written, and ONE History Unit holds them all, so an undo puts every page back together.
-        fun setMenuLists(next: Map<String, List<CustomMenuButton>>, renameOnly: Boolean = false) {
+        // [record] off: no History Unit (user rule 2026-11-19: a window's rows opened and closed, kept by its button, are no
+        // change the user makes to the menu — as opening a row is none).
+        fun setMenuLists(next: Map<String, List<CustomMenuButton>>, renameOnly: Boolean = false, record: Boolean = true) {
             val before = menuListsNow()
             if (next == before) return
             for ((p, list) in next) {
@@ -1050,6 +1052,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 menuButtonLists[p] = list
                 updatePlacementById(CustomMenuButtons.placementIdOf(p)) { it.copy(config = CustomMenuButtons.encode(list)) }
             }
+            if (!record) return
             viewHistory.record(
                 MENU_KEY + "*", CustomMenuButtons.encodePages(before), CustomMenuButtons.encodePages(next),
                 if (renameOnly) "Rename a menu button" else "Menu buttons",
@@ -2199,6 +2202,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         (ObjectWindowKey.decode(button.windowId)?.let { window.menuKey == button.windowId }
                             ?: (lateralWindowOf(window.id) != null && lateralWindowOf(window.id) == lateralWindowOf(button.windowId)))
                 }?.id
+        // User rule 2026-11-19: while [frameId]'s configuration says so ([SearchDomain.Config.buttonFollowsExpansion]), the
+        // menu buttons that opened it keep its open rows as they are opened and closed, and nothing else of it. No History Unit.
+        fun followMenuButtonExpansion(frameId: String, splits: org.example.project.ui.SearchSplits) {
+            if (!searchConfigOf(frameId).buttonFollowsExpansion) return
+            val ids = menuButtonWindows.filterValues { it == frameId }.keys
+            if (ids.isEmpty()) return
+            setMenuLists(CustomMenuButtons.withExpandedRows(menuListsNow(), ids, org.example.project.ui.ButtonExpandedRows.of(splits)), record = false)
+        }
         // The button's "Update" is offered while the window it opened is open and is no longer what the button holds.
         fun menuButtonCanUpdate(pressed: CustomMenuButton): Boolean {
             val frameId = menuButtonWindowOf(pressed) ?: return false
@@ -2780,6 +2791,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     saveWindowSections()
                     updatePlacementById(id) { it.copy(x = saved.x, y = saved.y, width = saved.width, height = saved.height) }
                 }
+                // User rule 2026-11-19: a new Search window opens with the rows its button keeps open.
+                if (id !in before && kind == FloatingWindow.Search) {
+                    button.expandedRows?.let { rows ->
+                        searchSplits[id] = rows.applyTo(searchSplits[id] ?: org.example.project.ui.SearchSplits())
+                        saveWindowSections()
+                    }
+                }
             }
             engineScope.launch {
                 // A new window registers as it is first composed: within a frame or two of the click.
@@ -2927,6 +2945,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     val id = TimerDomain.mintTimerId(st.timers.map { it.id })
                     vm.dispatch(SchedulerIntent.SetTimers(st.timers + NewElementDefaults.newTimer(st.newTimerDefaults, id)))
                     showCreated(SearchDomain.Kind.Timer, id)
+                }
+                // User rule 2026-11-19: an md element, associated with nothing until an element's "Md elements" takes it.
+                SearchDomain.Kind.Md -> {
+                    val id = org.example.project.scheduler.domain.MdDomain.mintId(st.mdElements.map { it.id })
+                    vm.dispatch(SchedulerIntent.SetMdElements(st.mdElements + org.example.project.scheduler.domain.MdElement(id = id)))
+                    showCreated(SearchDomain.Kind.Md, id)
                 }
                 SearchDomain.Kind.WorkplaceSetup -> {
                     val id = org.example.project.scheduler.domain.WorkplaceDomain.mintId(st.workplaceSetups.map { it.id })
@@ -4480,7 +4504,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 menuButtonWindowOf(button)?.let { frameId ->
                                     val layout = windowLayoutOf(frameId)
                                     val config = lateralWindowOf(frameId)?.let { windowConfigOf(frameId) }
-                                    setMenuButtons(CustomMenuButtons.updated(menuButtons, button.id, config, layout))
+                                    // A Search window's open rows go with it (user rule 2026-11-19).
+                                    val rows = searchSplits[frameId]?.takeIf { lateralWindowOf(frameId) == FloatingWindow.Search }
+                                        ?.let(org.example.project.ui.ButtonExpandedRows::of)
+                                    setMenuButtons(CustomMenuButtons.updated(menuButtons, button.id, config, layout, rows))
                                 }
                             },
                             onReset = { resetMenuButtons() },
@@ -4639,7 +4666,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 periodKinds = popupState.allPeriodKinds,
                                 onAddPeriodKind = { popupDispatch(SchedulerIntent.AddPeriodKind(it)) },
                                 onEditPeriodKind = { openElementSearch(SearchDomain.Kind.RestrictivePeriod, it) },
-                                onSave = { resilience, entries, text ->
+                                onSave = { resilience, entries ->
                                     // One intent per section, and only for what actually changed — so
                                     // Save on an untouched window adds nothing to the Undo/Redo history
                                     // (PRD §6). The resilience map goes one KIND at a time, because that
@@ -4655,9 +4682,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     }
                                     if (entries != task.scheduleUnit) {
                                         popupDispatch(SchedulerIntent.SetScheduleUnit(taskId, entries))
-                                    }
-                                    if (text != task.text) {
-                                        popupDispatch(SchedulerIntent.SetTaskText(taskId, text))
                                     }
                                     close()
                                 },
@@ -5777,6 +5801,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 if (searchSplits[searchId] != it) {
                                     searchSplits[searchId] = it
                                     saveWindowSections()
+                                    followMenuButtonExpansion(searchId, it)
                                 }
                             },
                             initialOffset = searchOffset,

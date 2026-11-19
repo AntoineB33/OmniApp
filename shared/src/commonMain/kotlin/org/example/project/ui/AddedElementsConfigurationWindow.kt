@@ -816,6 +816,10 @@ private fun AddedActionBlocks(
         // ([CalendarBlocksEditor]) — it was a button opening another Search window on them.
         SearchDomain.AddedAction.CalendarBlocks -> CalendarBlocksEditor(state, added, config, onConfigChange, handlers, run, nowMillis)
         SearchDomain.AddedAction.ElementParents -> ElementParentsEditor(state, added, config, onConfigChange, run, rowId)
+        // User rule 2026-11-19: the md elements associated with the added elements, and the md element's own actions.
+        SearchDomain.AddedAction.ElementMd -> MdElementsEditor(state, added, run)
+        SearchDomain.AddedAction.MdText -> MdTextEditor(state, added, run)
+        SearchDomain.AddedAction.MdAssociated -> MdAssociatedEditor(state, added, run)
         // Retired ([SearchDomain.RETIRED_ACTIONS]): what an item of the lateral menu made from one before still draws.
         SearchDomain.AddedAction.ElementAddParent -> ElementParentEditor(state, added, config, run)
         SearchDomain.AddedAction.ElementRemoveParent -> {
@@ -927,19 +931,6 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.TaskAddUnder -> AddUnderEditor(state, taskIds, run)
         SearchDomain.AddedAction.TaskResilience -> ResilienceEditor(state, added, config, onConfigChange, run)
         SearchDomain.AddedAction.TaskScheduleUnit -> ScheduleUnitActionEditor(state, added, run)
-        SearchDomain.AddedAction.TaskText -> {
-            val shared = tasks.map { it.text }.distinct().singleOrNull()
-            var draft by remember(shared) { mutableStateOf(shared.orEmpty()) }
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                placeholder = { if (shared == null && tasks.isNotEmpty()) Text("mixed") },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 90.dp),
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                FrameButton("Apply", enabled = tasks.any { it.text != draft }) { run(SearchDomain.AddedCommand.Text(draft)) }
-            }
-        }
         // User rule 2026-11-16: the evolution of a task's presence ratio target and minimum length, formulas of the instant.
         SearchDomain.AddedAction.TaskPresenceFormula -> PresenceFormulaEditor(state, tasks, run)
         SearchDomain.AddedAction.TaskMinimumFormula -> {
@@ -1052,7 +1043,7 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.TaskNew, SearchDomain.AddedAction.CategoryNew, SearchDomain.AddedAction.PeriodNew,
         SearchDomain.AddedAction.AlarmNew, SearchDomain.AddedAction.TimerNew, SearchDomain.AddedAction.ChronoNew,
         SearchDomain.AddedAction.ReminderNew, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.ShortcutNew,
-        SearchDomain.AddedAction.WorkplaceNew -> {
+        SearchDomain.AddedAction.WorkplaceNew, SearchDomain.AddedAction.MdNew -> {
             val kind = action.section ?: return
             // Made from the element whose group this is, when the group is one element's.
             FrameButton("New " + kind.label) { handlers.onCreateFrom(kind, added.singleOrNull { it.kind == kind }) }
@@ -1061,7 +1052,7 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.PeriodDuplicate, SearchDomain.AddedAction.AlarmDuplicate,
         SearchDomain.AddedAction.TimerDuplicate, SearchDomain.AddedAction.ChronoDuplicate,
         SearchDomain.AddedAction.ReminderDuplicate, SearchDomain.AddedAction.QuotaDuplicate,
-        SearchDomain.AddedAction.WorkplaceDuplicate -> {
+        SearchDomain.AddedAction.WorkplaceDuplicate, SearchDomain.AddedAction.MdDuplicate -> {
             val kind = action.section ?: return
             val count = added.count { it.kind == kind }
             FrameButton(if (count == 1) "Duplicate" else "Duplicate $count", enabled = count > 0) {
@@ -1335,7 +1326,7 @@ private fun AddedActionBlocks(
         }
         // The bin, over every added element of the kind; what it deleted leaves the added list too.
         SearchDomain.AddedAction.AlarmDelete, SearchDomain.AddedAction.TimerDelete, SearchDomain.AddedAction.ChronoDelete,
-        SearchDomain.AddedAction.QuotaDelete, SearchDomain.AddedAction.WorkplaceDelete,
+        SearchDomain.AddedAction.QuotaDelete, SearchDomain.AddedAction.WorkplaceDelete, SearchDomain.AddedAction.MdDelete,
         SearchDomain.AddedAction.ReminderDelete, SearchDomain.AddedAction.CategoryDelete -> {
             val kind = action.section ?: return
             val keys = added.filter { it.kind == kind }.map(SearchDomain::keyOf)
@@ -2549,7 +2540,12 @@ private fun ElementParentsEditor(
                                     addConfig = addConfig.copy(query = "")
                                     close()
                                 },
-                                onNewTask = null,
+                                // Anomaly 2026-11-19: the task kind's creation row first — a new task, made the parent.
+                                onNewTask = {
+                                    run(SearchDomain.AddedCommand.NewParentTask(addConfig.query))
+                                    addConfig = addConfig.copy(query = "")
+                                    close()
+                                },
                                 onCancel = close,
                             )
                         },

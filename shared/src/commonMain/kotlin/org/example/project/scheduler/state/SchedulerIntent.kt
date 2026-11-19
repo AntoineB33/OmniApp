@@ -372,13 +372,6 @@ sealed interface SchedulerIntent {
     data class DuplicatePeriodKind(val kind: String) : SchedulerIntent
 
     /**
-     * PRD §7 *Search*, the added elements' actions — the task edit window's sections over every task of [taskIds],
-     * each **one** Undo/Redo unit ([SetTasksMinimumTime]'s rule; a call that moves nobody records nothing):
-     * [SetTaskText] for every task.
-     */
-    data class SetTasksText(val taskIds: List<TaskId>, val text: String) : SchedulerIntent
-
-    /**
      * User rule 2026-11-13: the name of the tree each task of [taskIds] is the root of — that task's title, a tree being
      * the task at its root (user rule 2026-11-16) — ONE Undo/Redo unit; a call that changes nothing records nothing.
      */
@@ -699,15 +692,6 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * PRD §13 Edit window Save (text section): replace a task's free-form [text] document. Recorded as a content delta so
-     * it is part of the Undo/Redo history (PRD §6).
-     */
-    data class SetTaskText(
-        val taskId: TaskId,
-        val text: String,
-    ) : SchedulerIntent
-
-    /**
      * PRD §14 Reminders: replace the whole reminders list with [entries] (rows are edited live in the
      * floating window) and regenerate the reminder calendar tags anchored at [todayStartMillis] (local
      * midnight of today, supplied by the caller which knows the time zone). Persisted but not part of the
@@ -911,6 +895,12 @@ sealed interface SchedulerIntent {
      * a label edited. A **Main History Unit**, [SetTimers]' rule and [SetTimers]' [editKey]; the run state rides
      * along untouched and is moved only by [StartChrono] / [PauseChrono] / [ResetChrono].
      */
+    /** User rule 2026-11-19: the account's md elements, one History Unit. [editKey] as [SetChronos]' for a field typed into. */
+    data class SetMdElements(
+        val entries: List<org.example.project.scheduler.domain.MdElement>,
+        val editKey: String? = null,
+    ) : SchedulerIntent
+
     /** User rule 2026-11-01: the account's workplace setups, one History Unit. [editKey] as [SetChronos]' for a field typed into. */
     data class SetWorkplaceSetups(
         val entries: List<org.example.project.scheduler.domain.WorkplaceSetup>,

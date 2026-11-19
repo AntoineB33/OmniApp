@@ -395,6 +395,8 @@ data class SearchRowOpeners(
             SearchDomain.Kind.Notification, SearchDomain.Kind.ClaudePrompt, SearchDomain.Kind.ClaudeAnswer,
             SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.SearchConfiguration, SearchDomain.Kind.Option, SearchDomain.Kind.Integer,
             SearchDomain.Kind.Action -> Unit
+            // An md element is read and edited in its actions (user rule 2026-11-19).
+            SearchDomain.Kind.Md -> Unit
             SearchDomain.Kind.WorkplaceSetup -> onApplyWorkplaceSetup(item.id)
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }

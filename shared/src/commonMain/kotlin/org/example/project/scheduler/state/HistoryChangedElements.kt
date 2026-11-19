@@ -91,6 +91,8 @@ val Delta.changedElements: Set<ChangedElement>
             is TimersDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Timer, it)) }
             is ChronosDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Chrono, it)) }
             is WorkplaceSetupsDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.WorkplaceSetup, it)) }
+            is MdElementsDelta -> delta.changes.touched.forEach { add(ChangedElement(SearchDomain.Kind.Md, it)) }
+            is TreeAndMdDelta -> addAll(delta.tree.changedElements + delta.md.changedElements)
             is ElementLinksDelta ->
                 (delta.changes.before.values + delta.changes.after.values).flatMap { listOf(it.parent, it.child) }.forEach { key ->
                     org.example.project.scheduler.domain.ElementTree.kindOf(key)?.let { add(ChangedElement(it, key.substringAfter('/'))) }

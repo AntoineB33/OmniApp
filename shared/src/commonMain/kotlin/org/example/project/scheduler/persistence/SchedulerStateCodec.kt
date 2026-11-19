@@ -41,6 +41,8 @@ import org.example.project.scheduler.state.ExternalDelta
 import org.example.project.scheduler.state.EntryChanges
 import org.example.project.scheduler.state.SettingsDelta
 import org.example.project.scheduler.state.ElementLinksDelta
+import org.example.project.scheduler.state.MdElementsDelta
+import org.example.project.scheduler.state.TreeAndMdDelta
 import org.example.project.scheduler.state.WorkplaceSetupsDelta
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
@@ -232,6 +234,9 @@ object SchedulerStateCodec {
             // User rule 2026-11-16: a task tree is a task under the global root — the stored trees an older build wrote
             // are brought into the one structure ([TaskTreesAsTasks]).
             org.example.project.scheduler.domain.TaskTreesAsTasks.of(it)
+        }.let {
+            // User rule 2026-11-19: a task's text is an md element associated with it — what an older build wrote is lifted.
+            org.example.project.scheduler.domain.MdDomain.liftTaskTexts(it)
         }.let(SchedulerReducer::settleDefaultSubtree)
 
     private fun migrateLegacyRoot(element: JsonElement): JsonElement =
@@ -586,6 +591,7 @@ object SchedulerStateCodec {
             // PRD §18 Chronos: the run state rides along, the timers' rule — the start instant is authoritative.
             chronos = chronos.map { it.toPersisted() },
             workplaceSetups = workplaceSetups.map { it.toPersisted() },
+            mdElements = mdElements.map { PersistedMdElement(it.id, it.text, it.of) },
             elementLinks = elementLinks.map { it.toPersisted() },
             // Quotas (2026-10-03): the list whole; a quota's progression is derived and never written.
             quotas = quotas.map { it.toPersisted() },
@@ -951,6 +957,9 @@ object SchedulerStateCodec {
                 PersistedDelta.Timers(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is ElementLinksDelta ->
                 PersistedDelta.ElementLinks(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
+            is TreeAndMdDelta -> PersistedDelta.TreeAndMd(tree.toPersisted() as PersistedDelta.TreeMutation, md.toPersisted() as PersistedDelta.MdElements)
+            is MdElementsDelta ->
+                PersistedDelta.MdElements(changes.before.values.map { PersistedMdElement(it.id, it.text, it.of) }, changes.after.values.map { PersistedMdElement(it.id, it.text, it.of) })
             is WorkplaceSetupsDelta ->
                 PersistedDelta.WorkplaceSetups(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is ChronosDelta ->
@@ -1299,6 +1308,7 @@ object SchedulerStateCodec {
             // instant it is due at.
             timers = TimerDomain.assignTimerIds(timers.map { it.toTimerEntry() }).map(TimerDomain::healed),
             workplaceSetups = workplaceSetups.map { it.toWorkplaceSetup() },
+            mdElements = mdElements.map { it.toMdElement() },
             elementLinks = elementLinks.map { it.toElementLink() },
             // PRD §18 Chronos: a payload written before chronos existed decodes to an empty list; every row healed.
             chronos = ChronoDomain.assignChronoIds(chronos.map { it.toChronoEntry() }).map(ChronoDomain::healed),
@@ -1586,6 +1596,8 @@ object SchedulerStateCodec {
                     TimerDomain.assignTimerIds(after.map { it.toTimerEntry() }).map(TimerDomain::healed),
                 )
             is PersistedDelta.ElementLinks -> ElementLinksDelta(before.map { it.toElementLink() }, after.map { it.toElementLink() })
+            is PersistedDelta.TreeAndMd -> TreeAndMdDelta(tree.toDelta() as TreeMutationDelta, md.toDelta() as MdElementsDelta)
+            is PersistedDelta.MdElements -> MdElementsDelta(before.map { it.toMdElement() }, after.map { it.toMdElement() })
             is PersistedDelta.WorkplaceSetups ->
                 WorkplaceSetupsDelta(before.map { it.toWorkplaceSetup() }, after.map { it.toWorkplaceSetup() })
             is PersistedDelta.Chronos ->
@@ -1797,6 +1809,8 @@ private data class PersistedState(
     val chronos: List<PersistedChrono> = emptyList(),
     /** New 2026-11-01: absent from every older payload, which has none. */
     val workplaceSetups: List<PersistedWorkplaceSetup> = emptyList(),
+    /** New 2026-11-19: absent from every older payload, whose task texts are lifted into md elements on decode. */
+    val mdElements: List<PersistedMdElement> = emptyList(),
     /** New 2026-11-02: absent from every older payload, which has none. */
     val elementLinks: List<PersistedElementLink> = emptyList(),
     // User rule 2026-10-03: a missing quota list decodes to empty (payloads written before quotas existed).
@@ -2377,6 +2391,17 @@ private data class PersistedWorkplaceWindow(
     val maximized: Boolean? = null,
 )
 
+/** User rule 2026-11-19: one md element ([org.example.project.scheduler.domain.MdElement]). */
+@Serializable
+private data class PersistedMdElement(
+    val id: String = "",
+    val text: String = "",
+    val of: List<String> = emptyList(),
+)
+
+private fun PersistedMdElement.toMdElement(): org.example.project.scheduler.domain.MdElement =
+    org.example.project.scheduler.domain.MdElement(id, text, of.distinct())
+
 /** User rule 2026-11-01: one workplace setup. Its OS by name: one a later build added reads as the first this one knows. */
 @Serializable
 private data class PersistedWorkplaceSetup(
@@ -2690,6 +2715,19 @@ private sealed interface PersistedDelta {
         val after: List<PersistedElementLink>,
     ) : PersistedDelta
 
+
+    /** New 2026-11-19: a tree change that made md elements too ([TreeAndMdDelta]); an older build skips the unit. */
+    @Serializable
+    @SerialName("treeAndMd")
+    data class TreeAndMd(val tree: TreeMutation, val md: MdElements) : PersistedDelta
+
+    /** New 2026-11-19: the md elements; an older build cannot read it and skips the unit (`decodeUnit`). */
+    @Serializable
+    @SerialName("mdElements")
+    data class MdElements(
+        val before: List<PersistedMdElement>,
+        val after: List<PersistedMdElement>,
+    ) : PersistedDelta
 
     /** New 2026-11-01: the workplace setups; an older build cannot read it and skips the unit (`decodeUnit`). */
     @Serializable

@@ -149,6 +149,12 @@ object SearchDomain {
         WorkplaceSetup("workplace setup"),
 
         /**
+         * User rule 2026-11-19: an **md element** ([org.example.project.scheduler.domain.MdElement]) — a markdown text,
+         * associated with the elements it is about, searched in its whole text.
+         */
+        Md("md element"),
+
+        /**
          * A window of the app, open or not ([WindowEntry]): what the rows name is not in the account's state but
          * in `App`'s windows, which hands the list in ([results]'s `windows`).
          */
@@ -213,7 +219,7 @@ object SearchDomain {
     val CREATABLE: List<Kind> =
         listOf(
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.Window, Kind.Shortcut, Kind.WorkplaceSetup,
+            Kind.Window, Kind.Shortcut, Kind.WorkplaceSetup, Kind.Md,
         )
 
     /**
@@ -380,6 +386,18 @@ object SearchDomain {
      * **An element's own window** (user rule 2026-10-01): the Search window of [kind] holding the element [id] alone in
      * its added list, so its top right quarter holds every action on it — what replaced the element's edit window.
      */
+    /**
+     * User rule 2026-11-19: **the Search window of the global root task cell alone**: the scheduler's left-side menu's
+     * default "Root" button. No type checked, the root included, the button following its open rows
+     * ([Config.buttonFollowsExpansion]).
+     */
+    fun rootSearchConfig(): Config =
+        Config(
+            kinds = emptySet(),
+            filters = Filters(includedElements = setOf(taskKey(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK))),
+            buttonFollowsExpansion = true,
+        )
+
     fun elementSearchConfig(kind: Kind, id: String): Config =
         Config(kinds = setOf(kind), added = listOf(kind.name + "/" + id))
 
@@ -789,6 +807,12 @@ object SearchDomain {
          */
         val dropButtons: Boolean = false,
         /**
+         * User rule 2026-11-19, a search configuration ([Setting.ButtonFollowsExpansion]): *"when on updates the button in the
+         * left-side menu automatically only for which rows are expanded"*: the menu button that opened this window keeps its
+         * open rows as they are opened and closed, and nothing else of the window. Off by default.
+         */
+        val buttonFollowsExpansion: Boolean = false,
+        /**
          * User rule 2026-10-11: **the actions section's own search bar**. It SORTS — inside each group of elements
          * (a macro group), the actions (the micro groups, each under its title) that answer it come first, the best
          * answer first ([actionSearchRank], [sortedByActionSearch]) — and takes nothing away, nor moves a group of
@@ -945,6 +969,7 @@ object SearchDomain {
                     menuCustomizing = menuCustomizing,
                     arranged = arranged,
                     dropButtons = dropButtons,
+                    buttonFollowsExpansion = buttonFollowsExpansion,
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
                     pickedTimers = pickedTimers.sorted(),
@@ -1088,6 +1113,7 @@ object SearchDomain {
                     menuCustomizing = stored.menuCustomizing,
                     arranged = stored.arranged,
                     dropButtons = stored.dropButtons,
+                    buttonFollowsExpansion = stored.buttonFollowsExpansion,
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
                     pickedTimers = stored.pickedTimers.toSet(),
@@ -1885,6 +1911,8 @@ object SearchDomain {
         MenuCustomizing(null, "Arrange by dragging"),
         /** User rule 2026-11-12: a button on every element to drop it ([Config.dropButtons]). */
         DropButtons(null, "A drop button per element"),
+        /** User rule 2026-11-19: the menu button that opened the window keeps its open rows ([Config.buttonFollowsExpansion]). */
+        ButtonFollowsExpansion(null, "Menu button keeps the open rows"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -1988,7 +2016,8 @@ object SearchDomain {
         when {
             setting.sorts || setting == Setting.SearchSortsOnly -> SettingRole.Sort
             setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults -> SettingRole.Children
-            setting == Setting.DropButtons || setting == Setting.CompletionList || setting == Setting.MenuCustomizing -> SettingRole.Display
+            setting == Setting.DropButtons || setting == Setting.CompletionList || setting == Setting.MenuCustomizing ||
+                setting == Setting.ButtonFollowsExpansion -> SettingRole.Display
             setting == Setting.ResetSearch -> null
             else -> SettingRole.Filter
         }
@@ -2028,6 +2057,7 @@ object SearchDomain {
             Setting.SearchSortsOnly.takeIf { !config.actionSearchSortsOnly },
             Setting.MenuCustomizing.takeIf { config.menuCustomizing },
             Setting.DropButtons.takeIf { config.dropButtons },
+            Setting.ButtonFollowsExpansion.takeIf { config.buttonFollowsExpansion },
         )
         return (filters + own).distinct()
     }
@@ -2542,6 +2572,8 @@ object SearchDomain {
             Setting.SearchSortsOnly -> "The actions section's bar sorts the actions and hides none."
             Setting.MenuCustomizing -> "A press selects a row and activates nothing; a held press drags the selected rows into the order kept."
             Setting.DropButtons -> "A button on every element to drop it from the list."
+            Setting.ButtonFollowsExpansion ->
+                "The left-side menu button that opened this window keeps which rows are open, as they are opened and closed."
             else -> {
                 val kind = setting.section
                 when {
@@ -2921,6 +2953,8 @@ object SearchDomain {
         val arranged: List<String> = emptyList(),
         /** New 2026-11-12: absent = no drop button ([Config.dropButtons]). */
         val dropButtons: Boolean = false,
+        /** New 2026-11-19: absent = the menu button keeps what it kept ([Config.buttonFollowsExpansion]). */
+        val buttonFollowsExpansion: Boolean = false,
         /** New 2026-10-11: absent from an older build's = the actions in their own order. */
         val actionSearch: String = "",
         /** New 2026-10-11: absent = no block picked in "Blocks on the calendar". */
@@ -3446,6 +3480,20 @@ object SearchDomain {
     fun shownDetail(item: ItemResult, workplaceRunning: (String) -> Boolean): String =
         if (item.kind == Kind.WorkplaceSetup && workplaceRunning(item.id)) item.detail + " · running" else item.detail
 
+    /** An md element's row detail (user rule 2026-11-19): what it is associated with, by the titles of their rows. */
+    private fun mdDetail(state: SchedulerState, md: MdElement): String {
+        if (md.of.isEmpty()) return "associated with nothing"
+        val names = md.of.take(3).map { key ->
+            val id = key.substringAfter('/')
+            when (key.substringBefore('/')) {
+                Kind.Task.name -> state.tasks[org.example.project.scheduler.model.TaskId(id)]?.title
+                Kind.Md.name -> state.mdElements.firstOrNull { it.id == id }?.let(MdDomain::title)
+                else -> null
+            } ?: id
+        }
+        return "with " + names.joinToString(", ") + if (md.of.size > 3) " and ${md.of.size - 3} more" else ""
+    }
+
     fun itemResults(
         state: SchedulerState,
         kind: Kind,
@@ -3496,6 +3544,9 @@ object SearchDomain {
                 }
                 Kind.WorkplaceSetup -> state.workplaceSetups.map { setup ->
                     ItemResult(kind, setup.id, setup.title.ifBlank { "Workplace setup" }, WorkplaceDomain.detail(setup))
+                }
+                Kind.Md -> state.mdElements.map { md ->
+                    ItemResult(kind, md.id, MdDomain.title(md).ifBlank { "Md element" }, mdDetail(state, md))
                 }
                 Kind.Chrono -> state.chronos.map { chrono ->
                     val detail = when {
@@ -3600,8 +3651,13 @@ object SearchDomain {
                     ItemResult(kind, setting.name, setting.label, listOfNotNull(setting.section?.label ?: "general", roleOf(setting)?.label).joinToString(" · "))
                 }
             }
+        // An md element is found by its whole text, after what its title matches (user rule 2026-11-19).
+        val mdTexts = if (kind == Kind.Md && query.isNotBlank()) state.mdElements.associate { it.id to it.text } else emptyMap()
         return items
-            .mapNotNull { item -> matchRank(item.name, query)?.let { it to item } }
+            .mapNotNull { item ->
+                (matchRank(item.name, query) ?: mdTexts[item.id]?.takeIf { it.contains(query.trim(), ignoreCase = true) }?.let { Int.MAX_VALUE })
+                    ?.let { it to item }
+            }
             .sortedWith(compareBy({ it.second.kind != Kind.SearchConfiguration || !it.second.id.startsWith(CONFIGURATION_NODE_PREFIX) }, { it.first }, { it.second.name.lowercase() }, { it.second.detail }))
             .map { it.second }
     }
@@ -3990,7 +4046,7 @@ object SearchDomain {
                         ))
             }
             is ItemResult -> when (result.kind) {
-                Kind.Task, Kind.WorkplaceSetup, Kind.SearchConfiguration, Kind.Option, Kind.Integer, Kind.Action -> true
+                Kind.Task, Kind.WorkplaceSetup, Kind.Md, Kind.SearchConfiguration, Kind.Option, Kind.Integer, Kind.Action -> true
                 Kind.Category ->
                     tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
                 Kind.RestrictivePeriod -> when (filters.periodOrigin) {
@@ -4316,7 +4372,7 @@ object SearchDomain {
     val HISTORY_CHANGED_KINDS: List<Kind> =
         listOf(
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.Shortcut, Kind.Window, Kind.WorkplaceSetup,
+            Kind.Shortcut, Kind.Window, Kind.WorkplaceSetup, Kind.Md,
         )
 
     /** Whether a unit that changed [changed] passes the two "changed" filters: one of the checked kinds, the one element. */
@@ -4680,6 +4736,12 @@ object SearchDomain {
          * "Add a parent". It replaced the two actions below, retired ([RETIRED_ACTIONS]).
          */
         ElementParents(null, "Parents"),
+        /**
+         * User rule 2026-11-19: *"In the action section for an element (like a task element), the user can add md elements."*
+         * The md elements associated with the added elements, each edited in place and dissociated by its ✕, and the
+         * button adding a new one associated with them all ([MdDomain]). No parent and no child: an association.
+         */
+        ElementMd(null, "Md elements"),
         ElementAddParent(null, "Add a parent"),
         ElementRemoveParent(null, "Remove a parent"),
         ElementAddCategory(null, "Add a category"),
@@ -4769,7 +4831,6 @@ object SearchDomain {
         TaskChildren(Kind.Task, "Children"),
         TaskResilience(Kind.Task, "Resilience"),
         TaskScheduleUnit(Kind.Task, "Schedule unit"),
-        TaskText(Kind.Task, "Text"),
         /**
          * User rule 2026-11-16: *"In a task element, the user can define the evolution of its presence ratio target and its
          * minimum length target with any mathematical formula."* — the task's weight under each of its parents, a formula
@@ -4946,6 +5007,12 @@ object SearchDomain {
         WorkplaceNew(Kind.WorkplaceSetup, "New"),
         WorkplaceDuplicate(Kind.WorkplaceSetup, "Duplicate"),
         WorkplaceDelete(Kind.WorkplaceSetup, "Delete"),
+        // User rule 2026-11-19: an md element's text, the elements it is associated with, and the kind's New / Duplicate / bin.
+        MdText(Kind.Md, "Text"),
+        MdAssociated(Kind.Md, "Associated with"),
+        MdNew(Kind.Md, "New"),
+        MdDuplicate(Kind.Md, "Duplicate"),
+        MdDelete(Kind.Md, "Delete"),
 
         /** The volume of Claude Code's own sounds ([AppSettingEntry.ClaudeSounds]). */
         ClaudeSoundsVolume(Kind.AppSetting, "Claude Code sounds volume"),
@@ -4999,6 +5066,7 @@ object SearchDomain {
     fun actionStateOf(state: SchedulerState, action: AddedAction, row: Result): Any =
         when {
             action == AddedAction.ElementParents -> ElementTree.parentsOf(state, keyOf(row)).toSet()
+            action == AddedAction.ElementMd -> MdDomain.associatedWith(state, keyOf(row)).mapTo(HashSet()) { it.id }
             isSetAction(action) -> Unit
             else -> ownActionState(state, action, row) ?: keyOf(row)
         }
@@ -5027,7 +5095,7 @@ object SearchDomain {
             AddedAction.TaskMinimumTime -> task?.minimumMinutes
             AddedAction.TaskResilience -> task?.resilience
             AddedAction.TaskScheduleUnit -> task?.scheduleUnit
-            AddedAction.TaskText -> task?.text
+            AddedAction.MdText -> state.mdElements.firstOrNull { it.id == id && row.kind == Kind.Md }?.text
             AddedAction.TaskPresenceFormula -> task?.let { t -> state.cells.values.filter { it.taskId == t.id }.sortedBy { it.id.value }.map { it.weightFormula } }
             AddedAction.TaskMinimumFormula -> task?.minimumFormula
             AddedAction.TaskTreeName -> treeRootsOf(listOf(row)).map { state.tasks[it]?.title }
@@ -5123,7 +5191,7 @@ object SearchDomain {
     private val ROW_ACTION_KINDS: List<Kind> =
         listOf(
             Kind.Quota, Kind.Shortcut, Kind.Alarm, Kind.Reminder, Kind.Timer, Kind.WorkplaceSetup,
-            Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Chrono,
+            Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Chrono, Kind.Md,
         )
 
     /** Whether the "New [kind]" creation row is among [added] — its default configuration is then being edited. */
@@ -5158,6 +5226,7 @@ object SearchDomain {
             // …and a "New timer" row, which showed none of the timers' settings above; and the "New" of the kinds with no
             // default configuration to edit, as a "New keyboard shortcut" row.
             AddedAction.TimerNew, AddedAction.TaskNew, AddedAction.CategoryNew, AddedAction.PeriodNew, AddedAction.ChronoNew,
+            AddedAction.MdNew,
         )
 
     /**
@@ -5210,7 +5279,7 @@ object SearchDomain {
 
     /** The added elements' parents and categories: nothing a list without an element offers ([actionsFor]). */
     val ELEMENT_CATEGORY_ACTIONS: Set<AddedAction> = setOf(AddedAction.ElementAddCategory, AddedAction.ElementRemoveCategory)
-    val ELEMENT_ACTIONS: Set<AddedAction> = ELEMENT_CATEGORY_ACTIONS + setOf(AddedAction.ElementParents)
+    val ELEMENT_ACTIONS: Set<AddedAction> = ELEMENT_CATEGORY_ACTIONS + setOf(AddedAction.ElementParents, AddedAction.ElementMd)
 
     /**
      * User rule 2026-11-12: **the Search window "Add a parent" opens**, *"with the search configuration of only tasks"*: the
@@ -5506,7 +5575,10 @@ object SearchDomain {
             AddedAction.TaskDefaultSubtree -> "open default sub-tree template window"
             AddedAction.TaskChildren -> "children sub-tree cells edit rename change task id switch"
             AddedAction.TaskResilience -> "period apply"
-            AddedAction.TaskScheduleUnit, AddedAction.TaskText -> "apply"
+            AddedAction.TaskScheduleUnit -> "apply"
+            AddedAction.ElementMd -> "md markdown text notes note add associate dissociate"
+            AddedAction.MdText -> "md markdown text notes edit"
+            AddedAction.MdAssociated -> "associated with elements dissociate"
             AddedAction.TaskPresenceFormula -> "presence ratio target weight priority formula evolution time ramp date apply"
             AddedAction.TaskMinimumFormula -> "minimum length target time formula evolution ramp date apply"
             AddedAction.TaskTreeName -> "rename tree name apply"
@@ -5521,7 +5593,7 @@ object SearchDomain {
             AddedAction.ChronoHighestCount -> "chronos select all start pause reset all run compact expand"
             AddedAction.TaskNew, AddedAction.CategoryNew, AddedAction.PeriodNew, AddedAction.AlarmNew, AddedAction.TimerNew,
             AddedAction.ChronoNew, AddedAction.ReminderNew, AddedAction.QuotaNew, AddedAction.ShortcutNew,
-            AddedAction.WorkplaceNew -> "new create"
+            AddedAction.WorkplaceNew, AddedAction.MdNew -> "new create"
             AddedAction.WorkplaceTitle -> "name rename"
             AddedAction.WorkplaceOsChoice -> "os windows 11 system"
             AddedAction.WorkplaceWindows -> "file explorer vs code visual studio claude code cmd terminal tab path folder add remove default"
@@ -5530,7 +5602,7 @@ object SearchDomain {
             AddedAction.ShortcutWindow -> "choose a window"
             AddedAction.TaskDuplicate, AddedAction.CategoryDuplicate, AddedAction.PeriodDuplicate, AddedAction.AlarmDuplicate,
             AddedAction.TimerDuplicate, AddedAction.ChronoDuplicate, AddedAction.ReminderDuplicate, AddedAction.QuotaDuplicate,
-            AddedAction.WorkplaceDuplicate -> "duplicate copy"
+            AddedAction.WorkplaceDuplicate, AddedAction.MdDuplicate -> "duplicate copy"
             AddedAction.HistoryRules -> "copy the set of rules"
             AddedAction.HistoryInformation -> "copy all"
             AddedAction.TaskFulfilment -> "tasks add a task fulfils"
@@ -5548,7 +5620,7 @@ object SearchDomain {
             AddedAction.CategoryName -> "unique rename"
             AddedAction.CategoryRules, AddedAction.CategoryAddRule -> "rule label"
             AddedAction.AlarmDelete, AddedAction.TimerDelete, AddedAction.ChronoDelete, AddedAction.QuotaDelete,
-            AddedAction.WorkplaceDelete,
+            AddedAction.WorkplaceDelete, AddedAction.MdDelete,
             AddedAction.ReminderDelete, AddedAction.CategoryDelete, AddedAction.PeriodDelete, AddedAction.ShortcutDelete -> "delete remove bin"
             AddedAction.TimerAlert, AddedAction.ReminderAlert, AddedAction.AlarmAlert -> "alert sound voice notify vibrate"
             AddedAction.ReminderConstraint -> "choose none"
@@ -6070,6 +6142,12 @@ object SearchDomain {
         /** User rule 2026-11-02: the element [parent] made a parent of every added element ([on]), or no longer one. */
         data class ElementParent(val parent: String, val on: Boolean) : AddedCommand
 
+        /**
+         * Anomaly 2026-11-19 (*"in 'add a parent', there must be the creation task element in the first place"*): a new task
+         * titled [title] (a unique "New task" when blank), made a parent of every added element it may be one of.
+         */
+        data class NewParentTask(val title: String) : AddedCommand
+
         data class MinimumTime(val minutes: Int) : AddedCommand
 
         data class AlarmsOn(val on: Boolean) : AddedCommand
@@ -6117,7 +6195,14 @@ object SearchDomain {
 
         data class ScheduleUnit(val entries: List<org.example.project.scheduler.model.ScheduleUnitEntry>) : AddedCommand
 
-        data class Text(val text: String) : AddedCommand
+        /** User rule 2026-11-19: a new md element of [text], associated with every added element ([MdDomain]). */
+        data class MdAdd(val text: String = "") : AddedCommand
+
+        /** User rule 2026-11-19: md element [id]'s text, [editKey] coalescing what is typed into one field. */
+        data class MdSetText(val id: String, val text: String, val editKey: String? = null) : AddedCommand
+
+        /** User rule 2026-11-19: md element [id] no longer associated with the added elements (or, [keys] given, with those). */
+        data class MdDissociate(val id: String, val keys: List<String>? = null) : AddedCommand
 
         /** User rule 2026-11-16: one place's weight as a formula of the instant (blank: the constant). */
         data class WeightFormula(val cellId: CellId, val formula: String) : AddedCommand
@@ -7089,6 +7174,7 @@ object SearchDomain {
             Kind.Timer -> state.timers.mapTo(HashSet()) { it.id }
             Kind.Chrono -> state.chronos.mapTo(HashSet()) { it.id }
             Kind.WorkplaceSetup -> state.workplaceSetups.mapTo(HashSet()) { it.id }
+            Kind.Md -> state.mdElements.mapTo(HashSet()) { it.id }
             Kind.Quota -> state.quotas.mapTo(HashSet()) { it.id }
             Kind.Reminder -> state.chores.mapTo(HashSet()) { it.id }
             else -> emptySet()
@@ -7139,6 +7225,11 @@ object SearchDomain {
                     )
                 }
                 if (copies.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTimers(state.timers + copies))
+            }
+            Kind.Md -> {
+                val ids = state.mdElements.mapTo(HashSet()) { it.id }
+                val copies = state.mdElements.filter { m -> rows.any { it.id == m.id } }.map { it.copy(id = MdDomain.mintId(ids).also { id -> ids += id }) }
+                if (copies.isEmpty()) emptyList() else listOf(SchedulerIntent.SetMdElements(state.mdElements + copies))
             }
             Kind.WorkplaceSetup -> {
                 val ids = state.workplaceSetups.mapTo(HashSet()) { it.id }
@@ -7259,6 +7350,10 @@ object SearchDomain {
                         val next = state.timers.filterNot { it.id in ids }
                         if (next.size == state.timers.size) emptyList() else listOf(SchedulerIntent.SetTimers(next))
                     }
+                    Kind.Md -> {
+                        val next = state.mdElements.filterNot { it.id in ids }
+                        if (next.size == state.mdElements.size) emptyList() else listOf(SchedulerIntent.SetMdElements(next))
+                    }
                     Kind.WorkplaceSetup -> {
                         val next = state.workplaceSetups.filterNot { it.id in ids }
                         if (next.size == state.workplaceSetups.size) emptyList() else listOf(SchedulerIntent.SetWorkplaceSetups(next))
@@ -7377,6 +7472,17 @@ object SearchDomain {
                 if (taskIds.isEmpty()) emptyList()
                 else listOf(SchedulerIntent.SetTasksCategory(taskIds, command.categoryId, command.carried))
             is AddedCommand.ElementParent -> ElementTree.parentIntents(state, added.map(::keyOf), command.parent, command.on)
+            is AddedCommand.NewParentTask -> {
+                // The id the reducer will mint ([SchedulerState.allocateTaskId]): the links are asked of the state holding it.
+                val title =
+                    command.title.trim().ifEmpty {
+                        generateSequence(1) { it + 1 }.map { if (it == 1) "New task" else "New task $it" }
+                            .first { name -> state.tasks.values.none { it.title.equals(name, ignoreCase = true) } }
+                    }
+                val (id, allocated) = state.allocateTaskId()
+                val made = allocated.copy(tasks = allocated.tasks + (id to org.example.project.scheduler.model.Task(id = id, title = title)))
+                listOf(SchedulerIntent.CreatePathlessTask(title)) + ElementTree.parentIntents(made, added.map(::keyOf), taskKey(id), on = true)
+            }
             is AddedCommand.MinimumTime ->
                 if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksMinimumTime(taskIds, command.minutes))
             is AddedCommand.AlarmsOn -> {
@@ -7405,8 +7511,19 @@ object SearchDomain {
                 val ids = addedLeafIds(state, added)
                 if (ids.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksScheduleUnit(ids, command.entries))
             }
-            is AddedCommand.Text ->
-                if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksText(taskIds.distinct(), command.text))
+            is AddedCommand.MdAdd -> {
+                val keys = added.filter { ElementTree.isElement(it.kind) }.map(::keyOf)
+                if (keys.isEmpty()) emptyList()
+                else listOf(SchedulerIntent.SetMdElements(MdDomain.added(state.mdElements, MdDomain.mintId(state.mdElements.map { it.id }), keys, command.text)))
+            }
+            is AddedCommand.MdSetText -> {
+                val next = state.mdElements.map { if (it.id == command.id) it.copy(text = command.text) else it }
+                if (next == state.mdElements) emptyList() else listOf(SchedulerIntent.SetMdElements(next, command.editKey))
+            }
+            is AddedCommand.MdDissociate -> {
+                val next = MdDomain.dissociated(state.mdElements, command.id, command.keys ?: added.map(::keyOf))
+                if (next == state.mdElements) emptyList() else listOf(SchedulerIntent.SetMdElements(next))
+            }
             is AddedCommand.WeightFormula -> listOf(SchedulerIntent.SetCellWeightFormula(command.cellId, command.formula))
             is AddedCommand.MinimumFormula ->
                 if (taskIds.isEmpty()) emptyList() else listOf(SchedulerIntent.SetTasksMinimumFormula(taskIds.distinct(), command.formula))

@@ -3538,7 +3538,7 @@ internal fun TaskEditWindow(
      * dismisses this window — the price of the sort (see `ui/PopupWindows.kt`).
      */
     onEditPeriodKind: (String) -> Unit,
-    onSave: (resilience: Map<String, Double>, entries: List<ScheduleUnitEntry>, text: String) -> Unit,
+    onSave: (resilience: Map<String, Double>, entries: List<ScheduleUnitEntry>) -> Unit,
     onDismiss: () -> Unit,
     /**
      * PRD §13 **Paths** (user spec 2026-09-26): where the task sits in the live tree ([TaskPathsDomain]) and the
@@ -3559,7 +3559,6 @@ internal fun TaskEditWindow(
     var resilience by remember(task.id) { mutableStateOf(task.resilience) }
     var newKind by remember(task.id) { mutableStateOf("") }
     var entries by remember(task.id) { mutableStateOf(task.scheduleUnit) }
-    var text by remember(task.id) { mutableStateOf(task.text) }
     val sum = SchedulerDomain.scheduleUnitSumMinutes(entries)
     // A parent task's schedule unit is not editable here, so it can never block its own Save.
     val canSave = !isLeaf || SchedulerDomain.canSaveScheduleUnit(entries, minimumMinutes)
@@ -3687,14 +3686,7 @@ internal fun TaskEditWindow(
                     )
                 }
 
-                // Section 3: the free-form text document attached to the task (any populated cell).
-                HorizontalDivider()
-                Text("Text", style = MaterialTheme.typography.labelMedium)
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
-                )
+                // The task's text is its md elements now (user rule 2026-11-19): its Search window's "Md elements".
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -3705,7 +3697,7 @@ internal fun TaskEditWindow(
                     // PRD §13: Save is not clickable while the spans exceed the task's minimum time.
                     TextButton(
                         enabled = canSave,
-                        onClick = { onSave(resilience, entries, text) },
+                        onClick = { onSave(resilience, entries) },
                     ) { Text("Save") }
                 }
             }

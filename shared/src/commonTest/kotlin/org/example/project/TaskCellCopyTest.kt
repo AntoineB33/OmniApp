@@ -41,8 +41,8 @@ class TaskCellCopyTest {
             s,
             SchedulerIntent.SetScheduleUnit(pTask, listOf(ScheduleUnitEntry("warm up", 5), ScheduleUnitEntry("run", 25))),
         )
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskText(pTask, "line one\nline two"))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskText(c1Task, "child note"))
+        s = withMd(s, pTask, "line one\nline two")
+        s = withMd(s, c1Task, "child note")
         return s to cP
     }
 
@@ -170,7 +170,7 @@ class TaskCellCopyTest {
         var s = SchedulerState.empty()
         val c = s.lists[s.rootListId]!!.cellIds[0]
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(c, "P"))
-        s = SchedulerReducer.reduce(s, SchedulerIntent.SetTaskText(s.cells[c]!!.taskId!!, "a\n\nb"))
+        s = withMd(s, s.cells[c]!!.taskId!!, "a\n\nb")
 
         val text = SchedulerDomain.copyCellsText(s, listOf(c), maxDepth = 20)
         assertTrue(text.contains("Copied tasks:"), text)

@@ -8431,7 +8431,7 @@ object SchedulerDomain {
             resilience = task?.resilience.orEmpty(),
             categories = task?.categoryIds.orEmpty().mapNotNull { state.categoryById(it)?.title },
             scheduleUnit = task?.scheduleUnit.orEmpty(),
-            text = if (options.includeText) task?.text.orEmpty() else "",
+            text = if (options.includeText && taskId != null) MdDomain.copiedText(state, taskId) else "",
         )
     }
 

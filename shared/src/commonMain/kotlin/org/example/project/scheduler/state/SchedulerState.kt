@@ -908,6 +908,13 @@ data class SchedulerState(
     /** User rule 2026-11-01: the account's workplace setups: windows to open at one press, persisted and synced like [chronos]. */
     val workplaceSetups: List<org.example.project.scheduler.domain.WorkplaceSetup> = emptyList(),
 
+    /**
+     * User rule 2026-11-19: the account's **md elements** — markdown texts, each associated with the elements it is about
+     * ([org.example.project.scheduler.domain.MdElement]); persisted and synced like [workplaceSetups]. They hold what a task's
+     * text held ([org.example.project.scheduler.domain.MdDomain.liftTaskTexts]).
+     */
+    val mdElements: List<org.example.project.scheduler.domain.MdElement> = emptyList(),
+
 
     /** User rule 2026-11-02: which element is a parent of which, a category of what it is carried by; synced like [chronos]. */
     val elementLinks: List<org.example.project.scheduler.domain.ElementLink> = emptyList(),

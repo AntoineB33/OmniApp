@@ -450,6 +450,8 @@ internal fun SettingEditor(
         // User rule 2026-11-12: a button on every element of the list to drop it.
         SearchDomain.Setting.DropButtons ->
             CompactSwitch(checked = config.dropButtons, onCheckedChange = { onChange(config.copy(dropButtons = it)) })
+        SearchDomain.Setting.ButtonFollowsExpansion ->
+            CompactSwitch(checked = config.buttonFollowsExpansion, onCheckedChange = { onChange(config.copy(buttonFollowsExpansion = it)) })
         SearchDomain.Setting.SearchSortsOnly ->
             CompactSwitch(checked = config.actionSearchSortsOnly, onCheckedChange = { onChange(config.copy(actionSearchSortsOnly = it)) })
         SearchDomain.Setting.MenuCustomizing ->
