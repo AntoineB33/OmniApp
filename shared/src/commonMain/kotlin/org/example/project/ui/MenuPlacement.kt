@@ -183,3 +183,33 @@ internal fun stuckTo(at: IntRect, anchor: IntRect, list: IntRect? = null): Boole
     val whole = IntRect(minOf(anchor.left, list.left), minOf(anchor.top, list.top), maxOf(anchor.right, list.right), maxOf(anchor.bottom, list.bottom))
     return touches(row) || touches(whole)
 }
+
+/** The side of a pop-up furthest from what it hangs from ([farSideOf]): where the ▾ of its search bar stands. */
+enum class FarSide { Left, Right }
+
+/**
+ * User rule 2026-11-19: the down arrow of a window that appears stands on its left or its right side, **whichever is further
+ * from the caller** — the side of [popup] further from the middle of its [anchor]: a pop-up at its caller's left reads
+ * Left, at its right Right; below or above, the side further from the caller's middle. (The same rule for the hover arrow
+ * of a row was asked and cancelled the same day: that arrow stays at the row's end.)
+ */
+fun farSideOf(popup: IntRect, anchor: IntRect): FarSide {
+    val middle = (anchor.left + anchor.right) / 2
+    return if (kotlin.math.abs(popup.left - middle) > kotlin.math.abs(popup.right - middle)) FarSide.Left else FarSide.Right
+}
+
+/**
+ * User rule 2026-11-19: **the far side of the pop-up a search bar stands in** ([farSideOf]), given by the pop-up as it is
+ * placed; null where it is not known (outside a pop-up, or a platform drawing material's menu): the ▾ then at the bar's right.
+ */
+val LocalPopupFarSide = androidx.compose.runtime.compositionLocalOf<FarSide?> { null }
+
+/**
+ * The sides the ▾'s own tree tries from a bar whose ▾ stands at [far]: on that side first, away from the caller, then a
+ * pop-up's own order ([MenuSide.POPUP]).
+ */
+fun arrowTreeSides(far: FarSide?): List<MenuSide> =
+    when (far) {
+        FarSide.Right -> listOf(MenuSide.RightTop) + MenuSide.POPUP.filter { it != MenuSide.RightTop }
+        FarSide.Left, null -> MenuSide.POPUP
+    }

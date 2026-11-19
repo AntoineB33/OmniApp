@@ -1318,6 +1318,24 @@ fun SearchWindow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // User rule 2026-11-19: in a window that appears, the ▾ stands on its side furthest from its caller.
+                val barArrow: @Composable () -> Unit = {
+                // User rule 2026-11-04: the header is the bar alone, and at its right the arrow that opens the tree of
+                // every configuration (the types, Reset, the filters, the sorting — what the header's buttons were).
+                // A window drawn inside another has no id of its own: its ▾ window keeps its own state ([ArrowSearches]).
+                // A ▾ pop-up's arrow opens the configurations of the pop-up's own search, one level down, named after it
+                // ([SearchTreeList.arrowDepth]), as far as [MAX_TREE_DEPTH].
+                if (treeList == null || treeList.arrowDepth <= MAX_TREE_DEPTH) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides LocalArrowOwner.current.takeIf { !embedded || treeList != null }) {
+                        ConfigurationTreeArrow(
+                            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
+                            depth = treeList?.arrowDepth ?: 0,
+                            relevant = relevantSettings,
+                        )
+                    }
+                }
+                }
+                if (LocalPopupFarSide.current == FarSide.Left) barArrow()
                 // User rule 2026-11-06: the bar's right-click menu is the field's own (match case and whole word, which it
                 // held from 2026-11-04, are in the configurations tree alone).
                 Box(Modifier.weight(1f)) {
@@ -1344,20 +1362,7 @@ fun SearchWindow(
                 )
                 }
                 }
-                // User rule 2026-11-04: the header is the bar alone, and at its right the arrow that opens the tree of
-                // every configuration (the types, Reset, the filters, the sorting — what the header's buttons were).
-                // A window drawn inside another has no id of its own: its ▾ window keeps its own state ([ArrowSearches]).
-                // A ▾ pop-up's arrow opens the configurations of the pop-up's own search, one level down, named after it
-                // ([SearchTreeList.arrowDepth]), as far as [MAX_TREE_DEPTH].
-                if (treeList == null || treeList.arrowDepth <= MAX_TREE_DEPTH) {
-                    androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides LocalArrowOwner.current.takeIf { !embedded || treeList != null }) {
-                        ConfigurationTreeArrow(
-                            state, config, openedConfig, onConfigChange, nowMillis, windows, claudeLogs, onPickOnCalendar,
-                            depth = treeList?.arrowDepth ?: 0,
-                            relevant = relevantSettings,
-                        )
-                    }
-                }
+                if (LocalPopupFarSide.current != FarSide.Left) barArrow()
             }
             val completionOptions =
                 remember(config.completion, query, state.titleToTaskIds) { SearchDomain.completionOptions(state, config.completion, query) }

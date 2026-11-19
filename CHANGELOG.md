@@ -28,6 +28,9 @@ Check here before assuming the code matches the docs.
 - **A pop-up stays only while it touches its caller** (`stuckTo`). `MenuPlacementTest`. A hover arrow on the side of its
   pop-up furthest from the caller was built the same day and taken back at the user's word (*"I cancel my idea of
   alternating between left and right for the arrow"*): the arrow stays at the row's end, the sides `MenuSide.SUBMENU`'s.
+  **The ▾ in the bar of a window that appears does follow it** (*"However, I want it for the down arrow of the appearing
+  window"*): on the pop-up's side furthest from its caller, its tree opening there first (`farSideOf`,
+  `LocalPopupFarSide`, `arrowTreeSides`).
 - **The blank field under an element's children, double-clicked, is the bar of the window it opens** (`LinkedSearchBar`),
   its ✕ and ▾ in the row. `ElementChildrenTest`, `LinkedSearchBarTest`.
 

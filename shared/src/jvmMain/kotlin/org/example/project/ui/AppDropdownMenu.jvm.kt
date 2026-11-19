@@ -518,6 +518,7 @@ private class MenuSession(
                 // Its rows are in no list of the caller's: a list inside it says so itself.
                 LocalCallerList provides null,
                 LocalPopupWindowControl provides control,
+                LocalPopupFarSide provides farSide.value,
             ) {
                 MenuSurface(owner, modifier.value, content.value, ::fit)
             }
@@ -573,10 +574,25 @@ private class MenuSession(
         if (window.location != at) {
             window.location = at
         }
+        noteFarSide(at)
     }
 
     private fun location(): Point =
-        menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow(), stuck = avoidsList)
+        menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow(), stuck = avoidsList).also(::noteFarSide)
+
+    /**
+     * User rule 2026-11-19: the side of this pop-up furthest from its caller ([farSideOf]), told to what it holds
+     * ([LocalPopupFarSide]): where the ▾ of its search bar stands, and the side that ▾'s tree opens on first.
+     */
+    private val farSide = androidx.compose.runtime.mutableStateOf<FarSide?>(null)
+
+    private fun noteFarSide(at: Point) {
+        val shown = size ?: return
+        if (at.x <= OFF_SCREEN || at.y <= OFF_SCREEN) return
+        val caller = rectOnScreen(owner, anchor ?: Rect.Zero, offsetPx)
+        val next = farSideOf(IntRect(at.x, at.y, at.x + shown.width, at.y + shown.height), caller)
+        if (farSide.value != next) farSide.value = next
+    }
 
     fun close() {
         closed = true

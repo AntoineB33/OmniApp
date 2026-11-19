@@ -274,6 +274,8 @@ internal fun ConfigurationTreeArrow(
             // stands in — opened by a hover, it must be reachable by the pointer crossing straight onto it. Placed off
             // the list ([LocalCallerList]) it stood across the whole list from the arrow, and closed before it was reached.
             LocalCallerList provides null,
+            // User rule 2026-11-19: a ▾ at the right of a window that appears opens its tree further right, away from the caller.
+            LocalMenuSides provides if (LocalPopupFarSide.current == FarSide.Right) arrowTreeSides(FarSide.Right) else LocalMenuSides.current,
             LocalMenuHover provides hover,
             LocalTreeKeeper provides keeper,
             LocalTreePrefix provides prefix,

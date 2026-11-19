@@ -457,6 +457,12 @@ means.
     every window that appears by hovering over something, the caller, is always stuck to the caller."*; `stuckTo`,
     `keepsSpot`'s `stuck`): one of its sides on the caller's, or on the edge of the caller's list at the row's height. A
     pop-up at a caller's left that grew narrower left a gap; it is placed again against it.
+  - **The ▾ of a window that appears stands on its side furthest from its caller, and its tree opens on that side
+    first** (user rule 2026-11-19: *"I want it for the down arrow of the appearing window"*; `farSideOf`,
+    `LocalPopupFarSide` given by the desktop's `MenuSession` as it places the pop-up, `arrowTreeSides`): before the bar
+    in a pop-up at its caller's left, after it at its right. Where no pop-up says it (a window of the app, a phone's
+    material menu), at the bar's right as ever. **Not a row's hover arrow**: asked the same day and cancelled, it stays
+    at the row's end, its pop-up on `MenuSide.SUBMENU`'s sides.
   - **A pop-up opened from a field or a button opens at its left hanging down, else above reaching left, else below
     reaching left, else at its right hanging down** (user rule 2026-11-15: *"A pop-up window opened from a field/button
     must adjust its position on four choices …, depending on the available space, then on its size, when the pop-up
