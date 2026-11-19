@@ -203,7 +203,9 @@ class ConfigurationTreeTest {
         val tree = SearchDomain.configurationTree(opened.copy(menuCustomizing = false), opened)
         val byDefault = tree.filterIsInstance<ConfigurationCategory>().single { it.id == "default" }
         assertEquals(SearchDomain.DEFAULT_NODE_LABEL, byDefault.label)
-        assertEquals(listOf(Setting.MatchCase), byDefault.children.map { (it as ConfigurationLeaf).setting })
+        // Every setting it opened with, its own included (anomaly 2026-11-19: "Menu keeps open rows" was in "Currently on"
+        // and not here — "Default for this" kept a shorter list of the window's own settings than "Currently on").
+        assertEquals(listOf(Setting.MatchCase, Setting.MenuCustomizing), byDefault.children.map { (it as ConfigurationLeaf).setting })
         val search = tree.filterIsInstance<ConfigurationCategory>().single { it.id == SearchDomain.TreeGroup.Bar.id }
         assertEquals("Search", search.label)
         val matching = search.children.filterIsInstance<ConfigurationCategory>().single { it.label == "Matching" }

@@ -2047,8 +2047,20 @@ object SearchDomain {
 
     fun activeSettings(config: Config?): List<Setting> {
         config ?: return emptyList()
-        val filters = Setting.entries.filter { config.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES } + whereSettingsOn(config.filters)
-        val own = listOfNotNull(
+        return (filtersOn(config) + ownSettingsOn(config)).distinct()
+    }
+
+    /** The filters [config] sets, "Where to search" included: what [activeSettings] and [contextSettings] both read. */
+    private fun filtersOn(config: Config): List<Setting> =
+        Setting.entries.filter { config.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES } + whereSettingsOn(config.filters)
+
+    /**
+     * **The window's own settings [config] has on** — no filter: what it lists and how, its display. The ONE list "Currently
+     * on" ([activeSettings]) and "Default for this" ([contextSettings]) read (anomaly 2026-11-19: *"'Menu keeps open rows' is
+     * in 'Currently on' but not in 'Default for this'"* — the second kept a list of its own, three of these long).
+     */
+    private fun ownSettingsOn(config: Config): List<Setting> =
+        listOfNotNull(
             // User rule 2026-11-16 (*"If nothing is on … what is shown in down arrow is random, right?"*): what orders the
             // list and what it lists are on wherever they are not a plain Search window's ([Config]'s defaults).
             Setting.Types.takeIf { config.kinds != Config().kinds },
@@ -2060,8 +2072,6 @@ object SearchDomain {
             Setting.DropButtons.takeIf { config.dropButtons },
             Setting.ButtonFollowsExpansion.takeIf { config.buttonFollowsExpansion },
         )
-        return (filters + own).distinct()
-    }
 
     /**
      * User rule 2026-11-13: **the search configurations a context is about** — what the window was opened with
@@ -2071,17 +2081,16 @@ object SearchDomain {
      */
     fun contextSettings(opened: Config?, relevant: List<Setting> = emptyList()): List<Setting> {
         opened ?: return relevant
-        val on = Setting.entries.filter { opened.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES } + whereSettingsOn(opened.filters)
+        val on = filtersOn(opened)
         val first = listOfNotNull(
             Setting.ParentDistance.takeIf { opened.filters.parentsOf.isNotEmpty() },
             Setting.DropButtons.takeIf { opened.dropButtons },
         )
-        // What it lists and in what order, where not a plain Search window's (user rule 2026-11-16): last.
-        val shape = listOfNotNull(
-            Setting.Types.takeIf { opened.kinds != Config().kinds },
-            Setting.SortResults.takeIf { opened.sorts.isNotEmpty() && opened.sorts != DEFAULT_SORTS },
-        )
-        return (relevant + first.take(1) + on + first.drop(1) + shape).distinct()
+        // Its own settings, as "Currently on" reads them ([ownSettingsOn]): what it lists and in what order, where not a
+        // plain Search window's (user rule 2026-11-16), last.
+        val shape = setOf(Setting.Types, Setting.SortResults)
+        val own = ownSettingsOn(opened)
+        return (relevant + first.take(1) + on + first.drop(1) + own.filter { it !in shape } + own.filter { it in shape }).distinct()
     }
 
     /**

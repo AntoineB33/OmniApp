@@ -67,6 +67,14 @@ class RootMenuButtonTest {
         val tree = SearchDomain.configurationTree(SearchDomain.rootSearchConfig())
         val on = tree.filterIsInstance<SearchDomain.ConfigurationCategory>().single { it.label == "Currently on" }
         assertTrue(on.children.any { (it as? SearchDomain.ConfigurationLeaf)?.setting == SearchDomain.Setting.ButtonFollowsExpansion })
+        // Anomaly 2026-11-19: *"'Menu keeps open rows' is in 'Currently on' but not in 'Default for this'"*. Opened so, it is
+        // the window's default too — switched off since, "Default for this" still says what it opened with.
+        val switchedOff = SearchDomain.rootSearchConfig().copy(buttonFollowsExpansion = false)
+        val defaults = SearchDomain.configurationTree(switchedOff, opened = SearchDomain.rootSearchConfig())
+            .filterIsInstance<SearchDomain.ConfigurationCategory>().single { it.id == "default" }
+        assertTrue(defaults.children.any { (it as? SearchDomain.ConfigurationLeaf)?.setting == SearchDomain.Setting.ButtonFollowsExpansion })
+        assertTrue(SearchDomain.activeSettings(SearchDomain.rootSearchConfig()).all { it in SearchDomain.contextSettings(SearchDomain.rootSearchConfig()) },
+            "what a window opened with is on, every one of it is its default")
     }
 
     /** User rule 2026-11-19: *"rename 'root' by something like task trees"* — the global root, and its button. */

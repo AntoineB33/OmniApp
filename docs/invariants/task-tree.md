@@ -1647,7 +1647,8 @@ suggestions before it was ever entered.
   while nothing was), then every configuration, the last changed first (`Config.settingsChangedAt`, local-only, no
   part of the search); **"Currently on"** (`activeSettings`); **"Relevant here"**, what the window is about whatever
   it holds (the code's `relevant`); **"Default for this"**, what the window was opened on (`contextSettings`; a
-  window opened on nothing, its page's default) — and **each group ends with its own "Default for this"**, the part of
+  window opened on nothing, its page's default) — **every setting "Currently on" would list for that configuration**, the
+  two reading one list of the window's own settings (`ownSettingsOn`, anomaly 2026-11-19) — and **each group ends with its own "Default for this"**, the part of
   it in that group (*"if somewhere in the app the search bar by default matches case, then in down arrow > search >
   matching > default for this, the user can find matches case"*); none of these four where it would be empty; **the
   groups of what is about every row** — "Search" (its "Matching" under it, `TreeSubNode`, `subNodeOf`), "Types",

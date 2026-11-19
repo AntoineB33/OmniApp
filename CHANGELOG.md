@@ -13,6 +13,10 @@ Check here before assuming the code matches the docs.
 
 ### "Update" after a restart, the page selector's right-click — 2026-11-19
 
+- Anomaly: "Menu keeps open rows" was in "Currently on" and not in "Default for this". The two read the window's own
+  settings from two lists, the second three long; both read `ownSettingsOn` now (so a window opened arranging by
+  dragging has it in "Default for this" too, `ConfigurationTreeTest` updated).
+
 - Anomaly: no "Update" on the Task trees button after turning "Menu keeps open rows" off. The link from a button to its
   window was rebuilt after a restart from the tab's name, and the window's tab still said "Root". The link is now kept
   (`MenuButtonWindows` placement row; a tab named "Root" is still the Task trees button's).
