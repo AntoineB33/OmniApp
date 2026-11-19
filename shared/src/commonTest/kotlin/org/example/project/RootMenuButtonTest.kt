@@ -110,4 +110,22 @@ class RootMenuButtonTest {
         assertEquals(links, CustomMenuButtons.decodeButtonWindows(CustomMenuButtons.encodeButtonWindows(links)))
         assertEquals(emptyMap(), CustomMenuButtons.decodeButtonWindows(null))
     }
+
+    /**
+     * Anomaly 2026-11-19: *"now i have the update option, even though i set the switch button back to on"*. After a restart
+     * the layout the window had when its button opened it was gone, and a button keeping no layout of its own read its window
+     * as changed. Kept by the store, the window as it was opened is no change.
+     */
+    @Test
+    fun a_window_that_came_back_as_its_button_opened_it_offers_no_update() {
+        val opened = org.example.project.ui.WindowLayout(10f, 20f, 600f, 400f, listOf(0.5f, 0.5f), listOf(false, false, false))
+        val kept = CustomMenuButtons.decodeOpenedLayouts(CustomMenuButtons.encodeOpenedLayouts(mapOf("d-root" to opened)))
+        assertEquals(mapOf("d-root" to opened), kept)
+        val button = CustomMenuButtons.ROOT_SEARCH
+        val config = button.config
+        assertTrue(!CustomMenuButtons.needsUpdate(button, config, config, opened, kept["d-root"]), "as opened: nothing to update")
+        assertTrue(CustomMenuButtons.needsUpdate(button, config, config, opened, null), "the reference lost: an Update is offered")
+        val switchedOff = SearchDomain.rootSearchConfig().copy(buttonFollowsExpansion = false).encode()
+        assertTrue(CustomMenuButtons.needsUpdate(button, config, switchedOff, opened, kept["d-root"]), "switched off: it is offered")
+    }
 }

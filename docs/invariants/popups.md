@@ -130,7 +130,9 @@ means.
     selector showed the background's): the page selector's greys Rename, "all pages" (it is on every page) and Remove.
   - **The window a button opened is kept across a restart** (`menuButtonWindows`, kept on the `MenuButtonWindows`
     placement row, anomaly 2026-11-19: after a restart it was found by the tab's name alone, which the renamed "Task
-    trees" button no longer matched, and "Update" was not offered). The tab's name is still the fallback.
+    trees" button no longer matched, and "Update" was not offered). The tab's name is still the fallback. **So is the layout
+    the window had when its button opened it** (`menuButtonOpenedLayouts`, `MenuButtonOpenedLayouts` row): what a button
+    keeping no layout of its own is held against — lost at a restart, "Update" was offered for a window not changed.
   - **A button's right-click "Update" saves its window's state as it stands** (user rule 2026-10-07;
     `CustomMenuButtons.needsUpdate` / `updated`, `CustomMenuButtonsTest`): offered only while the window THE BUTTON
     opened or brought back is open (`App`'s `menuButtonWindows`, Compose-only — forgotten when that window closes;

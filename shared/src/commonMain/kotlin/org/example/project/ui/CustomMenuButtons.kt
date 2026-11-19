@@ -700,6 +700,19 @@ object CustomMenuButtons {
 
     fun decodeButtonWindows(text: String?): Map<String, String> = decodeTabTitles(text)
 
+    /**
+     * Anomaly 2026-11-19 (*"now i have the update option, even though i set the switch button back to on"*): **the layout
+     * each button's window had when the button opened it** — what "Update" holds a button that keeps none against
+     * ([needsUpdate]'s `opened`), kept across a restart with the link to the window ([BUTTON_WINDOWS_PLACEMENT_ID]). Without
+     * it, a window that came back read as changed. Local-only view state.
+     */
+    const val BUTTON_OPENED_LAYOUTS_PLACEMENT_ID: String = "MenuButtonOpenedLayouts"
+
+    fun encodeOpenedLayouts(layouts: Map<String, WindowLayout>): String = encodeTabTitles(layouts.mapValues { encodeLayout(it.value) })
+
+    fun decodeOpenedLayouts(text: String?): Map<String, WindowLayout> =
+        decodeTabTitles(text).mapNotNull { (id, layout) -> decodeLayout(layout)?.let { id to it } }.toMap()
+
     /** The order of the bar's tabs is kept on (user rule 2026-11-01): [encodeGlobalWindows]' shape. */
     const val TAB_ORDER_PLACEMENT_ID: String = "TabOrder"
 

@@ -325,6 +325,7 @@ private val VIEW_ROWS: Set<String> =
         CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID,
         org.example.project.claudelogs.ClaudeLogsSettings.PLACEMENT_ID, CustomMenuButtons.CLAUDE_LOGS_PLACEMENT_ID,
         CustomMenuButtons.SETTINGS_PLACEMENT_ID, CustomMenuButtons.TAB_ORDER_PLACEMENT_ID, CustomMenuButtons.BUTTON_WINDOWS_PLACEMENT_ID,
+        CustomMenuButtons.BUTTON_OPENED_LAYOUTS_PLACEMENT_ID,
         org.example.project.ui.AppViewState.PLACEMENT_ID,
         org.example.project.ui.PopupMemory.PLACEMENT_ID,
     )
@@ -706,15 +707,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // (by frame id), the layout that window had then — the reference for a button that kept none — and the lines
         // between the sections of the windows that have some, which those windows tell here. Compose-only.
         val menuButtonWindows = remember { androidx.compose.runtime.mutableStateMapOf<String, String>() }
+        val menuButtonOpenedLayouts = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowLayout>() }
         // Kept across a restart (anomaly 2026-11-19): loaded once, for the windows that come back; written as it changes.
         remember(placementStore) {
             menuButtonWindows.putAll(
                 CustomMenuButtons.decodeButtonWindows(placements[CustomMenuButtons.BUTTON_WINDOWS_PLACEMENT_ID]?.config)
                     .filterValues { placements[it]?.visible == true },
             )
+            // …and the layout each of those windows had when its button opened it: what "Update" holds them against.
+            menuButtonOpenedLayouts.putAll(
+                CustomMenuButtons.decodeOpenedLayouts(placements[CustomMenuButtons.BUTTON_OPENED_LAYOUTS_PLACEMENT_ID]?.config)
+                    .filterKeys { it in menuButtonWindows },
+            )
             true
         }
-        val menuButtonOpenedLayouts = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.WindowLayout>() }
         val searchSplits = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.SearchSplits>() }
         // Anomaly 2026-11-04: the Online window, opened on the Task Scheduler page, was asked for again from the settings
         // page's menu — and only brought back where it was, on a page not shown, so nothing opened. A window no page owns
@@ -1352,9 +1358,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             true
         }
         LaunchedEffect(placementStore) {
-            androidx.compose.runtime.snapshotFlow { menuButtonWindows.toMap() }.collect { links ->
+            androidx.compose.runtime.snapshotFlow { menuButtonWindows.toMap() to menuButtonOpenedLayouts.toMap() }.collect { (links, layouts) ->
                 updatePlacementById(CustomMenuButtons.BUTTON_WINDOWS_PLACEMENT_ID) {
                     it.copy(config = CustomMenuButtons.encodeButtonWindows(links))
+                }
+                updatePlacementById(CustomMenuButtons.BUTTON_OPENED_LAYOUTS_PLACEMENT_ID) {
+                    it.copy(config = CustomMenuButtons.encodeOpenedLayouts(layouts))
                 }
             }
         }

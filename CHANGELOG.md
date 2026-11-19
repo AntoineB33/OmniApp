@@ -16,6 +16,9 @@ Check here before assuming the code matches the docs.
 - Anomaly: no "Update" on the Task trees button after turning "Menu keeps open rows" off. The link from a button to its
   window was rebuilt after a restart from the tab's name, and the window's tab still said "Root". The link is now kept
   (`MenuButtonWindows` placement row; a tab named "Root" is still the Task trees button's).
+- Anomaly, the same evening: "Update" then stayed offered with the setting back on. The layout a button's window had
+  when the button opened it (its reference when the button keeps none) was lost at a restart; it is kept with the link
+  (`MenuButtonOpenedLayouts`).
 - Anomaly: the page selector's right-click was the menu background's. Every row's is `menuItemActions` now.
 
 ### The global root is "Task trees" — 2026-11-19
