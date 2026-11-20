@@ -177,13 +177,14 @@ fun CalendarElementsWindow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(Modifier.weight(1f)) {
+                    val popupOpener = rememberPopupOpener()
+                    Box(Modifier.weight(1f)) { OpenedBy(popupOpener) {
                         Text(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(4.dp))
                                 .border(1.dp, CalColors.grid, RoundedCornerShape(4.dp))
-                                .menuToggleClickable(kindMenuOpen) { kindMenuOpen = it }
+                                .menuToggleClickable(kindMenuOpen, popupOpener) { kindMenuOpen = it }
                                 .padding(horizontal = 8.dp, vertical = 8.dp),
                             text = kind.label + "  ▾",
                             style = MaterialTheme.typography.bodySmall,
@@ -197,7 +198,7 @@ fun CalendarElementsWindow(
                                 kindMenuOpen = false
                             },
                         )
-                    }
+                    }}
                     Button(
                         // "Greyed if no element is selected": for a task and a reminder a typed name IS a
                         // selection (a new one), for a period the kind must name something, and for an

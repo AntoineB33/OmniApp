@@ -102,7 +102,15 @@ actual fun AppDropdownMenu(
     val here = LocalAppWindow.current
     val owner = remember { if (MENUS_ARE_WINDOWS) inMenu ?: here ?: owningWindow() else null }
     if (owner == null) {
-        androidx.compose.material3.DropdownMenu(true, onDismissRequest, modifier, offset, properties = properties, content = content)
+        // Material's menu closes itself on a press outside it: one on its opener is that opener's click to answer
+        // (anomaly 2026-11-20, [PopupOpener]), as it is for a menu window's loss of the keyboard.
+        val opener = LocalPopupOpener.current
+        val dismiss = androidx.compose.runtime.rememberUpdatedState(onDismissRequest)
+        androidx.compose.material3.DropdownMenu(
+            true, { if (!PopupOpeners.pressAnsweredBy(opener)) dismiss.value() }, modifier, offset, properties = properties,
+        ) {
+            androidx.compose.runtime.CompositionLocalProvider(LocalPopupOpener provides null) { content() }
+        }
         return
     }
     HangingMenu(owner, at = null, offset, properties.focusable, onDismissRequest, modifier, atPointer || ROW_MENUS_AT_POINTER_EVERYWHERE, content)
@@ -163,6 +171,8 @@ private fun HangingMenu(
     val sides = LocalMenuSides.current
     // User rule 2026-11-16: the list of rows the menu's caller is in, which a pop-up opened from a row must not hide.
     val callerList = rememberUpdatedState(LocalCallerList.current)
+    // The control that opens it, whose click a press on it is (anomaly 2026-11-20, [PopupOpener]).
+    val opener = rememberUpdatedState(LocalPopupOpener.current)
     // User rule 2026-11-15: *"Right-click must open the right-click menu even if a right-click menu was already open."*
     // A right-click outside an open menu that leaves it open — the same row's again, another row whose menu is the
     // same one, a row of the pop-up it hangs from — opens it AFRESH: a new session, at the new pointer. Before, the
@@ -177,7 +187,7 @@ private fun HangingMenu(
     }
     val generation = opening[1]
     val session = remember(owner, generation) {
-        MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals, sides, openedOnRight, callerList).also { current[0] = it }
+        MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals, sides, openedOnRight, callerList, opener).also { current[0] = it }
     }
     DisposableEffect(session) { onDispose { session.close() } }
     // The pointer is read ONCE, as the menu opens — where the right-click was. Read at every layout of the anchor (a
@@ -230,7 +240,27 @@ private class MenuSession(
     openedOnRight: Boolean = true,
     /** The list of rows its caller is in ([LocalCallerList]), in [owner]'s pixels. */
     private val callerList: State<(() -> Rect?)?>? = null,
+    /** What opens it ([LocalPopupOpener]): a press on it is its click's to answer, never a loss of the keyboard's. */
+    private val opener: State<PopupOpener?>? = null,
 ) {
+    /**
+     * Anomaly 2026-11-20 (*"when I rapidly click on a down arrow, it appears and disappears in a blink"*): **every way this
+     * window hears the keyboard leave it for a window of the app goes through here** — its loss, another window active,
+     * its hover pop-up's tracker told. A press on its opener is that opener's click to answer ([PopupOpeners.keyboardLeft]):
+     * the keyboard is given back if the click keeps it, [act] is dropped if the click closes it, and done as ever when
+     * no click comes ([PopupOpener.SAME_GESTURE], or the pointer leaving the opener).
+     */
+    private fun keyboardLeft(act: () -> Unit) {
+        val handle = PopupOpeners.keyboardLeft(
+            opener?.value,
+            lost = { if (!closed) act() },
+            kept = { if (!closed) dialog?.giveKeyboard() },
+        ) ?: return
+        javax.swing.Timer(PopupOpener.SAME_GESTURE.inWholeMilliseconds.toInt()) { PopupOpeners.expire(handle) }
+            .apply { isRepeats = false }
+            .start()
+    }
+
     /**
      * User rule 2026-11-16: *"When a row makes a window appear, it must never hide the list of rows the caller is in."* A
      * pop-up of a field or a button stands off the list; a right-click's menu is a question about one row, at the pointer.
@@ -368,7 +398,7 @@ private class MenuSession(
         }
         override fun windowLostFocus(event: WindowEvent) {
             if (focusable && !ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
-                dismiss.value()
+                keyboardLeft { dismiss.value() }
             }
         }
     }
@@ -402,8 +432,10 @@ private class MenuSession(
                 // tree made the tree's own window the active one. Told nothing of where the keyboard went, the pinned
                 // branch closed every pop-up up to the tree's root. Gone to a pop-up it hangs from, only what stands
                 // below that one closes — the keyboard's loss says the same ([gone]).
-                if (hover?.pinned == true) hover?.windowLeft(gone(active))
-                dismiss.value()
+                keyboardLeft {
+                    if (hover?.pinned == true) hover?.windowLeft(gone(active))
+                    dismiss.value()
+                }
             }
         }
     }
@@ -494,7 +526,8 @@ private class MenuSession(
                         // Gone to another application, pinned: it stays (user rule 2026-11-15, [pinnedAway]).
                         // Gone to a pop-up this one hangs from: what is below that one closes, it stays.
                         if (!inside && !(event.oppositeWindow == null && tracker.pinned) && !heldByHand) {
-                            tracker.windowLeft(gone(event.oppositeWindow))
+                            val opposite = event.oppositeWindow
+                            keyboardLeft { tracker.windowLeft(gone(opposite)) }
                         }
                     }
                 }
@@ -519,6 +552,8 @@ private class MenuSession(
                 LocalCallerList provides null,
                 LocalPopupWindowControl provides control,
                 LocalPopupFarSide provides farSide.value,
+                // A menu opened inside it is not opened by what opened it.
+                LocalPopupOpener provides null,
             ) {
                 MenuSurface(owner, modifier.value, content.value, ::fit)
             }

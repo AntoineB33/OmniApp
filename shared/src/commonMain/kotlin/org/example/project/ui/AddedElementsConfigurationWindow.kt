@@ -1970,7 +1970,8 @@ private fun ShortcutWindowEditor(added: List<SearchDomain.Result>, handlers: Add
                     NoteText("One of the app's own shortcuts: it brings no window.", color = MaterialTheme.colorScheme.onSurface)
                 } else {
                     var open by remember { mutableStateOf(false) }
-                    Box(Modifier.width(260.dp)) {
+                    val popupOpener = rememberPopupOpener()
+                    Box(Modifier.width(260.dp)) { OpenedBy(popupOpener) {
                         Text(
                             text = (mapping.window?.let { titles[it] ?: "$it (closed)" } ?: "choose a window…") + "  ▾",
                             style = MaterialTheme.typography.bodyMedium,
@@ -1978,7 +1979,7 @@ private fun ShortcutWindowEditor(added: List<SearchDomain.Result>, handlers: Add
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(4.dp))
                                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                                .menuToggleClickable(open) { open = it }
+                                .menuToggleClickable(open, popupOpener) { open = it }
                                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
                         )
                         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]); the window it brings, ticked.
@@ -1994,7 +1995,7 @@ private fun ShortcutWindowEditor(added: List<SearchDomain.Result>, handlers: Add
                                 },
                             ),
                         )
-                    }
+                    }}
                 }
             }
         }

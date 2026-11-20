@@ -453,7 +453,8 @@ private val WEEKDAY_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Su
 internal fun DayField(date: LocalDate?, blank: String, today: LocalDate, enabled: Boolean, onPick: (LocalDate) -> Unit) {
     var open by remember { mutableStateOf(false) }
     var month by remember(date, open) { mutableStateOf(date ?: today) }
-    Box(Modifier.width(170.dp)) {
+    val popupOpener = rememberPopupOpener()
+    Box(Modifier.width(170.dp)) { OpenedBy(popupOpener) {
         Text(
             text = (date?.let { WEEKDAY_SHORT[it.dayOfWeek.ordinal] + " " + it } ?: blank) + "  ▾",
             style = MaterialTheme.typography.bodyMedium,
@@ -462,7 +463,7 @@ internal fun DayField(date: LocalDate?, blank: String, today: LocalDate, enabled
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                .then(if (enabled) Modifier.menuToggleClickable(open) { open = it } else Modifier)
+                .then(if (enabled) Modifier.menuToggleClickable(open, popupOpener) { open = it } else Modifier)
                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
         )
         transientMenuDismissal(open) { open = false }
@@ -501,7 +502,7 @@ internal fun DayField(date: LocalDate?, blank: String, today: LocalDate, enabled
                 )
             }
         }
-    }
+    }}
 }
 
 /**

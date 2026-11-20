@@ -58,7 +58,7 @@ import androidx.compose.ui.unit.dp
  * here must come with it — a non-focusable menu that no one registered never closes at all.
  */
 class TransientMenuHost {
-    private val entries = LinkedHashMap<Any, () -> Unit>()
+    private val entries = LinkedHashMap<Any, Pair<PopupOpener?, () -> Unit>>()
 
     /**
      * Whether a menu is open at all — **observable**, because the task tree reads it.
@@ -71,9 +71,9 @@ class TransientMenuHost {
         private set
 
     /** Registers a newly opened menu, closing any menu already open — a second one is never wanted. */
-    fun open(key: Any, onDismiss: () -> Unit) {
+    fun open(key: Any, opener: PopupOpener? = null, onDismiss: () -> Unit) {
         dismissMenus()
-        entries[key] = onDismiss
+        entries[key] = opener to onDismiss
         anyOpen = true
     }
 
@@ -135,7 +135,7 @@ class TransientMenuHost {
             editors.remove(key)
             editor.second()
         }
-        dismissMenus()
+        dismissMenus(onPress = true)
     }
 
     /**
@@ -155,16 +155,21 @@ class TransientMenuHost {
             // pop-up is a press somewhere else for the rows selected in another window ([takeRowSelection]).
             yieldRowSelections(root)
         }
-        dismissMenus()
+        dismissMenus(onPress = true)
     }
 
-    private fun dismissMenus() {
+    /**
+     * [onPress]: closed by a press — which leaves alone the menu whose own control it lands on: that control's click
+     * answers it ([PopupOpeners.pressAnsweredBy], anomaly 2026-11-20).
+     */
+    private fun dismissMenus(onPress: Boolean = false) {
         if (entries.isEmpty()) return
-        for ((key, onDismiss) in entries.entries.toList()) {
+        for ((key, entry) in entries.entries.toList()) {
+            if (onPress && PopupOpeners.pressAnsweredBy(entry.first)) continue
             entries.remove(key)
-            onDismiss()
+            entry.second()
         }
-        anyOpen = false
+        anyOpen = entries.isNotEmpty()
     }
 }
 
@@ -353,8 +358,10 @@ fun transientMenuDismissal(open: Boolean, onDismiss: () -> Unit) {
     val host = LocalTransientMenuHost.current
     val key = remember { Any() }
     val latestDismiss by rememberUpdatedState(onDismiss)
-    DisposableEffect(host, key, open) {
-        if (open) host?.open(key) { latestDismiss() }
+    // The control that opens it, whose click a press on it is (anomaly 2026-11-20, [PopupOpener]).
+    val opener = LocalPopupOpener.current
+    DisposableEffect(host, key, open, opener) {
+        if (open) host?.open(key, opener) { latestDismiss() }
         onDispose { host?.close(key) }
     }
 }
@@ -367,10 +374,15 @@ fun transientMenuDismissal(open: Boolean, onDismiss: () -> Unit) {
  * when the press lands, which the root's dismissal cannot have changed yet, and the click honours that.
  */
 @Composable
-fun Modifier.menuToggleClickable(open: Boolean, onOpenChange: (Boolean) -> Unit): Modifier {
+fun Modifier.menuToggleClickable(open: Boolean, opener: PopupOpener? = null, onOpenChange: (Boolean) -> Unit): Modifier {
     val composedOpen by rememberUpdatedState(open)
     val openAtPress = remember { booleanArrayOf(false) }
+    val own = opener ?: rememberPopupOpener()
     return this
+        // Anomaly 2026-11-20: the field is its menu's opener — a press on it is its click's, never the root's to close
+        // the menu on, and a double click is one click ([PopupOpener]). Provide [opener] around the menu
+        // ([LocalPopupOpener]) for the root observer and the menu's own window to know it.
+        .popupOpener(own, open)
         .pointerInput(Unit) {
             awaitPointerEventScope {
                 while (true) {
@@ -383,7 +395,7 @@ fun Modifier.menuToggleClickable(open: Boolean, onOpenChange: (Boolean) -> Unit)
             // `open` too, for a click that is not a press (the keyboard's), which no dismissal preceded.
             val wasOpen = openAtPress[0] || open
             openAtPress[0] = false
-            onOpenChange(!wasOpen)
+            onOpenChange(own.click(wasOpen, closes = true))
         }
 }
 

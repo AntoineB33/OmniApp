@@ -394,18 +394,37 @@ means.
   - **A hover pop-up vanishes once the pointer has left it and all of its descendants** (`MenuHoverTracker`,
     `LocalMenuHover`: the configurations tree's), the menus opened inside it being its descendants — a category's
     child pop-up and the arrow in a pop-up's bar each a branch of the pop-up they stand in (`parent`).
-  - **The late report of the click that pinned a pop-up does not close it** (anomaly 2026-11-19: a quick click on the ▾
-    pinned the pop-up its hover had just opened, and AWT reported the press's activation of the app's window only after
-    the pop-up had taken the keyboard — "appeared and disappeared rapidly"; `MenuHoverTracker.windowLeft`,
-    `LATE_PRESS_REPORT`): the pointer still on a part of it, pinned under half a second ago, it stays. Pinned before, a
-    press on its ▾ still closes it.
+  - **A PRESS ON WHAT OPENS A POP-UP IS ITS CLICK'S TO ANSWER — never the outside press's, never the keyboard's loss**
+    (anomaly 2026-11-20: *"Often when I rapidly click on a down arrow, it appears and disappears in a blink. It also
+    happens for rows that show a window when hovering over it."*; `ui/PopupOpener.kt`, `PopupOpenerTest`,
+    `PopupRapidClickTest`). Every control that opens a pop-up — the ▾, a category's row, a drop-down's field
+    (`menuToggleClickable`) — is a `PopupOpener` (`Modifier.popupOpener`), provided to its menu as `LocalPopupOpener`
+    (`OpenedBy`), reset inside the menu. A press on it while its pop-up is open was answered twice: by what closes a
+    pop-up on a press outside it, and by the control's click — in either order, AWT reporting the keyboard's move to the
+    control's window before the click or after it. After a click that KEPT the pop-up (a hover pop-up pinned, a
+    category's pop-up clicked), the late report closed it; the 2026-11-19 fix (`LATE_PRESS_REPORT`) covered the tracker
+    alone, while the menu window's own focus listener still closed it. Now ONE funnel:
+    - the root observer leaves that control's menus alone (`PopupOpeners.pressAnsweredBy`, `TransientMenuHost`), and so
+      does Material's own outside-press dismissal where the desktop draws a menu in the scene (no window: the tests,
+      `-Domniapp.menuWindows=false`);
+    - **every way the desktop's menu window hears the keyboard leave it** — its loss, another window active, its hover
+      tracker told — goes through `MenuSession.keyboardLeft` → `PopupOpeners.keyboardLeft`: the pointer on its opener,
+      the loss waits for the click; the click keeping the pop-up gives it the keyboard back, the click closing it drops
+      the loss, and no click ([PopupOpener.SAME_GESTURE], 500 ms) or the pointer leaving the opener applies it as ever.
+      A loss reported after the click is answered as that click was;
+    - **a click within 500 ms of the last is the same gesture** (`PopupOpener.click`): a double click, or any run of
+      quick clicks, leaves the pop-up as the first click left it.
+    What a click does is the opener's to say: the ▾ opens a closed tree pinned, pins a hover one, closes a pinned one
+    (the toggle); a category's row opens and pins its pop-up; a drop-down's field toggles. `takeClosedPinned` and
+    `LATE_PRESS_REPORT` are gone with it. **A new control that opens a pop-up goes through `PopupOpener`**, never a
+    hand-rolled toggle or a loss handler of its own.
   - **A press in a hover pop-up pins it and its ancestors** (user rule 2026-11-11, `MenuHoverTracker.pin`, read by
     `reportsHover`): the pointer leaving no longer closes them; the keyboard going to a window outside the tree does.
     **User rule 2026-11-14** (*"Clicking, right-clicking or typing pins the currently focused Search windows (clicking or
     right-clicking the button that makes the window appear also pins it)"*; `MenuHoverTrackerTest`): a key typed in it
     pins it too (the menu window's key handler), and so does a press of either button on what opens it — the ▾, a
     category's row — which opens it again, pinned, where that press had just closed it as a hover pop-up (the keyboard
-    gone to the window the button stands in). **The ▾'s own press pins nothing — its click (or right-click) does**
+    gone to the window the button stands in) — since 2026-11-20 the press does not close it at all (above). **The ▾'s own press pins nothing — its click (or right-click) does**
     (anomaly 2026-11-16, *"when I click on the down arrow, it disappears instead of getting pinned"*;
     `reportsHover(pinOnPress = false)`): the press reaches Compose before AWT tells the hover pop-up its keyboard went
     to the app's window, so a pin on the press made that loss read as a pinned pop-up left by a press outside — closed,
@@ -596,6 +615,11 @@ means.
     What a Search window of the app gives what is inside it is ONE funnel in `App`, `InsideSearchWindow` — the Search
     window and its Added elements configurations window each had a copy, and the second had lost the calendar element.
   - Not menus, and still drawn in the window: the calendar's hover bubble and the shortcut hints (`Popup`).
+  - **Every hover bubble is drawn AT THE POINTER and follows it** (user rule 2026-11-20: *"The bubble info must appear
+    only at the position of the mouse, even if it is moving."*): `BUBBLE_BELOW_POINTER` (16 dp) under it, at its x — the
+    calendar's bubble and `InfoHint` / `ShortcutHint` alike, the one constant (`ShortcutHint.kt`). `InfoHint` hung its
+    bubble under the control's left corner, far from a pointer at the other end of a wide row; it now reads the pointer
+    on Enter and every Move (`PopupRapidClickTest`). Never anchor a bubble to its control.
 - **A right-click on a window's HEAD opens its menu, at the pointer** (user rule 2026-10-15: *"The user can modify
   the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove from
   menu' and one option for each button in the right side of the header of the window."*; `WindowHead`'s `HeadMenu`, a
@@ -967,7 +991,9 @@ The account's data is shared, of course — an alarm edited in one copy shows in
 - **The field a drop-down hangs from toggles it** (`Modifier.menuToggleClickable`): a click while the menu is
   open closes it. A plain `clickable { open = true }` reopens it instead, because the root observer has
   already closed it on the press and the click lands after; the field reads the menu's state as last
-  composed at the press. Every drop-down field uses it, never a hand-rolled toggle.
+  composed at the press. Every drop-down field uses it, never a hand-rolled toggle. Given its `PopupOpener`, provided
+  around its menu (`OpenedBy`), the root observer leaves the menu to the field's click, and a double click is one
+  click (anomaly 2026-11-20, *A press on what opens a pop-up*, above).
 - **Enter ends the edit of any single-line field** (user rule 2026-10-05; `ui/EnterLeavesField.kt`,
   `EnterLeavesFieldTest`): the field gives up the focus, as a press outside it does. The app has ONE text field —
   `org.example.project.ui.OutlinedTextField`, Material's plus `Modifier.leavesEditOnEnter` — and every window draws

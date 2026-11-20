@@ -2938,7 +2938,8 @@ internal fun <T> CheckBoxDropDown(name: String,
         open = true
         latestOnDeployed()
     }
-    Box(modifier) {
+    val popupOpener = rememberPopupOpener()
+    Box(modifier) { OpenedBy(popupOpener) {
         Text(
             text = "$face  ▾",
             style = MaterialTheme.typography.bodyMedium,
@@ -2946,7 +2947,7 @@ internal fun <T> CheckBoxDropDown(name: String,
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                .menuToggleClickable(open) { open = it }
+                .menuToggleClickable(open, popupOpener) { open = it }
                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
         )
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]); the options by their place in [options].
@@ -2977,7 +2978,7 @@ internal fun <T> CheckBoxDropDown(name: String,
                 onNearEnd = onNearEnd,
             ),
         )
-    }
+    }}
 }
 
 /** How close to its bottom a list is "at its end" ([CheckBoxDropDown]'s `onNearEnd`): about two rows. */
@@ -3001,7 +3002,8 @@ internal fun <T> ChoiceDropDown(name: String,
 ) {
     var open by remember { mutableStateOf(false) }
     val usable = enabled && options.isNotEmpty()
-    Box(modifier) {
+    val popupOpener = rememberPopupOpener()
+    Box(modifier) { OpenedBy(popupOpener) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -3009,7 +3011,7 @@ internal fun <T> ChoiceDropDown(name: String,
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                .then(if (usable) Modifier.menuToggleClickable(open) { open = it } else Modifier)
+                .then(if (usable) Modifier.menuToggleClickable(open, popupOpener) { open = it } else Modifier)
                 .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
         ) {
             if (selected != null && leading != null) leading(selected)
@@ -3033,7 +3035,7 @@ internal fun <T> ChoiceDropDown(name: String,
                 leading = leading?.let { draw -> { id -> id.toIntOrNull()?.let(options::getOrNull)?.let { draw(it) } } },
             ),
         )
-    }
+    }}
 }
 
 /**
@@ -3599,14 +3601,15 @@ private fun TaskPathBox(
             modifier = Modifier.weight(1f),
         )
         if (result.hasSeveralPaths && listsPaths) {
-            Box {
+            val popupOpener = rememberPopupOpener()
+            Box { OpenedBy(popupOpener) {
                 Text(
                     text = if (listOpen) "▴" else "▾",
                     style = MaterialTheme.typography.labelMedium,
                     color = onTaskCell(MaterialTheme.colorScheme.onSurfaceVariant),
                     modifier = Modifier
                         .fillMaxHeight()
-                        .menuToggleClickable(listOpen) { listOpen = it }
+                        .menuToggleClickable(listOpen, popupOpener) { listOpen = it }
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
                 // User rule 2026-11-12: the menu is a Search window of its entries.
@@ -3622,7 +3625,7 @@ private fun TaskPathBox(
                         }
                     },
                 )
-            }
+            }}
         } else {
             Box(Modifier.width(6.dp))
         }

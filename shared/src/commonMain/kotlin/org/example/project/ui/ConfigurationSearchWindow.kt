@@ -733,7 +733,8 @@ private fun SortMethodPicker(
     val methods = SearchDomain.sortKeysOf(kind).map { SearchDomain.SortMethod(kind, it) }
     fun inList(method: SearchDomain.SortMethod) = sorts.any { it.sameMethod(method) }
     val range = rememberCheckRange<SearchDomain.SortMethod>()
-    Box {
+    val popupOpener = rememberPopupOpener()
+    Box { OpenedBy(popupOpener) {
         Text(
             text = methods.filter(::inList).joinToString(", ") { it.key.label }.ifEmpty { "none" } + "  ▾",
             style = MaterialTheme.typography.bodyMedium,
@@ -741,7 +742,7 @@ private fun SortMethodPicker(
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                .menuToggleClickable(open) { open = it }
+                .menuToggleClickable(open, popupOpener) { open = it }
                 .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]), "Select all" its first element.
@@ -772,7 +773,7 @@ private fun SortMethodPicker(
                 },
             ),
         )
-    }
+    }}
 }
 
 /**
@@ -901,7 +902,8 @@ private fun historyCategoryLabel(category: HistoryCategory): String =
 @Composable
 private fun <T> EnumPicker(name: String, options: List<T>, selected: T?, label: (T) -> String, onSelect: (T?) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box {
+    val popupOpener = rememberPopupOpener()
+    Box { OpenedBy(popupOpener) {
         Text(
             text = (selected?.let(label) ?: "any") + "  ▾",
             style = MaterialTheme.typography.bodyMedium,
@@ -909,7 +911,7 @@ private fun <T> EnumPicker(name: String, options: List<T>, selected: T?, label: 
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                .menuToggleClickable(open) { open = it }
+                .menuToggleClickable(open, popupOpener) { open = it }
                 .padding(horizontal = 10.dp, vertical = buttonVerticalPadding(8.dp)),
         )
         // User rule 2026-11-12: the list is a Search window ([OptionSearchMenu]), "any" first.
@@ -921,7 +923,7 @@ private fun <T> EnumPicker(name: String, options: List<T>, selected: T?, label: 
                 onSelect(it)
             },
         )
-    }
+    }}
 }
 
 /**

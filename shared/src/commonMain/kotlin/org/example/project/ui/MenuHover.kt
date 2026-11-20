@@ -47,17 +47,21 @@ class MenuHoverTracker(
     var pinned: Boolean by androidx.compose.runtime.mutableStateOf(false)
         private set
 
-    /** When it was last pinned ([windowLeft]'s late report of the press that pinned it). */
-    private var pinnedAt: kotlin.time.TimeMark? = null
-
     /** Pinned ([pinned]), it and its ancestors. A wait already running for the pointer gone is dropped. */
     fun pin() {
         parent?.pin()
         pinned = true
-        pinnedAt = kotlin.time.TimeSource.Monotonic.markNow()
         pending?.cancel()
         pending = null
     }
+
+    /**
+     * A click on what opens this pop-up ([opener]: the ▾, a category's row) — whether the pop-up is open after it, to be
+     * pinned then by the caller. A hover pop-up is pinned by it; a pinned one is closed by it where the control [toggles]
+     * (the ▾), kept where it does not (a row); a quick run of clicks is one ([PopupOpener.click]).
+     */
+    fun clickedOpener(opener: PopupOpener, isOpen: Boolean, toggles: Boolean): Boolean =
+        opener.click(isOpen, closes = toggles && pinned)
 
     /** The pop-up closed: the next opening is a hover pop-up again, until a press pins it. */
     fun unpin() {
@@ -65,15 +69,6 @@ class MenuHoverTracker(
         if (focused === this) focused = null
         if (walkingTo === this) walkingTo = null
     }
-
-    /**
-     * Set as a press outside closed the pop-up while pinned ([windowLeft]), until the pointer next enters a part of it:
-     * the press that closed it, landing on the button that opens it, must not open it again ([takeClosedPinned]).
-     */
-    private var closedPinned = false
-
-    /** Whether the press being answered is the one that just closed the pop-up, pinned; asked once. */
-    fun takeClosedPinned(): Boolean = closedPinned.also { closedPinned = false }
 
     /**
      * The windows the pop-up is drawn in, as the platform knows them (the desktop's menu windows: its own, and each menu
@@ -95,18 +90,12 @@ class MenuHoverTracker(
     fun windowLeft(goneTo: ((Set<Any>) -> Boolean)? = null) {
         if (focused === this) focused = null
         if (!pinned) return
-        // Anomaly 2026-11-19 (*"I clicked on the down arrow, and the window appeared and disappeared rapidly ... slower it
-        // worked"*): a quick click on the ▾ pinned the pop-up its hover had just opened, and the press's activation of the
-        // app's window reached AWT only after the pop-up had taken the keyboard — read as the keyboard gone elsewhere. The
-        // pointer still on a part of it, just pinned: that press, not another. (A pop-up pinned before, its ▾ clicked,
-        // still closes: the toggle.)
-        if (held && pinnedAt?.let { it.elapsedNow() < LATE_PRESS_REPORT } == true) return
+        // A press on what opens it (the ▾, a category's row) never reaches here: its click answers it ([PopupOpeners]).
         val target = walkingTo ?: goneTo?.let { test -> generateSequence(parent) { it.parent }.firstOrNull { test(it.windows) } }
         var at: MenuHoverTracker? = this
         while (at != null && at !== target) {
             val above = at.parent
             at.pinned = false
-            at.closedPinned = true
             at.pending?.cancel()
             at.pending = null
             at.onLeft()
@@ -144,7 +133,6 @@ class MenuHoverTracker(
 
     fun enter(part: Any) {
         parent?.enter(part)
-        closedPinned = false
         inside += part
         pending?.cancel()
         pending = null
@@ -171,9 +159,6 @@ class MenuHoverTracker(
          * (anomaly 2026-11-04).
          */
         const val GRACE_MILLIS: Long = 80
-
-        /** How late the platform reports the press that pinned a pop-up, at most, as the keyboard leaving it ([windowLeft]). */
-        val LATE_PRESS_REPORT: kotlin.time.Duration = kotlin.time.Duration.parse("500ms")
 
         /** The hover pop-up whose window holds the keyboard, null while none does. One app, one keyboard. */
         var focused: MenuHoverTracker? = null

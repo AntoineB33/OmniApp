@@ -8917,7 +8917,7 @@ private fun CalendarTitleBubble(
     taskColors: Map<TaskId, Color>,
 ) {
     if (sections.isEmpty()) return
-    val yOffsetPx = with(LocalDensity.current) { 16.dp.roundToPx() }
+    val yOffsetPx = with(LocalDensity.current) { BUBBLE_BELOW_POINTER.roundToPx() }
     Column(
         Modifier
             .offset { IntOffset(pos.x.roundToInt(), pos.y.roundToInt() + yOffsetPx) }

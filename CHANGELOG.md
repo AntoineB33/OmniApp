@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A press on what opens a pop-up is its click's; bubbles at the pointer — 2026-11-20
+
+- Anomaly: *"Often when I rapidly click on a down arrow, it appears and disappears in a blink. It also happens for rows
+  that show a window when hovering over it."* A press on the control of an open pop-up was answered twice — by the
+  outside-press closers (the root observer; on the desktop, the menu window losing the keyboard, reported by AWT before
+  or after the click) and by the control's click; and a double click toggled open then shut. The 2026-11-19 fix
+  (`MenuHoverTracker.LATE_PRESS_REPORT`) covered the hover tracker alone; the menu window's own focus listener still
+  closed the pop-up. Now one funnel, `ui/PopupOpener.kt`: every opener (the ▾, a category's row, every
+  `menuToggleClickable` drop-down) answers a press on it with its click, the keyboard losses waiting for that click
+  (`PopupOpeners.keyboardLeft`, every loss path of `MenuSession`), and clicks within 500 ms are one gesture.
+  `takeClosedPinned` and `LATE_PRESS_REPORT` removed.
+- User rule: *"The bubble info must appear only at the position of the mouse, even if it is moving."* `InfoHint` (and
+  `ShortcutHint`) draws its bubble at the pointer, following it, `BUBBLE_BELOW_POINTER` under it — the calendar
+  bubble's offset, now one constant. It was hung under the control's left corner.
+- Tests: `PopupOpenerTest`, `PopupRapidClickTest` (scene: rapid clicks on a drop-down and on the ▾ with the platform's
+  loss reported before and after each click; the bubble following a moving pointer).
+
 ### The evolutions' sort reads in "Currently on" — 2026-11-20
 
 - Anomaly: *"in 'Currently on', I don't understand 'sort by [relevance]', even with the info bubble"*. "Sort results"

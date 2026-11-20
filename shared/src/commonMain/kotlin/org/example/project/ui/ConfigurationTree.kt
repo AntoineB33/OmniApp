@@ -191,12 +191,18 @@ internal fun ConfigurationTreeArrow(
         path = emptyList()
         open = true
     }
+    // Anomaly 2026-11-20 (*"when I rapidly click on a down arrow, it appears and disappears in a blink"*): the arrow is
+    // its pop-up's opener ([PopupOpener]) — a press on it is its click's to answer, never the pop-up's window losing the
+    // keyboard to the arrow's; a quick run of clicks is one click.
+    val opener = rememberPopupOpener()
     fun arrowClicked() {
-        if (open) hover.pin()
-        else if (hover.takeClosedPinned()) hover.unpin()
-        else {
-            openFresh()
+        val wasOpen = open
+        // A hover pop-up is pinned by the click; one pinned already is closed by it (the toggle).
+        if (hover.clickedOpener(opener, wasOpen, toggles = true)) {
+            if (!wasOpen) openFresh()
             hover.pin()
+        } else {
+            close()
         }
     }
     // The pop-up this arrow stands in (null: a window of the app): where a hover over it is read from.
@@ -247,11 +253,11 @@ internal fun ConfigurationTreeArrow(
                 .clip(RoundedCornerShape(6.dp))
                 // Its press pins nothing: the click does (anomaly 2026-11-16, [reportsHover]'s `pinOnPress`).
                 .reportsHover(hover, pinOnPress = false)
+                .popupOpener(opener, open)
                 // User rule 2026-11-14: no hover opens it while a pinned pop-up it is not in holds the keyboard.
                 .onHoverEnter { if (!open && MenuHoverTracker.hoverActs(around)) openFresh() }
-                // User rule 2026-11-14: a click on the arrow pins its pop-up, opening it first where the press itself just
-                // closed it as a hover pop-up (the keyboard gone to this window). A pinned one left on that press: the
-                // arrow is outside it, and it stays closed. Only one pinned BEFORE the press is: the press pins nothing.
+                // User rule 2026-11-14: a click on the arrow pins its pop-up, opening it first if it is closed; a pinned one
+                // it closes. The press pins nothing.
                 .clickable { arrowClicked() }
                 // ...and so does a right-click (user rule 2026-11-14: *"clicking or right-clicking the button"*).
                 .pointerInput(Unit) {
@@ -277,6 +283,7 @@ internal fun ConfigurationTreeArrow(
             // User rule 2026-11-19: a ▾ at the right of a window that appears opens its tree further right, away from the caller.
             LocalMenuSides provides if (LocalPopupFarSide.current == FarSide.Right) arrowTreeSides(FarSide.Right) else LocalMenuSides.current,
             LocalMenuHover provides hover,
+            LocalPopupOpener provides opener,
             LocalTreeKeeper provides keeper,
             LocalTreePrefix provides prefix,
             LocalBarPath provides emptyList(),
@@ -533,6 +540,8 @@ private fun TreeColumn(
                             onPathChange(path.take(depth) + node.id)
                         }
                     }
+                    // Anomaly 2026-11-20: the row is its pop-up's opener ([PopupOpener]): a press on it is its click's.
+                    val rowOpener = rememberPopupOpener()
                     val treeWindowHead = LocalTreeWindowHead.current
                     // The pop-up this row stands in: where a hover over it is read from ([MenuHoverTracker.hoverActs]).
                     val around = LocalMenuHover.current
@@ -548,14 +557,14 @@ private fun TreeColumn(
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(if (revealing) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
                                 .reportsHover(branch)
+                                .popupOpener(rowOpener, revealing)
                                 .onHoverEnter { if (MenuHoverTracker.hoverActs(around)) reveal() }
-                                // User rule 2026-11-14: a click on the row pins the pop-up it opens.
-                                // Anomaly 2026-11-15: the press itself may have closed it (the keyboard leaving its
-                                // pop-up for this row's, [MenuHoverTracker.windowLeft]) after this was composed, so the
-                                // click opens it whatever [revealing] last said.
+                                // User rule 2026-11-14: a click on the row pins the pop-up it opens — opened if it is not.
                                 .clickable {
-                                    onPathChange(path.take(depth) + node.id)
-                                    branch.pin()
+                                    if (branch.clickedOpener(rowOpener, revealing, toggles = false)) {
+                                        onPathChange(path.take(depth) + node.id)
+                                        branch.pin()
+                                    }
                                 }
                                 .padding(horizontal = 8.dp, vertical = 6.dp),
                         ) {
@@ -570,6 +579,7 @@ private fun TreeColumn(
                                 LocalMenuSides provides MenuSide.SUBMENU,
                                 LocalCallerList provides { columnBounds[0] },
                                 LocalMenuHover provides branch,
+                                LocalPopupOpener provides rowOpener,
                                 // The arrow in this pop-up's bar opens a tree standing at this category.
                                 LocalBarPath provides branchPath,
                                 LocalArrowOwner provides branchId,
