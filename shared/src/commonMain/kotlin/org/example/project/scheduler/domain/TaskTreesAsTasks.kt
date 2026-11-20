@@ -70,7 +70,8 @@ object TaskTreesAsTasks {
     /** The empty row at the end of the root's list, once the trees stand in it. */
     private val ROOT_END = CellId("cell/tree/end")
 
-    private fun topTaskIds(state: SchedulerState): List<TaskId> =
+    /** The tasks directly under the root, in its list's order: the roots of the task trees, the first one first. */
+    fun topTaskIds(state: SchedulerState): List<TaskId> =
         state.lists[state.rootListId]?.cellIds.orEmpty().mapNotNull { state.cells[it]?.taskId }
             .filter { state.tasks[it]?.title?.isNotEmpty() == true }
 

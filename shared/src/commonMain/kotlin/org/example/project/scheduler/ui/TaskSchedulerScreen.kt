@@ -1604,6 +1604,11 @@ internal fun PriorityWeightWindow(
     onIntent: (SchedulerIntent) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * User rule 2026-11-20: the table is also found in a task element's actions ("Priority weights"), drawn there
+     * without a window frame, at most [EMBEDDED_PRIORITY_MAX_HEIGHT] tall, and without taking the keyboard on opening.
+     */
+    embedded: Boolean = false,
 ) {
     val list = state.lists[listId] ?: return
     val taskHues = rememberTaskHues(state, TaskHueMemo.account)
@@ -1632,9 +1637,8 @@ internal fun PriorityWeightWindow(
     // Focus is taken when it opens, taken back on every press on a row, and handed to the row's own field
     // while one is being edited.
     val keyboardFocus = remember(listId) { FocusRequester() }
-    LaunchedEffect(listId) { keyboardFocus.requestFocus() }
+    LaunchedEffect(listId) { if (!embedded) keyboardFocus.requestFocus() }
     val tableRows = priorityWeightTableRows(state, listId, optionalTaskIds)
-    val frame = rememberWindowFrameState(PRIORITY_WEIGHTS_FRAME_ID)
     var draggedColumn by remember(listId) { mutableStateOf<Int?>(null) }
     var columnDropIndex by remember(listId) { mutableStateOf<Int?>(null) }
     // PRD §5: the pins are the ACCOUNT's, not this window session's — they outlive the window and reach
@@ -1647,52 +1651,43 @@ internal fun PriorityWeightWindow(
     val openedTable = remember(listId) { weightTableSnapshot(state, listId) }
     val tableEdited = weightTableSnapshot(state, listId) != openedTable
 
-    AppWindowFrame(
-        title = "Priority weights",
-        state = frame,
-        onClose = onDismiss,
-        defaultWidth = 760.dp,
-        defaultHeight = 600.dp,
-        // Its rows ARE task cells (PRD §4), so it answers keystrokes itself and takes the keyboard off the
-        // tree while it is the focused window.
-        claimsKeyboard = true,
-        modifier = modifier
-            .focusRequester(keyboardFocus)
-            .focusable()
-            // PRD §4, the tree's own keyboard on the selected row: Delete/Backspace empties it, and a
-            // printable character opens its Edit Mode seeded with that character. Only the rows this table
-            // owns answer either — a member row is a cell of the TREE, drawn here and edited there.
-            .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                if (event.isCtrlPressed || event.isMetaPressed || event.isAltPressed) {
-                    return@onPreviewKeyEvent false
-                }
-                // A row already in Edit Mode owns its own field; the weight inputs own theirs.
-                if (editingRowId != null) return@onPreviewKeyEvent false
-                val selected = selectedRowId ?: return@onPreviewKeyEvent false
-                val row =
-                    tableRows.firstOrNull { priorityWeightRowId(listId, it) == selected }
-                        ?: return@onPreviewKeyEvent false
-                if (!row.isOptional) return@onPreviewKeyEvent false
-                if (event.key == Key.Delete || event.key == Key.Backspace) {
-                    // PRD §4: the blank title is what deletes, so emptying the row IS removing it — the
-                    // same one intent the editor's own blank exit raises. The add row holds no task and so
-                    // has nothing to empty; the key is left unhandled there rather than swallowed.
-                    val task = row.taskId ?: return@onPreviewKeyEvent false
-                    onIntent(SchedulerIntent.SetPriorityWeightTableRow(listId, replacing = task))
-                    selectedRowId = null
-                    return@onPreviewKeyEvent true
-                }
-                // A dead key (^, ¨, ~ …) carries no character of its own, so Edit Mode opens empty and the
-                // composed letter lands in the field — the tree's reasoning, verbatim.
-                val typed =
-                    if (event.isDeadKey()) "" else event.printableChar() ?: return@onPreviewKeyEvent false
-                editingRowDraft = typed
-                editingRowTask = row.taskId
-                editingRowId = selected
-                true
-            },
-    ) {
+    val keyed = modifier
+        .focusRequester(keyboardFocus)
+        .focusable()
+        // PRD §4, the tree's own keyboard on the selected row: Delete/Backspace empties it, and a
+        // printable character opens its Edit Mode seeded with that character. Only the rows this table
+        // owns answer either — a member row is a cell of the TREE, drawn here and edited there.
+        .onPreviewKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            if (event.isCtrlPressed || event.isMetaPressed || event.isAltPressed) {
+                return@onPreviewKeyEvent false
+            }
+            // A row already in Edit Mode owns its own field; the weight inputs own theirs.
+            if (editingRowId != null) return@onPreviewKeyEvent false
+            val selected = selectedRowId ?: return@onPreviewKeyEvent false
+            val row =
+                tableRows.firstOrNull { priorityWeightRowId(listId, it) == selected }
+                    ?: return@onPreviewKeyEvent false
+            if (!row.isOptional) return@onPreviewKeyEvent false
+            if (event.key == Key.Delete || event.key == Key.Backspace) {
+                // PRD §4: the blank title is what deletes, so emptying the row IS removing it — the
+                // same one intent the editor's own blank exit raises. The add row holds no task and so
+                // has nothing to empty; the key is left unhandled there rather than swallowed.
+                val task = row.taskId ?: return@onPreviewKeyEvent false
+                onIntent(SchedulerIntent.SetPriorityWeightTableRow(listId, replacing = task))
+                selectedRowId = null
+                return@onPreviewKeyEvent true
+            }
+            // A dead key (^, ¨, ~ …) carries no character of its own, so Edit Mode opens empty and the
+            // composed letter lands in the field — the tree's reasoning, verbatim.
+            val typed =
+                if (event.isDeadKey()) "" else event.printableChar() ?: return@onPreviewKeyEvent false
+            editingRowDraft = typed
+            editingRowTask = row.taskId
+            editingRowId = selected
+            true
+        }
+    val content: @Composable () -> Unit = {
         Column(Modifier.padding(16.dp)) {
             // `fill = false` so a short table keeps the window short; the Cancel bar below always shows.
             Row(Modifier.weight(1f, fill = false), verticalAlignment = Alignment.Top) {
@@ -1987,7 +1982,26 @@ internal fun PriorityWeightWindow(
             }
         }
     }
+    if (embedded) {
+        Box(keyed.fillMaxWidth().heightIn(max = EMBEDDED_PRIORITY_MAX_HEIGHT)) { content() }
+    } else {
+        AppWindowFrame(
+            title = "Priority weights",
+            state = rememberWindowFrameState(PRIORITY_WEIGHTS_FRAME_ID),
+            onClose = onDismiss,
+            defaultWidth = 760.dp,
+            defaultHeight = 600.dp,
+            // Its rows ARE task cells (PRD §4), so it answers keystrokes itself and takes the keyboard off the
+            // tree while it is the focused window.
+            claimsKeyboard = true,
+            modifier = keyed,
+            content = { content() },
+        )
+    }
 }
+
+/** User rule 2026-11-20: how tall the weight table and the relative priority stand inside a task's actions. */
+internal val EMBEDDED_PRIORITY_MAX_HEIGHT = 480.dp
 
 /** Distinct slice color for the [index]-th task in a priority pie chart, spread around the hue wheel. */
 /**
@@ -2024,6 +2038,8 @@ internal fun RelativePriorityWindow(
     /** …and right-clicking it re-opens this very window on that chain cell, as the tree's menu does. */
     onOpenRelativePriority: (CellId) -> Unit = {},
     modifier: Modifier = Modifier,
+    /** User rule 2026-11-20: also found in a task element's actions ("Relative priority"), drawn there without a frame. */
+    embedded: Boolean = false,
 ) {
     val taskId = state.cells[cellId]?.taskId ?: return
     val options = RelativePriorityDomain.relativeToOptions(state, cellId)
@@ -2039,7 +2055,6 @@ internal fun RelativePriorityWindow(
     val taskColors = remember(taskHues) { TaskPalette.sheetColors(taskHues) }
     val value = RelativePriorityDomain.relativePriority(state, taskId, relativeTo)
     val pinned = state.relativePriorityPins[RelativePriorityPinKey(taskId, relativeTo)].orEmpty()
-    val frame = rememberWindowFrameState(RELATIVE_PRIORITY_FRAME_ID)
 
     // PRD §5 the **task relations** window: opening this window on a (task, `t_r`) pair is what puts that
     // pair on the account's relations list, and whether it ends up in that window's "edited" or "opened"
@@ -2053,19 +2068,15 @@ internal fun RelativePriorityWindow(
     // nothing cost neither a save nor a push.
     val shownPercent = percentFieldText(value)
     val baseline = remember(cellId, taskId, relativeTo) { shownPercent }
+    // Drawn in a task's actions, it is in front of the user without being opened on the pair: the pair reaches the
+    // relations list once its number has moved there, not by being looked at.
+    var reported by remember(cellId, taskId, relativeTo) { mutableStateOf(!embedded) }
     LaunchedEffect(cellId, taskId, relativeTo, shownPercent) {
-        onIntent(SchedulerIntent.RecordTaskRelation(taskId, relativeTo, changed = shownPercent != baseline))
+        if (shownPercent != baseline) reported = true
+        if (reported) onIntent(SchedulerIntent.RecordTaskRelation(taskId, relativeTo, changed = shownPercent != baseline))
     }
 
-    AppWindowFrame(
-        title = "Relative priority of " + quoted(state.tasks[taskId]?.title.orEmpty()),
-        state = frame,
-        onClose = onDismiss,
-        defaultWidth = 520.dp,
-        defaultHeight = 420.dp,
-        claimsKeyboard = true,
-        modifier = modifier,
-    ) {
+    val content: @Composable () -> Unit = {
         Column(Modifier.padding(16.dp)) {
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2151,6 +2162,20 @@ internal fun RelativePriorityWindow(
                 }
             }
         }
+    }
+    if (embedded) {
+        Box(modifier.fillMaxWidth().heightIn(max = EMBEDDED_PRIORITY_MAX_HEIGHT)) { content() }
+    } else {
+        AppWindowFrame(
+            title = "Relative priority of " + quoted(state.tasks[taskId]?.title.orEmpty()),
+            state = rememberWindowFrameState(RELATIVE_PRIORITY_FRAME_ID),
+            onClose = onDismiss,
+            defaultWidth = 520.dp,
+            defaultHeight = 420.dp,
+            claimsKeyboard = true,
+            modifier = modifier,
+            content = { content() },
+        )
     }
 }
 

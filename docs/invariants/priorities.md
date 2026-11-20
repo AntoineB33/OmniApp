@@ -12,6 +12,12 @@ Global rules that always apply: `CLAUDE.md`.
 - Right-clicking a cell's **percentage** opens "relative priority" / "priority weights" — not the row's §13
   menu. It consumes the press; the row's handler skips consumed presses.
 - Relative priority with `t_r == MAIN` is **exactly** `absoluteTaskPriorities`. Keep that identity.
+- **Both windows are also a task's actions** (user rule 2026-11-20: *"The priority weights table and the relative
+  priority manager must actually be found in the action section."*): "Priority weights" draws the table of each
+  sub-list an added task stands in, "Relative priority" each added task's manager — `PriorityWeightWindow` and
+  `RelativePriorityWindow` themselves with `embedded = true` (no frame, at most `EMBEDDED_PRIORITY_MAX_HEIGHT` tall, no
+  keyboard taken on opening), never a second drawing. Embedded, the relative priority reaches the task-relations list
+  once its number moves, not by being looked at.
 - Editing scales **percentages** by one common factor, solved by bisection on the measured tree — not by a
   closed form.
 - **A factor first, an added term only where no factor lands.** `setChainsShare` is two stages. A factor

@@ -64,7 +64,7 @@ internal fun PresenceEvolutionRows(
     val evolutionKey = { id: String -> SearchDomain.Kind.PresenceEvolution.name + "/" + id }
     val involving = PresenceEvolutions.involving(state, s)
     val involvingKeys = involving.mapTo(HashSet()) { evolutionKey(it.id) }
-    val others = state.presenceEvolutions.map { evolutionKey(it.id) }.filterNot { it in involvingKeys }.toSet()
+    val others = PresenceEvolutions.shown(state).map { evolutionKey(it.id) }.filterNot { it in involvingKeys }.toSet()
 
     // --- 1. the evolutions, and their added elements list A
     val evolutionsOpened = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.PresenceEvolution), filters = SearchDomain.Filters(excludedElements = others))
@@ -77,7 +77,10 @@ internal fun PresenceEvolutionRows(
     val a: List<PresenceEvolution> = evolutionsShown.added.mapNotNull { key -> involving.firstOrNull { evolutionKey(it.id) == key } }
     fun edit(change: (PresenceEvolution) -> PresenceEvolution, editKey: String? = null) {
         val ids = a.mapTo(HashSet()) { it.id }
-        val next = state.presenceEvolutions.map { if (it.id in ids) change(it) else it }
+        // A default evolution of A (user rule 2026-11-20) is derived: edited, it is written, under its own id.
+        val storedIds = state.presenceEvolutions.mapTo(HashSet()) { it.id }
+        val next = state.presenceEvolutions.map { if (it.id in ids) change(it) else it } +
+            a.filter { it.id !in storedIds }.map(change)
         run(SchedulerIntent.SetPresenceEvolutions(next, editKey))
     }
 
@@ -103,6 +106,14 @@ internal fun PresenceEvolutionRows(
     }
     if (a.isEmpty()) {
         Indented { NoteText("Add evolutions to the list of the field above, or make a new one: the rows below edit them") }
+    }
+    if (a.any { PresenceEvolutions.isDefault(it, state) }) {
+        Indented {
+            NoteText(
+                "A default evolution is the task's absolute priority, constant: the actions \"Priority weights\" and " +
+                    "\"Relative priority\" set it. An edit here writes it as an evolution of its own, which then holds in its place",
+            )
+        }
     }
 
     // --- 2. the tasks that get it

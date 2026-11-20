@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Default presence ratio target evolutions; the priority windows in a task's actions — 2026-11-20
+
+- Anomaly: clicking the "presence ratio target evolutions" field showed an empty list — a task had none until one was
+  made. User rule: *"By default, every task in the first task tree … must have the presence ratio target evolution as a
+  constant value in the whole timeline. The value is by default associated with the absolute priority the user can
+  define with the priority weight tables and the relative priority manager."* `PresenceEvolutions.defaults`: one per
+  task under the first tree's root, relative to "Task trees", always, its formula the task's absolute priority as a
+  constant. Derived, never stored or synced, and read by neither scheduler (the weights already say it); edited in the
+  rows, it is written under its own id (`presence-default-<task>`) and holds in its place. `PresenceEvolutions.shown`
+  is what the Search window and the rows list.
+- *"The priority weights table and the relative priority manager must actually be found in the action section."*: two
+  task actions, "Priority weights" (the table of each sub-list an added task stands in) and "Relative priority" (each
+  added task's), the windows' own drawings unframed (`embedded = true`). The windows stay, opened from the percentage.
+- No migration: nothing persisted changed.
+
 ### Presence ratio target evolutions, edited in rows — 2026-11-19
 
 - User rules: *"In the action section of a task element, the user must be able to change the formula for the evolution

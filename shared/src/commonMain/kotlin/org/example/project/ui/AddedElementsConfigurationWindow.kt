@@ -69,6 +69,7 @@ import org.example.project.scheduler.domain.TaskPathsDomain
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CellId
+import org.example.project.scheduler.model.CellListId
 import org.example.project.scheduler.model.ChoreEntry
 import org.example.project.scheduler.model.TimerEntry
 import org.example.project.scheduler.domain.TimerDomain
@@ -201,6 +202,9 @@ data class AddedActionHandlers(
     val onGoToTaskTree: (TaskId) -> Unit,
     /** "Default sub-tree": its window, opened or brought to the front (user rule 2026-11-11). */
     val onOpenDefaultSubtree: () -> Unit = {},
+    /** "Priority weights" / "Relative priority" (user rule 2026-11-20): a chain cell's percentage opens these windows, as the tree's does. */
+    val onOpenWeightWindow: (CellListId) -> Unit = {},
+    val onOpenRelativePriority: (CellId) -> Unit = {},
     val onDeepCopyCell: (CellId) -> Unit,
     /** A period's "Search its tasks": the Search window of its tasks' resilience ([SearchDomain.resilienceSearchConfig]). */
     val onOpenResilienceSearch: (String) -> Unit,
@@ -931,6 +935,51 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.TaskAddUnder -> AddUnderEditor(state, taskIds, run)
         SearchDomain.AddedAction.TaskResilience -> ResilienceEditor(state, added, config, onConfigChange, run)
         SearchDomain.AddedAction.TaskScheduleUnit -> ScheduleUnitActionEditor(state, added, run)
+        // User rule 2026-11-20: the weight table of each sub-list an added task stands in, and each added task's relative
+        // priority — their windows' own drawings, unframed: what the default presence ratio target evolutions read.
+        SearchDomain.AddedAction.TaskPriorityWeights -> {
+            val wanted = taskIds.toHashSet()
+            val lists = remember(state.cells, state.lists, taskIds) {
+                state.cells.values
+                    .filter { it.taskId in wanted && SchedulerDomain.isPopulatedCell(state, it.id) && state.lists[it.parentListId] != null }
+                    .map { it.parentListId }
+                    .distinct()
+            }
+            if (lists.isEmpty()) NoteText("No added task stands in the tree")
+            val priorities = remember(state) { SchedulerDomain.absoluteTaskPriorities(state) }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (listId in lists) androidx.compose.runtime.key(listId) {
+                    val parent = SchedulerDomain.parentTaskIdOfList(state, listId)
+                    NoteText("Under " + (parent?.let { SchedulerDomain.taskTitleLabel(state, it) } ?: "?"))
+                    org.example.project.scheduler.ui.PriorityWeightWindow(
+                        state = state,
+                        listId = listId,
+                        priorities = priorities,
+                        onIntent = { run(SearchDomain.AddedCommand.Raw(it)) },
+                        onDismiss = {},
+                        embedded = true,
+                    )
+                }
+            }
+        }
+        SearchDomain.AddedAction.TaskRelativePriority -> {
+            val cells = SearchDomain.addedTaskCells(state, added)
+            if (cells.isEmpty()) NoteText("No added task stands in the tree")
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (cellId in cells) androidx.compose.runtime.key(cellId) {
+                    if (cells.size > 1) NoteText(SchedulerDomain.taskTitleLabel(state, state.cells[cellId]?.taskId))
+                    org.example.project.scheduler.ui.RelativePriorityWindow(
+                        state = state,
+                        cellId = cellId,
+                        onIntent = { run(SearchDomain.AddedCommand.Raw(it)) },
+                        onDismiss = {},
+                        onOpenWeightWindow = handlers.onOpenWeightWindow,
+                        onOpenRelativePriority = handlers.onOpenRelativePriority,
+                        embedded = true,
+                    )
+                }
+            }
+        }
         // User rule 2026-11-16: the evolution of a task's presence ratio target and minimum length, formulas of the instant.
         // User rule 2026-11-19: rows only — the evolutions, their tasks, what they are relative to, the periods, the
         // formula, the categories; and what is incoherent.

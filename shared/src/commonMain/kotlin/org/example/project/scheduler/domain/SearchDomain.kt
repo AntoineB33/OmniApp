@@ -3614,7 +3614,7 @@ object SearchDomain {
                 Kind.Md -> state.mdElements.map { md ->
                     ItemResult(kind, md.id, MdDomain.title(md).ifBlank { "Md element" }, mdDetail(state, md))
                 }
-                Kind.PresenceEvolution -> state.presenceEvolutions.map { e ->
+                Kind.PresenceEvolution -> PresenceEvolutions.shown(state).map { e ->
                     ItemResult(kind, e.id, PresenceEvolutions.title(state, e), PresenceEvolutions.detail(state, e))
                 }
                 Kind.Chrono -> state.chronos.map { chrono ->
@@ -4905,6 +4905,13 @@ object SearchDomain {
          * minimum length target with any mathematical formula."* — the task's weight under each of its parents, a formula
          * of the instant ([TimeFormula]) per place.
          */
+        /**
+         * User rule 2026-11-20: *"The priority weights table and the relative priority manager must actually be found in
+         * the action section."* — the weight table of each sub-list an added task stands in, and the relative priority of
+         * each added task, drawn here as their windows draw them: what a default presence ratio target evolution reads.
+         */
+        TaskPriorityWeights(Kind.Task, "Priority weights"),
+        TaskRelativePriority(Kind.Task, "Relative priority"),
         TaskPresenceFormula(Kind.Task, "Presence ratio target"),
         /** User rule 2026-11-16: the task's minimum length, in minutes, a formula of the instant ([TimeFormula]). */
         TaskMinimumFormula(Kind.Task, "Minimum length target"),
@@ -5650,6 +5657,8 @@ object SearchDomain {
             AddedAction.ElementMd -> "md markdown text notes note add associate dissociate"
             AddedAction.MdText -> "md markdown text notes edit"
             AddedAction.MdAssociated -> "associated with elements dissociate"
+            AddedAction.TaskPriorityWeights -> "priority weights table weight columns chart share sub-list absolute priority"
+            AddedAction.TaskRelativePriority -> "relative priority manager percentage relative to ancestor chains pins absolute priority"
             AddedAction.TaskPresenceFormula -> "presence ratio target evolutions tasks relative to parent distance time periods formula categories new"
             AddedAction.TaskMinimumFormula -> "minimum length target time periods formula evolution ramp date"
             AddedAction.TaskTreeName -> "rename tree name apply"
@@ -7246,7 +7255,7 @@ object SearchDomain {
             Kind.Chrono -> state.chronos.mapTo(HashSet()) { it.id }
             Kind.WorkplaceSetup -> state.workplaceSetups.mapTo(HashSet()) { it.id }
             Kind.Md -> state.mdElements.mapTo(HashSet()) { it.id }
-            Kind.PresenceEvolution -> state.presenceEvolutions.mapTo(HashSet()) { it.id }
+            Kind.PresenceEvolution -> PresenceEvolutions.shown(state).mapTo(HashSet()) { it.id }
             Kind.Quota -> state.quotas.mapTo(HashSet()) { it.id }
             Kind.Reminder -> state.chores.mapTo(HashSet()) { it.id }
             else -> emptySet()

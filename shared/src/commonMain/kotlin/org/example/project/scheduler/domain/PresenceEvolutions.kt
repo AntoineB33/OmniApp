@@ -60,10 +60,76 @@ object PresenceEvolutions {
     /** Its value at [atMillis]: null outside its periods, or where it reads as no number. Not clamped. */
     fun valueAt(e: PresenceEvolution, atMillis: Long): Double? = parsed(e)?.at(atMillis)
 
-    /** Which evolutions involve one of [taskIds]: the evolutions pop-up's list. */
+    /** Which evolutions involve one of [taskIds]: the evolutions pop-up's list, the defaults included ([shown]). */
     fun involving(state: SchedulerState, taskIds: Collection<TaskId>): List<PresenceEvolution> {
         val ids = taskIds.toHashSet()
-        return state.presenceEvolutions.filter { e -> e.taskIds.any { it in ids } }
+        return shown(state).filter { e -> e.taskIds.any { it in ids } }
+    }
+
+    // ----- the default evolutions -----------------------------------------------------------------
+
+    /**
+     * User rule 2026-11-20: *"By default, every task in the first task tree (those that have the first child of the global
+     * root as an ascendant) must have the presence ratio target evolution as a constant value in the whole timeline. The
+     * value is by default associated with the absolute priority the user can define with the priority weight tables and
+     * the relative priority manager."*
+     *
+     * So each task under the first task tree's root has a **default evolution**: its own, relative to the global root
+     * ("Task trees"), always, its formula the constant its absolute priority is ([SchedulerDomain.absoluteTaskPriorities]).
+     * It is DERIVED, never stored nor synced: the weights are what it reads, so it moves when they do, and the schedulers
+     * read the weights, not it ([adjust] and [FormulaCoherence] read the stored evolutions only). Edited in the rows, it is
+     * written as a stored evolution under the same id ([DEFAULT_ID_PREFIX]), which then holds in its place.
+     */
+    const val DEFAULT_ID_PREFIX = ID_PREFIX + "default-"
+
+    fun defaultIdOf(task: TaskId): String = DEFAULT_ID_PREFIX + task.value
+
+    fun isDefault(e: PresenceEvolution, state: SchedulerState): Boolean =
+        e.id.startsWith(DEFAULT_ID_PREFIX) && state.presenceEvolutions.none { it.id == e.id }
+
+    private class DefaultsMemo(
+        val cells: Any, val lists: Any, val tasks: Any, val evolutions: Any,
+        val value: List<PresenceEvolution>,
+    )
+
+    private var defaultsMemo: DefaultsMemo? = null
+
+    /** The default evolutions not overridden by a stored one of the same id, in the first tree's order of walk. */
+    fun defaults(state: SchedulerState): List<PresenceEvolution> {
+        defaultsMemo?.let { m ->
+            if (m.cells === state.cells && m.lists === state.lists && m.tasks === state.tasks && m.evolutions === state.presenceEvolutions) return m.value
+        }
+        val computed = computeDefaults(state)
+        defaultsMemo = DefaultsMemo(state.cells, state.lists, state.tasks, state.presenceEvolutions, computed)
+        return computed
+    }
+
+    private fun computeDefaults(state: SchedulerState): List<PresenceEvolution> {
+        val first = TaskTreesAsTasks.topTaskIds(state).firstOrNull() ?: return emptyList()
+        val under = TreeIndex(state).descendants(first)
+        if (under.isEmpty()) return emptyList()
+        val stored = state.presenceEvolutions.mapTo(HashSet()) { it.id }
+        val absolute = SchedulerDomain.absoluteTaskPriorities(state)
+        return under.mapNotNull { t ->
+            val id = defaultIdOf(t)
+            if (id in stored) null
+            else PresenceEvolution(id, listOf(t), WellKnownIds.ROOT_TASK, formula = constantText(absolute[t] ?: 0.0))
+        }
+    }
+
+    /** The stored evolutions, then the defaults: what the Search window lists and the rows edit. */
+    fun shown(state: SchedulerState): List<PresenceEvolution> {
+        val d = defaults(state)
+        return if (d.isEmpty()) state.presenceEvolutions else state.presenceEvolutions + d
+    }
+
+    /** [ratio] as a plain decimal a [TimeFormula] reads (no exponent), to the billionth. */
+    fun constantText(ratio: Double): String {
+        if (!ratio.isFinite() || ratio <= 0.0) return "0"
+        val scaled = kotlin.math.round(ratio * 1e9).toLong()
+        val whole = scaled / 1_000_000_000L
+        val frac = (scaled % 1_000_000_000L).toString().padStart(9, '0').trimEnd('0')
+        return if (frac.isEmpty()) whole.toString() else "$whole.$frac"
     }
 
     // ----- the tree, as the evolutions read it -------------------------------------------------
@@ -276,5 +342,6 @@ object PresenceEvolutions {
     }
 
     /** A Search row's detail: what it is relative to, and when. */
-    fun detail(state: SchedulerState, e: PresenceEvolution): String = relativeText(state, e) + " · " + periodsText(e)
+    fun detail(state: SchedulerState, e: PresenceEvolution): String =
+        relativeText(state, e) + " · " + periodsText(e) + if (isDefault(e, state)) " · default: its absolute priority" else ""
 }

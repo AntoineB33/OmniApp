@@ -145,6 +145,13 @@ root of a task tree, child of the first task element."* — and, of the trees an
   the weights; outside its periods the weights decide. Read in ONE place, `PresenceEvolutions.adjust`, from
   `absoluteTaskPriorities`. A presence formula the build of that morning wrote on a cell (`Cell.presenceFormula`) is
   lifted into an evolution relative to the cell's parent on decode.
+- **Every task of the first task tree has a default evolution** (user rule 2026-11-20, `PresenceEvolutions.defaults`):
+  each task under the first child of the global root gets one of its own, relative to the global root, always, its
+  formula the constant its absolute priority is now — the priority weight tables and the relative priority set it. It
+  is DERIVED: never stored or synced, listed with the stored ones (`PresenceEvolutions.shown`, the Search window's and
+  the rows' list), and read by neither scheduler, since it says what the weights already say (`adjust` and
+  `FormulaCoherence` read `state.presenceEvolutions` only). Edited in the rows, it is written as a stored evolution under
+  its id (`presence-default-<task>`), which then holds in its place.
 - **Edited in rows only** (user rule 2026-11-19: *"I only want rows in the 3 sections of any Search window"*;
   `PresenceEvolutionRows`): the task group's "Presence ratio target" holds six rows — the **evolutions** (a field whose
   Search window lists those involving the group's tasks, its added elements list showing: what is added there, A, is what

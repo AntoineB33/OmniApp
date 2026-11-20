@@ -51,6 +51,47 @@ class PresenceRatioFormulaTest {
 
     private fun share(s: SchedulerState, title: String, at: Long = 0L) = SchedulerDomain.absoluteTaskPriorities(s, at).getValue(id(s, title))
 
+    /**
+     * User rule 2026-11-20: every task under the first task tree's root has a default evolution — constant, relative to the
+     * global root, its value the task's absolute priority — derived (never stored), listed for the task, and leaving the
+     * schedulers' shares as the weights give them. Edited, it is written under its own id and replaces the default.
+     */
+    @Test
+    fun every_task_of_the_first_tree_has_a_default_evolution_its_absolute_priority() {
+        val s = account()
+        val defaults = PresenceEvolutions.defaults(s)
+        assertEquals(setOf("A", "B", "C"), defaults.flatMap { it.taskIds }.map { t -> s.tasks[t]!!.title }.toSet(), "the first tree's tasks, not Q's")
+        assertTrue(s.presenceEvolutions.isEmpty(), "derived, never stored")
+        val a = id(s, "A")
+        val ofA = PresenceEvolutions.involving(s, listOf(a)).single()
+        assertEquals(PresenceEvolutions.defaultIdOf(a), ofA.id)
+        assertEquals(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK, ofA.relativeTask)
+        assertTrue(ofA.periods.isEmpty(), "the whole timeline")
+        assertEquals(share(s, "A"), TimeFormula.parse(ofA.formula, utc)!!.at(0L)!!, 1e-9)
+        assertTrue(PresenceEvolutions.isDefault(ofA, s))
+        assertTrue(SearchDomain.results(s, setOf(SearchDomain.Kind.PresenceEvolution), "").any { SearchDomain.keyOf(it).endsWith(ofA.id) })
+
+        // The weights move it: A's weight doubled.
+        val doubled = SchedulerReducer.reduce(s, SchedulerIntent.SetCellWeightFormula(s.cells.values.first { it.taskId == a }.id, "2"))
+        assertNotEquals(ofA.formula, PresenceEvolutions.involving(doubled, listOf(a)).single().formula)
+
+        // Edited: written under its id, the default gone, its value now the schedulers'.
+        val edited = with(s, ofA.copy(formula = "0.3"))
+        assertEquals(listOf(ofA.id), edited.presenceEvolutions.map { it.id })
+        assertFalse(PresenceEvolutions.isDefault(PresenceEvolutions.involving(edited, listOf(a)).single(), edited))
+        assertEquals(0.3, share(edited, "A"), 1e-9)
+        assertTrue(FormulaCoherence.problems(edited, utc).isEmpty())
+    }
+
+    @Test
+    fun a_default_formula_is_a_plain_decimal() {
+        assertEquals("0.25", PresenceEvolutions.constantText(0.25))
+        assertEquals("0.0001", PresenceEvolutions.constantText(1e-4))
+        assertEquals("1", PresenceEvolutions.constantText(1.0))
+        assertEquals("0", PresenceEvolutions.constantText(0.0))
+        assertEquals(1e-4, TimeFormula.parse(PresenceEvolutions.constantText(1e-4), utc)!!.at(0L)!!, 1e-15)
+    }
+
     @Test
     fun periods_are_a_formula_and_read_back() {
         val periods = listOf(Period("1970-01-11", "1970-01-21", "0.5"), Period("1970-01-21", "", "ramp(20, 30, 0.5, 0.2)"))
@@ -132,8 +173,9 @@ class PresenceRatioFormulaTest {
         val above = PresenceEvolutions.commonAncestors(s0, listOf(a, b))
         assertTrue(id(s0, "P") in above && id(s0, "Q") !in above)
         val s = with(s0, evo("e1", listOf(a), "0.3"), evo("e2", listOf(id(s0, "Q")), "0.3", relative = null))
-        assertEquals(listOf("e1"), PresenceEvolutions.involving(s, listOf(a)).map { it.id })
-        assertEquals(listOf("e1"), SearchDomain.itemResults(s, SearchDomain.Kind.PresenceEvolution, "A:").map { it.id })
+        // A's stored evolution, then its default (user rule 2026-11-20); not Q's.
+        assertEquals(listOf("e1", PresenceEvolutions.defaultIdOf(a)), PresenceEvolutions.involving(s, listOf(a)).map { it.id })
+        assertEquals(setOf("e1", PresenceEvolutions.defaultIdOf(a)), SearchDomain.itemResults(s, SearchDomain.Kind.PresenceEvolution, "A:").map { it.id }.toSet())
         // A category is carried as any element carries one.
         var withCategory = SchedulerReducer.reduce(s, SchedulerIntent.CreateCategory("Health"))
         val category = ElementTree.categoryKey(withCategory.categories.single { it.title == "Health" }.id)

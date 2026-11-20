@@ -5684,6 +5684,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 if (!defaultSubtreeWindowOpen) defaultSubtreeWindowOpen = true
                                 presentWindow(FloatingWindow.DefaultSubtree, FloatingWindow.DefaultSubtree.name)
                             },
+                            onOpenWeightWindow = { weightWindows.open(TreeObject(it, false)) },
+                            onOpenRelativePriority = { relativeWindows.open(TreeObject(it, false)) },
                             onOpenResilienceSearch = { kind -> openLinkedSearch(SearchDomain.resilienceSearchConfig(kind)) },
                             onOpenKindSearch = { kind -> openLinkedSearch(SearchDomain.kindSearchConfig(kind)) },
                             schedulerRuns = { schedulerRuns },
