@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The scheduler's menu: History units and Life context buttons — 2026-11-20
+
+- User rule: *"By default, in 'Task Scheduler', add two buttons in the left-side menu: one that opens a search window
+  showing all the history units, one that opens a search window showing one single md file."* Asked which md file: *"One
+  called life context"*.
+- Now: `CustomMenuButtons.HISTORY_SEARCH` (`d-history`, the history unit kind alone, nothing filtered) and
+  `LIFE_CONTEXT_SEARCH` (`d-life-context`, `SearchDomain.mdSearchConfig(MdDomain.LIFE_CONTEXT_ID)`: that md element listed
+  and added alone) sit between Task trees and Calendar in `DEFAULTS`. A menu stored before is given them ONCE above the
+  calendar's button (`Stored.historyMdSeeded`, absent = false); a removal stays. The md element `md-life-context`
+  (`# Life context`) is made — one md elements unit — by the button's press when it is missing (fixed id, so two devices
+  make the same row). No SQLite or Supabase change.
+
 ### ↑ / ↓ in the Search bar walk its own pin; a keystroke is a unit — 2026-11-20
 
 - User rule: *"The up and down keyboard arrow in the search bar must navigate a specific pin in the history units, but

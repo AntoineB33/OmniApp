@@ -76,8 +76,8 @@ class MuteAllSoundTest {
         assertEquals(CustomMenuButtons.GLOBAL_MUTE, CustomMenuButtons.CLAUDE_LOGS_DEFAULTS[1])
         // A menu stored before: given it once, just under the global Search button.
         val before = """{"buttons":[{"id":"g-search","window":"Search","title":"Search","global":true},{"id":"d-calendar","window":"Calendar","title":"Calendar"}],"seeded":true,"globalSeeded":true,"lifePlanSeeded":true}"""
-        assertEquals(listOf("g-search", "g-mute", "d-root", "d-calendar"), CustomMenuButtons.decode(before).map { it.id })
+        assertEquals(listOf("g-search", "g-mute", "d-root", "d-history", "d-life-context", "d-calendar"), CustomMenuButtons.decode(before).map { it.id })
         val removed = CustomMenuButtons.encode(CustomMenuButtons.decode(before).filterNot { it.id == "g-mute" })
-        assertEquals(listOf("g-search", "d-root", "d-calendar"), CustomMenuButtons.decode(removed).map { it.id }, "removed, it stays removed")
+        assertEquals(listOf("g-search", "d-root", "d-history", "d-life-context", "d-calendar"), CustomMenuButtons.decode(removed).map { it.id }, "removed, it stays removed")
     }
 }

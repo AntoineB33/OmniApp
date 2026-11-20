@@ -20,6 +20,17 @@ data class MdElement(
 )
 
 object MdDomain {
+    /**
+     * User rule 2026-11-20: the md element the scheduler's menu shows alone by default, *"one called life context"*. A fixed
+     * id, so two devices that make it make the same row; made at the first press of its button ([withLifeContext]).
+     */
+    const val LIFE_CONTEXT_ID: String = "md-life-context"
+    const val LIFE_CONTEXT_TEXT: String = "# Life context"
+
+    /** [elements] with the Life context md element, or null when it is there already (renamed or not: its id says it). */
+    fun withLifeContext(elements: List<MdElement>): List<MdElement>? =
+        if (elements.any { it.id == LIFE_CONTEXT_ID }) null else elements + MdElement(LIFE_CONTEXT_ID, LIFE_CONTEXT_TEXT)
+
     /** The first free `md-N`. */
     fun mintId(used: Collection<String>): String {
         val taken = used.toHashSet()

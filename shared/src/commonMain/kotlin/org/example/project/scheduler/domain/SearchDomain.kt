@@ -412,6 +412,20 @@ object SearchDomain {
             buttonFollowsExpansion = true,
         )
 
+    /**
+     * User rule 2026-11-20: the Search window of ONE md element ([MdDomain.LIFE_CONTEXT_ID] for the menu's default), listed
+     * alone and added, so its text is drawn in the actions.
+     */
+    fun mdSearchConfig(id: String): Config {
+        val key = Kind.Md.name + "/" + id
+        return Config(kinds = emptySet(), filters = Filters(includedElements = setOf(key)), added = listOf(key))
+    }
+
+    /** The md element a Search configuration shows alone ([mdSearchConfig]), or null. */
+    fun soleMdOf(config: Config?): String? =
+        config?.filters?.includedElements?.singleOrNull()?.takeIf { config.kinds.isEmpty() && it.startsWith(Kind.Md.name + "/") }
+            ?.substringAfter('/')
+
     fun elementSearchConfig(kind: Kind, id: String): Config =
         Config(kinds = setOf(kind), added = listOf(kind.name + "/" + id))
 

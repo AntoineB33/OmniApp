@@ -26,8 +26,8 @@ class CustomMenuButtonsTest {
     fun the_whole_menu_is_the_users_list_and_starts_as_what_the_menu_held() {
         val defaults = CustomMenuButtons.DEFAULTS
         // The global Search button first (user rule 2026-10-18: "by default, there is a Search button … for all pages").
-        // …then the global root's own (user rule 2026-11-19).
-        assertEquals(listOf("Search", "Search", "Calendar"), defaults.filter { it.control == null }.map { it.windowId })
+        // …then the global root's own (user rule 2026-11-19), the history units' and the Life context's (2026-11-20).
+        assertEquals(listOf("Search", "Search", "Search", "Search", "Calendar"), defaults.filter { it.control == null }.map { it.windowId })
         assertEquals(
             // The mute switch, global (user rule 2026-10-18), then the controls the fixed part held — but the online button,
             // moved to the settings page's menu (user rule 2026-11-04).

@@ -2842,6 +2842,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val button =
                 if (!pressed.global || lateralWindowOf(pressed.windowId) != FloatingWindow.Search) pressed
                 else pressed.copy(config = CustomMenuButtons.globalSearchConfig(pressed, page.searchPage))
+            // User rule 2026-11-20: the Life context md element its button shows is made at the press that finds it missing.
+            if (SearchDomain.soleMdOf(SearchDomain.Config.decode(button.config)) == org.example.project.scheduler.domain.MdDomain.LIFE_CONTEXT_ID) {
+                org.example.project.scheduler.domain.MdDomain.withLifeContext(vm.state.value.mdElements)?.let { vm.dispatch(SchedulerIntent.SetMdElements(it)) }
+            }
             val before = windowFrames.registrations.mapTo(HashSet()) { it.id }
             val saved = CustomMenuButtons.decodeLayout(button.layout)
             var asked: String? = null

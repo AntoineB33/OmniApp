@@ -30,10 +30,11 @@ class RootMenuButtonTest {
     @Test
     fun the_scheduler_menu_holds_it_under_the_search_button_and_an_older_menu_is_given_it_once() {
         val defaults = CustomMenuButtons.DEFAULTS.map { it.id }
-        assertEquals(defaults.indexOf("d-calendar") - 1, defaults.indexOf(CustomMenuButtons.ROOT_SEARCH.id), "with the windows' buttons, above the calendar's")
+        assertEquals(defaults.indexOf(CustomMenuButtons.HISTORY_SEARCH.id) - 1, defaults.indexOf(CustomMenuButtons.ROOT_SEARCH.id), "with the windows' buttons, above the history units'")
         assertTrue(CustomMenuButtons.CLAUDE_LOGS_DEFAULTS.none { it.id == CustomMenuButtons.ROOT_SEARCH.id }, "the scheduler's page alone")
         // A menu written before (no rootSeeded): given it once, above the calendar's button.
-        val older = CustomMenuButtons.encode(CustomMenuButtons.DEFAULTS - CustomMenuButtons.ROOT_SEARCH).replace(",\"rootSeeded\":true", "")
+        val older = CustomMenuButtons.encode(CustomMenuButtons.DEFAULTS - CustomMenuButtons.ROOT_SEARCH - CustomMenuButtons.HISTORY_SEARCH - CustomMenuButtons.LIFE_CONTEXT_SEARCH)
+            .replace(",\"rootSeeded\":true", "").replace(",\"historyMdSeeded\":true", "")
         val given = CustomMenuButtons.decode(older)
         assertEquals(CustomMenuButtons.DEFAULTS.map { it.id }, given.map { it.id })
         // Removed by the user since: it stays removed.

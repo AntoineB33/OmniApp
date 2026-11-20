@@ -107,7 +107,7 @@ class NewElementJoinsWindowTest {
         val older = """{"buttons":[{"id":"g-search","window":"Search","title":"Search","global":true},{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"d-task-tree","window":"TaskTree","title":"Task tree"},{"id":"d-Voice","window":"","title":"","control":"Voice"},{"id":"b1","window":"Search","title":"Mine"},{"id":"d-Notifications","window":"","title":"","control":"Notifications"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"claudeSoundsSeeded":true,"lifePlanSeeded":true}"""
         val read = CustomMenuButtons.decode(older)
         // The task tree's button is gone with its window (user rule 2026-11-11).
-        assertEquals(listOf("g-search", "g-mute", "d-Voice", "d-Notifications", "b1", "d-root"), positions(read))
+        assertEquals(listOf("g-search", "g-mute", "d-Voice", "d-Notifications", "b1", "d-root", "d-history", "d-life-context"), positions(read))
         // Once: moved apart after that, they stay.
         val apart = CustomMenuButtons.moved(read, "d-Voice", null)
         assertEquals(positions(apart), positions(CustomMenuButtons.decode(CustomMenuButtons.encode(apart))))
@@ -116,8 +116,8 @@ class NewElementJoinsWindowTest {
     @Test
     fun switches_removed_or_in_a_folder_are_the_users() {
         val removed = """{"buttons":[{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"b1","window":"Search","title":"Mine"},{"id":"d-Voice","window":"","title":"","control":"Voice"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"lifePlanSeeded":true}"""
-        assertEquals(listOf("g-mute", "b1", "d-Voice", "d-root"), positions(CustomMenuButtons.decode(removed)))
+        assertEquals(listOf("g-mute", "b1", "d-Voice", "d-root", "d-history", "d-life-context"), positions(CustomMenuButtons.decode(removed)))
         val folder = """{"buttons":[{"id":"g-mute","window":"","title":"","control":"MuteAll","global":true},{"id":"f1","window":"","title":"F","folder":true},{"id":"d-Voice","window":"","title":"","control":"Voice","parent":"f1"},{"id":"d-Notifications","window":"","title":"","control":"Notifications","parent":"f1"}],"seeded":true,"globalSeeded":true,"muteSeeded":true,"lifePlanSeeded":true}"""
-        assertEquals(listOf("g-mute", "f1", "d-Voice", "d-Notifications", "d-root"), positions(CustomMenuButtons.decode(folder)))
+        assertEquals(listOf("g-mute", "f1", "d-Voice", "d-Notifications", "d-root", "d-history", "d-life-context"), positions(CustomMenuButtons.decode(folder)))
     }
 }

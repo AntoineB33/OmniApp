@@ -204,7 +204,9 @@ means.
     (`AppSettingEntry`) with that ONE action (`APP_SETTING_CONTROL_ACTIONS`), drawn by `MenuControlItem` there too
     (`LocalMenuControlHost`, provided over every window). A new control needs its action (`MenuControlsAreActionsTest`).
   - **What the menu held is what it starts as** (`CustomMenuButtons.DEFAULTS`: the Search button, the three sound
-    switches together, Mute, Voice, Notifications (brought together once in a menu stored before), Task tree, Calendar, Look
+    switches together, Mute, Voice, Notifications (brought together once in a menu stored before), Task trees, History units
+    (every history unit), Life context (user rule 2026-11-20: the md element `MdDomain.LIFE_CONTEXT_ID` alone, made at the
+    press that finds it missing — those three given once to a menu stored before, above the calendar's), Calendar, Look
     away now, Switch task, Sleep / Work, I'm away; Online is the settings page's since 2026-11-04). A list stored before is given those
     ON TOP, once (`Stored.seeded`); from then on a removal is final, and an emptied menu stays empty.
   - **Every item has the same right-click menu**: Update (a window's button whose window changed), Rename (a window's

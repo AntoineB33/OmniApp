@@ -381,6 +381,8 @@ object CustomMenuButtons {
         val serverSeeded: Boolean = false,
         /** Whether a list of the scheduler's menu was already given the global root's button ([ROOT_SEARCH]), ONCE. */
         val rootSeeded: Boolean = false,
+        /** Whether a list of the scheduler's menu was already given the history units' and Life context's buttons, ONCE. */
+        val historyMdSeeded: Boolean = false,
     )
 
     /**
@@ -399,6 +401,22 @@ object CustomMenuButtons {
         CustomMenuButton(
             "d-root", "Search", org.example.project.scheduler.domain.SchedulerDomain.ROOT_TASK_TITLE,
             config = SearchDomain.rootSearchConfig().encode(),
+        )
+    }
+
+    /**
+     * User rule 2026-11-20: *"By default, in 'Task Scheduler', add two buttons in the left-side menu: one that opens a search
+     * window showing all the history units"* ([HISTORY_SEARCH]), *"one that opens a search window showing one single md file"*
+     * — the one called Life context ([LIFE_CONTEXT_SEARCH], made at the button's first press: `App`'s onMenuButtonClicked).
+     */
+    val HISTORY_SEARCH: CustomMenuButton by lazy {
+        CustomMenuButton("d-history", "Search", "History units", config = SearchDomain.kindSearchConfig(SearchDomain.Kind.HistoryUnit).encode())
+    }
+
+    val LIFE_CONTEXT_SEARCH: CustomMenuButton by lazy {
+        CustomMenuButton(
+            "d-life-context", "Search", "Life context",
+            config = SearchDomain.mdSearchConfig(org.example.project.scheduler.domain.MdDomain.LIFE_CONTEXT_ID).encode(),
         )
     }
 
@@ -427,6 +445,9 @@ object CustomMenuButtons {
             // The global root's Search window (user rule 2026-11-19), with the windows' buttons: the sound switches stay
             // just under the global Search button.
             ROOT_SEARCH,
+            // Every history unit, and the Life context md element (user rule 2026-11-20).
+            HISTORY_SEARCH,
+            LIFE_CONTEXT_SEARCH,
             CustomMenuButton("d-calendar", "Calendar", "Calendar"),
         ) + listOf(
             // The online button moved to the settings page's menu (user rule 2026-11-04, [SETTINGS_ONLINE]).
@@ -510,7 +531,7 @@ object CustomMenuButtons {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(buttons: List<CustomMenuButton>): String =
-        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, usageSeeded = true, onlineSeeded = true, serverSeeded = true, rootSeeded = true))
+        json.encodeToString(Stored.serializer(), Stored(buttons, seeded = true, globalSeeded = true, muteSeeded = true, claudeSoundsSeeded = true, soundsTogether = true, usageSeeded = true, onlineSeeded = true, serverSeeded = true, rootSeeded = true, historyMdSeeded = true))
 
     /**
      * User rule 2026-10-18: **every page's menu once the menu of [page] became [list]** — its global items written to
@@ -677,10 +698,19 @@ object CustomMenuButtons {
         // ...and, on the scheduler's page, the global root's button, ONCE: just above the calendar's where it stands, else at
         // the bottom. One given it under its first name, "Root", reads the root's name now (user rule 2026-11-19).
         val together3 = seeded3.map { if (it.id == ROOT_SEARCH.id && it.title == "Root") it.copy(title = ROOT_SEARCH.title) else it }
-        if (stored.rootSeeded || ROOT_SEARCH !in defaults || together3.any { it.id == ROOT_SEARCH.id }) return together3
-        val calendarAt = together3.indexOfFirst { it.id == "d-calendar" }
-        return if (calendarAt < 0) together3 + ROOT_SEARCH
-        else together3.toMutableList().also { it.add(calendarAt, ROOT_SEARCH.copy(parent = together3[calendarAt].parent)) }
+        val together4 = aboveCalendar(together3, listOf(ROOT_SEARCH).takeUnless { stored.rootSeeded || ROOT_SEARCH !in defaults }.orEmpty())
+        // ...and, on the scheduler's page, the history units' and the Life context's buttons, ONCE, the same way (2026-11-20).
+        val historyMd = listOf(HISTORY_SEARCH, LIFE_CONTEXT_SEARCH).filter { it in defaults }
+        return aboveCalendar(together4, if (stored.historyMdSeeded) emptyList() else historyMd)
+    }
+
+    /** [buttons] with those of [given] it lacks just above the calendar's button where it stands, else at the bottom. */
+    private fun aboveCalendar(buttons: List<CustomMenuButton>, given: List<CustomMenuButton>): List<CustomMenuButton> {
+        val missing = given.filter { item -> buttons.none { it.id == item.id } }
+        if (missing.isEmpty()) return buttons
+        val calendarAt = buttons.indexOfFirst { it.id == "d-calendar" }
+        return if (calendarAt < 0) buttons + missing
+        else buttons.toMutableList().also { list -> list.addAll(calendarAt, missing.map { it.copy(parent = buttons[calendarAt].parent) }) }
     }
 
     /**
