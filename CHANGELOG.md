@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A result row's name is never drawn at no width — 2026-11-20
+
+- Anomaly: *"now the 'Presence ratio target evolutions' field doesn't show anything in the pop-up window"*. It listed the
+  default evolution, but the row's detail ("of “Task trees” · always · default: its absolute priority"), unweighted and
+  so measured first, took the whole of the narrow pop-up's row and left the name no width. The name and the detail
+  share a row now (`ItemResultRow`, both `weight(1f, fill = false)`, each wrapping), and a default's detail ends in
+  "default". `PresenceEvolutionSelectionTest` asserts the name is drawn.
+
 ### A row selected in the evolutions' window is what the rows edit — 2026-11-20
 
 - Anomaly: *"I selected the default presence ratio target evolution, but in relative to there is nothing"*. A row

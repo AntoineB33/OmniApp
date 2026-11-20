@@ -48,6 +48,9 @@ import org.example.project.ui.transientMenuDismissRoot
 @OptIn(ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
 class PresenceEvolutionSelectionTest {
 
+    /** Narrow, as a Search window beside others is: its pop-up is narrow, the detail beside the name long against it. */
+    private val SCENE_WIDTH = 1000
+
     private val openers = SearchRowOpeners(onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {})
     private val handlers =
         AddedActionHandlers(
@@ -81,7 +84,7 @@ class PresenceEvolutionSelectionTest {
         val menus = org.example.project.ui.TransientMenuHost()
         val frames = org.example.project.ui.WindowFrameHost()
         val scene = onEdt {
-            ImageComposeScene(1400, 1200, density = Density(1f)) {
+            ImageComposeScene(SCENE_WIDTH, 1200, density = Density(1f)) {
                 var state by remember { mutableStateOf(start) }
                 var config by remember { mutableStateOf(opened) }
                 val registry = remember {
@@ -112,7 +115,7 @@ class PresenceEvolutionSelectionTest {
                             SearchWindow(
                                 state = state, openers = openers, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
                                 actionHandlers = handlers, onIntent = onIntent, onDismiss = {}, config = config,
-                                onConfigChange = { config = it }, onOpenConfigurations = {}, initialSize = Size(1400f, 1200f),
+                                onConfigChange = { config = it }, onOpenConfigurations = {}, initialSize = Size(SCENE_WIDTH.toFloat(), 1200f),
                             )
                         }
                         FieldSearchPopupLayer(popups)
@@ -143,15 +146,17 @@ class PresenceEvolutionSelectionTest {
             assertTrue(popups.request != null, "the evolutions' window is open")
             val row = PresenceEvolutions.title(start, PresenceEvolutions.defaults(start).first { a in it.taskIds })
             assertTrue(row in texts(), "the default evolution is listed: ${texts()}")
-            // The row's kind label: in this narrow pop-up its title column is drawn at no width.
-            click(find("presence ratio target evolution"))
+            // Anomaly 2026-11-20: listed, its name was drawn at no width — the long detail beside it took the row.
+            val name = nodes().last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == row } == true }.boundsInWindow
+            assertTrue(name.width > 20f, "the name is drawn: $name")
+            click(find(row))
             frames(6)
-            assertTrue(texts().any { it == "relative to · of “Task trees”" }, "the selected default is relative to the root: ${texts()}")
+            assertTrue(texts().any { it.startsWith("relative to · of “Task trees") }, "the selected default is relative to the root: ${texts()}")
             // A press on a row below closes the window; the selection is still what the rows edit.
-            click(find("relative to · of “Task trees”"))
+            click(nodes().last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text.startsWith("relative to · of “Task trees") } == true }.boundsInWindow.center)
             frames(6)
-            assertTrue(texts().any { it == "relative to · of “Task trees”" }, "held once its window closed: ${texts()}")
-            assertTrue(texts().any { it == "Task trees" }, "the relative-to window offers the root: ${texts()}")
+            assertTrue(texts().any { it.startsWith("relative to · of “Task trees") }, "held once its window closed: ${texts()}")
+            assertTrue(texts().any { it.startsWith("Task trees") }, "the relative-to window offers the root: ${texts()}")
         } finally {
             onEdt { scene.close() }
         }

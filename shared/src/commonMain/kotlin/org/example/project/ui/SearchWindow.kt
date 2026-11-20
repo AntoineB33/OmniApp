@@ -3869,10 +3869,14 @@ private fun ItemResultRow(
                     color = logEntryColor(item.kind) ?: Color.Unspecified,
                     modifier = Modifier.weight(1f, fill = false),
                 )
+                // Anomaly 2026-11-20 (*"the field doesn't show anything in the pop-up window"*): measured first, unweighted,
+                // a long detail took the whole of a narrow row and left the name no width at all. The two share it, each
+                // wrapping in its half when both are long.
                 Text(
                     text = searchHighlighted(withCategories(SearchDomain.shownDetail(item) { workplaceRuns?.isRunning(it) == true }, categories), query),
                     style = MaterialTheme.typography.labelSmall,
                     color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
             }
         }

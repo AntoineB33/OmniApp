@@ -343,5 +343,5 @@ object PresenceEvolutions {
 
     /** A Search row's detail: what it is relative to, and when. */
     fun detail(state: SchedulerState, e: PresenceEvolution): String =
-        relativeText(state, e) + " · " + periodsText(e) + if (isDefault(e, state)) " · default: its absolute priority" else ""
+        relativeText(state, e) + " · " + periodsText(e) + if (isDefault(e, state)) " · default" else ""
 }
