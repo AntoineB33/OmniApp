@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### ↑ / ↓ in the Search bar walk its own pin; a keystroke is a unit — 2026-11-20
+
+- User rule: *"The up and down keyboard arrow in the search bar must navigate a specific pin in the history units, but
+  only those where the user did something else than changing the search bar content right after, like scrolling or
+  clicking elsewhere."* Asked, the user added: each keystroke is a History Unit (Ctrl+Z goes back character by
+  character); each pin has its own units (the bar's, as Alt+arrows walk only the window's selections); at the newest
+  text ↓ goes to the row below.
+- Was: a run of the bar's keystrokes was ONE unit of the whole configuration (`coalesceKey` `search/<id>/query`), never
+  ended by a scroll or a click, so no settled text was a unit of its own; and a Search restore puts the configuration
+  back only if it is still exactly as left, so walking the text past a later filter change would have done nothing.
+- Now: `ExternalKeys.SEARCH_TEXT` units hold the text alone; `ExternalDelta.runStart` (persisted, `PersistedDelta.External`,
+  absent = false) marks a keystroke made after something else; `SchedulerIntent.WalkSearchText` walks them, ONE restore a
+  walk. `SearchBarPin` wires the Search window and its copies. `popups.md` § *Search bars*. Tests: `SearchBarPinTest`,
+  `SearchBarRunKeysTest`.
+- Cost, accepted by the rule: a unit (a `history_unit` row, synced) a keystroke, so the Main stack's 1000-unit bound is
+  reached sooner by typing in Search bars.
+
 ### A press on what opens a pop-up is its click's; bubbles at the pointer — 2026-11-20
 
 - Anomaly: *"Often when I rapidly click on a down arrow, it appears and disappears in a blink. It also happens for rows

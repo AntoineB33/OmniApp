@@ -18,6 +18,13 @@ object ExternalKeys {
     /** A Search window's configuration, followed by its frame id (`search/Search`, `search/Search#2`). */
     const val SEARCH: String = "search/"
 
+    /**
+     * User rule 2026-11-20: ONE keystroke in a Search window's bar, followed by its frame id — the bar's text alone, before
+     * and after, so a walk of the bar's pin moves the text and nothing else of the window ([ExternalDelta.runStart]).
+     * Never starts with [SEARCH].
+     */
+    const val SEARCH_TEXT: String = "search-text/"
+
     /** A window's layout, followed by its frame id. */
     const val WINDOW: String = "window/"
 
@@ -114,6 +121,8 @@ val Delta.changedElements: Set<ChangedElement>
                 when {
                     delta.key.startsWith(ExternalKeys.SEARCH) ->
                         add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.SEARCH)))
+                    delta.key.startsWith(ExternalKeys.SEARCH_TEXT) ->
+                        add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.SEARCH_TEXT)))
                     delta.key.startsWith(ExternalKeys.WINDOW_TITLE) ->
                         add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.WINDOW_TITLE)))
                     delta.key.startsWith(ExternalKeys.WINDOW) ->

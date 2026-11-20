@@ -98,6 +98,8 @@ import org.example.project.scheduler.ui.contextMenuModifier
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.graphics.Color
@@ -436,6 +438,50 @@ data class SearchRowOpeners(
     }
 }
 
+/**
+ * User rule 2026-11-20: **the pin of a Search window's bar.** Each keystroke in the bar is a History Unit of its own
+ * (`ExternalKeys.SEARCH_TEXT`; Ctrl+Z goes back a character at a time). ↑ / ↓ in the bar walk this pin alone — the bar's
+ * keystrokes, nothing else of the window — stopping only at a text the user left the bar at: a keystroke after which
+ * they did something else ([runEnded]). At the newest text ↓ goes to the row below, at the oldest ↑ to the row above.
+ */
+class SearchBarPin(
+    /** Moves the pin to the previous ([back]) or next text the user left the bar at; false at that end of its walk. */
+    val step: (back: Boolean) -> Boolean,
+    /** The user did something else than changing the bar's text: the next keystroke starts a run. */
+    val runEnded: () -> Unit,
+)
+
+/** A key that changes the bar's text, or a modifier on its own: the run of keystrokes goes on. Any other ends it. */
+internal fun typesInBar(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+    val ctrl = event.isCtrlPressed || event.isMetaPressed
+    return when (event.key) {
+        Key.ShiftLeft, Key.ShiftRight, Key.CtrlLeft, Key.CtrlRight, Key.AltLeft, Key.AltRight,
+        Key.MetaLeft, Key.MetaRight, Key.CapsLock,
+        Key.Backspace, Key.Delete,
+        -> true
+        Key.V, Key.X -> ctrl || (!event.isAltPressed && event.utf16CodePoint > 31)
+        Key.Insert -> event.isShiftPressed
+        else -> !ctrl && !event.isAltPressed && event.utf16CodePoint > 31 && event.utf16CodePoint != 127
+    }
+}
+
+/** Every press and every wheel turn in the window ends the bar's run ([SearchBarPin.runEnded]); none is consumed. */
+@Composable
+private fun Modifier.endsBarRun(pin: SearchBarPin?): Modifier {
+    if (pin == null) return this
+    val current by androidx.compose.runtime.rememberUpdatedState(pin)
+    return pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.type == PointerEventType.Press || event.type == PointerEventType.Scroll) {
+                    current.runEnded()
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun SearchWindow(
     /** The live state — the search is about the account's own things. */
@@ -558,6 +604,8 @@ fun SearchWindow(
      * elements its own, as any Search window's.
      */
     treeList: SearchTreeList? = null,
+    /** User rule 2026-11-20: the pin its bar's ↑ / ↓ walk ([SearchBarPin]). Null: the bar has none, ↓ enters the list. */
+    barPin: SearchBarPin? = null,
     modifier: Modifier = Modifier,
     initialOffset: Offset = Offset.Zero,
     initialSize: Size = Size.Zero,
@@ -1398,11 +1446,26 @@ fun SearchWindow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(fieldFocus)
-                        .onFocusChanged { fieldFocused = it.isFocused }
+                        .onFocusChanged {
+                            // Leaving the bar is something else than typing in it (user rule 2026-11-20).
+                            if (fieldFocused && !it.isFocused) barPin?.runEnded()
+                            fieldFocused = it.isFocused
+                        }
                         .outsidePressPart(barEditor)
                         // ↓ or Enter leave the bar for the list, onto its first row; every other key types.
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            // User rule 2026-11-20: ↑ / ↓ walk the bar's pin ([SearchBarPin]) while it has a text to go
+                            // to; at its end ↓ goes to the row below, as Enter does, and ↑ is the field's own.
+                            if (barPin != null) {
+                                if (!typesInBar(event)) barPin.runEnded()
+                                val plain = !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed && !event.isShiftPressed
+                                if (plain && (event.key == Key.DirectionUp || event.key == Key.DirectionDown) &&
+                                    barPin.step(event.key == Key.DirectionUp)
+                                ) {
+                                    return@onPreviewKeyEvent true
+                                }
+                            }
                             val intoList =
                                 event.key == Key.DirectionDown || event.key == Key.Enter || event.key == Key.NumPadEnter
                             if (!intoList || count == 0) return@onPreviewKeyEvent false
@@ -2204,13 +2267,15 @@ fun SearchWindow(
       }
       }
     }
+    // User rule 2026-11-20: a press or a scroll anywhere in the window ends its bar's run of keystrokes.
+    val windowModifier = modifier.endsBarRun(barPin)
     // User rule 2026-11-04: with the bar's match case or whole word on, only what matches with them is highlighted.
     androidx.compose.runtime.CompositionLocalProvider(LocalSearchMatch provides filters.queryOptions) {
     if (frame == null && popupChrome != null) {
         // A pop-up: the window's surface, its head at the top edge (anomaly 2026-11-15, 5). What is inside is not it.
         androidx.compose.runtime.CompositionLocalProvider(LocalSearchPopupWindow provides null, LocalPopupChrome provides null) {
             WindowSurface(
-                modifier = modifier,
+                modifier = windowModifier,
                 head = if (headerRemoved) null else { { SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss, window = popupWindow) } },
             ) {
                 Column(Modifier.fillMaxSize().padding(POPUP_CONTENT_PADDING), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -2220,7 +2285,7 @@ fun SearchWindow(
             }
         }
     } else if (frame == null) {
-        Column(modifier) {
+        Column(windowModifier) {
             // User rule 2026-11-11: shown by its background menu, the head of a Search window drawn in no frame.
             if (!headerRemoved) SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss, window = popupWindow)
             // The Search windows inside it (its sections, a field's) are not this pop-up.
@@ -2235,7 +2300,7 @@ fun SearchWindow(
             onClose = onDismiss,
             defaultWidth = 1040.dp,
             defaultHeight = 600.dp,
-            modifier = modifier,
+            modifier = windowModifier,
             onRaise = onRaise,
             onGeometryChange = onGeometryChange,
             claimsKeyboard = true,

@@ -353,7 +353,17 @@ sealed interface SchedulerIntent {
         val after: String?,
         val label: String,
         val coalesceKey: String? = null,
+        /** A keystroke of a Search window's bar that the user did something else before ([ExternalDelta.runStart]). */
+        val runStart: Boolean = false,
     ) : SchedulerIntent
+
+    /**
+     * User rule 2026-11-20: **↑ / ↓ in a Search window's bar walk the bar's own pin** — the keystroke units of [key]
+     * ([ExternalKeys.SEARCH_TEXT] + the window's frame id), back when [back], to the previous (next) text the user left
+     * the bar at: a keystroke after which they did something else ([ExternalDelta.runStart] on the next one). Nothing
+     * else of the window moves. Not a unit itself, as no walk is. `SchedulerReducer.searchTextStep` says whether it moves.
+     */
+    data class WalkSearchText(val key: String, val back: Boolean) : SchedulerIntent
 
     /**
      * The added elements' Duplicate on a category: a new category titled `"<title> copy"` (`"… copy 2"`, … where taken —

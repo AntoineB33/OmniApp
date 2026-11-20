@@ -68,7 +68,10 @@ window's list, which recorded nothing). Undoable, from the window it was made in
   in the state; undo and redo queue the value for `App` (`SchedulerState.externalRestores`, transient — never stored,
   synced or fingerprinted), which puts it back **three-way** (only while the thing is still what the unit left) and
   records nothing while it does. Nothing is recorded until the start-up has settled (the restores of the windows are not
-  the user's). A text field typed into is one unit per run of keystrokes (`coalesceKey`). A window that closes hands
+  the user's). A text field typed into is one unit per run of keystrokes (`coalesceKey`) — except **a Search window's
+  bar, one unit a keystroke** (user rule 2026-11-20, `ExternalKeys.SEARCH_TEXT`: its text alone, before and after;
+  `ExternalDelta.runStart`, stored, marks a keystroke the user did something else before; `popups.md` § *Search
+  bars*). A window that closes hands
   the focus to the one under it, so its close is stamped with — and undone from — that window.
 - **An account setting** — defining, deleting, resetting or duplicating a kind of period, its drawing and combination
   rules, creating, renaming (one unit per run of keystrokes), deleting or duplicating a category and its rules, the

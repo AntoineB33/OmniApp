@@ -978,7 +978,7 @@ object SchedulerStateCodec {
                 PersistedDelta.Chronos(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is QuotasDelta ->
                 PersistedDelta.Quotas(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
-            is ExternalDelta -> PersistedDelta.External(key, before, after, label)
+            is ExternalDelta -> PersistedDelta.External(key, before, after, label, runStart)
             is SettingsDelta ->
                 PersistedDelta.Settings(
                     label = label,
@@ -1628,7 +1628,7 @@ object SchedulerStateCodec {
                 )
             is PersistedDelta.ShortcutBindings ->
                 ShortcutBindingDelta(before.toShortcutBindings(), after.toShortcutBindings())
-            is PersistedDelta.External -> ExternalDelta(key, before, after, label)
+            is PersistedDelta.External -> ExternalDelta(key, before, after, label, runStart = runStart)
             is PersistedDelta.Settings ->
                 SettingsDelta(
                     label = label,
@@ -2809,7 +2809,14 @@ private sealed interface PersistedDelta {
      */
     @Serializable
     @SerialName("external")
-    data class External(val key: String, val before: String? = null, val after: String? = null, val label: String = "") : PersistedDelta
+    data class External(
+        val key: String,
+        val before: String? = null,
+        val after: String? = null,
+        val label: String = "",
+        /** New 2026-11-20 (`ExternalDelta.runStart`): absent — every unit written before — is false. Written only when true. */
+        val runStart: Boolean = false,
+    ) : PersistedDelta
 
     /** New 2026-10-01: an account setting — each piece only when it changed, entries as the state writes them. */
     @Serializable

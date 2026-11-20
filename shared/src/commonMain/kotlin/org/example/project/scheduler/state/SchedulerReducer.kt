@@ -784,7 +784,8 @@ object SchedulerReducer {
                 }
             is SchedulerIntent.RecordExternal ->
                 if (intent.before == intent.after) state
-                else commitDelta(state, ExternalDelta(intent.key, intent.before, intent.after, intent.label, intent.coalesceKey))
+                else commitDelta(state, ExternalDelta(intent.key, intent.before, intent.after, intent.label, intent.coalesceKey, intent.runStart))
+            is SchedulerIntent.WalkSearchText -> walkSearchText(state, intent.key, intent.back)
             is SchedulerIntent.InDefaultSubtree -> reduceInDefaultSubtree(state, intent.inner)
             is SchedulerIntent.InSearchSubtree -> reduceInSearchSubtree(state, intent.inner, intent.listId, intent.readOnly, intent.window)
             is SchedulerIntent.SetSearchExpanded ->
@@ -1111,6 +1112,64 @@ object SchedulerReducer {
 
     /** `Ctrl+Page Up/Down`: the moves of the focus between windows alone (user rule 2026-10-15). */
     private val FOCUS_MOVES = HistoryWalk(listOf(HistoryCategory.WindowNav))
+
+    /**
+     * User rule 2026-11-20: **the pin of a Search window's bar** — this device's keystroke units of [key]
+     * ([ExternalKeys.SEARCH_TEXT] + frame id), oldest first, each with its index in [HistoryCategory.Main], and how many
+     * of them are applied: the pin stands after that many. Every other change of the window is another pin's.
+     */
+    private class SearchTextPin(val units: List<Pair<Int, HistoryUnit>>, val at: Int) {
+        val deltas: List<ExternalDelta> get() = units.map { it.second.delta as ExternalDelta }
+
+        /** Whether [k] keystrokes applied is a text the user left the bar at: the newest, or one before a run's start. */
+        fun stop(k: Int): Boolean = k == units.size || deltas[k].runStart
+
+        /** The bar's text with [k] keystrokes applied. */
+        fun text(k: Int): String? = if (k == 0) deltas.firstOrNull()?.before else deltas[k - 1].after
+    }
+
+    private fun searchTextPin(state: SchedulerState, key: String): SearchTextPin {
+        val me = deviceId()
+        val units =
+            state.histories.forCategory(HistoryCategory.Main).units.withIndex()
+                .filter { (_, u) -> u.ownedBy(me) && (u.delta as? ExternalDelta)?.key == key }
+                .map { (i, u) -> i to u }
+        // Walked by this pin and by the window's Ctrl+Z, newest first both ways, the applied ones are a prefix.
+        return SearchTextPin(units, units.indexOfLast { !it.second.undone } + 1)
+    }
+
+    /**
+     * Where ↑ ([back]) or ↓ in the bar of [key] takes its pin: the previous text the user left the bar at (or the text
+     * before the oldest keystroke kept), the next one — or null when the pin is already at that end of its walk, and the
+     * key is then the list's (↓ to the row below, ↑ to the row above).
+     */
+    fun searchTextStep(state: SchedulerState, key: String, back: Boolean): Int? {
+        val pin = searchTextPin(state, key)
+        return if (back) (pin.at - 1 downTo 0).firstOrNull { it == 0 || pin.stop(it) }
+        else (pin.at + 1..pin.units.size).firstOrNull { pin.stop(it) }
+    }
+
+    /**
+     * [SchedulerIntent.WalkSearchText]: every keystroke between the pin and [searchTextStep]'s target undone or redone,
+     * and ONE restore of the bar's text queued for `App` — not one a keystroke, which a long run would push past
+     * [MAX_EXTERNAL_RESTORES].
+     */
+    private fun walkSearchText(state: SchedulerState, key: String, back: Boolean): SchedulerState {
+        val target = searchTextStep(state, key, back) ?: return state
+        val pin = searchTextPin(state, key)
+        val me = deviceId()
+        val now = clock.nowMillis()
+        val history = state.histories.forCategory(HistoryCategory.Main)
+        val units = history.units.toMutableList()
+        pin.units.forEachIndexed { k, (index, unit) ->
+            val undone = k >= target
+            if (unit.undone != undone) units[index] = unit.copy(undone = undone, changedAtMillis = now)
+        }
+        val walked =
+            state.copy(histories = state.histories.withCategory(HistoryCategory.Main, historyOf(units, me)))
+                .withExternalRestore(key, from = pin.text(pin.at), to = pin.text(target))
+        return snapWholePin(walked)
+    }
 
     /**
      * The window (and, for a per-copy selection, the copy) a selection unit is about. The tree's own selection
@@ -8019,6 +8078,13 @@ internal data class ExternalDelta(
     val after: String?,
     override val label: String,
     override val coalesceKey: String? = null,
+    /**
+     * User rule 2026-11-20: a keystroke of a Search window's bar ([ExternalKeys.SEARCH_TEXT]) the user did something else
+     * before — scrolled, clicked, moved the caret, left the bar, walked the history. The text BEFORE it is then one the
+     * user left the bar at: a stop of the bar's pin ([SchedulerReducer.searchTextStep]). Persisted: a scroll leaves no unit,
+     * so nothing else could tell it afterwards.
+     */
+    val runStart: Boolean = false,
 ) : Delta {
     override val details: List<String>
         get() = listOf(key)

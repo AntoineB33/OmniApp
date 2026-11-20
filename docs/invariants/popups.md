@@ -662,6 +662,18 @@ means.
   that stale text set the caret back. What the bar typed, and what it held as the typing began, are echoes and ignored;
   any other text from its owner (the cross, Escape's revert, a configuration put back) replaces it. `SearchBar` is the
   one place: a new bar is one.
+- **↑ / ↓ in a Search window's bar walk the bar's own pin** (user rule 2026-11-20, *"only those where the user did
+  something else than changing the search bar content right after, like scrolling or clicking elsewhere"*;
+  `SearchBarPin`, `SchedulerReducer.searchTextStep` / `SchedulerIntent.WalkSearchText`, `SearchBarPinTest`). Each
+  keystroke is a History Unit of the bar's text alone (`ExternalKeys.SEARCH_TEXT`; Ctrl+Z takes back one character).
+  The pin walks those units only — the window's other changes are its Ctrl+Z's — and stops only at a text the user left
+  the bar at: the newest, or one followed by a keystroke marked `runStart`. A run ends at a press or a wheel turn
+  anywhere in the window, the bar losing the keyboard, any key that does not change the text (`typesInBar`: the caret
+  moved, Ctrl+Z, Enter…), and a walk or an undo of the bar. ONE restore per walk, of the text alone, put back while the
+  bar still holds what the walk left. At the newest text ↓ goes to the row below, as Enter does; at the oldest ↑ is the
+  field's own. Wired for the Search window and its copies; a bar given no pin (the left-side menu, a ▾ window, a
+  field's list) keeps ↓ into the list — though every bar whose text `App.setSearchConfig` keeps (the left-side menu's
+  included) records a unit a keystroke; a ▾ window's (`setSearchInside`) is still a unit a run.
 - **Every search bar has a ✕ at its right end, which empties it** (user rule 2026-10-11; `SearchBarCross`, the
   field's `trailingIcon`): the Search window's bar, "Search a configuration" in both configuration windows, the
   actions section's "Search an action", the notification list's "Filter" and the task picker's "Find a task". Always
