@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.getAllSemanticsNodes
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.example.project.scheduler.domain.PresenceEvolutions
 import org.example.project.scheduler.domain.SearchDomain
@@ -43,7 +44,7 @@ import org.example.project.ui.transientMenuDismissRoot
  * Anomaly 2026-11-20: *"I selected the default presence ratio target evolution, but in relative to there is nothing"*.
  * Drawn off screen in the real Search window: a task of the first tree added, its "Presence ratio target" open, its
  * default evolution SELECTED (not added) in the evolutions field's window — the rows below edit it: "relative to" names
- * the global root, and its window offers the root.
+ * the first tree's root, and its window offers it.
  */
 @OptIn(ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
 class PresenceEvolutionSelectionTest {
@@ -146,22 +147,18 @@ class PresenceEvolutionSelectionTest {
             assertTrue(popups.request != null, "the evolutions' window is open")
             val row = PresenceEvolutions.title(start, PresenceEvolutions.defaults(start).first { a in it.taskIds })
             assertTrue(row in texts(), "the default evolution is listed: ${texts()}")
-            // Anomaly 2026-11-20: every evolution, not only those of the added tasks — B's too, nothing excluded.
-            val ofB = PresenceEvolutions.title(start, PresenceEvolutions.defaults(start).first { e -> e.taskIds.none { it == a } })
-            assertTrue(ofB in texts(), "an evolution of another task is listed: ${texts()}")
-            // User rule 2026-11-20: A's own first, the rest after.
-            assertTrue(texts().indexOf(row) < texts().indexOf(ofB), "A's evolution before B's: ${texts()}")
+            assertEquals(1, PresenceEvolutions.defaults(start).size, "one default evolution")
             // Anomaly 2026-11-20: listed, its name was drawn at no width — the long detail beside it took the row.
             val name = nodes().last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == row } == true }.boundsInWindow
             assertTrue(name.width > 20f, "the name is drawn: $name")
             click(find(row))
             frames(6)
-            assertTrue(texts().any { it.startsWith("relative to · of “Task trees") }, "the selected default is relative to the root: ${texts()}")
+            assertTrue(texts().any { it == "relative to · of “Tree”" }, "the selected default is relative to the root: ${texts()}")
             // A press on a row below closes the window; the selection is still what the rows edit.
-            click(nodes().last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text.startsWith("relative to · of “Task trees") } == true }.boundsInWindow.center)
+            click(find("relative to · of “Tree”"))
             frames(6)
-            assertTrue(texts().any { it.startsWith("relative to · of “Task trees") }, "held once its window closed: ${texts()}")
-            assertTrue(texts().any { it.startsWith("Task trees") }, "the relative-to window offers the root: ${texts()}")
+            assertTrue(texts().any { it == "relative to · of “Tree”" }, "held once its window closed: ${texts()}")
+            assertTrue(texts().count { it == "Tree" } >= 2, "the relative-to window offers the tree's root: ${texts()}")
         } finally {
             onEdt { scene.close() }
         }

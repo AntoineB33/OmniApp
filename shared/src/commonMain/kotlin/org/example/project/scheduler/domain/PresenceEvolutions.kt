@@ -55,10 +55,13 @@ object PresenceEvolutions {
         } + ")"
     }
 
-    fun parsed(e: PresenceEvolution): TimeFormula.Parsed? = TimeFormula.parse(effectiveText(e))
+    fun parsed(e: PresenceEvolution): TimeFormula.Parsed? = TimeFormula.parse(effectiveText(e), allowPriority = true)
 
-    /** Its value at [atMillis]: null outside its periods, or where it reads as no number. Not clamped. */
-    fun valueAt(e: PresenceEvolution, atMillis: Long): Double? = parsed(e)?.at(atMillis)
+    /**
+     * Its value at [atMillis] for a task of that [priority] relative to what it is relative to (its `priority`): null
+     * outside its periods, or where it reads as no number. Not clamped.
+     */
+    fun valueAt(e: PresenceEvolution, atMillis: Long, priority: Double = Double.NaN): Double? = parsed(e)?.at(atMillis, priority)
 
     /** Which evolutions involve one of [taskIds]: the evolutions pop-up's list, the defaults included ([shown]). */
     fun involving(state: SchedulerState, taskIds: Collection<TaskId>): List<PresenceEvolution> {
@@ -85,23 +88,29 @@ object PresenceEvolutions {
     // ----- the default evolutions -----------------------------------------------------------------
 
     /**
+     * User rule 2026-11-20 (the second, the same day: *"shouldn't there be only one row … all the tasks of the first tree,
+     * relative to the root of the first task tree, where the formula is a constant, the priority of each task relative to
+     * the root tree as the constant value?"*): ONE default evolution — every task under the first tree's root, relative
+     * to that root, always, its formula `priority`: each task's priority relative to the root, as the weights give it.
+     * It replaced one default evolution per task, relative to the global root, its formula the task's absolute priority.
+     *
      * User rule 2026-11-20: *"By default, every task in the first task tree (those that have the first child of the global
      * root as an ascendant) must have the presence ratio target evolution as a constant value in the whole timeline. The
      * value is by default associated with the absolute priority the user can define with the priority weight tables and
      * the relative priority manager."*
      *
-     * So each task under the first task tree's root has a **default evolution**: its own, relative to the global root
-     * ("Task trees"), always, its formula the constant its absolute priority is ([SchedulerDomain.absoluteTaskPriorities]).
-     * It is DERIVED, never stored nor synced: the weights are what it reads, so it moves when they do, and the schedulers
+     * It is DERIVED, never stored nor synced: `priority` reads the weights, so it moves when they do, and the schedulers
      * read the weights, not it ([adjust] and [FormulaCoherence] read the stored evolutions only). Edited in the rows, it is
-     * written as a stored evolution under the same id ([DEFAULT_ID_PREFIX]), which then holds in its place.
+     * written as a stored evolution under its id ([DEFAULT_ID]), which then holds in its place — and changes nothing until
+     * its formula does, `priority` being what the weights say ([resolveNested] reads its nested targets).
      */
-    const val DEFAULT_ID_PREFIX = ID_PREFIX + "default-"
+    const val DEFAULT_ID = ID_PREFIX + "default"
 
-    fun defaultIdOf(task: TaskId): String = DEFAULT_ID_PREFIX + task.value
+    /** The default evolution's formula: each task's priority relative to the first tree's root. */
+    const val DEFAULT_FORMULA = "priority"
 
     fun isDefault(e: PresenceEvolution, state: SchedulerState): Boolean =
-        e.id.startsWith(DEFAULT_ID_PREFIX) && state.presenceEvolutions.none { it.id == e.id }
+        e.id == DEFAULT_ID && state.presenceEvolutions.none { it.id == e.id }
 
     private class DefaultsMemo(
         val cells: Any, val lists: Any, val tasks: Any, val evolutions: Any,
@@ -110,7 +119,7 @@ object PresenceEvolutions {
 
     private var defaultsMemo: DefaultsMemo? = null
 
-    /** The default evolutions not overridden by a stored one of the same id, in the first tree's order of walk. */
+    /** The default evolution, unless a stored one holds its id (it was edited): none or one. */
     fun defaults(state: SchedulerState): List<PresenceEvolution> {
         defaultsMemo?.let { m ->
             if (m.cells === state.cells && m.lists === state.lists && m.tasks === state.tasks && m.evolutions === state.presenceEvolutions) return m.value
@@ -121,31 +130,17 @@ object PresenceEvolutions {
     }
 
     private fun computeDefaults(state: SchedulerState): List<PresenceEvolution> {
+        if (state.presenceEvolutions.any { it.id == DEFAULT_ID }) return emptyList()
         val first = TaskTreesAsTasks.topTaskIds(state).firstOrNull() ?: return emptyList()
         val under = TreeIndex(state).descendants(first)
         if (under.isEmpty()) return emptyList()
-        val stored = state.presenceEvolutions.mapTo(HashSet()) { it.id }
-        val absolute = SchedulerDomain.absoluteTaskPriorities(state)
-        return under.mapNotNull { t ->
-            val id = defaultIdOf(t)
-            if (id in stored) null
-            else PresenceEvolution(id, listOf(t), WellKnownIds.ROOT_TASK, formula = constantText(absolute[t] ?: 0.0))
-        }
+        return listOf(PresenceEvolution(DEFAULT_ID, under.toList(), first, formula = DEFAULT_FORMULA))
     }
 
     /** The stored evolutions, then the defaults: what the Search window lists and the rows edit. */
     fun shown(state: SchedulerState): List<PresenceEvolution> {
         val d = defaults(state)
         return if (d.isEmpty()) state.presenceEvolutions else state.presenceEvolutions + d
-    }
-
-    /** [ratio] as a plain decimal a [TimeFormula] reads (no exponent), to the billionth. */
-    fun constantText(ratio: Double): String {
-        if (!ratio.isFinite() || ratio <= 0.0) return "0"
-        val scaled = kotlin.math.round(ratio * 1e9).toLong()
-        val whole = scaled / 1_000_000_000L
-        val frac = (scaled % 1_000_000_000L).toString().padStart(9, '0').trimEnd('0')
-        return if (frac.isEmpty()) whole.toString() else "$whole.$frac"
     }
 
     // ----- the tree, as the evolutions read it -------------------------------------------------
@@ -229,15 +224,71 @@ object PresenceEvolutions {
     /** One target in force at an instant: [task] takes [ratio] of [relative]'s time, by evolution [evolutionId]. */
     data class Target(val task: TaskId, val relative: TaskId, val ratio: Double, val evolutionId: String)
 
-    /** The targets in force at [atMillis]: every task of every evolution, relative to each of its relatives that is above it. */
-    fun targetsAt(state: SchedulerState, index: TreeIndex, atMillis: Long): List<Target> {
+    /**
+     * The targets in force at [atMillis]: every task of every evolution, relative to each of its relatives that is above
+     * it. [weights] (the shares the weights alone give, [SchedulerDomain.absoluteTaskPriorities] without evolutions) is
+     * what a formula's `priority` reads: the task's share over the relative task's.
+     */
+    fun targetsAt(state: SchedulerState, index: TreeIndex, atMillis: Long, weights: () -> Map<TaskId, Double>): List<Target> {
         val out = ArrayList<Target>()
         for (e in state.presenceEvolutions) {
-            val r = valueAt(e, atMillis) ?: continue
+            val p = parsed(e) ?: continue
+            if (!p.readsPriority) {
+                val r = p.at(atMillis) ?: continue
+                for (t in e.taskIds) {
+                    if (t !in index.parents) continue
+                    val above = index.ancestors(t)
+                    for (rel in relativesOf(index, e, t)) if (rel in above) out += Target(t, rel, r, e.id)
+                }
+                continue
+            }
+            val w = weights()
+            fun share(x: TaskId) = if (x == WellKnownIds.ROOT_TASK) 1.0 else w[x] ?: 0.0
             for (t in e.taskIds) {
                 if (t !in index.parents) continue
                 val above = index.ancestors(t)
-                for (rel in relativesOf(index, e, t)) if (rel in above) out += Target(t, rel, r, e.id)
+                for (rel in relativesOf(index, e, t)) {
+                    if (rel !in above) continue
+                    val of = share(rel)
+                    val r = p.at(atMillis, if (of > 0.0) share(t) / of else 0.0) ?: continue
+                    out += Target(t, rel, r, e.id)
+                }
+            }
+        }
+        return out
+    }
+
+    /**
+     * User rule 2026-11-20 (one evolution for every task of the first tree, the tasks inside others included): **a target
+     * inside another task's target relative to the same task is a target relative to that task** — its nearest targeted
+     * ancestor `O`, at `ratio(t) / ratio(O)`. So a task and the tasks inside it may all be given one, as the default
+     * evolution gives them; one asking more than the task around it reads as more than 100 % of it ([FormulaCoherence]).
+     */
+    fun resolveNested(targets: List<Target>, index: TreeIndex): List<Target> {
+        val out = ArrayList<Target>(targets.size)
+        for ((rel, list) in targets.groupBy { it.relative }) {
+            val byTask = list.associateBy { it.task }
+            if (byTask.size < 2) {
+                out += list
+                continue
+            }
+            val ancestorsOf = HashMap<TaskId, Set<TaskId>>()
+            for (tg in list) {
+                val above = ancestorsOf.getOrPut(tg.task) { index.ancestors(tg.task) }
+                val targeted = above.filter { it in byTask && it != tg.task }
+                if (targeted.isEmpty()) {
+                    out += tg
+                    continue
+                }
+                // The nearest: the targeted ancestor no other targeted ancestor stands below.
+                val nearest = targeted.firstOrNull { o -> targeted.none { other -> other != o && o in index.ancestors(other) } } ?: targeted.first()
+                val outer = byTask.getValue(nearest).ratio
+                val ratio = when {
+                    outer > 0.0 -> tg.ratio / outer
+                    tg.ratio <= 0.0 -> 0.0
+                    else -> Double.POSITIVE_INFINITY
+                }
+                out += Target(tg.task, nearest, ratio, tg.evolutionId)
             }
         }
         return out
@@ -253,7 +304,7 @@ object PresenceEvolutions {
     fun adjust(state: SchedulerState, absolute: Map<TaskId, Double>, atMillis: Long): Map<TaskId, Double> {
         if (state.presenceEvolutions.isEmpty()) return absolute
         val index = TreeIndex(state)
-        val targets = targetsAt(state, index, atMillis)
+        val targets = resolveNested(targetsAt(state, index, atMillis) { absolute }, index)
         if (targets.isEmpty()) return absolute
         val out = HashMap(absolute)
         fun share(t: TaskId) = if (t == WellKnownIds.ROOT_TASK) 1.0 else out[t] ?: 0.0
@@ -352,6 +403,10 @@ object PresenceEvolutions {
 
     /** A Search row's name: the tasks it is given to and its formula. */
     fun title(state: SchedulerState, e: PresenceEvolution): String {
+        if (isDefault(e, state)) {
+            val tree = e.relativeTask?.let { state.tasks[it]?.title.orEmpty().ifBlank { it.value } }.orEmpty()
+            return "every task of “$tree”: its priority in it, constant"
+        }
         val tasks = e.taskIds.take(3).joinToString(", ") { state.tasks[it]?.title.orEmpty().ifBlank { it.value } } +
             if (e.taskIds.size > 3) " and ${e.taskIds.size - 3} more" else ""
         return (if (tasks.isBlank()) "no task" else tasks) + ": " + e.formula.ifBlank { "no formula" }

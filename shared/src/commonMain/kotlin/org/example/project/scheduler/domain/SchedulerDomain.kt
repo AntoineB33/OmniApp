@@ -897,7 +897,8 @@ object SchedulerDomain {
         return state.tasks[taskId]?.title?.isNotBlank() == true
     }
 
-    fun absoluteTaskPriorities(state: SchedulerState, atMillis: Long? = null): Map<TaskId, Double> {
+    /** [withEvolutions] false: the weights' answer alone, what a presence formula's `priority` reads ([PresenceEvolutions]). */
+    fun absoluteTaskPriorities(state: SchedulerState, atMillis: Long? = null, withEvolutions: Boolean = true): Map<TaskId, Double> {
         // User rule 2026-11-16: a weight given as a formula of the instant is read at [atMillis] (null: now).
         val at by lazy { atMillis ?: org.example.project.scheduler.state.SchedulerReducer.clock.nowMillis() }
         fun weightOf(cell: org.example.project.scheduler.model.Cell, c: Int): Double =
@@ -970,7 +971,7 @@ object SchedulerDomain {
         // the whole tree twice.
         val byWeights = cellsByTask.keys.asSequence().filterNot(::isRootTask).associateWith { absolute(it) }
         // User rule 2026-11-19: the presence ratio target evolutions in force at [at] — the one place they are read.
-        return if (state.presenceEvolutions.isEmpty()) byWeights else PresenceEvolutions.adjust(state, byWeights, at)
+        return if (!withEvolutions || state.presenceEvolutions.isEmpty()) byWeights else PresenceEvolutions.adjust(state, byWeights, at)
     }
 
     // ----- The tasks the tree holds ------------------------------------------------------------

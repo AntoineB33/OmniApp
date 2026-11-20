@@ -67,8 +67,8 @@ object FormulaCoherence {
         for (e in live.sortedBy { it.id }) {
             val tasks = e.taskIds.filter { it in index.parents }
             val what = "The presence ratio target evolution of " + tasks.joinToString(", ") { "“${title(it)}”" }.ifEmpty { "no task" }
-            val problem = TimeFormula.problem(e.formula, zone)
-            val p = TimeFormula.parse(PresenceEvolutions.effectiveText(e), zone)
+            val problem = TimeFormula.problem(e.formula, zone, allowPriority = true)
+            val p = TimeFormula.parse(PresenceEvolutions.effectiveText(e), zone, allowPriority = true)
             if (problem != null || p == null) {
                 out += Problem("$what does not read: ${problem ?: "not a formula"}", tasks.toSet())
                 continue
@@ -92,7 +92,11 @@ object FormulaCoherence {
                 if (reported.add(key)) out += problem()
             }
             for (at in samples) {
-                val targets = PresenceEvolutions.targetsAt(state, index, at).filter { it.evolutionId in parsed }
+                // A target inside another relative to the same task is one relative to that task ([resolveNested]).
+                val weights by lazy { SchedulerDomain.absoluteTaskPriorities(state, at, withEvolutions = false) }
+                val targets = PresenceEvolutions.resolveNested(
+                    PresenceEvolutions.targetsAt(state, index, at) { weights }.filter { it.evolutionId in parsed }, index,
+                )
                 for (tg in targets) {
                     if (tg.ratio < -EPS || tg.ratio > 1.0 + EPS) {
                         report("range/${tg.evolutionId}") {
@@ -110,13 +114,6 @@ object FormulaCoherence {
                         }
                     }
                     val subOf = byTask.keys.associateWith { index.descendants(it) }
-                    for (t in byTask.keys) for (other in byTask.keys) {
-                        if (other != t && t in subOf.getValue(other)) {
-                            report("nested/$rel/$t/$other") {
-                                Problem("“${title(t)}” is inside “${title(other)}”, and both have a presence ratio target relative to “${title(rel)}” on ${when_(at)}", setOf(t, other))
-                            }
-                        }
-                    }
                     val sum = byTask.values.sumOf { same -> same.maxOf { it.ratio } }
                     if (sum > 1.0 + EPS) {
                         report("over/$rel") {

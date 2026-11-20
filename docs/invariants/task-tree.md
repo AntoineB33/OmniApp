@@ -145,13 +145,20 @@ root of a task tree, child of the first task element."* — and, of the trees an
   the weights; outside its periods the weights decide. Read in ONE place, `PresenceEvolutions.adjust`, from
   `absoluteTaskPriorities`. A presence formula the build of that morning wrote on a cell (`Cell.presenceFormula`) is
   lifted into an evolution relative to the cell's parent on decode.
-- **Every task of the first task tree has a default evolution** (user rule 2026-11-20, `PresenceEvolutions.defaults`):
-  each task under the first child of the global root gets one of its own, relative to the global root, always, its
-  formula the constant its absolute priority is now — the priority weight tables and the relative priority set it. It
-  is DERIVED: never stored or synced, listed with the stored ones (`PresenceEvolutions.shown`, the Search window's and
-  the rows' list), and read by neither scheduler, since it says what the weights already say (`adjust` and
-  `FormulaCoherence` read `state.presenceEvolutions` only). Edited in the rows, it is written as a stored evolution under
-  its id (`presence-default-<task>`), which then holds in its place.
+- **ONE default evolution: the first task tree's** (user rule 2026-11-20, `PresenceEvolutions.defaults`, `DEFAULT_ID`
+  `presence-default`): every task under the first child of the global root, relative to that child (the tree's root),
+  always, its formula `priority` — each task's priority in the tree, by the weights, which the priority weight tables and
+  the relative priority set. It replaced, the same day, one default per task relative to the global root. It is DERIVED:
+  never stored or synced, listed with the stored ones (`PresenceEvolutions.shown`, the Search window's and the rows'
+  list), and read by neither scheduler (`adjust` and `FormulaCoherence` read `state.presenceEvolutions` only). Edited in
+  the rows, it is written as a stored evolution under its id, which then holds in its place — and changes no share until
+  its formula changes, `priority` being what the weights say.
+- **`priority` is a presence formula's alone** (`TimeFormula.parse`/`problem`'s `allowPriority`): the task's share over
+  the relative task's, by the weights alone (`absoluteTaskPriorities(withEvolutions = false)`); a weight or minimum
+  formula reading it does not read.
+- **A target inside another relative to the same task is a target relative to that task** (`resolveNested`, read by
+  `adjust` and `FormulaCoherence` alike): at `ratio(inner) / ratio(outer)`, its nearest targeted ancestor. So one
+  evolution may give a task and the tasks inside it a target, as the default does.
 - **Edited in rows only** (user rule 2026-11-19: *"I only want rows in the 3 sections of any Search window"*;
   `PresenceEvolutionRows`): the task group's "Presence ratio target" holds six rows — the **evolutions** (a field whose
   Search window lists every evolution — anomaly 2026-11-20, nothing excluded by default; those given to the group's tasks first, then those relative to one of them, then the rest (`involvementGroups`, by the sort `SortKey.EvolutionInvolvement` over the tasks of `Filters.involvementOf`, both configurations the field opens with, `evolutionsFieldConfig`, listed in its ▾'s "Currently on" — never an order no configuration says) —, its added elements list showing: what is added there, A, is what
@@ -163,7 +170,7 @@ root of a task tree, child of the first task element."* — and, of the trees an
 - **Incoherent formulas stop both schedulers** (`FormulaCoherence`): read at every breakpoint and between them, never
   at now (so time passing never changes the verdict). Over 100 % relative to one task at an instant; under 100 % with
   nothing else under it to take the rest; a ratio outside [0, 1]; two evolutions giving one task a target relative to
-  one task at once; a task and a task inside it both given one; a relative task not above a task, or a parent distance it
+  one task at once; a target inside another asking more than it (over 100 % of it, read relative to it); a relative task not above a task, or a parent distance it
   has no ancestor at; a formula that does not read; a negative minimum or overlapping minimum periods. While any holds,
   `fillSchedule` hands no task any time — the instant schedule and the search alike — and the actions, the task tree
   window and the calendar list why.

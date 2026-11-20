@@ -28,6 +28,20 @@ Check here before assuming the code matches the docs.
 - Tests: `PopupOpenerTest`, `PopupRapidClickTest` (scene: rapid clicks on a drop-down and on the ▾ with the platform's
   loss reported before and after each click; the bubble following a moving pointer).
 
+### One default evolution: the first tree's, each task at its priority in it — 2026-11-20
+
+- User rule: *"Since I never edited any presence ratio target evolutions, shouldn't there be only one row … which would
+  be all the tasks of the first tree, relative to the root of the first task tree, where the formula is a constant, the
+  priority of each task relative to the root tree as the constant value?"* The per-task defaults (relative to the global
+  root, each formula its absolute priority as a number) are replaced by ONE derived evolution, `presence-default`:
+  every task under the first tree's root, relative to it, always, formula `priority`.
+- `priority`: a new variable of a presence formula alone (`TimeFormula`'s `allowPriority`), the task's share over the
+  relative task's by the weights (`absoluteTaskPriorities(withEvolutions = false)`).
+- A target inside another relative to the same task now reads relative to that task (`PresenceEvolutions.resolveNested`,
+  in `adjust` and `FormulaCoherence`), at inner ÷ outer; "a task and a task inside it both given one" is no longer an
+  incoherence by itself — only asking more than the task around it is. So the default, once edited and stored, is
+  coherent and changes nothing until its formula does. No migration: nothing stored changed shape.
+
 ### The evolutions' sort reads in "Currently on" — 2026-11-20
 
 - Anomaly: *"in 'Currently on', I don't understand 'sort by [relevance]', even with the info bubble"*. "Sort results"

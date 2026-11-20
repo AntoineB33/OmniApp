@@ -121,8 +121,9 @@ internal fun PresenceEvolutionRows(
     if (a.any { PresenceEvolutions.isDefault(it, state) }) {
         Indented {
             NoteText(
-                "A default evolution is the task's absolute priority, constant: the actions \"Priority weights\" and " +
-                    "\"Relative priority\" set it. An edit here writes it as an evolution of its own, which then holds in its place",
+                "The default evolution: every task of the first tree, relative to its root, at its priority in it (the formula " +
+                    "priority) — the actions \"Priority weights\" and \"Relative priority\" set it. An edit here writes it as an " +
+                    "evolution of its own, which then holds in its place",
             )
         }
     }
@@ -218,6 +219,7 @@ internal fun PresenceEvolutionRows(
     Indented {
         TypedFormulaRow(
             label = PresenceRow.Formula.placeholder + " (the ratio, 0 to 1)",
+            allowPriority = true,
             current = formulas.singleOrNull() ?: "",
             mixed = formulas.size > 1,
             enabled = a.isNotEmpty(),
@@ -393,15 +395,24 @@ private fun PeriodRow(from: String, until: String, onChange: (Long?, Long?) -> U
 
 /** The formula: written at each keystroke that reads ([TimeFormula]); what is wrong with it said under it. */
 @Composable
-private fun TypedFormulaRow(label: String, current: String, mixed: Boolean, enabled: Boolean, allowBlank: Boolean = false, onValid: (String) -> Unit) {
+private fun TypedFormulaRow(
+    label: String,
+    current: String,
+    mixed: Boolean,
+    enabled: Boolean,
+    allowBlank: Boolean = false,
+    /** A presence ratio target's formula: it may read `priority` (user rule 2026-11-20). */
+    allowPriority: Boolean = false,
+    onValid: (String) -> Unit,
+) {
     var draft by remember(current) { mutableStateOf(current) }
-    val problem = TimeFormula.problem(draft)
+    val problem = TimeFormula.problem(draft, allowPriority = allowPriority)
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         OutlinedTextField(
             value = draft,
             onValueChange = {
                 draft = it
-                if (TimeFormula.problem(it) == null && (allowBlank || it.isNotBlank())) onValid(it.trim())
+                if (TimeFormula.problem(it, allowPriority = allowPriority) == null && (allowBlank || it.isNotBlank())) onValid(it.trim())
             },
             singleLine = true,
             enabled = enabled,
@@ -411,7 +422,10 @@ private fun TypedFormulaRow(label: String, current: String, mixed: Boolean, enab
             modifier = Modifier.fitsShownWidth().leaveFocusOnOutsidePress(),
         )
         if (problem != null) NoteText(problem, color = MaterialTheme.colorScheme.error)
-        else NoteText("t is the instant in days; date(2026-12-01), ramp(t0, t1, a, b), step(t0, a, b), min, max, clamp, + - * / ^")
+        else NoteText(
+            (if (allowPriority) "priority is each task's priority relative to what it is relative to, by the weights; " else "") +
+                "t is the instant in days; date(2026-12-01), ramp(t0, t1, a, b), step(t0, a, b), min, max, clamp, + - * / ^",
+        )
     }
 }
 

@@ -30,6 +30,10 @@ import kotlinx.datetime.toInstant
  *   `b1`, `e2` from `a2` until `b2`… — the first period holding the instant; outside every period, no value (so the
  *   constant applies there). A bound is an instant (`date(…)`), `-inf` or `inf` for an open one.
  *
+ * - `priority` (user rule 2026-11-20, a presence ratio target's formula alone, [parse]'s `allowPriority`): the task's
+ *   priority relative to what its evolution is relative to, as the weights give it — so `priority` alone is the
+ *   evolution that changes nothing, the default one ([PresenceEvolutions.defaults]).
+ *
  * A formula that does not read `t` is a constant ([Parsed.constant]). A value that is not a finite number is no value.
  */
 object TimeFormula {
@@ -46,6 +50,9 @@ object TimeFormula {
         /** Whether it reads no `t`: the same value at every instant. */
         val constant: Boolean = !root.readsT()
 
+        /** Whether it reads `priority`: a value per task ([at]'s `priority`). */
+        val readsPriority: Boolean = root.readsPriority()
+
         /**
          * The instants (in millis) where it may stop or start moving or jump: every `date(…)` and every bound of a
          * `ramp` or `step` that is a constant. Between two of them a formula is smooth.
@@ -56,29 +63,32 @@ object TimeFormula {
             out.sorted().map(::millisOf)
         }
 
-        /** Its value at [millis], or null where it is no finite number. */
-        fun at(millis: Long): Double? = root.eval(dayOf(millis)).takeIf { it.isFinite() }
+        /** Its value at [millis] for a task of that [priority] (none: `priority` is no number), or null where it is none. */
+        fun at(millis: Long, priority: Double = Double.NaN): Double? = root.eval(dayOf(millis), priority).takeIf { it.isFinite() }
     }
 
     /** Read formulas by zone and text, an immutable value swapped whole: more than one thread asks, and a race only reads twice. */
     private var cache: Map<String, Parsed?> = emptyMap()
 
-    /** [text] read as a formula, or null where it is not one (blank included). Memoized: the fill asks at every decision. */
-    fun parse(text: String, zone: TimeZone = TimeZone.currentSystemDefault()): Parsed? {
+    /**
+     * [text] read as a formula, or null where it is not one (blank included). Memoized: the fill asks at every decision.
+     * [allowPriority]: a presence ratio target's formula, which may read `priority`; no other may.
+     */
+    fun parse(text: String, zone: TimeZone = TimeZone.currentSystemDefault(), allowPriority: Boolean = false): Parsed? {
         if (text.isBlank()) return null
-        val key = zone.id + "|" + text
+        val key = zone.id + "|" + allowPriority + "|" + text
         val known = cache
         if (key in known) return known[key]
-        val parsed = runCatching { Parser(text, zone).parse() }.getOrNull()?.let { Parsed(it, text) }
+        val parsed = runCatching { Parser(text, zone, allowPriority).parse() }.getOrNull()?.let { Parsed(it, text) }
         cache = (if (known.size > 2_000) emptyMap() else known) + (key to parsed)
         return parsed
     }
 
     /** What is wrong with [text] as a formula, said to the user; null when it is one (or blank: no formula). */
-    fun problem(text: String, zone: TimeZone = TimeZone.currentSystemDefault()): String? {
+    fun problem(text: String, zone: TimeZone = TimeZone.currentSystemDefault(), allowPriority: Boolean = false): String? {
         if (text.isBlank()) return null
         return try {
-            Parser(text, zone).parse()
+            Parser(text, zone, allowPriority).parse()
             null
         } catch (e: FormulaError) {
             e.message
@@ -163,9 +173,11 @@ object TimeFormula {
     internal class FormulaError(message: String) : Exception(message)
 
     internal sealed class Node {
-        abstract fun eval(t: Double): Double
+        abstract fun eval(t: Double, p: Double): Double
 
         open fun readsT(): Boolean = children().any { it.readsT() }
+
+        open fun readsPriority(): Boolean = children().any { it.readsPriority() }
 
         open fun children(): List<Node> = emptyList()
 
@@ -174,17 +186,24 @@ object TimeFormula {
         }
 
         class Num(val value: Double) : Node() {
-            override fun eval(t: Double) = value
+            override fun eval(t: Double, p: Double) = value
         }
 
         object T : Node() {
-            override fun eval(t: Double) = t
+            override fun eval(t: Double, p: Double) = t
 
             override fun readsT() = true
         }
 
+        /** `priority`: the task's priority relative to what its evolution is relative to. */
+        object Priority : Node() {
+            override fun eval(t: Double, p: Double) = p
+
+            override fun readsPriority() = true
+        }
+
         class Date(val day: Double) : Node() {
-            override fun eval(t: Double) = day
+            override fun eval(t: Double, p: Double) = day
 
             override fun collectBreakpoints(out: MutableSet<Double>) {
                 out += day
@@ -192,15 +211,15 @@ object TimeFormula {
         }
 
         class Unary(val op: Char, val x: Node) : Node() {
-            override fun eval(t: Double) = if (op == '-') -x.eval(t) else x.eval(t)
+            override fun eval(t: Double, p: Double) = if (op == '-') -x.eval(t, p) else x.eval(t, p)
 
             override fun children() = listOf(x)
         }
 
         class Binary(val op: Char, val a: Node, val b: Node) : Node() {
-            override fun eval(t: Double): Double {
-                val x = a.eval(t)
-                val y = b.eval(t)
+            override fun eval(t: Double, p: Double): Double {
+                val x = a.eval(t, p)
+                val y = b.eval(t, p)
                 return when (op) {
                     '+' -> x + y
                     '-' -> x - y
@@ -214,15 +233,15 @@ object TimeFormula {
         }
 
         class Call(val name: String, val args: List<Node>) : Node() {
-            override fun eval(t: Double): Double {
+            override fun eval(t: Double, p: Double): Double {
                 if (name == "periods") {
                     // Lazy: only the formula of the period holding [t] is read.
                     for (i in args.indices step 3) {
-                        if (t >= args[i].eval(t) && t < args[i + 1].eval(t)) return args[i + 2].eval(t)
+                        if (t >= args[i].eval(t, p) && t < args[i + 1].eval(t, p)) return args[i + 2].eval(t, p)
                     }
                     return Double.NaN
                 }
-                val v = args.map { it.eval(t) }
+                val v = args.map { it.eval(t, p) }
                 return when (name) {
                     "min" -> v.min()
                     "max" -> v.max()
@@ -259,7 +278,7 @@ object TimeFormula {
                     "periods" -> args.filterIndexed { i, _ -> i % 3 != 2 }
                     else -> emptyList()
                 }
-                for (b in bounds) if (!b.readsT()) b.eval(0.0).takeIf { it.isFinite() }?.let { out += it }
+                for (b in bounds) if (!b.readsT()) b.eval(0.0, Double.NaN).takeIf { it.isFinite() }?.let { out += it }
             }
         }
     }
@@ -269,7 +288,7 @@ object TimeFormula {
         "floor" to 1..1, "ramp" to 4..4, "step" to 3..3, "min" to 1..64, "max" to 1..64, "periods" to 3..300,
     )
 
-    private class Parser(private val s: String, private val zone: TimeZone) {
+    private class Parser(private val s: String, private val zone: TimeZone, private val allowPriority: Boolean) {
         private var pos = 0
 
         fun parse(): Node {
@@ -351,8 +370,12 @@ object TimeFormula {
                 while (pos < s.length && (s[pos].isLetterOrDigit() || s[pos] == '_')) pos++
                 val name = s.substring(start, pos).lowercase()
                 if (name == "t") return Node.T
+                if (name == "priority") {
+                    if (!allowPriority) throw FormulaError("\"priority\" is read only in a presence ratio target's formula")
+                    return Node.Priority
+                }
                 if (name == "inf") return Node.Num(Double.POSITIVE_INFINITY)
-                if (peek() != '(') throw FormulaError("\"$name\" is not known: t, date(…) or a function")
+                if (peek() != '(') throw FormulaError("\"$name\" is not known: t, ${if (allowPriority) "priority, " else ""}date(…) or a function")
                 pos++
                 if (name == "date") return date()
                 val arity = ARITY[name] ?: throw FormulaError("\"$name\" is not a function")

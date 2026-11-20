@@ -52,35 +52,49 @@ class PresenceRatioFormulaTest {
     private fun share(s: SchedulerState, title: String, at: Long = 0L) = SchedulerDomain.absoluteTaskPriorities(s, at).getValue(id(s, title))
 
     /**
-     * User rule 2026-11-20: every task under the first task tree's root has a default evolution — constant, relative to the
-     * global root, its value the task's absolute priority — derived (never stored), listed for the task, and leaving the
-     * schedulers' shares as the weights give them. Edited, it is written under its own id and replaces the default.
+     * User rule 2026-11-20: ONE default evolution — every task under the first tree's root, relative to that root, always,
+     * its formula `priority` (each task's priority in the tree, by the weights). Derived, never stored; stored by an edit,
+     * it changes no share and is coherent, the tasks inside others included; a formula changed there takes effect.
      */
     @Test
-    fun every_task_of_the_first_tree_has_a_default_evolution_its_absolute_priority() {
-        val s = account()
+    fun one_default_evolution_gives_every_task_of_the_first_tree_its_priority_in_it() {
+        var s = account()
+        // A deeper level: "A1" and "A2" under "A".
+        for (title in listOf("A1", "A2")) {
+            val a = s.tasks.values.first { it.title == "A" }
+            s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[a.childListId!!]!!.cellIds.last(), title))
+        }
+        val p = id(s, "P")
         val defaults = PresenceEvolutions.defaults(s)
-        assertEquals(setOf("A", "B", "C"), defaults.flatMap { it.taskIds }.map { t -> s.tasks[t]!!.title }.toSet(), "the first tree's tasks, not Q's")
+        val only = defaults.single()
+        assertEquals(PresenceEvolutions.DEFAULT_ID, only.id)
+        assertEquals(setOf("A", "B", "C", "A1", "A2"), only.taskIds.map { s.tasks.getValue(it).title }.toSet(), "the first tree's tasks, not Q")
+        assertEquals(p, only.relativeTask, "relative to the first tree's root")
+        assertEquals("priority", only.formula)
+        assertTrue(only.periods.isEmpty(), "the whole timeline")
         assertTrue(s.presenceEvolutions.isEmpty(), "derived, never stored")
-        val a = id(s, "A")
-        val ofA = PresenceEvolutions.involving(s, listOf(a)).single()
-        assertEquals(PresenceEvolutions.defaultIdOf(a), ofA.id)
-        assertEquals(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK, ofA.relativeTask)
-        assertTrue(ofA.periods.isEmpty(), "the whole timeline")
-        assertEquals(share(s, "A"), TimeFormula.parse(ofA.formula, utc)!!.at(0L)!!, 1e-9)
-        assertTrue(PresenceEvolutions.isDefault(ofA, s))
-        assertTrue(SearchDomain.results(s, setOf(SearchDomain.Kind.PresenceEvolution), "").any { SearchDomain.keyOf(it).endsWith(ofA.id) })
+        assertTrue(PresenceEvolutions.isDefault(only, s))
+        assertEquals(listOf(only.id), PresenceEvolutions.involving(s, listOf(id(s, "A1"))).map { it.id })
+        assertEquals(1, SearchDomain.results(s, setOf(SearchDomain.Kind.PresenceEvolution), "").size, "one row")
 
-        // The weights move it: A's weight doubled.
-        val doubled = SchedulerReducer.reduce(s, SchedulerIntent.SetCellWeightFormula(s.cells.values.first { it.taskId == a }.id, "2"))
-        assertNotEquals(ofA.formula, PresenceEvolutions.involving(doubled, listOf(a)).single().formula)
+        // Stored (an edit writes it under its id): every share as the weights give it, and coherent.
+        val before = listOf("A", "B", "C", "A1", "A2", "P", "Q").associateWith { share(s, it) }
+        val stored = with(s, only)
+        assertTrue(PresenceEvolutions.defaults(stored).isEmpty(), "the stored one holds in its place")
+        for ((title, v) in before) assertEquals(v, share(stored, title), 1e-9, "$title unchanged")
+        assertTrue(FormulaCoherence.problems(stored, utc).isEmpty(), "coherent: ${FormulaCoherence.problems(stored, utc)}")
 
-        // Edited: written under its id, the default gone, its value now the schedulers'.
-        val edited = with(s, ofA.copy(formula = "0.3"))
-        assertEquals(listOf(ofA.id), edited.presenceEvolutions.map { it.id })
-        assertFalse(PresenceEvolutions.isDefault(PresenceEvolutions.involving(edited, listOf(a)).single(), edited))
-        assertEquals(0.3, share(edited, "A"), 1e-9)
-        assertTrue(FormulaCoherence.problems(edited, utc).isEmpty())
+        // Its formula changed, it takes effect: twice every priority asks more than P has.
+        val doubled = SchedulerReducer.reduce(stored, SchedulerIntent.SetPresenceEvolutions(listOf(only.copy(formula = "2 * priority"))))
+        assertTrue(FormulaCoherence.problems(doubled, utc).isNotEmpty(), "twice every priority is over 100 % of P")
+    }
+
+    @Test
+    fun priority_is_read_in_a_presence_formula_alone() {
+        assertNull(TimeFormula.problem("priority * 2", utc, allowPriority = true))
+        assertEquals(0.5, TimeFormula.parse("priority * 2", utc, allowPriority = true)!!.at(0L, 0.25)!!, 1e-12)
+        assertTrue(TimeFormula.parse("priority", utc, allowPriority = true)!!.readsPriority)
+        assertTrue(TimeFormula.problem("priority", utc) != null, "not in a weight or minimum formula")
     }
 
     /**
@@ -100,7 +114,8 @@ class PresenceRatioFormulaTest {
         )
         val (own, involved) = PresenceEvolutions.involvementGroups(s, listOf(id(s, "P")))
         assertEquals(setOf("own"), own)
-        assertEquals(setOf("byDistance", "byTask"), involved)
+        // The default evolution is relative to P, the first tree's root: P is involved in it too.
+        assertEquals(setOf("byDistance", "byTask", PresenceEvolutions.DEFAULT_ID), involved)
         // A sort of the window, and the tasks it reads, both configurations its ▾ lists in "Currently on".
         val config = SearchDomain.evolutionsFieldConfig(listOf(id(s, "P")))
         val on = SearchDomain.activeSettings(config)
@@ -118,18 +133,9 @@ class PresenceRatioFormulaTest {
         val led = SearchDomain.results(s, config.kinds, "", filters = config.filters, sorts = config.sorts).map { SearchDomain.keyOf(it) }
         val key = { e: String -> SearchDomain.Kind.PresenceEvolution.name + "/" + e }
         assertEquals(key("own"), led.first())
-        assertEquals(setOf(key("byDistance"), key("byTask")), led.subList(1, 3).toSet())
+        assertEquals(setOf(key("byDistance"), key("byTask"), key(PresenceEvolutions.DEFAULT_ID)), led.subList(1, 4).toSet())
         assertEquals(all.size, led.size, "every evolution still listed")
-        assertTrue(led.indexOf(key("rest")) > 2)
-    }
-
-    @Test
-    fun a_default_formula_is_a_plain_decimal() {
-        assertEquals("0.25", PresenceEvolutions.constantText(0.25))
-        assertEquals("0.0001", PresenceEvolutions.constantText(1e-4))
-        assertEquals("1", PresenceEvolutions.constantText(1.0))
-        assertEquals("0", PresenceEvolutions.constantText(0.0))
-        assertEquals(1e-4, TimeFormula.parse(PresenceEvolutions.constantText(1e-4), utc)!!.at(0L)!!, 1e-15)
+        assertTrue(led.indexOf(key("rest")) > 3)
     }
 
     @Test
@@ -214,8 +220,9 @@ class PresenceRatioFormulaTest {
         assertTrue(id(s0, "P") in above && id(s0, "Q") !in above)
         val s = with(s0, evo("e1", listOf(a), "0.3"), evo("e2", listOf(id(s0, "Q")), "0.3", relative = null))
         // A's stored evolution, then its default (user rule 2026-11-20); not Q's.
-        assertEquals(listOf("e1", PresenceEvolutions.defaultIdOf(a)), PresenceEvolutions.involving(s, listOf(a)).map { it.id })
-        assertEquals(setOf("e1", PresenceEvolutions.defaultIdOf(a)), SearchDomain.itemResults(s, SearchDomain.Kind.PresenceEvolution, "A:").map { it.id }.toSet())
+        assertEquals(listOf("e1", PresenceEvolutions.DEFAULT_ID), PresenceEvolutions.involving(s, listOf(a)).map { it.id })
+        // The one default is named after the tree ("every task of “P”: …"): "A:" finds A's own evolution.
+        assertEquals(setOf("e1"), SearchDomain.itemResults(s, SearchDomain.Kind.PresenceEvolution, "A:").map { it.id }.toSet())
         // A category is carried as any element carries one.
         var withCategory = SchedulerReducer.reduce(s, SchedulerIntent.CreateCategory("Health"))
         val category = ElementTree.categoryKey(withCategory.categories.single { it.title == "Health" }.id)
