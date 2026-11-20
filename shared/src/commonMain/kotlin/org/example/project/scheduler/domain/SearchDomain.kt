@@ -1682,7 +1682,7 @@ object SearchDomain {
          * one of them, then the rest** ([PresenceEvolutions.involvementGroups]) — what the "Presence ratio target
          * evolutions" field's window opens sorted by, a sort like any other.
          */
-        EvolutionInvolvement(Kind.PresenceEvolution, "involvement"),
+        EvolutionInvolvement(Kind.PresenceEvolution, "involvement of the tasks of \"Involvement of\""),
         /** [WindowStatus]'s order: open, minimized, not open. */
         WindowState(Kind.Window, "state"),
         /**
@@ -2090,7 +2090,11 @@ object SearchDomain {
             // User rule 2026-11-16 (*"If nothing is on … what is shown in down arrow is random, right?"*): what orders the
             // list and what it lists are on wherever they are not a plain Search window's ([Config]'s defaults).
             Setting.Types.takeIf { config.kinds != Config().kinds },
-            Setting.SortResults.takeIf { config.sorts.isNotEmpty() && config.sorts != DEFAULT_SORTS },
+            // Anomaly 2026-11-20 (*"in 'Currently on', I don't understand 'sort by [relevance]'"*): "Sort results" draws
+            // the methods about every row alone, so it is on for those; a kind's own methods are its own "Sort by", on
+            // when one is in the sorting (the evolutions' "involvement" was in none of "Currently on").
+            Setting.SortResults.takeIf { config.sorts.filter { it.kind == null }.let { whole -> whole.isNotEmpty() && whole != DEFAULT_SORTS } },
+        ) + Setting.entries.filter { s -> s.sorts && s.section != null && config.sorts.any { it.kind == s.section } } + listOfNotNull(
             Setting.CompletionList.takeIf { config.completion != null },
             Setting.ExpandResults.takeIf { config.actionsExpanded },
             Setting.SearchSortsOnly.takeIf { !config.actionSearchSortsOnly },
@@ -2152,7 +2156,7 @@ object SearchDomain {
         Config(
             kinds = setOf(Kind.PresenceEvolution),
             filters = Filters(involvementOf = taskIds.mapTo(LinkedHashSet(), ::taskKey)),
-            sorts = listOf(SortMethod(Kind.PresenceEvolution, SortKey.EvolutionInvolvement), SortMethod(null, SortKey.Relevance)),
+            sorts = listOf(SortMethod(Kind.PresenceEvolution, SortKey.EvolutionInvolvement)),
             sortFollowsDefault = false,
         )
 
@@ -2589,6 +2593,14 @@ object SearchDomain {
         else Setting.entries.firstOrNull { it.name == id }?.let(::settingDescription)
 
     /** What [setting] does, in a sentence or two: its info bubble ([configurationDescription]). */
+    /** What the methods every list offers mean (anomaly 2026-11-20: "relevance" was read as nothing). */
+    private const val SORT_KEY_HINTS: String =
+        "Relevance: the rows whose name is the search text first, then those starting with it, then the rest; with nothing " +
+            "typed, the list's own order. Name: alphabetical."
+
+    private const val EVOLUTION_INVOLVEMENT_HINT: String =
+        "Involvement: the evolutions given to the tasks of \"Involvement of\" first, then those relative to one of them, then the rest."
+
     fun settingDescription(setting: Setting): String =
         when (setting) {
             Setting.SearchText -> "What the window's bar holds: the rows that answer it are listed, the best answers first."
@@ -2610,7 +2622,8 @@ object SearchDomain {
             Setting.PageTypes -> "The type selector offers only the types of the window's feature page."
             Setting.ResetSearch -> "Puts the window back to the configuration it opened with."
             Setting.CompletionList -> "What the bar offers to complete what is typed."
-            Setting.SortResults -> "The order of every row: the sorting methods checked, the first one dominant."
+            Setting.SortResults ->
+                "The order of every row: the sorting methods checked, the first one dominant. " + SORT_KEY_HINTS
             Setting.CalendarAdd -> "Only what can be put on the calendar at the instant given."
             Setting.CalendarAt -> "Only what is on the calendar at the instant given."
             Setting.ExcludedElements -> "Elements always kept out of the list."
@@ -2669,7 +2682,8 @@ object SearchDomain {
                 val kind = setting.section
                 when {
                     kind == null -> setting.label + "."
-                    setting.sorts -> "The order of the ${kind.plural}: the sorting methods checked, the first one dominant."
+                    setting.sorts -> "The order of the ${kind.plural}: the sorting methods checked, the first one dominant. " +
+                        SORT_KEY_HINTS + (if (kind == Kind.PresenceEvolution) " " + EVOLUTION_INVOLVEMENT_HINT else "")
                     else -> "Keeps the ${kind.plural} by \"${setting.label}\". " + (filterHint(listOf(setting)) ?: "")
                 }.trim()
             }

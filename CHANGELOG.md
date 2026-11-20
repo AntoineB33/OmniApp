@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The evolutions' sort reads in "Currently on" — 2026-11-20
+
+- Anomaly: *"in 'Currently on', I don't understand 'sort by [relevance]', even with the info bubble"*. "Sort results"
+  draws the methods about every row alone: it showed the field's second method, relevance (which asks nothing of a list
+  with no text), and not its first, "involvement", which is the evolutions' own "Sort by" — in none of "Currently on".
+  Now a kind's own "Sort by" is on wherever one of its methods is in the sorting, "Sort results" only where the methods
+  about every row are not the default; the field sorts by involvement alone ("involvement of the tasks of
+  'Involvement of'"); every sort's bubble says what relevance and name mean, the evolutions' what involvement means.
+
 ### The evolutions' order is a sort of the window, in its ▾ — 2026-11-20
 
 - Anomaly: *"I don't see any sorting search configuration in the down arrow … It means there is a fundamental issue in

@@ -104,12 +104,16 @@ class PresenceRatioFormulaTest {
         // A sort of the window, and the tasks it reads, both configurations its ▾ lists in "Currently on".
         val config = SearchDomain.evolutionsFieldConfig(listOf(id(s, "P")))
         val on = SearchDomain.activeSettings(config)
-        assertTrue(SearchDomain.Setting.SortResults in on, "the sort is on: $on")
+        // Anomaly 2026-11-20: the evolutions' own "Sort by" — where "involvement" is — not "Sort results" (every row's).
+        assertTrue(SearchDomain.Setting.PresenceEvolutionSort in on, "the sort is on: $on")
+        assertTrue(SearchDomain.Setting.SortResults !in on, "no sort of every row: $on")
         assertTrue(SearchDomain.Setting.InvolvementOf in on, "its tasks are on: $on")
         // …the ▾'s "Currently on", as its tree holds it.
         val currently = SearchDomain.configurationTree(config, config).filterIsInstance<SearchDomain.ConfigurationCategory>().single { it.label == "Currently on" }
         val listed = currently.children.filterIsInstance<SearchDomain.ConfigurationLeaf>().map { it.setting }
-        assertTrue(SearchDomain.Setting.SortResults in listed && SearchDomain.Setting.InvolvementOf in listed, "Currently on: $listed")
+        assertTrue(SearchDomain.Setting.PresenceEvolutionSort in listed && SearchDomain.Setting.InvolvementOf in listed, "Currently on: $listed")
+        assertTrue("Relevance:" in SearchDomain.settingDescription(SearchDomain.Setting.PresenceEvolutionSort))
+        assertTrue("Involvement:" in SearchDomain.settingDescription(SearchDomain.Setting.PresenceEvolutionSort))
         val all = SearchDomain.results(s, config.kinds, "")
         val led = SearchDomain.results(s, config.kinds, "", filters = config.filters, sorts = config.sorts).map { SearchDomain.keyOf(it) }
         val key = { e: String -> SearchDomain.Kind.PresenceEvolution.name + "/" + e }
