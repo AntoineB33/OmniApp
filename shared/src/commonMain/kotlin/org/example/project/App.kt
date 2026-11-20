@@ -2903,6 +2903,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // Its sub-trees' open cells: the button's, else none — never what a closed window under that id had.
                     seedSubtreeCells(id, button.expandedRows?.cells.orEmpty().toSet())
                 }
+                // User rule 2026-11-21: a Calendar button keeping no layout of its own (the default one) opens a calendar
+                // window showing its actions section alone, scrolled to its open "Calendar" row: the calendar.
+                if (id !in before && kind == FloatingWindow.Calendar && saved == null) {
+                    searchSplits[id] = org.example.project.ui.SearchSplits.actionsOnly(searchSplits[id] ?: org.example.project.ui.SearchSplits())
+                    saveWindowSections()
+                    SearchDomain.calendarActionRowId()?.let { searchActionReveals[id] = it }
+                }
             }
             engineScope.launch {
                 // A new window registers as it is first composed: within a frame or two of the click.

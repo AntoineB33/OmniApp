@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Calendar menu button opens the actions section alone, at the calendar — 2026-11-21
+
+- User rule: *"The default 'Calendar' button in the left-side menu of the 'Task Scheduler' feature page must open a window
+  that has only the action section showing, and it must show the calendar view (the 'calendar' row is expanded, and the
+  action section is correctly scrolled)."*
+- Now: a Calendar button keeping no layout of its own (`d-calendar` as shipped), when it OPENS a calendar window (not when
+  it brings one back), gives it `SearchSplits.actionsOnly` — the search and the added elements retracted to their arrow —
+  and asks its actions section to start at `SearchDomain.calendarActionRowId()` (the open "Calendar" row, through the
+  existing `searchActionReveals`), its head at the top and the calendar under it. A button the user updated keeps its
+  own layout. Local view state only: no SQLite or Supabase change.
+
 ### The scheduler's menu: History units and Life context buttons — 2026-11-20
 
 - User rule: *"By default, in 'Task Scheduler', add two buttons in the left-side menu: one that opens a search window

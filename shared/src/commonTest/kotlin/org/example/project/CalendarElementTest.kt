@@ -34,6 +34,22 @@ class CalendarElementTest {
     }
 
     @Test
+    fun the_calendar_buttons_window_shows_its_actions_alone_scrolled_to_the_open_calendar_row() {
+        // User rule 2026-11-21: the row the window is scrolled to is the "Calendar" row, open, in the rows its actions list.
+        val config = SearchDomain.calendarWindowConfig()
+        val row = assertNotNull(SearchDomain.calendarActionRowId())
+        assertEquals("action/element/" + SearchDomain.CALENDAR_KEY + "/" + SearchDomain.AddedAction.CalendarGrid.name, row)
+        assertTrue(open(config, row))
+        // Its sections: the actions alone, the search and the added elements retracted, nothing else changed.
+        val before = org.example.project.ui.SearchSplits(left = 0.3f, actionsHidden = true, actionsRemoved = true, expandedResults = setOf("t"))
+        val shown = org.example.project.ui.SearchSplits.actionsOnly(before)
+        assertTrue(shown.searchHidden && shown.addedHidden)
+        assertFalse(shown.actionsHidden || shown.actionsRemoved)
+        assertEquals(before.left, shown.left)
+        assertEquals(before.expandedResults, shown.expandedResults)
+    }
+
+    @Test
     fun a_windows_view_of_the_calendar_is_its_configuration_and_an_older_one_has_none() {
         val config = SearchDomain.calendarWindowConfig().copy(calendarDay = "2026-11-20", calendarDayMode = true, calendarView = "actions")
         val back = assertNotNull(SearchDomain.Config.decode(config.encode()))

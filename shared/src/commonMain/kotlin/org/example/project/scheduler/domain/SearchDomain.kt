@@ -4838,14 +4838,26 @@ object SearchDomain {
      */
     fun calendarWindowConfig(base: Config = Config(kinds = setOf(Kind.Calendar))): Config {
         val added = (base.added - CALENDAR_KEY) + CALENDAR_KEY
-        val calendar = calendarResult()
-        val groups = actionGroups(actionsFor(addedActions(base.actionQuery, Kind.entries.toSet(), setOf(Kind.Calendar)), listOf(calendar)), listOf(calendar))
-        val group = groups.firstOrNull { g -> g.members.any { keyOf(it) == CALENDAR_KEY } }
+        val group = calendarActionGroup(base)
         val open =
             listOfNotNull(group?.id, group?.let { microGroupId(it, AddedAction.CalendarGrid) })
                 .filter { !isActionRowOpen(base, it, top = it == group?.id) }
         return base.copy(added = added, toggledActionRows = base.toggledActionRows + open)
     }
+
+    /** The group of actions the calendar element stands in, in a window of [base] ([calendarWindowConfig]). */
+    private fun calendarActionGroup(base: Config): ActionGroup? {
+        val calendar = calendarResult()
+        val groups = actionGroups(actionsFor(addedActions(base.actionQuery, Kind.entries.toSet(), setOf(Kind.Calendar)), listOf(calendar)), listOf(calendar))
+        return groups.firstOrNull { g -> g.members.any { keyOf(it) == CALENDAR_KEY } }
+    }
+
+    /**
+     * User rule 2026-11-21: the "Calendar" row of a calendar window's actions section ([calendarWindowConfig]) — the row
+     * whose content is the calendar, which the default Calendar menu button's window opens scrolled to.
+     */
+    fun calendarActionRowId(base: Config = Config(kinds = setOf(Kind.Calendar))): String? =
+        calendarActionGroup(base)?.let { microGroupId(it, AddedAction.CalendarGrid) }
 
     /** A task's key — its result row's, and a cell of an expanded row's sub-tree that holds it. */
     fun taskKey(taskId: TaskId): String = Kind.Task.name + "/" + taskId.value
