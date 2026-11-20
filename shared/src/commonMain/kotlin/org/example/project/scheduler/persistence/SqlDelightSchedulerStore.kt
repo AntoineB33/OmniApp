@@ -78,11 +78,12 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
      * 3. The incoming side carries its own digest for free ([HistoryRow.deltaHash], memoized on the unit by
      *    [SchedulerStateCodec]), so a save hashes only the delta it is about to insert.
      *
-     * The alignment relies on nothing but the identity in that digest: the incoming list is matched against
-     * the stored one from its first unit onwards, whatever falls outside the matched run is deleted, and
-     * whatever the match did not cover is appended above the highest seq. That covers the three things that
-     * can happen to a history list - an append, a redo branch discarding the tail, the cap evicting the head
-     * - and it degrades safely, because a run that fails to align is simply rewritten.
+     * The alignment finds each incoming unit among the stored ones by its place in time, in order: the stored rows
+     * skipped are deleted, a row found with other content (by the digest) is updated in place, and whatever the
+     * walk did not reach is appended above the highest seq. That covers what can happen to a history list - an
+     * append, a redo branch discarding the tail, the cap evicting the head, a unit merged into the one before it
+     * or coalesced where it stands - and it degrades safely: a unit stored nowhere after the last one found ends
+     * the walk, and the rest is rewritten.
      */
     override fun save(snapshot: PersistedSnapshot) = Perf.measure("persist.save") {
         val account = activeAccountId()
@@ -132,42 +133,53 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
         stored: List<StoredUnit>,
         incoming: List<HistoryRow>,
     ) {
-        // Where the incoming list picks up in the stored one. Anything before it was evicted by the cap;
-        // `stored.size` (no match at all, an emptied history included) means nothing may be reused.
-        val start =
-            incoming.firstOrNull()
-                ?.let { first -> stored.indexOfFirst { it matches first } }
-                ?.takeIf { it >= 0 }
-                ?: stored.size
+        // Each incoming unit is found among the stored ones by its place in time (`timeMillis`, `chronoId`, which a
+        // unit keeps for life, a merge or a coalesce included), from where the previous one was found on. The stored
+        // rows skipped on the way are gone (the head the cap evicted, a keystroke merged into the one before it);
+        // one found with other content is rewritten IN PLACE, keeping its seq and so its place (user rule 2026-11-20:
+        // the oldest keystrokes merged at the cap would otherwise have rewritten every row after them, on every save).
+        val byTime = HashMap<Pair<Long, Long>, MutableList<Int>>()
+        stored.forEachIndexed { index, unit -> byTime.getOrPut(unit.timeMillis to unit.chronoId) { ArrayList(1) } += index }
+        var next = 0
         var matched = 0
-        while (start + matched < stored.size && matched < incoming.size &&
-            stored[start + matched] matches incoming[matched]
-        ) {
+        while (matched < incoming.size) {
+            val row = incoming[matched]
+            val at = byTime[row.timeMillis to row.chronoId]?.firstOrNull { it >= next } ?: break
+            for (index in next until at) queries.deleteHistoryUnit(account_id = account, category = category, seq = stored[index].seq)
+            val unit = stored[at]
+            when {
+                unit matches row ->
+                    // A row a pre-v11 DB carried up matched on its remaining columns; give it the digest it lacked so
+                    // the next save can align on the full identity. Two integers - its delta is not touched.
+                    if (unit.deltaHash == null || unit.deltaLength < 0) {
+                        queries.healHistoryUnitDigest(
+                            delta_length = row.deltaJson.length.toLong(),
+                            delta_hash = row.digestHash(),
+                            account_id = account,
+                            category = category,
+                            seq = unit.seq,
+                        )
+                    }
+                else ->
+                    queries.updateHistoryUnit(
+                        debug_tainted = if (row.debugTainted) 1L else 0L,
+                        delta_length = row.deltaJson.length.toLong(),
+                        delta_hash = row.digestHash(),
+                        delta = row.deltaJson,
+                        window = row.window,
+                        account_id = account,
+                        category = category,
+                        seq = unit.seq,
+                    )
+            }
+            next = at + 1
             matched++
         }
 
-        // Everything outside the matched run goes: the head the cap evicted before it, the redo branch
-        // discarded after it. A `seq` is never reused, so the appends below can only land above what is kept.
-        stored.forEachIndexed { index, unit ->
-            if (index < start || index >= start + matched) {
-                queries.deleteHistoryUnit(account_id = account, category = category, seq = unit.seq)
-            }
-        }
-
-        // A row a pre-v11 DB carried up matched on its remaining columns; give it the digest it lacked so the
-        // next save can align on the full identity. Two integers - its delta is not touched.
-        for (index in 0 until matched) {
-            val unit = stored[start + index]
-            if (unit.deltaHash != null && unit.deltaLength >= 0) continue
-            val row = incoming[index]
-            queries.healHistoryUnitDigest(
-                delta_length = row.deltaJson.length.toLong(),
-                delta_hash = row.digestHash(),
-                account_id = account,
-                category = category,
-                seq = unit.seq,
-            )
-        }
+        // What follows the last unit found goes: the redo branch a new edit discarded — and, when an incoming unit is
+        // stored nowhere after it (a peer's unit merged in between), everything from there, the rest appended
+        // below in order. A `seq` is never reused, so the appends can only land above what is kept.
+        for (index in next until stored.size) queries.deleteHistoryUnit(account_id = account, category = category, seq = stored[index].seq)
 
         var nextSeq = (stored.maxOfOrNull { it.seq } ?: -1L) + 1
         for (index in matched until incoming.size) {

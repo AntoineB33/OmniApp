@@ -25,8 +25,19 @@ Check here before assuming the code matches the docs.
   absent = false) marks a keystroke made after something else; `SchedulerIntent.WalkSearchText` walks them, ONE restore a
   walk. `SearchBarPin` wires the Search window and its copies. `popups.md` § *Search bars*. Tests: `SearchBarPinTest`,
   `SearchBarRunKeysTest`.
-- Cost, accepted by the rule: a unit (a `history_unit` row, synced) a keystroke, so the Main stack's 1000-unit bound is
-  reached sooner by typing in Search bars.
+- Same day, user follow-up: *"Isn't there very basic methods to solve this? … history units that are old get merged when
+  they can"*; *"the left-side menu is supposed to use the same code as any other search window … Fix it"*; *"A click
+  elsewhere that leaves the keyboard in the bar doesn't end the run … Fix it."*
+  - Cost: a keystroke is local-only and never pushed (`Delta.synced`), so typing sends nothing to the server. At the
+    1000-unit cap the oldest keystrokes of a run merge into the one before (`mergedOldKeystrokes`) before any change is
+    evicted; the store now aligns rows by time and updates a changed unit in its own row (`updateHistoryUnit`, a query,
+    no schema change) — the old contiguous match would have rewritten every row after the merged one on every save.
+  - One code: the Search window finds its pin itself (`LocalSearchBarPins`, by `LocalArrowOwner` / `LocalArrowRoot`),
+    so the left-side menu, ▾ windows and lists drawn inside a window have it too; `setSearchInside` records a keystroke
+    as `setSearchConfig` does (`ExternalKeys.searchText(root, owner)`), put back by `ArrowSearches.setText`.
+  - A press or a wheel turn anywhere in the app ends a run (`TransientMenuHost.onActivity`), not only in the window.
+  - Tests: `SearchBarPinTest` (merge at the cap, sync flag, bar keys), `SchedulerHistoryWriteTest` (merge in the
+    middle: two rows written), `SearchBarRunEndTest`.
 
 ### A press on what opens a pop-up is its click's; bubbles at the pointer — 2026-11-20
 

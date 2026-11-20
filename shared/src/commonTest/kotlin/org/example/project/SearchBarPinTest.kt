@@ -116,6 +116,78 @@ class SearchBarPinTest {
         assertEquals(3, SchedulerReducer.searchTextStep(s, bar, back = true), "back to \"foo\", left by the walk")
     }
 
+    /** [state] with other changes of the window appended until its Main stack holds [total] units. */
+    private fun filledTo(state: SchedulerState, total: Int): SchedulerState {
+        val withOne = r(state, SchedulerIntent.RecordExternal(ExternalKeys.WINDOW_TITLE + "Search", "x", "y", "Title"))
+        val template = main(withOne).last()
+        val start = template.timeMillis + 1
+        val fillers = (0 until total - main(state).size).map { i ->
+            template.copy(timeMillis = start + i, deviceSeq = SchedulerReducer.deviceSeqOf(start + i, 0))
+        }
+        val units = main(state) + fillers
+        return state.copy(
+            histories = state.histories.withCategory(
+                HistoryCategory.Main,
+                org.example.project.scheduler.state.SchedulerHistory(units.lastIndex, units),
+            ),
+        )
+    }
+
+    private fun keystrokes(state: SchedulerState) = main(state).mapNotNull { it.delta as? ExternalDelta }.filter { it.key == bar }
+
+    /**
+     * User rule 2026-11-20 (*"history units that are old get merged when they can (two character typing become one
+     * history unit for example)"*): at the cap, the oldest keystrokes of a run are merged before any change is evicted —
+     * and never across a run's start, so the bar's pin keeps its stops.
+     */
+    @Test
+    fun at_the_cap_old_keystrokes_of_a_run_merge_before_any_change_is_evicted() {
+        var s = r(SchedulerState.empty(), SchedulerIntent.FocusWindow(HistoryWindow.Search, ""))
+        s = key(s, "", "a", runStart = true)
+        s = key(s, "a", "ab")
+        s = key(s, "ab", "abc")
+        s = key(s, "abc", "abcd", runStart = true)
+        s = filledTo(s, 1000)
+        val firstFiller = main(s)[4]
+
+        s = r(s, SchedulerIntent.RecordExternal(ExternalKeys.WINDOW_TITLE + "Search", "y", "z", "Title"))
+        assertEquals(1000, main(s).size)
+        assertEquals(listOf("" to "ab", "ab" to "abc", "abc" to "abcd"), keystrokes(s).map { it.before to it.after })
+        assertTrue(main(s).first().delta.let { it is ExternalDelta && it.runStart }, "the merged unit keeps the run's start, and its place")
+
+        s = r(s, SchedulerIntent.RecordExternal(ExternalKeys.WINDOW_TITLE + "Search", "z", "w", "Title"))
+        assertEquals(listOf("" to "abc", "abc" to "abcd"), keystrokes(s).map { it.before to it.after }, "never across a run's start")
+        assertTrue(firstFiller in main(s), "no other change was evicted while keystrokes could merge")
+        assertEquals("abc", barText(walk(s, back = true)), "the stop between the two runs is still a stop")
+
+        s = r(s, SchedulerIntent.RecordExternal(ExternalKeys.WINDOW_TITLE + "Search", "w", "v", "Title"))
+        assertEquals(listOf("abc" to "abcd"), keystrokes(s).map { it.before to it.after }, "nothing left to merge: the oldest goes")
+    }
+
+    @Test
+    fun a_keystroke_never_reaches_the_server_nor_asks_for_a_push() {
+        val unit = main(typed()).first { (it.delta as? ExternalDelta)?.key == bar }
+        assertFalse(unit.delta.synced, "a Search bar's text is this device's view")
+        assertTrue(unit.delta.localOnly, "no reason for a push")
+        val filters = main(typed()).first { (it.delta as? ExternalDelta)?.key == ExternalKeys.SEARCH + "Search" }
+        assertTrue(filters.delta.synced, "the window's other changes are pushed as before")
+    }
+
+    @Test
+    fun a_window_drawn_inside_has_a_bar_key_of_its_own() {
+        val key = ExternalKeys.searchText("Search#2", "Search#2/actions/▾x")
+        assertEquals("Search#2" to "/actions/▾x", ExternalKeys.searchTextOf(key))
+        assertEquals("Search#2" to "", ExternalKeys.searchTextOf(ExternalKeys.searchText("Search#2", "Search#2")))
+        assertEquals(ExternalKeys.SEARCH_TEXT + "Search", ExternalKeys.searchText("Search", "Search"))
+    }
+
+    @Test
+    fun a_bar_showing_another_text_than_its_pin_does_not_walk_it() {
+        val s = typed()
+        assertNull(SchedulerReducer.searchTextStep(s, bar, back = true, shown = "something else"))
+        assertEquals(3, SchedulerReducer.searchTextStep(s, bar, back = true, shown = "foobar"))
+    }
+
     @Test
     fun the_run_start_is_stored_and_a_unit_written_before_reads_as_none() {
         val s = typed()

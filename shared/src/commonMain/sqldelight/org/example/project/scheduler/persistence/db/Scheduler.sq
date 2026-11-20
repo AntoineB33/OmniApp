@@ -279,6 +279,12 @@ INSERT OR REPLACE INTO
 history_unit(account_id, category, seq, time_millis, chrono_id, debug_tainted, delta_length, delta_hash, delta, window)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
+-- A unit whose content changed where it stands (a keystroke merged into it, a gesture coalesced onto it): its row
+-- rewritten in place, keeping its seq and so its place among the others.
+updateHistoryUnit:
+UPDATE history_unit SET debug_tainted = ?, delta_length = ?, delta_hash = ?, delta = ?, window = ?
+WHERE account_id = ? AND category = ? AND seq = ?;
+
 -- Fills in the digest of a row a pre-v11 DB carried up, WITHOUT touching its delta. Only ever called for a
 -- row the save has just matched, so the values written are that row's own.
 healHistoryUnitDigest:

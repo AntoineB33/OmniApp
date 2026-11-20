@@ -88,7 +88,8 @@ rewritten on every edit is what filled the database.
 - **History units are rows too** (`history_unit`, `persistence.md` § *One history, per-device undo*): a device
   pushes its own units changed since its last push (a commit, or an undo/redo flipping `undone`), marks the redo
   branch a new edit discarded `dropped` (and empties its delta), and pulls the other devices' units by revision.
-  The server keeps the newest 1000 per category (a trigger), like each device.
+  The server keeps the newest 1000 per category (a trigger), like each device. A unit that is the device's view alone
+  is never pushed (`Delta.synced`: a Search bar's keystroke, user rule 2026-11-20).
 
 ### The Claude Code logs ride their own call
 

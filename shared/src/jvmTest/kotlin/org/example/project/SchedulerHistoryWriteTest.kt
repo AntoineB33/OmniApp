@@ -162,6 +162,43 @@ class SchedulerHistoryWriteTest {
         )
     }
 
+    /**
+     * User rule 2026-11-20: at the cap, an old keystroke of a Search bar is merged into the one before it — a unit
+     * changed and a unit gone, in the MIDDLE of the list, near its head. That must cost those two rows, not a rewrite of
+     * every row after them (the whole stack, on every save once the cap is reached), and the changed unit keeps its
+     * place.
+     */
+    @Test
+    fun a_unit_merged_into_the_one_before_it_rewrites_those_two_rows_alone() {
+        val store = openStore()
+        val units = listOf(unit(100, "a"), unit(200, "b"), unit(300, "c"), unit(400, "d"), unit(500, "e"))
+        save(store, units)
+        stampSentinel(seq = 0, text = "SENTINEL-A")
+        stampSentinel(seq = 3, text = "SENTINEL-D")
+        stampSentinel(seq = 4, text = "SENTINEL-E")
+
+        // "c" merged into "b": "b" keeps its time (and its place) with other content, "c" is gone; one appended.
+        save(store, listOf(units[0], unit(200, "b+c"), units[3], units[4], unit(600, "f")))
+
+        val after = storedMainRows()
+        assertEquals(listOf(0L, 1L, 3L, 4L, 5L), after.keys.toList(), "the merged-away row alone is deleted")
+        assertEquals("SENTINEL-A", after[0])
+        assertEquals("SENTINEL-D", after[3], "a row after the merge is not rewritten")
+        assertEquals("SENTINEL-E", after[4])
+        assertTrue(after.getValue(1).contains("b+c"), "the merged unit is rewritten in its own row, in its place")
+    }
+
+    /** The same walk, read back: the list as saved, in order. */
+    @Test
+    fun a_merge_in_the_middle_loads_back_as_saved() {
+        val store = openStore()
+        val units = listOf(unit(100, "a"), unit(200, "b"), unit(300, "c"), unit(400, "d"))
+        save(store, units)
+        save(store, listOf(units[0], unit(200, "b+c"), units[3], unit(500, "e")))
+        val reloaded = SchedulerStateCodec.decodeSnapshot(store.load()!!)!!.histories.main.units
+        assertEquals(listOf("a", "b+c", "d", "e"), reloaded.map { (it.delta as ToggleExpandDelta).cellId.value })
+    }
+
     /** Whatever the seqs end up being, the loaded list is dense, ordered, and indexes the pointer. */
     @Test
     fun the_loaded_list_is_dense_and_ordered_however_the_seqs_fall() {

@@ -658,7 +658,8 @@ open class SchedulerSyncEngine(
         val units = own()
         val changed =
             units.flatMap { (category, list) ->
-                list.filter { it.ownedBy(me) && it.changedAtMillis > base.historyPushedAt }.map { category to it }
+                // A unit that is this device's view alone (a Search bar's keystroke) never leaves it ([Delta.synced]).
+                list.filter { it.ownedBy(me) && it.changedAtMillis > base.historyPushedAt && it.delta.synced }.map { category to it }
             }
         if (changed.isNotEmpty()) {
             val rows =

@@ -89,6 +89,15 @@ class TransientMenuHost {
         editors[key] = editor to onLeave
     }
 
+    /**
+     * User rule 2026-11-20: told of every press and every wheel turn the app sees — in its window or in a pop-up's, the
+     * two observers below — what ends a Search bar's run of keystrokes (`App`'s `searchRunEnded`).
+     */
+    var onActivity: () -> Unit = {}
+
+    /** A wheel turn anywhere: no menu closes, but it is the user doing something ([onActivity]). */
+    fun onScroll() = onActivity()
+
     /** The app window's root ([transientMenuDismissRoot]): a root other than it is a pop-up's own window. */
     internal var appRoot: Any? = null
 
@@ -130,6 +139,7 @@ class TransientMenuHost {
      * neither consumed nor altered.
      */
     fun onPress(windowPosition: Offset? = null, root: Any? = null) {
+        onActivity()
         for ((key, editor) in editors.entries.toList()) {
             if (windowPosition != null && editor.first.contains(root, windowPosition)) continue
             editors.remove(key)
@@ -143,6 +153,7 @@ class TransientMenuHost {
      * close, and no edit — the pop-up is a part of the edit it was opened from (the cell's "▾"), not outside it.
      */
     fun onPressInPopup(windowPosition: Offset? = null, root: Any? = null) {
+        onActivity()
         // Anomaly 2026-11-15 (*"the selected rows sometimes stay selected even when clicking elsewhere"*): an edit drawn
         // in THAT pop-up's window (a Search window's selected rows there) leaves on a press elsewhere in the same window.
         if (windowPosition != null && root != null) {
@@ -194,6 +205,7 @@ fun Modifier.transientMenuDismissRoot(host: TransientMenuHost): Modifier {
             awaitPointerEventScope {
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
+                    if (event.type == PointerEventType.Scroll) host.onScroll()
                     if (event.type != PointerEventType.Press) continue
                     val at = event.changes.firstOrNull()?.position
                     val here = coordinates[0]?.takeIf { it.isAttached }
@@ -293,6 +305,7 @@ fun Modifier.dismissesMenusOnPress(): Modifier {
             awaitPointerEventScope {
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
+                    if (event.type == PointerEventType.Scroll) host.onScroll()
                     if (event.type != PointerEventType.Press) continue
                     val here = coordinates[0]?.takeIf { it.isAttached }
                     val at = event.changes.firstOrNull()?.position?.let { here?.localToWindow(it) }

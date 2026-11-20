@@ -580,6 +580,13 @@ sealed interface Delta {
     val localOnly: Boolean get() = false
 
     /**
+     * Whether the unit is pushed to the account's server at all. A keystroke of a Search bar is not (user rule 2026-11-20,
+     * `ExternalKeys.SEARCH_TEXT`): what a bar holds is this device's view, and a row a keystroke would be a stream no
+     * other device walks — this device's own undo is the only reader. Such a unit is [localOnly] too.
+     */
+    val synced: Boolean get() = true
+
+    /**
      * Merge this unit onto [previous] — the unit currently at the category's pointer — returning the single
      * unit the two together are, or `null` when they must stay two (a different delta kind, or a different
      * [coalesceKey]). Only ever asked when this unit's [coalesceKey] is non-null.

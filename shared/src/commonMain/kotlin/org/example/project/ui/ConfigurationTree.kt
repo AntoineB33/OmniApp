@@ -902,15 +902,31 @@ class ArrowSearches(
      * The configuration of the window [relative] drawn inside the window [root] — a ▾ window, a field's list, a
      * drop-down's: its own, else what it opens with ([opened]; a ▾ window's by default).
      */
-    fun of(root: String, relative: String, opened: SearchDomain.Config = SearchDomain.CONFIGURATION_SEARCH): SearchDomain.Config =
+    fun of(root: String, relative: String, opened: SearchDomain.Config = SearchDomain.CONFIGURATION_SEARCH): SearchDomain.Config {
+        openedBy[root + relative] = opened
         // Healed (2026-11-16): one stored before the ▾'s search sorted by the tree's order still follows its default sort,
         // which is that order now ([SearchDomain.defaultSortsOf]).
-        SearchDomain.Config.decode(read(root)[relative])?.let(SearchDomain::withDefaultSort) ?: opened
+        return SearchDomain.Config.decode(read(root)[relative])?.let(SearchDomain::withDefaultSort) ?: opened
+    }
 
     fun set(root: String, relative: String, config: SearchDomain.Config, opened: SearchDomain.Config = SearchDomain.CONFIGURATION_SEARCH) {
+        openedBy[root + relative] = opened
         val all = read(root)
         val next = arrowsWith(all, relative, config, opened)
         if (next != all) write(root, next)
+    }
+
+    /** What each window drawn inside opens with, as its last read or write said ([of], [set]): what [setText] needs. */
+    private val openedBy = HashMap<String, SearchDomain.Config>()
+
+    /**
+     * User rule 2026-11-20: a keystroke of the bar of the window [relative] (in [root]) undone or walked — its text put
+     * back from [from] to [to], the rest of its configuration as it is now; nothing while its bar holds another text.
+     */
+    fun setText(root: String, relative: String, from: String, to: String) {
+        val opened = openedBy[root + relative] ?: SearchDomain.CONFIGURATION_SEARCH
+        val current = of(root, relative, opened)
+        if (current.query == from) set(root, relative, current.copy(query = to), opened)
     }
 
     /**

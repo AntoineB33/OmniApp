@@ -1141,10 +1141,12 @@ object SchedulerReducer {
     /**
      * Where ↑ ([back]) or ↓ in the bar of [key] takes its pin: the previous text the user left the bar at (or the text
      * before the oldest keystroke kept), the next one — or null when the pin is already at that end of its walk, and the
-     * key is then the list's (↓ to the row below, ↑ to the row above).
+     * key is then the list's (↓ to the row below, ↑ to the row above). [shown]: what the bar holds — a pin standing at
+     * another text is not this bar's (a window whose text no unit holds), and moves nothing.
      */
-    fun searchTextStep(state: SchedulerState, key: String, back: Boolean): Int? {
+    fun searchTextStep(state: SchedulerState, key: String, back: Boolean, shown: String? = null): Int? {
         val pin = searchTextPin(state, key)
+        if (pin.units.isEmpty() || (shown != null && pin.text(pin.at) != shown)) return null
         return if (back) (pin.at - 1 downTo 0).firstOrNull { it == 0 || pin.stop(it) }
         else (pin.at + 1..pin.units.size).firstOrNull { pin.stop(it) }
     }
@@ -4528,8 +4530,8 @@ object SchedulerReducer {
         }
         if (!changed) return state
         val merged = byIdentity.values.sortedWith(compareBy({ it.timeMillis }, { it.chronoId }, { it.deviceId }, { it.deviceSeq }))
-        val (capped, _) = dropOldestUntainted(merged, (merged.size - MAX_HISTORY_UNITS).coerceAtLeast(0))
-        return state.copy(histories = state.histories.withCategory(category, historyOf(capped, me)))
+        val (kept, _) = capped(merged, me)
+        return state.copy(histories = state.histories.withCategory(category, historyOf(kept, me)))
     }
 
     /**
@@ -4652,8 +4654,7 @@ object SchedulerReducer {
         // [MAX_HISTORY_UNITS], shifting the pointer back by however many were removed. Debug-tainted
         // units are exempt from the cap: dropping one would break the chain the restart rollback walks,
         // leaving a half-reverted state, so only the oldest *untainted* units are evicted.
-        val overflow = (appendedUnits.size - MAX_HISTORY_UNITS).coerceAtLeast(0)
-        val (cappedUnits, _) = dropOldestUntainted(appendedUnits, overflow)
+        val (cappedUnits, _) = capped(appendedUnits, me)
 
         val committed = newState.copy(histories = state.histories.withCategory(category, historyOf(cappedUnits, me)))
         // A new change is where the whole app stands.
@@ -4678,6 +4679,51 @@ object SchedulerReducer {
         // Commit against `after` (records already applied), so RecordDelta.redo is a no-op replay and
         // `after`'s other fields survive; the unit still carries `recBefore` for undo and rollback.
         return commitDelta(after, RecordDelta(recBefore, recAfter), HistoryCategory.Main)
+    }
+
+    /**
+     * [units] held to [MAX_HISTORY_UNITS]: first by merging the oldest keystrokes of a Search bar ([mergedOldKeystrokes]),
+     * then — only if that frees too little — by evicting the oldest units ([dropOldestUntainted]).
+     */
+    private fun capped(units: List<HistoryUnit>, me: String): Pair<List<HistoryUnit>, Int> {
+        val merged = mergedOldKeystrokes(units, (units.size - MAX_HISTORY_UNITS).coerceAtLeast(0), me)
+        return dropOldestUntainted(merged, (merged.size - MAX_HISTORY_UNITS).coerceAtLeast(0))
+    }
+
+    /**
+     * User rule 2026-11-20 (*"history units that are old get merged when they can (two character typing become one
+     * history unit for example)"*): up to [count] of this device's Search bar keystrokes ([ExternalKeys.SEARCH_TEXT])
+     * merged, oldest first, each into the keystroke of the same bar before it — so the cap takes old keystrokes before any
+     * other change, and Ctrl+Z goes back a character at a time as long as there is room. Only within a run
+     * ([ExternalDelta.runStart] starts one): the texts the user left the bar at stay the bar's pin's stops. Both applied
+     * (an undone one is a redo branch) and neither debug-tainted (the restart rollback walks those one by one). The merged
+     * unit keeps the older one's place, time and row; never synced ([Delta.synced]), it is the local store's alone.
+     */
+    private fun mergedOldKeystrokes(units: List<HistoryUnit>, count: Int, me: String): List<HistoryUnit> {
+        if (count <= 0) return units
+        var budget = count
+        val out = ArrayList<HistoryUnit>(units.size)
+        // Each bar's latest keystroke so far, by its index in [out].
+        val lastOf = HashMap<String, Int>()
+        for (unit in units) {
+            val delta = unit.delta as? ExternalDelta
+            if (delta == null || !delta.key.startsWith(ExternalKeys.SEARCH_TEXT) || !unit.ownedBy(me)) {
+                out += unit
+                continue
+            }
+            val at = lastOf[delta.key]
+            val previous = at?.let { out[it] }
+            if (budget > 0 && at != null && previous != null && !delta.runStart && !unit.undone && !previous.undone &&
+                !unit.debugTainted && !previous.debugTainted
+            ) {
+                out[at] = previous.copy(delta = (previous.delta as ExternalDelta).copy(after = delta.after), changedAtMillis = clock.nowMillis())
+                budget--
+                continue
+            }
+            lastOf[delta.key] = out.size
+            out += unit
+        }
+        return out
     }
 
     /**
@@ -8088,6 +8134,13 @@ internal data class ExternalDelta(
 ) : Delta {
     override val details: List<String>
         get() = listOf(key)
+
+    /** A keystroke of a Search bar is this device's view alone: never pushed, no reason for a push ([Delta.synced]). */
+    private val keystroke: Boolean get() = key.startsWith(ExternalKeys.SEARCH_TEXT)
+
+    override val localOnly: Boolean get() = keystroke
+
+    override val synced: Boolean get() = !keystroke
 
     override fun coalesceOnto(previous: Delta): Delta? =
         if (previous is ExternalDelta && previous.key == key && previous.coalesceKey == coalesceKey) copy(before = previous.before)

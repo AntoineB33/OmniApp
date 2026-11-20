@@ -118,6 +118,7 @@ import androidx.compose.ui.input.key.type
 import org.example.project.scheduler.state.defaultSubtreePriorities
 import org.example.project.scheduler.state.projectDefaultSubtree
 import org.example.project.scheduler.state.HistoryWindow
+import org.example.project.scheduler.state.ExternalKeys
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.PriorityWeightWindow
@@ -332,7 +333,7 @@ private val VIEW_ROWS: Set<String> =
 
 private const val MENU_KEY: String = org.example.project.scheduler.state.ExternalKeys.MENU
 private const val SEARCH_KEY: String = org.example.project.scheduler.state.ExternalKeys.SEARCH
-private const val SEARCH_TEXT_KEY: String = org.example.project.scheduler.state.ExternalKeys.SEARCH_TEXT
+private const val SEARCH_TEXT_KEY: String = ExternalKeys.SEARCH_TEXT
 private const val WINDOW_KEY: String = org.example.project.scheduler.state.ExternalKeys.WINDOW
 
 /** A window's layout as its unit holds it — its row without the configuration, which has a unit of its own. */
@@ -1665,10 +1666,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     searchConfigs[id] = it
                     searchOpenedConfigs[id] = it
                 }
-        // User rule 2026-11-20: by frame id, whether the user did something else than typing in the window's bar since its
-        // last keystroke (scrolled, pressed, moved the caret, left the bar, walked its history). Absent reads as yes. Not
-        // state: the keystroke after it carries it, persisted ([SchedulerIntent.RecordExternal.runStart]).
+        // User rule 2026-11-20: by bar ([ExternalKeys.searchText]), whether the user did something else than typing in it
+        // since its last keystroke (pressed or scrolled anywhere, moved the caret, left the bar, walked its history).
+        // Absent reads as yes: a press or a scroll anywhere empties it ([TransientMenuHost.onActivity]). Not state: the
+        // keystroke after it carries it, persisted ([SchedulerIntent.RecordExternal.runStart]).
         val searchRunEnded = remember { mutableMapOf<String, Boolean>() }
+        transientMenus.onActivity = { searchRunEnded.clear() }
+        // One keystroke of the bar [key]: a unit of its text alone, starting a run if the user did something else since.
+        fun recordKeystroke(key: String, before: String, after: String, label: String) {
+            viewHistory.record(key, before, after, label, runStart = searchRunEnded.put(key, false) != false)
+        }
         // [follow]: the default sorting is followed (`SearchDomain.withDefaultSortFollowed`) — by every edit, never by an
         // undo, which puts back what was.
         fun setSearchConfig(id: String, edited: SearchDomain.Config, follow: Boolean = true) {
@@ -1682,10 +1689,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // `SchedulerReducer.searchTextStep`) moves the text alone. It starts a run when the user did something else
             // since the bar's last keystroke ([searchRunEnded]).
             if (config == before.copy(query = config.query)) {
-                viewHistory.record(
-                    SEARCH_TEXT_KEY + id, before.query, config.query, searchChangeLabel(before, config),
-                    runStart = searchRunEnded.put(id, false) != false,
-                )
+                recordKeystroke(ExternalKeys.searchText(id, id), before.query, config.query, searchChangeLabel(before, config))
                 return
             }
             // The other text fields are typed: one unit for the run of a field's keystrokes.
@@ -1699,17 +1703,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 coalesceKey = typed?.let { SEARCH_KEY + id + "/" + it },
             )
         }
-        // User rule 2026-11-20: the pin of the bar of the Search window [id] — ↑ / ↓ in it walk its keystroke units.
-        fun searchBarPin(id: String) =
-            org.example.project.ui.SearchBarPin(
-                step = { back ->
-                    val key = SEARCH_TEXT_KEY + id
-                    val moves = SchedulerReducer.searchTextStep(vm.state.value, key, back) != null
+        // User rule 2026-11-20: the pin of the bar of the Search window [owner], stored by the window [root] — every Search
+        // window's, found by the window itself ([org.example.project.ui.LocalSearchBarPins]): ↑ / ↓ in it walk its
+        // keystroke units. It moves only while the bar holds the text its pin stands at: a bar whose text no unit holds
+        // (a drop-down's list, which starts empty at each opening) keeps ↓ into its list.
+        fun searchBarPin(owner: String, root: String): org.example.project.ui.SearchBarPin {
+            val key = ExternalKeys.searchText(root, owner)
+            return org.example.project.ui.SearchBarPin(
+                step = { back, shown ->
+                    val moves = SchedulerReducer.searchTextStep(vm.state.value, key, back, shown) != null
                     if (moves) vm.dispatch(SchedulerIntent.WalkSearchText(key, back))
                     moves
                 },
-                runEnded = { searchRunEnded[id] = true },
+                runEnded = { searchRunEnded[key] = true },
             )
+        }
+        // One value for the composition: what it reads (the view model, [searchRunEnded]) is remembered already.
+        val searchBarPins: (String, String) -> org.example.project.ui.SearchBarPin = remember { { owner, root -> searchBarPin(owner, root) } }
         // User rule 2026-11-13: the ▾ windows, by id. Each one's configuration is kept WITH the Search window it hangs
         // from (`SearchDomain.Config.inside`), on that window's placement row: it comes back with the window after a
         // restart, and a menu button's "Update" keeps it. So is the own configuration of a field's list and of a
@@ -1722,10 +1732,17 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             searchConfigs[id] = config
             updatePlacementById(id) { it.copy(config = config.encode()) }
             val typedIn = SearchDomain.insideTypedIn(before.inside, inside)
-            viewHistory.record(
-                SEARCH_KEY + id, before.encode(), config.encode(), "Search configuration inside " + id,
-                coalesceKey = typedIn?.let { SEARCH_KEY + id + "/inside/" + it },
-            )
+            // User rule 2026-11-20: a keystroke in the bar of a window drawn inside is a unit of its text alone, as in
+            // the window's own bar (one code for every Search window's bar).
+            if (typedIn != null) {
+                fun textOf(entry: String?) = SearchDomain.Config.decode(entry)?.query.orEmpty()
+                recordKeystroke(
+                    ExternalKeys.searchText(id, id + typedIn), textOf(before.inside[typedIn]), textOf(inside[typedIn]),
+                    "Search text inside " + id,
+                )
+                return
+            }
+            viewHistory.record(SEARCH_KEY + id, before.encode(), config.encode(), "Search configuration inside " + id)
         }
         val arrowSearches = remember {
             org.example.project.ui.ArrowSearches(read = { searchConfigOf(it).inside }, write = { id, inside -> setSearchInside(id, inside) })
@@ -2023,13 +2040,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             restore.to?.toDoubleOrNull()?.let { putClaudeSoundsVolume(it) }
                         // The bar's text alone: the rest of the window stays as it is now.
                         restore.key.startsWith(SEARCH_TEXT_KEY) -> {
-                            val id = restore.key.removePrefix(SEARCH_TEXT_KEY)
-                            val current = searchConfigOf(id)
-                            if (current.query == restore.from) {
-                                setSearchConfig(id, current.copy(query = restore.to.orEmpty()), follow = false)
+                            val (id, relative) = ExternalKeys.searchTextOf(restore.key)!!
+                            val to = restore.to.orEmpty()
+                            if (relative.isEmpty()) {
+                                val current = searchConfigOf(id)
+                                if (current.query == restore.from) setSearchConfig(id, current.copy(query = to), follow = false)
+                            } else {
+                                // A window drawn inside: through the one funnel of its configuration, which knows what
+                                // it opens with ([org.example.project.ui.ArrowSearches.setText]).
+                                arrowSearches.setText(id, relative, from = restore.from.orEmpty(), to = to)
                             }
                             // A walk or an undo is something else than typing: the next keystroke starts a run.
-                            searchRunEnded[id] = true
+                            searchRunEnded[restore.key] = true
                         }
                         restore.key.startsWith(SEARCH_KEY) -> {
                             val id = restore.key.removePrefix(SEARCH_KEY)
@@ -4375,6 +4397,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             org.example.project.ui.LocalPatternExceptionDispatch provides patternExceptionDispatch,
             org.example.project.ui.LocalHeldCalendarRecords provides heldCalendarRecords,
             LocalTransientMenuHost provides transientMenus,
+            // User rule 2026-11-20: every Search window's bar finds its pin here, by its own id and the stored window's.
+            org.example.project.ui.LocalSearchBarPins provides searchBarPins,
             org.example.project.ui.LocalPopupPositions provides popupPositions,
             org.example.project.ui.LocalSearchPartsStore provides searchPartsStore,
             org.example.project.ui.LocalPopupMemory provides popupMemory,
@@ -5890,7 +5914,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onDismiss = { searchWindowOpen = false },
                             config = searchConfig,
                             onConfigChange = { setSearchConfig(searchId, it) },
-                            barPin = searchBarPin(searchId),
                             actionRevealAsked = searchActionReveals[searchId],
                             onActionRevealTaken = { searchActionReveals.remove(searchId) },
                             openedConfig = searchOpenedConfigs[searchId],

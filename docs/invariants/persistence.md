@@ -70,8 +70,9 @@ window's list, which recorded nothing). Undoable, from the window it was made in
   records nothing while it does. Nothing is recorded until the start-up has settled (the restores of the windows are not
   the user's). A text field typed into is one unit per run of keystrokes (`coalesceKey`) — except **a Search window's
   bar, one unit a keystroke** (user rule 2026-11-20, `ExternalKeys.SEARCH_TEXT`: its text alone, before and after;
-  `ExternalDelta.runStart`, stored, marks a keystroke the user did something else before; `popups.md` § *Search
-  bars*). A window that closes hands
+  `ExternalDelta.runStart`, stored, marks a keystroke the user did something else before; never pushed, `Delta.synced`;
+  merged with the one before it at the cap rather than evicting a change; `popups.md` § *Search bars*). A window that
+  closes hands
   the focus to the one under it, so its close is stamped with — and undone from — that window.
 - **An account setting** — defining, deleting, resetting or duplicating a kind of period, its drawing and combination
   rules, creating, renaming (one unit per run of keystrokes), deleting or duplicating a category and its rules, the
@@ -108,6 +109,10 @@ is what the append it replaces would have cost anyway, and the list does not gro
   of the app speaks in (`HistoryRow.ordinal`, what a `history_pointer` indexes) is derived back from it on
   load. Keying on the position is what forced the rewrite: **the cap evicts from the FRONT**, so one new unit
   renumbered all `MAX_HISTORY_UNITS` of them and no row could be reused.
+- **A save aligns the units by their place in time** (`timeMillis`, `chronoId`, kept for life): the stored rows skipped
+  are deleted, a unit found with another digest is UPDATED in its own row, the rest appended (2026-11-20: a keystroke
+  merged at the cap changes a unit near the head, which the old contiguous match turned into a rewrite of every row
+  after it). A unit found nowhere after the last one (a peer's merged in between) rewrites from there, as before.
 - **A save diffs the DIGEST, never the deltas** (`selectHistoryDigests`, `HistoryDigest`). Identity is
   `(timeMillis, chronoId, debugTainted, length, hash)`; a wrong "different" costs one rewritten row, a wrong
   "same" would keep a stale delta, which is why all five must agree. `window` is deliberately NOT among them:
