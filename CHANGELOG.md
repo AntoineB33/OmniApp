@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The evolutions field lists its tasks' evolutions first — 2026-11-20
+
+- User rule: *"It must show all presence ratio target evolutions, but the ones for the tasks that the field is for are
+  placed first, then the ones the tasks are involved in other ways, then the rest."* `PresenceEvolutions.involvementGroups`:
+  given to one of the field's tasks; else relative to one (its relative task, or a task's ancestor at its parent
+  distance); the rest. Applied through a new `Config.leadingGroups` (`SearchDomain.leadingFirst`, a stable partition after
+  the window's own sort), set by the field, never stored.
+
 ### The evolutions field lists every evolution — 2026-11-20
 
 - Anomaly: *"In the down arrow of the 'Presence ratio target evolutions' field, in 'Currently on', why do I see excluded

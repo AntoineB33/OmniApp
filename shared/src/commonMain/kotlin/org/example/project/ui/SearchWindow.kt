@@ -736,8 +736,10 @@ fun SearchWindow(
     // window's (anomaly 2026-11-19: *"only the background color is the only difference in the logic"*). Its items keep the
     // order the user gave them; what the search finds keeps the window's.
     val menuItemRows = remember(menuList?.rows) { menuList?.rows.orEmpty().map { SearchDomain.ItemResult(SearchDomain.Kind.Option, it.key, it.title, "") } }
+    // User rule 2026-11-20: the rows the field this window is for lists first ([SearchDomain.Config.leadingGroups]).
+    val led = remember(listed, config.leadingGroups) { SearchDomain.leadingFirst(listed, config.leadingGroups) }
     val results: List<SearchDomain.Result> =
-        menuItemRows + if (arranging) remember(listed, config.arranged) { SearchDomain.arrangedResults(listed, config.arranged) } else listed
+        menuItemRows + if (arranging) remember(led, config.arranged) { SearchDomain.arrangedResults(led, config.arranged) } else led
     val count = results.size
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
     // among the results (the question changed, the thing was deleted) reads as the first row.

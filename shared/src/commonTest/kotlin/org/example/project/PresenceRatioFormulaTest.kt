@@ -83,6 +83,33 @@ class PresenceRatioFormulaTest {
         assertTrue(FormulaCoherence.problems(edited, utc).isEmpty())
     }
 
+    /**
+     * User rule 2026-11-20: the field of P's actions lists the evolutions given to P first, then those P is otherwise
+     * involved in (what they are relative to), then the rest.
+     */
+    @Test
+    fun the_evolutions_of_the_field_s_tasks_lead_then_those_they_are_involved_in() {
+        val s0 = account()
+        val root = org.example.project.scheduler.model.WellKnownIds.ROOT_TASK
+        val s = with(
+            s0,
+            evo("rest", listOf(id(s0, "Q")), "0.3"),
+            evo("byDistance", listOf(id(s0, "A")), "0.3"),
+            evo("byTask", listOf(id(s0, "B")), "0.3", relative = id(s0, "P")),
+            evo("own", listOf(id(s0, "P")), "0.5", relative = root),
+        )
+        val (own, involved) = PresenceEvolutions.involvementGroups(s, listOf(id(s, "P")))
+        assertEquals(setOf("own"), own)
+        assertEquals(setOf("byDistance", "byTask"), involved)
+        val rows = SearchDomain.results(s, setOf(SearchDomain.Kind.PresenceEvolution), "")
+        val key = { e: String -> SearchDomain.Kind.PresenceEvolution.name + "/" + e }
+        val led = SearchDomain.leadingFirst(rows, listOf(own.mapTo(HashSet(), key), involved.mapTo(HashSet(), key))).map { SearchDomain.keyOf(it) }
+        assertEquals(key("own"), led.first())
+        assertEquals(setOf(key("byDistance"), key("byTask")), led.subList(1, 3).toSet())
+        assertEquals(rows.size, led.size, "every evolution still listed")
+        assertTrue(led.indexOf(key("rest")) > 2)
+    }
+
     @Test
     fun a_default_formula_is_a_plain_decimal() {
         assertEquals("0.25", PresenceEvolutions.constantText(0.25))

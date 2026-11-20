@@ -149,6 +149,8 @@ class PresenceEvolutionSelectionTest {
             // Anomaly 2026-11-20: every evolution, not only those of the added tasks — B's too, nothing excluded.
             val ofB = PresenceEvolutions.title(start, PresenceEvolutions.defaults(start).first { e -> e.taskIds.none { it == a } })
             assertTrue(ofB in texts(), "an evolution of another task is listed: ${texts()}")
+            // User rule 2026-11-20: A's own first, the rest after.
+            assertTrue(texts().indexOf(row) < texts().indexOf(ofB), "A's evolution before B's: ${texts()}")
             // Anomaly 2026-11-20: listed, its name was drawn at no width — the long detail beside it took the row.
             val name = nodes().last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == row } == true }.boundsInWindow
             assertTrue(name.width > 20f, "the name is drawn: $name")

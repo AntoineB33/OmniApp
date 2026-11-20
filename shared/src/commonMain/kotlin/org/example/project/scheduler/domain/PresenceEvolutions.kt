@@ -66,6 +66,22 @@ object PresenceEvolutions {
         return shown(state).filter { e -> e.taskIds.any { it in ids } }
     }
 
+    /**
+     * User rule 2026-11-20: *"the ones for the tasks that the field is for are placed first, then the ones the tasks are
+     * involved in other ways, then the rest"* — the ids of [shown]'s evolutions GIVEN to one of [taskIds], then of those
+     * where one of them is what the evolution is relative to (its relative task, or a task's ancestor at its parent
+     * distance). Each evolution in the first group it falls in.
+     */
+    fun involvementGroups(state: SchedulerState, taskIds: Collection<TaskId>): List<Set<String>> {
+        val s = taskIds.toHashSet()
+        if (s.isEmpty()) return emptyList()
+        val all = shown(state)
+        val given = all.filter { e -> e.taskIds.any { it in s } }.mapTo(LinkedHashSet()) { it.id }
+        val index = TreeIndex(state)
+        val relative = all.filter { e -> e.id !in given && e.taskIds.any { t -> relativesOf(index, e, t).any { it in s } } }.mapTo(LinkedHashSet()) { it.id }
+        return listOf(given, relative)
+    }
+
     // ----- the default evolutions -----------------------------------------------------------------
 
     /**

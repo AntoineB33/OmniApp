@@ -72,6 +72,10 @@ internal fun PresenceEvolutionRows(
     val evolutionsShown = evolutionsConfig.copy(
         kinds = setOf(SearchDomain.Kind.PresenceEvolution),
         added = evolutionsConfig.added.filter { it in allKeys },
+        // User rule 2026-11-20: the evolutions of S first, then those S is otherwise involved in, then the rest.
+        leadingGroups = remember(state.presenceEvolutions, state.cells, state.lists, state.tasks, s) {
+            PresenceEvolutions.involvementGroups(state, s).map { g -> g.mapTo(HashSet()) { evolutionKey(it) } }
+        },
     )
     // Anomaly 2026-11-20 (*"I selected the default presence ratio target evolution, but in relative to there is nothing"*):
     // a row selected in the field's window is in its added elements (user rule 2026-11-15), so the rows below edit it as

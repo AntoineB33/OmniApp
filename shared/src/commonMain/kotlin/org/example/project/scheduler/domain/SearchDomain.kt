@@ -808,6 +808,12 @@ object SearchDomain {
          */
         val arranged: List<String> = emptyList(),
         /**
+         * User rule 2026-11-20: **the rows a field's window lists first** ([leadingFirst]), by result key — each group in
+         * turn, then the rest; inside each, the list's own order. Set by the field (the presence ratio target evolutions':
+         * those of its tasks, then those involving them otherwise), never stored nor offered in the ▾.
+         */
+        val leadingGroups: List<Set<String>> = emptyList(),
+        /**
          * User rule 2026-11-12, a search configuration ([Setting.DropButtons]): **every element of the list with a button to
          * drop it** — the "List of parents" takes the parent off ([ElementTree.parentIntents]); any other Search window takes
          * the row off its list ([Filters.excludedElements]). Off by default.
@@ -2124,6 +2130,13 @@ object SearchDomain {
      * User rule 2026-11-14, "Arrange by dragging": [results] in the order the user dragged them into ([Config.arranged])
      * — those it names first, in its order; the others after, in the list's own.
      */
+    fun leadingFirst(results: List<Result>, groups: List<Set<String>>): List<Result> {
+        if (groups.isEmpty()) return results
+        val rank = HashMap<String, Int>()
+        groups.forEachIndexed { i, g -> for (k in g) if (k !in rank) rank[k] = i }
+        return results.sortedBy { rank[keyOf(it)] ?: groups.size }
+    }
+
     fun arrangedResults(results: List<Result>, arranged: List<String>): List<Result> {
         if (arranged.isEmpty()) return results
         val rank = arranged.withIndex().associate { (i, key) -> key to i }
