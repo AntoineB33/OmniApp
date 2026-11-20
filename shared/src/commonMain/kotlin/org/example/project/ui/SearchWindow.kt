@@ -217,11 +217,15 @@ data class SearchSplits(
 
     companion object {
         /**
-         * User rule 2026-11-21: [from] showing its actions section alone — the search and the added elements retracted to
-         * their arrow, the actions neither retracted nor removed (the default Calendar menu button's window).
+         * User rule 2026-11-21: [from] showing its actions section alone — the search and the added elements REMOVED, as
+         * the background menu takes them off (*"not minimized but really hidden"*), the actions neither retracted nor
+         * removed (the default Calendar menu button's window).
          */
         fun actionsOnly(from: SearchSplits): SearchSplits =
-            from.copy(searchHidden = true, actionsHidden = false, addedHidden = true, actionsRemoved = false)
+            from.copy(
+                searchHidden = false, actionsHidden = false, addedHidden = false,
+                searchRemoved = true, actionsRemoved = false, addedRemoved = true,
+            )
 
         /** Read back from [hiddenFlags]; a flag an older build did not write is off. */
         fun of(left: Float, topRight: Float, hidden: List<Boolean>): SearchSplits =

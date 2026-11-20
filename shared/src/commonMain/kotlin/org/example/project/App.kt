@@ -4965,9 +4965,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                         }
                                     }
                                     // User rule 2026-11-19: why the calendar is left to nobody while a formula is incoherent.
-                                    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
-                                    org.example.project.ui.FormulaProblems(schedulerState)
-                                    Box(Modifier.weight(1f)) {
+                                    org.example.project.ui.CalendarGridWithProblems(schedulerState) {
                                     org.example.project.ui.CalendarElementGrid(
                                         view = view,
                                         selectedDate = selectedDate,
@@ -5096,7 +5094,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             nowLineMillisPerPixel = calendarResolutions.values.min()
                                         },
                                     )
-                                    }
                                     }
                                 }
                                 // The day picked is the window's configuration: one History Unit, its Ctrl+Z.

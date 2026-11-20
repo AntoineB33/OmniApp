@@ -17,10 +17,15 @@ Check here before assuming the code matches the docs.
   that has only the action section showing, and it must show the calendar view (the 'calendar' row is expanded, and the
   action section is correctly scrolled)."*
 - Now: a Calendar button keeping no layout of its own (`d-calendar` as shipped), when it OPENS a calendar window (not when
-  it brings one back), gives it `SearchSplits.actionsOnly` — the search and the added elements retracted to their arrow —
-  and asks its actions section to start at `SearchDomain.calendarActionRowId()` (the open "Calendar" row, through the
-  existing `searchActionReveals`), its head at the top and the calendar under it. A button the user updated keeps its
-  own layout. Local view state only: no SQLite or Supabase change.
+  it brings one back), gives it `SearchSplits.actionsOnly` — the search and the added elements REMOVED as the background
+  menu removes them (user, same day: *"not minimized but really hidden"*) — and asks its actions section to start at
+  `SearchDomain.calendarActionRowId()` (the open "Calendar" row, through the existing `searchActionReveals`), its head at
+  the top and the calendar under it. A button the user updated keeps its own layout. Local view state only: no SQLite or
+  Supabase change.
+- Anomaly, same day (*"the calendar is still not showing"*): since 2026-11-19 (`a6beb0c9`, the incoherent formulas'
+  note) the grid stood in a `weight(1f)` box of a `fillMaxSize` column; in the actions list's unbounded height a weight
+  gets no room, so EVERY calendar window drew its calendar 0 px tall. The wrapper is now `CalendarGridWithProblems`
+  (no weight), which `CalendarButtonWindowTest` draws in the real Search window.
 
 ### The scheduler's menu: History units and Life context buttons — 2026-11-20
 

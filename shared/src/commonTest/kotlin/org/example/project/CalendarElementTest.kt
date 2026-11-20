@@ -40,11 +40,11 @@ class CalendarElementTest {
         val row = assertNotNull(SearchDomain.calendarActionRowId())
         assertEquals("action/element/" + SearchDomain.CALENDAR_KEY + "/" + SearchDomain.AddedAction.CalendarGrid.name, row)
         assertTrue(open(config, row))
-        // Its sections: the actions alone, the search and the added elements retracted, nothing else changed.
-        val before = org.example.project.ui.SearchSplits(left = 0.3f, actionsHidden = true, actionsRemoved = true, expandedResults = setOf("t"))
+        // Its sections: the actions alone, the search and the added elements removed (not retracted), nothing else changed.
+        val before = org.example.project.ui.SearchSplits(left = 0.3f, searchHidden = true, actionsHidden = true, actionsRemoved = true, expandedResults = setOf("t"))
         val shown = org.example.project.ui.SearchSplits.actionsOnly(before)
-        assertTrue(shown.searchHidden && shown.addedHidden)
-        assertFalse(shown.actionsHidden || shown.actionsRemoved)
+        assertTrue(shown.searchRemoved && shown.addedRemoved)
+        assertFalse(shown.searchHidden || shown.addedHidden || shown.actionsHidden || shown.actionsRemoved)
         assertEquals(before.left, shown.left)
         assertEquals(before.expandedResults, shown.expandedResults)
     }

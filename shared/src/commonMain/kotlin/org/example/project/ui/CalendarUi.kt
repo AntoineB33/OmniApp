@@ -4127,6 +4127,20 @@ val LocalCalendarElement = compositionLocalOf<(@Composable (CalendarPart) -> Uni
  */
 val LocalSearchResults = compositionLocalOf<List<org.example.project.scheduler.domain.SearchDomain.Result>> { emptyList() }
 
+/**
+ * The calendar element's calendar as its row draws it ([CalendarPart.Grid]): why the calendar is left to nobody while a
+ * formula is incoherent (user rule 2026-11-19, [FormulaProblems]), then [grid] at its own height. Anomaly 2026-11-21
+ * (*"the calendar is still not showing"*): the grid stood in a `weight(1f)` box of a `fillMaxSize` column — inside the
+ * actions list, whose height is unbounded, a weight is given no room, and the calendar was drawn 0 px tall.
+ */
+@Composable
+fun CalendarGridWithProblems(state: org.example.project.scheduler.state.SchedulerState, grid: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        FormulaProblems(state)
+        grid()
+    }
+}
+
 /** The calendar's height in a Search window's actions section until its handle is dragged. */
 internal val CALENDAR_ELEMENT_HEIGHT = 520.dp
 

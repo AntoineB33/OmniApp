@@ -1,0 +1,107 @@
+package org.example.project
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.ImageComposeScene
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import kotlin.test.Test
+import kotlin.test.assertTrue
+import org.example.project.quota.QuotaScenario
+import org.example.project.scheduler.domain.SearchDomain
+import org.example.project.ui.AddedActionHandlers
+import org.example.project.ui.CalendarPart
+import org.example.project.ui.LocalCalendarElement
+import org.example.project.ui.SearchRowOpeners
+import org.example.project.ui.SearchSplits
+import org.example.project.ui.SearchWindow
+
+/**
+ * User rule 2026-11-21: the default Calendar menu button's window shows its actions section alone, the calendar in view —
+ * drawn off screen as `App` opens it: [SearchDomain.calendarWindowConfig], [SearchSplits.actionsOnly], the actions asked to
+ * start at [SearchDomain.calendarActionRowId]. `App`'s calendar is a stand-in of its height here.
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
+class CalendarButtonWindowTest {
+    private val width = 1000
+    private val height = 700
+
+    @Test
+    fun the_calendar_buttons_window_shows_the_calendar() {
+        val config0 = SearchDomain.calendarWindowConfig(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Calendar), calendarDayMode = true))
+        val account = QuotaScenario.account()
+        val scene = onEdt {
+            ImageComposeScene(width, height, density = Density(1f)) {
+                var config by remember { mutableStateOf(config0) }
+                var splits by remember { mutableStateOf(SearchSplits.actionsOnly(SearchSplits())) }
+                val registry = remember {
+                    org.example.project.ui.ArrowSearches(read = { config.inside }, write = { _, inside -> config = config.copy(inside = inside) })
+                }
+                CompositionLocalProvider(
+                    // `App`'s own wrapper of the grid (anomaly 2026-11-21: it drew the calendar 0 px tall), the grid a
+                    // stand-in at the calendar's height.
+                    LocalCalendarElement provides { part ->
+                        if (part == CalendarPart.Grid) {
+                            org.example.project.ui.CalendarGridWithProblems(account) {
+                                Box(Modifier.fillMaxWidth().height(520.dp)) { Text("THE CALENDAR GRID") }
+                            }
+                        } else {
+                            Text("calendar part $part")
+                        }
+                    },
+                    org.example.project.ui.LocalArrowSearches provides registry,
+                    org.example.project.ui.LocalArrowOwner provides "Search#2",
+                    org.example.project.ui.LocalArrowRoot provides "Search#2",
+                ) {
+                    SearchWindow(
+                        state = account,
+                        openers = SearchRowOpeners(onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {}),
+                        onStartTaskNow = {},
+                        onGoToTaskTree = { _, _ -> },
+                        onDeepCopyCell = {},
+                        actionRevealAsked = SearchDomain.calendarActionRowId(),
+                        actionHandlers = AddedActionHandlers(
+                            onStartNow = {}, onEdit = {}, onGoToTaskTree = {}, onDeepCopyCell = {}, onOpenResilienceSearch = {},
+                            onOpenKindSearch = {}, timerRun = { _, _ -> }, reminderEditor = {}, onCreate = {},
+                            onDuplicate = { _, _ -> emptyList() }, onPlaceOnCalendar = {},
+                        ),
+                        onIntent = {},
+                        onDismiss = {},
+                        config = config,
+                        onConfigChange = { config = it },
+                        onOpenConfigurations = {},
+                        splits = splits,
+                        onSplitsChange = { splits = it },
+                        initialSize = Size(width.toFloat(), height.toFloat()),
+                    )
+                }
+            }
+        }
+        try {
+            var time = 0L
+            repeat(12) { onEdt { time += 16; scene.render(time * 1_000_000L) } }
+            fun nodes(): List<SemanticsNode> = onEdt { scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) } }
+            val shown = nodes().mapNotNull { n -> n.config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text }?.let { it to n.boundsInWindow } }
+            println("shown:\n" + shown.joinToString("\n") { (t, b) -> "  $b  $t" })
+            val grid = shown.firstOrNull { it.first == "THE CALENDAR GRID" }
+            assertTrue(grid != null && grid.second.top < height && grid.second.top >= 0f && grid.second.height > 0f, "the calendar is in view: $grid")
+            // Only the actions section: the search's and the added elements' heads are not there at all.
+            assertTrue(shown.none { it.first.startsWith("Added elements") }, "no added elements section")
+        } finally {
+            onEdt { scene.close() }
+        }
+    }
+}
