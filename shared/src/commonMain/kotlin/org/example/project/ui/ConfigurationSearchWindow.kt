@@ -539,6 +539,9 @@ internal fun SettingEditor(
         // User rule 2026-11-12: only the parents of these elements (what the "List of parents" asks).
         SearchDomain.Setting.ParentsOf ->
             ElementsDropDown(setting.name, state, f.parentsOf, windows) { filters(f.copy(parentsOf = it)) }
+        // User rule 2026-11-20: the tasks the evolutions' "involvement" order is measured against.
+        SearchDomain.Setting.InvolvementOf ->
+            ElementsDropDown(setting.name, state, f.involvementOf, windows) { filters(f.copy(involvementOf = it)) }
         // User rule 2026-11-13: how far above them — an integer, picked in a list of integers with no end.
         SearchDomain.Setting.ParentDistance -> ParentDistanceField(state, f) { filters(f.copy(parentDistance = it)) }
         // User rule 2026-11-12: the kinds no parent of a listed element may be — the app's one check-box drop-down.

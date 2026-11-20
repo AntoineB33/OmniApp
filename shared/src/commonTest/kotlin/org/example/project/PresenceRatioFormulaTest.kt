@@ -101,12 +101,21 @@ class PresenceRatioFormulaTest {
         val (own, involved) = PresenceEvolutions.involvementGroups(s, listOf(id(s, "P")))
         assertEquals(setOf("own"), own)
         assertEquals(setOf("byDistance", "byTask"), involved)
-        val rows = SearchDomain.results(s, setOf(SearchDomain.Kind.PresenceEvolution), "")
+        // A sort of the window, and the tasks it reads, both configurations its ▾ lists in "Currently on".
+        val config = SearchDomain.evolutionsFieldConfig(listOf(id(s, "P")))
+        val on = SearchDomain.activeSettings(config)
+        assertTrue(SearchDomain.Setting.SortResults in on, "the sort is on: $on")
+        assertTrue(SearchDomain.Setting.InvolvementOf in on, "its tasks are on: $on")
+        // …the ▾'s "Currently on", as its tree holds it.
+        val currently = SearchDomain.configurationTree(config, config).filterIsInstance<SearchDomain.ConfigurationCategory>().single { it.label == "Currently on" }
+        val listed = currently.children.filterIsInstance<SearchDomain.ConfigurationLeaf>().map { it.setting }
+        assertTrue(SearchDomain.Setting.SortResults in listed && SearchDomain.Setting.InvolvementOf in listed, "Currently on: $listed")
+        val all = SearchDomain.results(s, config.kinds, "")
+        val led = SearchDomain.results(s, config.kinds, "", filters = config.filters, sorts = config.sorts).map { SearchDomain.keyOf(it) }
         val key = { e: String -> SearchDomain.Kind.PresenceEvolution.name + "/" + e }
-        val led = SearchDomain.leadingFirst(rows, listOf(own.mapTo(HashSet(), key), involved.mapTo(HashSet(), key))).map { SearchDomain.keyOf(it) }
         assertEquals(key("own"), led.first())
         assertEquals(setOf(key("byDistance"), key("byTask")), led.subList(1, 3).toSet())
-        assertEquals(rows.size, led.size, "every evolution still listed")
+        assertEquals(all.size, led.size, "every evolution still listed")
         assertTrue(led.indexOf(key("rest")) > 2)
     }
 

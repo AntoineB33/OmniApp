@@ -11,13 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The evolutions' order is a sort of the window, in its ▾ — 2026-11-20
+
+- Anomaly: *"I don't see any sorting search configuration in the down arrow … It means there is a fundamental issue in
+  how the app works"* (in "Currently on"). The order below was a hidden `Config.leadingGroups` the field set: an order
+  no configuration said. It is gone; the order is a sort like any other — `SortKey.EvolutionInvolvement`
+  ("presence ratio target evolution: involvement"), measured against the tasks of a new configuration,
+  `Filters.involvementOf` ("Involvement of", stored, keeping nothing out). The field opens with both
+  (`SearchDomain.evolutionsFieldConfig`), and the ▾'s "Currently on" lists "Sort results" and "Involvement of".
+
 ### The evolutions field lists its tasks' evolutions first — 2026-11-20
 
 - User rule: *"It must show all presence ratio target evolutions, but the ones for the tasks that the field is for are
   placed first, then the ones the tasks are involved in other ways, then the rest."* `PresenceEvolutions.involvementGroups`:
   given to one of the field's tasks; else relative to one (its relative task, or a task's ancestor at its parent
-  distance); the rest. Applied through a new `Config.leadingGroups` (`SearchDomain.leadingFirst`, a stable partition after
-  the window's own sort), set by the field, never stored.
+  distance); the rest. (First applied through a hidden `Config.leadingGroups`; replaced the same day by a sort, above.)
 
 ### The evolutions field lists every evolution — 2026-11-20
 

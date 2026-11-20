@@ -808,12 +808,6 @@ object SearchDomain {
          */
         val arranged: List<String> = emptyList(),
         /**
-         * User rule 2026-11-20: **the rows a field's window lists first** ([leadingFirst]), by result key — each group in
-         * turn, then the rest; inside each, the list's own order. Set by the field (the presence ratio target evolutions':
-         * those of its tasks, then those involving them otherwise), never stored nor offered in the ▾.
-         */
-        val leadingGroups: List<Set<String>> = emptyList(),
-        /**
          * User rule 2026-11-12, a search configuration ([Setting.DropButtons]): **every element of the list with a button to
          * drop it** — the "List of parents" takes the parent off ([ElementTree.parentIntents]); any other Search window takes
          * the row off its list ([Filters.excludedElements]). Off by default.
@@ -1006,6 +1000,7 @@ object SearchDomain {
                     includedElements = filters.includedElements.sorted(),
                     noParentOfKinds = Kind.entries.filter { it in filters.noParentOfKinds }.map { it.name },
                     parentsOf = filters.parentsOf.sorted(),
+                    involvementOf = filters.involvementOf.sorted(),
                     parentDistance = filters.parentDistance,
                     searchIn = SearchField.entries.filter { it in filters.searchIn }.map { it.name }.takeIf { filters.searchIn != DEFAULT_SEARCH_IN },
                     searchChildren = filters.searchChildren,
@@ -1102,6 +1097,7 @@ object SearchDomain {
                         includedElements = stored.includedElements.toSet(),
                         noParentOfKinds = kindsNamed(stored.noParentOfKinds),
                         parentsOf = stored.parentsOf.toSet(),
+                        involvementOf = stored.involvementOf.toSet(),
                         parentDistance = stored.parentDistance.coerceAtLeast(PARENT_DISTANCE_HIGHEST),
                         searchIn = stored.searchIn?.let { names -> SearchField.entries.filterTo(HashSet()) { it.name in names } } ?: DEFAULT_SEARCH_IN,
                         searchChildren = stored.searchChildren,
@@ -1479,6 +1475,13 @@ object SearchDomain {
          */
         val parentDistance: Int = 1,
         /**
+         * User rule 2026-11-20 (*"I don't see any sorting search configuration in the down arrow … It means there is a
+         * fundamental issue"*): **the tasks the "involvement" order of the presence ratio target evolutions is measured
+         * against** ([SortKey.EvolutionInvolvement]), by key. It keeps nothing out: it is what that sort reads, a
+         * configuration of the window like any other, shown in its ▾ and changed there.
+         */
+        val involvementOf: Set<String> = emptySet(),
+        /**
          * The Claude Code logs' filters (user rule 2026-10-18), one for the three kinds: only the entries of this project
          * (null = any), and only those written in `[claudeFrom, claudeUntil]` (a null bound asks nothing on its side).
          */
@@ -1630,6 +1633,7 @@ object SearchDomain {
                 Setting.IncludedElements -> includedElements.isNotEmpty()
                 Setting.NoParentOfKinds -> noParentOfKinds.isNotEmpty()
                 Setting.ParentsOf -> parentsOf.isNotEmpty()
+                Setting.InvolvementOf -> involvementOf.isNotEmpty()
                 Setting.ParentDistance -> parentsOf.isNotEmpty() && parentDistance != 1
                 Setting.NotificationSourceSetting -> notificationSources.isNotEmpty()
                 Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject -> claudeProject != null
@@ -1673,6 +1677,12 @@ object SearchDomain {
         NotificationDate(Kind.Notification, "date"),
         RelationSection(Kind.TaskRelation, "section"),
         ShortcutChord(Kind.Shortcut, "chord"),
+        /**
+         * User rule 2026-11-20: **the evolutions given to the tasks of [Filters.involvementOf] first, then those relative to
+         * one of them, then the rest** ([PresenceEvolutions.involvementGroups]) — what the "Presence ratio target
+         * evolutions" field's window opens sorted by, a sort like any other.
+         */
+        EvolutionInvolvement(Kind.PresenceEvolution, "involvement"),
         /** [WindowStatus]'s order: open, minimized, not open. */
         WindowState(Kind.Window, "state"),
         /**
@@ -1908,6 +1918,8 @@ object SearchDomain {
         NoParentOfKinds(null, "Has no parent of the types"),
         /** User rule 2026-11-12: only the parents of the given elements ([Filters.parentsOf]): the "List of parents". */
         ParentsOf(null, "Parents of"),
+        /** User rule 2026-11-20: the tasks the evolutions' "involvement" order is measured against ([Filters.involvementOf]). */
+        InvolvementOf(Kind.PresenceEvolution, "Involvement of"),
         /** User rule 2026-11-13: how far above those elements a parent may stand ([Filters.parentDistance]): an integer. */
         ParentDistance(null, "Parent distance"),
         /** User rule 2026-11-12: the results grouped by the added elements they involve ([Config.actionsGrouped]). */
@@ -2130,12 +2142,19 @@ object SearchDomain {
      * User rule 2026-11-14, "Arrange by dragging": [results] in the order the user dragged them into ([Config.arranged])
      * — those it names first, in its order; the others after, in the list's own.
      */
-    fun leadingFirst(results: List<Result>, groups: List<Set<String>>): List<Result> {
-        if (groups.isEmpty()) return results
-        val rank = HashMap<String, Int>()
-        groups.forEachIndexed { i, g -> for (k in g) if (k !in rank) rank[k] = i }
-        return results.sortedBy { rank[keyOf(it)] ?: groups.size }
-    }
+    /**
+     * User rule 2026-11-20: **what the "Presence ratio target evolutions" field of the tasks [taskIds] opens with** — every
+     * evolution, sorted by their involvement of those tasks (given to one, then relative to one, then the rest): the sort
+     * and the tasks it reads ([Filters.involvementOf]) are configurations of the window, listed in its ▾'s "Currently on"
+     * (anomaly 2026-11-20: an order no configuration said was "a fundamental issue").
+     */
+    fun evolutionsFieldConfig(taskIds: Collection<TaskId>): Config =
+        Config(
+            kinds = setOf(Kind.PresenceEvolution),
+            filters = Filters(involvementOf = taskIds.mapTo(LinkedHashSet(), ::taskKey)),
+            sorts = listOf(SortMethod(Kind.PresenceEvolution, SortKey.EvolutionInvolvement), SortMethod(null, SortKey.Relevance)),
+            sortFollowsDefault = false,
+        )
 
     fun arrangedResults(results: List<Result>, arranged: List<String>): List<Result> {
         if (arranged.isEmpty()) return results
@@ -2598,6 +2617,7 @@ object SearchDomain {
             Setting.IncludedElements -> "Elements always in the list, whatever else narrows it."
             Setting.NoParentOfKinds -> "Only the elements with no parent of the types checked."
             Setting.ParentsOf -> "Only the parents of the elements given."
+            Setting.InvolvementOf -> "The tasks the order involvement puts first: the evolutions given to them, then those relative to them, then the rest."
             Setting.ParentDistance -> "How far above those elements a parent stands to be listed: 1, the direct parents; 2, their parents alone…"
             Setting.GroupByAddedElements -> "The actions grouped by the added elements they act on."
             Setting.ExpandResults -> "The top rows open, showing their children, from the start."
@@ -3067,6 +3087,8 @@ object SearchDomain {
         val parentsOf: List<String> = emptyList(),
         /** New 2026-11-13: absent = the direct parents (1); 0 = at any distance. */
         val parentDistance: Int = 1,
+        /** New 2026-11-20: absent = no task the evolutions' involvement order is measured against. */
+        val involvementOf: List<String> = emptyList(),
         /**
          * New 2026-11-16 ("Where to search"): absent = the names alone, as before; a field this build does not know is
          * dropped. [childDistance] absent = the direct children.
@@ -3973,7 +3995,7 @@ object SearchDomain {
         if (sorts == DEFAULT_SORTS) return base
         // User rule 2026-11-16, "tree order": the place of each row in the tree it comes from.
         val treeOrder = (given ?: configurationRows?.rows)?.withIndex()?.associate { (i, row) -> keyOf(row) to i }.orEmpty()
-        val keys = SortValues(state, query, treeOrder)
+        val keys = SortValues(state, query, treeOrder, filters.involvementOf)
         var rows = base
         for (method in sorts.asReversed()) {
             val kind = method.kind
@@ -4057,7 +4079,18 @@ object SearchDomain {
      * per-kind counts — is computed at most once per [results], and only when a sort asks for it: none of it is
      * read under the default order.
      */
-    private class SortValues(private val state: SchedulerState, private val query: String, private val treeOrder: Map<String, Int> = emptyMap()) {
+    private class SortValues(
+        private val state: SchedulerState,
+        private val query: String,
+        private val treeOrder: Map<String, Int> = emptyMap(),
+        private val involvementOf: Set<String> = emptySet(),
+    ) {
+        private val involvement by lazy {
+            val tasks = involvementOf.mapNotNull { key -> key.takeIf { it.startsWith(Kind.Task.name + "/") }?.substringAfter('/')?.let(::TaskId) }
+            val rank = HashMap<String, Int>()
+            PresenceEvolutions.involvementGroups(state, tasks).forEachIndexed { i, g -> for (id in g) if (id !in rank) rank[id] = i }
+            rank
+        }
         private val priorities by lazy { SchedulerDomain.absoluteTaskPriorities(state) }
         private val carriers by lazy {
             state.tasks.values.flatMap { it.categoryIds }.groupingBy { it }.eachCount()
@@ -4102,6 +4135,7 @@ object SearchDomain {
                 SortKey.RelationSection -> sectionRank[row.detail.substringBefore(" · ")]
                 SortKey.ShortcutChord -> row.detail.substringBefore(" · ").lowercase()
                 SortKey.WindowState -> windowStatusOf(row)?.ordinal
+                SortKey.EvolutionInvolvement -> row.takeIf { it.kind == Kind.PresenceEvolution }?.let { involvement[it.id] ?: 2 }
                 SortKey.Date -> (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.id?.let(ClaudeLogCatalog::timeOf)
                 else -> null
             }
