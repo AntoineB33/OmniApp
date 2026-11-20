@@ -25,14 +25,18 @@ import org.example.project.time.SystemAppClock
  * `SchedulerDomain.schedulingSignature`, and one that only rewrites the RECORDS counts itself in
  * `SchedulerState.recordRewrites`, which the engine watches beside it.
  *
- * Read off the fill's own instrument (`scheduler.fillSchedule`): zero calls while the edits below are reduced.
+ * Read off the fill itself ([SchedulerDomain.fillObserver]), on THIS thread: zero fills while the edits below are reduced.
+ * Not off the global `scheduler.fillSchedule` counter (anomaly 2026-11-21): it also counted the fills an earlier test of
+ * the same JVM left running in the background, and the gate failed by the order its classes were shared out in.
  */
 class CalendarEditNeverPlansInlineTest {
     private val hour = 3_600_000L
     private val day = 24 * hour
     private val now = 1_900_000_000_000L - 1_900_000_000_000L % day + 12 * hour
 
-    private fun fills(): Long = Perf.snapshot().sections.firstOrNull { it.name == "scheduler.fillSchedule" }?.calls ?: 0L
+    @Volatile private var ownFills = 0L
+
+    private fun fills(): Long = ownFills
 
     private fun account(): SchedulerState {
         var s = SchedulerState.empty()
@@ -47,6 +51,9 @@ class CalendarEditNeverPlansInlineTest {
         val perfBefore = Perf.enabled
         SchedulerReducer.clock = object : AppClock { override fun nowMillis(): Long = now }
         Perf.enabled = true
+        val observerBefore = SchedulerDomain.fillObserver
+        val thread = Thread.currentThread()
+        SchedulerDomain.fillObserver = { if (Thread.currentThread() == thread) ownFills++ }
         try {
             var s = account()
             // Work the line banked this morning: three hours of the first schedulable task (the account's own, if any).
@@ -54,6 +61,7 @@ class CalendarEditNeverPlansInlineTest {
             val worked = TaskTimeRange(now - 5 * hour, now - 2 * hour)
             s = s.copy(tasks = s.tasks + (task.id to task.copy(record = listOf(worked))))
             Perf.reset()
+            ownFills = 0
 
             // A period laid over that work: the work is hidden under it — a record rewrite, counted, not planned for.
             val laid = SchedulerReducer.reduce(s, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.SLEEP, now - 4 * hour, now - 3 * hour))
@@ -85,6 +93,7 @@ class CalendarEditNeverPlansInlineTest {
             // The request is in memory only: it is no part of what is saved or sent.
             assertEquals(0, removed.withLocalViewStateNeutralized().recordRewrites)
         } finally {
+            SchedulerDomain.fillObserver = observerBefore
             Perf.enabled = perfBefore
             SchedulerReducer.clock = clockBefore
         }

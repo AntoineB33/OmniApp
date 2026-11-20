@@ -63,6 +63,13 @@ data class SchedulerRunRules(
 }
 
 object SchedulerDomain {
+    /**
+     * Told at the start of every fill ([fillSchedule]), on the thread running it; null (always, in the app). A test seam:
+     * `CalendarEditNeverPlansInlineTest` counts the fills made on ITS thread — the global `scheduler.fillSchedule`
+     * counter also counted fills an earlier test of the same JVM left running in the background (anomaly 2026-11-21).
+     */
+    internal var fillObserver: (() -> Unit)? = null
+
     fun isRootTask(taskId: TaskId?): Boolean = taskId == WellKnownIds.ROOT_TASK
 
     /**
@@ -5823,6 +5830,7 @@ object SchedulerDomain {
         noPast: Boolean = false,
     ): List<TaskPanel> {
         var ruleState: List<String> = emptyList()
+        fillObserver?.invoke()
         // Only the fill itself is measured: describing it is a diagnostic the two plan reductions ask for,
         // and folding its cost into `scheduler.fillSchedule` would misreport what a re-plan costs a user
         // (CLAUDE.md — the section is how the re-plan cost is checked rather than assumed).
