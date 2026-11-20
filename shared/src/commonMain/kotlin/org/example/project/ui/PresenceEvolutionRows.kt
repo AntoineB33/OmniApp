@@ -42,8 +42,9 @@ internal enum class PresenceRow(val placeholder: String) {
 
 /**
  * User rule 2026-11-19: **"Presence ratio target", in the group of the added tasks S, is rows only**:
- * - **the evolutions** — a field opening a Search window of the presence ratio target evolutions involving a task of S,
- *   its added elements list A showing: what is added there is what the rows below edit (and a row making a new one, for
+ * - **the evolutions** — a field opening a Search window of every presence ratio target evolution (anomaly 2026-11-20:
+ *   *"It should show all the Presence ratio target evolutions by default, since that's what this field is for"* — it
+ *   excluded those involving no task of S, which its ▾ showed as excluded elements), its added elements list A showing: what is added there is what the rows below edit (and a row making a new one, for
  *   S, added to A);
  * - **the tasks that get it** — a field opening a Search window of tasks whose added elements are the tasks of A's
  *   evolutions: added there, a task gets them; dropped, it no longer does;
@@ -62,17 +63,15 @@ internal fun PresenceEvolutionRows(
 ) {
     val s = SearchDomain.addedTaskIds(state, added)
     val evolutionKey = { id: String -> SearchDomain.Kind.PresenceEvolution.name + "/" + id }
-    val involving = PresenceEvolutions.involving(state, s)
-    val involvingKeys = involving.mapTo(HashSet()) { evolutionKey(it.id) }
-    val others = PresenceEvolutions.shown(state).map { evolutionKey(it.id) }.filterNot { it in involvingKeys }.toSet()
+    val all = PresenceEvolutions.shown(state)
+    val allKeys = all.mapTo(HashSet()) { evolutionKey(it.id) }
 
     // --- 1. the evolutions, and their added elements list A
-    val evolutionsOpened = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.PresenceEvolution), filters = SearchDomain.Filters(excludedElements = others))
+    val evolutionsOpened = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.PresenceEvolution))
     var evolutionsConfig by rememberInsideConfig(embeddedSearchId("field:$rowId/${PresenceRow.Evolutions.placeholder}"), evolutionsOpened)
     val evolutionsShown = evolutionsConfig.copy(
         kinds = setOf(SearchDomain.Kind.PresenceEvolution),
-        filters = evolutionsConfig.filters.copy(excludedElements = others),
-        added = evolutionsConfig.added.filter { it in involvingKeys },
+        added = evolutionsConfig.added.filter { it in allKeys },
     )
     // Anomaly 2026-11-20 (*"I selected the default presence ratio target evolution, but in relative to there is nothing"*):
     // a row selected in the field's window is in its added elements (user rule 2026-11-15), so the rows below edit it as
@@ -80,7 +79,7 @@ internal fun PresenceEvolutionRows(
     // selected there or the field's own list changes.
     var selectedInWindow by androidx.compose.runtime.saveable.rememberSaveable(rowId) { mutableStateOf(emptyList<String>()) }
     val a: List<PresenceEvolution> = (evolutionsShown.added + selectedInWindow).distinct()
-        .mapNotNull { key -> involving.firstOrNull { evolutionKey(it.id) == key } }
+        .mapNotNull { key -> all.firstOrNull { evolutionKey(it.id) == key } }
     fun edit(change: (PresenceEvolution) -> PresenceEvolution, editKey: String? = null) {
         val ids = a.mapTo(HashSet()) { it.id }
         // A default evolution of A (user rule 2026-11-20) is derived: edited, it is written, under its own id.
@@ -105,7 +104,7 @@ internal fun PresenceEvolutionRows(
                 modifier = Modifier.weight(1f),
                 openedParts = EMBEDDED_SEARCH_SPLITS.copy(addedRemoved = false),
                 // A selection replaces the one held; none (a press outside its rows, its closing) leaves it held.
-                onSelectedAdded = { keys -> if (keys.isNotEmpty()) selectedInWindow = keys.filter { it in involvingKeys } },
+                onSelectedAdded = { keys -> if (keys.isNotEmpty()) selectedInWindow = keys.filter { it in allKeys } },
             )
             // A new evolution, given to the tasks of S, and added to A.
             FrameButton("New", enabled = s.isNotEmpty()) {

@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The evolutions field lists every evolution — 2026-11-20
+
+- Anomaly: *"In the down arrow of the 'Presence ratio target evolutions' field, in 'Currently on', why do I see excluded
+  elements? It should show all the Presence ratio target evolutions by default"*. Its window excluded the evolutions
+  involving none of the added tasks (`excludedElements`). It opens on every one now, nothing excluded; what the rows
+  edit is still what is added or selected there. `PresenceEvolutionSelectionTest`.
+
 ### A result row's name is never drawn at no width — 2026-11-20
 
 - Anomaly: *"now the 'Presence ratio target evolutions' field doesn't show anything in the pop-up window"*. It listed the
