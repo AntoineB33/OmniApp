@@ -62,13 +62,13 @@ object FormulaCoherence {
 
         // --- presence ratio target evolutions
         val index = PresenceEvolutions.TreeIndex(state)
-        val live = state.presenceEvolutions.filter { it.formula.isNotBlank() }
+        val live = state.presenceEvolutions.filter { it.formula.isNotBlank() && it.target == EvolutionTarget.Presence }
         val parsed = HashMap<String, TimeFormula.Parsed>()
         for (e in live.sortedBy { it.id }) {
             val tasks = e.taskIds.filter { it in index.parents }
             val what = "The presence ratio target evolution of " + tasks.joinToString(", ") { "“${title(it)}”" }.ifEmpty { "no task" }
-            val problem = TimeFormula.problem(e.formula, zone, allowPriority = true)
-            val p = TimeFormula.parse(PresenceEvolutions.effectiveText(e), zone, allowPriority = true)
+            val problem = TimeFormula.problem(e.formula, zone, target = e.target)
+            val p = TimeFormula.parse(PresenceEvolutions.effectiveText(e), zone, target = e.target)
             if (problem != null || p == null) {
                 out += Problem("$what does not read: ${problem ?: "not a formula"}", tasks.toSet())
                 continue
@@ -132,7 +132,37 @@ object FormulaCoherence {
             }
         }
 
-        // --- minimum length targets
+        // --- minimum length target evolutions (user rule 2026-11-20): each reads, never below 0, and one at a time per task
+        val minimums = state.presenceEvolutions.filter { it.formula.isNotBlank() && it.target == EvolutionTarget.Minimum }
+        val minimumParsed = HashMap<String, TimeFormula.Parsed>()
+        for (e in minimums.sortedBy { it.id }) {
+            val tasks = e.taskIds.filter { state.tasks[it]?.title?.isNotBlank() == true }
+            val what = "The minimum length target evolution of " + tasks.joinToString(", ") { "“${title(it)}”" }.ifEmpty { "no task" }
+            val problem = TimeFormula.problem(e.formula, zone, target = e.target)
+            val p = TimeFormula.parse(PresenceEvolutions.effectiveText(e), zone, target = e.target)
+            if (problem != null || p == null) {
+                out += Problem("$what does not read: ${problem ?: "not a formula"}", tasks.toSet())
+                continue
+            }
+            minimumParsed[e.id] = p
+        }
+        if (minimumParsed.isNotEmpty()) {
+            val reported = HashSet<String>()
+            val byTask = HashMap<TaskId, MutableList<PresenceEvolution>>()
+            for (e in minimums) if (e.id in minimumParsed) for (t in e.taskIds) byTask.getOrPut(t) { ArrayList() } += e
+            for (at in samples(minimumParsed.values)) for ((t, list) in byTask) {
+                val task = state.tasks[t]?.takeIf { it.title.isNotBlank() } ?: continue
+                val values = list.mapNotNull { e -> minimumParsed.getValue(e.id).at(at, task.minimumMinutes.toDouble())?.let { e to it } }
+                if (values.size > 1 && reported.add("twice/$t")) {
+                    out += Problem("Two evolutions give “${task.title}” a minimum length target on ${when_(at)}", setOf(t))
+                }
+                values.firstOrNull { it.second < -EPS }?.let { (_, v) ->
+                    if (reported.add("negative/$t")) out += Problem("The minimum length target of “${task.title}” is $v min on ${when_(at)}: below 0", setOf(t))
+                }
+            }
+        }
+
+        // --- minimum length targets an older build wrote on a task (lifted into evolutions on decode)
         for (task in state.tasks.values.filter { it.minimumFormula.isNotBlank() && it.title.isNotBlank() }.sortedBy { it.id.value }) {
             val what = "The minimum length target of “${task.title}”"
             val problem = TimeFormula.problem(task.minimumFormula, zone)

@@ -781,6 +781,8 @@ class SearchWindowTest {
                 SearchDomain.Setting.NoParentOfKinds,
                 SearchDomain.Setting.ParentsOf,
                 SearchDomain.Setting.ParentDistance,
+                // User rule 2026-11-20: the tasks the evolutions' involvement order reads (both evolution kinds').
+                SearchDomain.Setting.InvolvementOf,
                 // User rule 2026-11-12: how the results are laid out (today the actions section's).
                 SearchDomain.Setting.GroupByAddedElements,
                 SearchDomain.Setting.ExpandResults,

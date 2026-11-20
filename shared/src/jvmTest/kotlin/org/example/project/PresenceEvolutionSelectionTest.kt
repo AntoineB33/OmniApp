@@ -84,6 +84,7 @@ class PresenceEvolutionSelectionTest {
         val popups = FieldSearchPopupHost()
         val menus = org.example.project.ui.TransientMenuHost()
         val frames = org.example.project.ui.WindowFrameHost()
+        var live = start
         val scene = onEdt {
             ImageComposeScene(SCENE_WIDTH, 1200, density = Density(1f)) {
                 var state by remember { mutableStateOf(start) }
@@ -91,7 +92,7 @@ class PresenceEvolutionSelectionTest {
                 val registry = remember {
                     org.example.project.ui.ArrowSearches(read = { config.inside }, write = { _, inside -> config = config.copy(inside = inside) })
                 }
-                val onIntent = { intent: SchedulerIntent -> state = SchedulerReducer.reduce(state, intent) }
+                val onIntent = { intent: SchedulerIntent -> state = SchedulerReducer.reduce(state, intent); live = state }
                 val embedded: @androidx.compose.runtime.Composable (org.example.project.ui.EmbeddedSearchRequest, Modifier) -> Unit = { request, modifier ->
                     SearchWindow(
                         state = state, openers = openers, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
@@ -147,7 +148,7 @@ class PresenceEvolutionSelectionTest {
             assertTrue(popups.request != null, "the evolutions' window is open")
             val row = PresenceEvolutions.title(start, PresenceEvolutions.defaults(start).first { a in it.taskIds })
             assertTrue(row in texts(), "the default evolution is listed: ${texts()}")
-            assertEquals(1, PresenceEvolutions.defaults(start).size, "one default evolution")
+            assertEquals(1, PresenceEvolutions.shown(start).size, "one default presence evolution")
             // Anomaly 2026-11-20: listed, its name was drawn at no width — the long detail beside it took the row.
             val name = nodes().last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == row } == true }.boundsInWindow
             assertTrue(name.width > 20f, "the name is drawn: $name")
@@ -159,6 +160,12 @@ class PresenceEvolutionSelectionTest {
             frames(6)
             assertTrue(texts().any { it == "relative to · of “Tree”" }, "held once its window closed: ${texts()}")
             assertTrue(texts().count { it == "Tree" } >= 2, "the relative-to window offers the tree's root: ${texts()}")
+            // User rule 2026-11-20, "Add a delete button": the bin beside "New" deletes the evolution the rows edit — the
+            // default one, marked gone.
+            click(find("🗑 Delete"))
+            frames(6)
+            assertTrue(PresenceEvolutions.shown(live).isEmpty(), "the default evolution is deleted: ${live.presenceEvolutions}")
+            assertTrue(texts().none { it.startsWith("relative to · ") }, "nothing left to edit: ${texts()}")
         } finally {
             onEdt { scene.close() }
         }

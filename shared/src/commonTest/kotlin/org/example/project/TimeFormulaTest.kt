@@ -100,9 +100,9 @@ class TimeFormulaTest {
         var s = account()
         s = SchedulerReducer.reduce(s, SchedulerIntent.SetTasksMinimumFormula(listOf(id(s, "B")), "ramp(10, 20, 30, 60)"))
         val b = s.tasks.getValue(id(s, "B"))
-        assertEquals(30.0, SchedulerDomain.minimumMinutesAt(b, 0L))
-        assertEquals(45.0, SchedulerDomain.minimumMinutesAt(b, 15 * DAY))
-        assertEquals(b.minimumMinutes.toDouble(), SchedulerDomain.minimumMinutesAt(b.copy(minimumFormula = ""), 15 * DAY), "blank: the constant")
+        assertEquals(30.0, SchedulerDomain.minimumMinutesAt(s, b, 0L))
+        assertEquals(45.0, SchedulerDomain.minimumMinutesAt(s, b, 15 * DAY))
+        assertEquals(b.minimumMinutes.toDouble(), SchedulerDomain.minimumMinutesAt(s, b.copy(minimumFormula = ""), 15 * DAY), "blank: the constant")
     }
 
     @Test
@@ -124,7 +124,9 @@ class TimeFormulaTest {
         val withMinimum = SchedulerReducer.reduce(s, SchedulerIntent.SetTasksMinimumFormula(listOf(id(s, "B")), "40 + t * 0"))
         val back = SchedulerStateCodec.decode(SchedulerStateCodec.encode(withMinimum))!!
         assertEquals("ramp(10, 20, 3, 1)", back.cells.getValue(a).weightFormula)
-        assertEquals("40 + t * 0", back.tasks.getValue(id(s, "B")).minimumFormula)
+        // User rule 2026-11-20: a minimum formula is a minimum length target evolution — written on the task, it is lifted.
+        assertEquals("", back.tasks.getValue(id(s, "B")).minimumFormula)
+        assertEquals("40 + t * 0", back.presenceEvolutions.single { it.taskIds == listOf(id(s, "B")) }.formula)
         // Persisted-DB compatibility: a payload written before the fields has none, and writes none until one is given.
         val older = SchedulerStateCodec.encode(SchedulerState.empty())
         assertFalse("weightFormula" in older || "minimumFormula" in older)

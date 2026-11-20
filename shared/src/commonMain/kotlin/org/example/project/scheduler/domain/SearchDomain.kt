@@ -162,6 +162,13 @@ object SearchDomain {
         PresenceEvolution("presence ratio target evolution"),
 
         /**
+         * User rule 2026-11-20 (*"The minimum time target evolution action should be the same thing"*): a **minimum length
+         * target evolution** — the same element ([org.example.project.scheduler.domain.PresenceEvolution], its target
+         * [org.example.project.scheduler.domain.EvolutionTarget.Minimum]), edited from the "Minimum length target" action.
+         */
+        MinimumEvolution("minimum length target evolution"),
+
+        /**
          * A window of the app, open or not ([WindowEntry]): what the rows name is not in the account's state but
          * in `App`'s windows, which hands the list in ([results]'s `windows`).
          */
@@ -1683,6 +1690,8 @@ object SearchDomain {
          * evolutions" field's window opens sorted by, a sort like any other.
          */
         EvolutionInvolvement(Kind.PresenceEvolution, "involvement of the tasks of \"Involvement of\""),
+        /** The same for the minimum length target evolutions: those given to the tasks of [Filters.involvementOf] first. */
+        MinimumInvolvement(Kind.MinimumEvolution, "involvement of the tasks of \"Involvement of\""),
         /** [WindowStatus]'s order: open, minimized, not open. */
         WindowState(Kind.Window, "state"),
         /**
@@ -1918,10 +1927,10 @@ object SearchDomain {
         NoParentOfKinds(null, "Has no parent of the types"),
         /** User rule 2026-11-12: only the parents of the given elements ([Filters.parentsOf]): the "List of parents". */
         ParentsOf(null, "Parents of"),
-        /** User rule 2026-11-20: the tasks the evolutions' "involvement" order is measured against ([Filters.involvementOf]). */
-        InvolvementOf(Kind.PresenceEvolution, "Involvement of"),
         /** User rule 2026-11-13: how far above those elements a parent may stand ([Filters.parentDistance]): an integer. */
         ParentDistance(null, "Parent distance"),
+        /** User rule 2026-11-20: the tasks the evolutions' "involvement" order is measured against ([Filters.involvementOf]). */
+        InvolvementOf(null, "Involvement of"),
         /** User rule 2026-11-12: the results grouped by the added elements they involve ([Config.actionsGrouped]). */
         GroupByAddedElements(null, "Group by added elements"),
         /** User rule 2026-11-12: the top rows of the results open by default, not their children ([Config.actionsExpanded]). */
@@ -1954,6 +1963,7 @@ object SearchDomain {
         WorkplaceSetupSort(Kind.WorkplaceSetup, "Sort by", sorts = true),
         MdSort(Kind.Md, "Sort by", sorts = true),
         PresenceEvolutionSort(Kind.PresenceEvolution, "Sort by", sorts = true),
+        MinimumEvolutionSort(Kind.MinimumEvolution, "Sort by", sorts = true),
         AppSettingSort(Kind.AppSetting, "Sort by", sorts = true),
         CalendarSort(Kind.Calendar, "Sort by", sorts = true),
         WindowSort(Kind.Window, "Sort by", sorts = true),
@@ -2152,13 +2162,20 @@ object SearchDomain {
      * and the tasks it reads ([Filters.involvementOf]) are configurations of the window, listed in its ▾'s "Currently on"
      * (anomaly 2026-11-20: an order no configuration said was "a fundamental issue").
      */
-    fun evolutionsFieldConfig(taskIds: Collection<TaskId>): Config =
-        Config(
-            kinds = setOf(Kind.PresenceEvolution),
+    fun evolutionsFieldConfig(taskIds: Collection<TaskId>, target: EvolutionTarget = EvolutionTarget.Presence): Config {
+        val kind = evolutionKindOf(target)
+        return Config(
+            kinds = setOf(kind),
             filters = Filters(involvementOf = taskIds.mapTo(LinkedHashSet(), ::taskKey)),
-            sorts = listOf(SortMethod(Kind.PresenceEvolution, SortKey.EvolutionInvolvement)),
+            sorts = listOf(SortMethod(kind, if (target == EvolutionTarget.Minimum) SortKey.MinimumInvolvement else SortKey.EvolutionInvolvement)),
             sortFollowsDefault = false,
         )
+    }
+
+    /** The search kind of the evolutions of [target], and back. */
+    fun evolutionKindOf(target: EvolutionTarget): Kind = if (target == EvolutionTarget.Minimum) Kind.MinimumEvolution else Kind.PresenceEvolution
+
+    fun evolutionTargetOf(kind: Kind): EvolutionTarget = if (kind == Kind.MinimumEvolution) EvolutionTarget.Minimum else EvolutionTarget.Presence
 
     fun arrangedResults(results: List<Result>, arranged: List<String>): List<Result> {
         if (arranged.isEmpty()) return results
@@ -2249,6 +2266,7 @@ object SearchDomain {
             Kind.Shortcut -> "shortcuts"
             Kind.WorkplaceSetup -> "setups"
             Kind.PresenceEvolution -> "evolutions"
+            Kind.MinimumEvolution -> "minimum evolutions"
             Kind.ClaudeReasoning -> "reasoning"
             Kind.SearchConfiguration -> "configurations"
             else -> kind.plural
@@ -2683,7 +2701,7 @@ object SearchDomain {
                 when {
                     kind == null -> setting.label + "."
                     setting.sorts -> "The order of the ${kind.plural}: the sorting methods checked, the first one dominant. " +
-                        SORT_KEY_HINTS + (if (kind == Kind.PresenceEvolution) " " + EVOLUTION_INVOLVEMENT_HINT else "")
+                        SORT_KEY_HINTS + (if (kind == Kind.PresenceEvolution || kind == Kind.MinimumEvolution) " " + EVOLUTION_INVOLVEMENT_HINT else "")
                     else -> "Keeps the ${kind.plural} by \"${setting.label}\". " + (filterHint(listOf(setting)) ?: "")
                 }.trim()
             }
@@ -3663,7 +3681,7 @@ object SearchDomain {
                 Kind.Md -> state.mdElements.map { md ->
                     ItemResult(kind, md.id, MdDomain.title(md).ifBlank { "Md element" }, mdDetail(state, md))
                 }
-                Kind.PresenceEvolution -> PresenceEvolutions.shown(state).map { e ->
+                Kind.PresenceEvolution, Kind.MinimumEvolution -> PresenceEvolutions.shown(state, evolutionTargetOf(kind)).map { e ->
                     ItemResult(kind, e.id, PresenceEvolutions.title(state, e), PresenceEvolutions.detail(state, e))
                 }
                 Kind.Chrono -> state.chronos.map { chrono ->
@@ -4105,6 +4123,12 @@ object SearchDomain {
             PresenceEvolutions.involvementGroups(state, tasks).forEachIndexed { i, g -> for (id in g) if (id !in rank) rank[id] = i }
             rank
         }
+        private val minimumInvolvement by lazy {
+            val tasks = involvementOf.mapNotNull { key -> key.takeIf { it.startsWith(Kind.Task.name + "/") }?.substringAfter('/')?.let(::TaskId) }
+            val rank = HashMap<String, Int>()
+            PresenceEvolutions.involvementGroups(state, tasks, EvolutionTarget.Minimum).forEachIndexed { i, g -> for (id in g) if (id !in rank) rank[id] = i }
+            rank
+        }
         private val priorities by lazy { SchedulerDomain.absoluteTaskPriorities(state) }
         private val carriers by lazy {
             state.tasks.values.flatMap { it.categoryIds }.groupingBy { it }.eachCount()
@@ -4150,6 +4174,7 @@ object SearchDomain {
                 SortKey.ShortcutChord -> row.detail.substringBefore(" · ").lowercase()
                 SortKey.WindowState -> windowStatusOf(row)?.ordinal
                 SortKey.EvolutionInvolvement -> row.takeIf { it.kind == Kind.PresenceEvolution }?.let { involvement[it.id] ?: 2 }
+                SortKey.MinimumInvolvement -> row.takeIf { it.kind == Kind.MinimumEvolution }?.let { minimumInvolvement[it.id] ?: 2 }
                 SortKey.Date -> (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.id?.let(ClaudeLogCatalog::timeOf)
                 else -> null
             }
@@ -4176,7 +4201,7 @@ object SearchDomain {
                         ))
             }
             is ItemResult -> when (result.kind) {
-                Kind.Task, Kind.WorkplaceSetup, Kind.Md, Kind.PresenceEvolution, Kind.SearchConfiguration, Kind.Option, Kind.Integer, Kind.Action -> true
+                Kind.Task, Kind.WorkplaceSetup, Kind.Md, Kind.PresenceEvolution, Kind.MinimumEvolution, Kind.SearchConfiguration, Kind.Option, Kind.Integer, Kind.Action -> true
                 Kind.Category ->
                     tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
                 Kind.RestrictivePeriod -> when (filters.periodOrigin) {
@@ -4502,7 +4527,7 @@ object SearchDomain {
     val HISTORY_CHANGED_KINDS: List<Kind> =
         listOf(
             Kind.Task, Kind.Category, Kind.RestrictivePeriod, Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Quota, Kind.Reminder,
-            Kind.Shortcut, Kind.Window, Kind.WorkplaceSetup, Kind.Md, Kind.PresenceEvolution,
+            Kind.Shortcut, Kind.Window, Kind.WorkplaceSetup, Kind.Md, Kind.PresenceEvolution, Kind.MinimumEvolution,
         )
 
     /** Whether a unit that changed [changed] passes the two "changed" filters: one of the checked kinds, the one element. */
@@ -5152,6 +5177,7 @@ object SearchDomain {
         MdDelete(Kind.Md, "Delete"),
         /** User rule 2026-11-19: the bin of the added presence ratio target evolutions. */
         PresenceEvolutionDelete(Kind.PresenceEvolution, "Delete"),
+        MinimumEvolutionDelete(Kind.MinimumEvolution, "Delete"),
 
         /** The volume of Claude Code's own sounds ([AppSettingEntry.ClaudeSounds]). */
         ClaudeSoundsVolume(Kind.AppSetting, "Claude Code sounds volume"),
@@ -5236,7 +5262,7 @@ object SearchDomain {
             AddedAction.TaskScheduleUnit -> task?.scheduleUnit
             AddedAction.MdText -> state.mdElements.firstOrNull { it.id == id && row.kind == Kind.Md }?.text
             AddedAction.TaskPresenceFormula -> task?.let { t -> PresenceEvolutions.involving(state, listOf(t.id)).map { it.id }.toSet() }
-            AddedAction.TaskMinimumFormula -> task?.minimumFormula
+            AddedAction.TaskMinimumFormula -> task?.let { t -> PresenceEvolutions.involving(state, listOf(t.id), EvolutionTarget.Minimum).map { it.id }.toSet() }
             AddedAction.TaskTreeName -> treeRootsOf(listOf(row)).map { state.tasks[it]?.title }
             AddedAction.AlarmTitle -> alarm()?.label
             AddedAction.AlarmOnOff -> alarm()?.enabled
@@ -5761,7 +5787,7 @@ object SearchDomain {
             AddedAction.CategoryName -> "unique rename"
             AddedAction.CategoryRules, AddedAction.CategoryAddRule -> "rule label"
             AddedAction.AlarmDelete, AddedAction.TimerDelete, AddedAction.ChronoDelete, AddedAction.QuotaDelete,
-            AddedAction.WorkplaceDelete, AddedAction.MdDelete, AddedAction.PresenceEvolutionDelete,
+            AddedAction.WorkplaceDelete, AddedAction.MdDelete, AddedAction.PresenceEvolutionDelete, AddedAction.MinimumEvolutionDelete,
             AddedAction.ReminderDelete, AddedAction.CategoryDelete, AddedAction.PeriodDelete, AddedAction.ShortcutDelete -> "delete remove bin"
             AddedAction.TimerAlert, AddedAction.ReminderAlert, AddedAction.AlarmAlert -> "alert sound voice notify vibrate"
             AddedAction.ReminderConstraint -> "choose none"
@@ -7316,7 +7342,7 @@ object SearchDomain {
             Kind.Chrono -> state.chronos.mapTo(HashSet()) { it.id }
             Kind.WorkplaceSetup -> state.workplaceSetups.mapTo(HashSet()) { it.id }
             Kind.Md -> state.mdElements.mapTo(HashSet()) { it.id }
-            Kind.PresenceEvolution -> PresenceEvolutions.shown(state).mapTo(HashSet()) { it.id }
+            Kind.PresenceEvolution, Kind.MinimumEvolution -> PresenceEvolutions.shown(state, evolutionTargetOf(kind)).mapTo(HashSet()) { it.id }
             Kind.Quota -> state.quotas.mapTo(HashSet()) { it.id }
             Kind.Reminder -> state.chores.mapTo(HashSet()) { it.id }
             else -> emptySet()
@@ -7496,9 +7522,10 @@ object SearchDomain {
                         val next = state.mdElements.filterNot { it.id in ids }
                         if (next.size == state.mdElements.size) emptyList() else listOf(SchedulerIntent.SetMdElements(next))
                     }
-                    Kind.PresenceEvolution -> {
-                        val next = state.presenceEvolutions.filterNot { it.id in ids }
-                        if (next.size == state.presenceEvolutions.size) emptyList() else listOf(SchedulerIntent.SetPresenceEvolutions(next))
+                    // User rule 2026-11-20: a default evolution deleted is marked gone ([PresenceEvolutions.deleted]).
+                    Kind.PresenceEvolution, Kind.MinimumEvolution -> {
+                        val next = PresenceEvolutions.deleted(state, ids)
+                        if (next == state.presenceEvolutions) emptyList() else listOf(SchedulerIntent.SetPresenceEvolutions(next))
                     }
                     Kind.WorkplaceSetup -> {
                         val next = state.workplaceSetups.filterNot { it.id in ids }

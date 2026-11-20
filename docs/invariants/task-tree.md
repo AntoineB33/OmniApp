@@ -153,7 +153,19 @@ root of a task tree, child of the first task element."* — and, of the trees an
   list), and read by neither scheduler (`adjust` and `FormulaCoherence` read `state.presenceEvolutions` only). Edited in
   the rows, it is written as a stored evolution under its id, which then holds in its place — and changes no share until
   its formula changes, `priority` being what the weights say.
-- **`priority` is a presence formula's alone** (`TimeFormula.parse`/`problem`'s `allowPriority`): the task's share over
+- **The minimum length target is evolutions too** (user rule 2026-11-20: *"The minimum time target evolution action
+  should be the same thing"*): the same element with `target = Minimum` (`EvolutionTarget`, stored in the same list,
+  persisted with its target — absent: a presence one), the search kind "minimum length target evolution"
+  (`Kind.MinimumEvolution`), edited in the same rows (`EvolutionRows`) less "relative to". Its formula reads `minimum`,
+  the task's minimum time; ONE default (`MINIMUM_DEFAULT_ID`): every task of the first tree, always, `minimum`. Read in
+  ONE place, `PresenceEvolutions.minimumAt` from `SchedulerDomain.minimumMinutesAt` (the stored ones only); two giving a
+  task a value at one instant, or a value below 0, is incoherent. A minimum formula an older build wrote on a task
+  (`Task.minimumFormula`) is lifted into an evolution of it on decode.
+- **Deleted with the bin beside "New"** (user rule 2026-11-20: *"Add a delete button"*; `PresenceEvolutions.deleted`, the
+  added elements' "Delete" alike): a stored evolution is removed; a default one, derived, is marked gone — an evolution
+  of no task and no formula under its id, which nothing lists or reads — so it stays deleted, on every device; Ctrl+Z
+  brings it back.
+- **`priority` is a presence formula's alone, `minimum` a minimum one's** (`TimeFormula.parse`/`problem`'s `target`): the task's share over
   the relative task's, by the weights alone (`absoluteTaskPriorities(withEvolutions = false)`); a weight or minimum
   formula reading it does not read.
 - **A target inside another relative to the same task is a target relative to that task** (`resolveNested`, read by

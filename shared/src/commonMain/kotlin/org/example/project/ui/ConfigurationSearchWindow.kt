@@ -667,7 +667,7 @@ internal fun SettingEditor(
         SearchDomain.Setting.ReminderSort, SearchDomain.Setting.BlockSort,
         SearchDomain.Setting.HistorySort, SearchDomain.Setting.NotificationSort,
         SearchDomain.Setting.RelationSort,
-        SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.WorkplaceSetupSort, SearchDomain.Setting.MdSort, SearchDomain.Setting.PresenceEvolutionSort, SearchDomain.Setting.AppSettingSort, SearchDomain.Setting.CalendarSort,
+        SearchDomain.Setting.ShortcutSort, SearchDomain.Setting.WorkplaceSetupSort, SearchDomain.Setting.MdSort, SearchDomain.Setting.PresenceEvolutionSort, SearchDomain.Setting.MinimumEvolutionSort, SearchDomain.Setting.AppSettingSort, SearchDomain.Setting.CalendarSort,
         SearchDomain.Setting.WindowSort,
         SearchDomain.Setting.CreationSort,
         SearchDomain.Setting.PromptSort, SearchDomain.Setting.AnswerSort, SearchDomain.Setting.ReasoningSort,

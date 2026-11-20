@@ -28,6 +28,22 @@ Check here before assuming the code matches the docs.
 - Tests: `PopupOpenerTest`, `PopupRapidClickTest` (scene: rapid clicks on a drop-down and on the ▾ with the platform's
   loss reported before and after each click; the bubble following a moving pointer).
 
+### Evolutions are deleted; the minimum length target is evolutions too — 2026-11-20
+
+- User rules: *"Add a delete button to delete a presence ratio target evolution. The minimum time target evolution
+  action should be the same thing."*
+- The bin beside "New" in the evolutions' rows (and the added elements' "Delete") goes through
+  `PresenceEvolutions.deleted`: a stored evolution is removed; a default one is marked gone (no task, no formula, under
+  its id) so it stays deleted.
+- The minimum length target is the same element with `target = Minimum` (`EvolutionTarget`; `PersistedPresenceEvolution.target`,
+  absent = Presence), its own search kind (`Kind.MinimumEvolution`, its "Sort by" and involvement sort), edited in the
+  same rows (`EvolutionRows`, `MinimumFormulaRows` gone) less "relative to". Its formula reads `minimum`, the task's
+  minimum time; one default, every task of the first tree at `minimum`. Read by `PresenceEvolutions.minimumAt` in
+  `SchedulerDomain.minimumMinutesAt(state, …)`; incoherent when two give a task a value at once or one is below 0.
+- Migration: a task's `minimumFormula` (an older build's) is lifted into a minimum evolution on decode
+  (`liftTaskMinimumFormulas`). `SchedulerDomain.formulaTexts` became `parsedFormulas`, each evolution read as its
+  target's: a formula reading `priority` had added no breakpoint to the plan's timeline.
+
 ### One default evolution: the first tree's, each task at its priority in it — 2026-11-20
 
 - User rule: *"Since I never edited any presence ratio target evolutions, shouldn't there be only one row … which would

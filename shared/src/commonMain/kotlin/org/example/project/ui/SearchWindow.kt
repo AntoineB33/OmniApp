@@ -421,7 +421,7 @@ data class SearchRowOpeners(
             // An md element is read and edited in its actions (user rule 2026-11-19).
             SearchDomain.Kind.Md -> Unit
             // A presence ratio target evolution is edited in the actions of its tasks (user rule 2026-11-19).
-            SearchDomain.Kind.PresenceEvolution -> Unit
+            SearchDomain.Kind.PresenceEvolution, SearchDomain.Kind.MinimumEvolution -> Unit
             SearchDomain.Kind.WorkplaceSetup -> onApplyWorkplaceSetup(item.id)
             SearchDomain.Kind.CalendarBlock ->
                 SearchDomain.calendarBlockOf(state, item.id)?.let { onOpenCalendarAt(it.startMillis) }

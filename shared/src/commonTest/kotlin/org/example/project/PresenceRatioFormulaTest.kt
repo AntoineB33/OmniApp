@@ -9,6 +9,7 @@ import kotlin.test.assertTrue
 import kotlinx.datetime.TimeZone
 import org.example.project.scheduler.domain.ElementTree
 import org.example.project.scheduler.domain.EvolutionPeriod
+import org.example.project.scheduler.domain.EvolutionTarget
 import org.example.project.scheduler.domain.FormulaCoherence
 import org.example.project.scheduler.domain.PresenceEvolution
 import org.example.project.scheduler.domain.PresenceEvolutions
@@ -65,8 +66,7 @@ class PresenceRatioFormulaTest {
             s = SchedulerReducer.reduce(s, SchedulerIntent.SetCellTitle(s.lists[a.childListId!!]!!.cellIds.last(), title))
         }
         val p = id(s, "P")
-        val defaults = PresenceEvolutions.defaults(s)
-        val only = defaults.single()
+        val only = PresenceEvolutions.shown(s).single()
         assertEquals(PresenceEvolutions.DEFAULT_ID, only.id)
         assertEquals(setOf("A", "B", "C", "A1", "A2"), only.taskIds.map { s.tasks.getValue(it).title }.toSet(), "the first tree's tasks, not Q")
         assertEquals(p, only.relativeTask, "relative to the first tree's root")
@@ -80,7 +80,7 @@ class PresenceRatioFormulaTest {
         // Stored (an edit writes it under its id): every share as the weights give it, and coherent.
         val before = listOf("A", "B", "C", "A1", "A2", "P", "Q").associateWith { share(s, it) }
         val stored = with(s, only)
-        assertTrue(PresenceEvolutions.defaults(stored).isEmpty(), "the stored one holds in its place")
+        assertTrue(PresenceEvolutions.defaults(stored).none { it.id == only.id }, "the stored one holds in its place")
         for ((title, v) in before) assertEquals(v, share(stored, title), 1e-9, "$title unchanged")
         assertTrue(FormulaCoherence.problems(stored, utc).isEmpty(), "coherent: ${FormulaCoherence.problems(stored, utc)}")
 
@@ -89,12 +89,75 @@ class PresenceRatioFormulaTest {
         assertTrue(FormulaCoherence.problems(doubled, utc).isNotEmpty(), "twice every priority is over 100 % of P")
     }
 
+    /** User rule 2026-11-20: "Add a delete button" — a stored evolution goes; a default one is marked gone, and stays gone. */
+    @Test
+    fun an_evolution_is_deleted_and_a_default_one_stays_deleted() {
+        val s0 = account()
+        val s = with(s0, evo("e1", listOf(id(s0, "A")), "0.3"))
+        val withoutE1 = SchedulerReducer.reduce(s, SchedulerIntent.SetPresenceEvolutions(PresenceEvolutions.deleted(s, listOf("e1"))))
+        assertTrue(withoutE1.presenceEvolutions.isEmpty())
+        val noDefault = SchedulerReducer.reduce(s0, SchedulerIntent.SetPresenceEvolutions(PresenceEvolutions.deleted(s0, listOf(PresenceEvolutions.DEFAULT_ID))))
+        assertTrue(PresenceEvolutions.shown(noDefault).isEmpty(), "the default presence evolution is gone from the list")
+        assertEquals(1, PresenceEvolutions.shown(noDefault, EvolutionTarget.Minimum).size, "the minimum one stays")
+        assertTrue(FormulaCoherence.problems(noDefault, utc).isEmpty())
+        for (title in listOf("A", "B", "C", "Q")) assertEquals(share(s0, title), share(noDefault, title), 1e-12, "$title unchanged")
+        // Survives the store.
+        assertTrue(PresenceEvolutions.shown(SchedulerStateCodec.decode(SchedulerStateCodec.encode(noDefault))!!).isEmpty())
+        // One undo brings it back.
+        assertEquals(1, PresenceEvolutions.shown(SchedulerReducer.reduce(noDefault, SchedulerIntent.Undo)).size)
+    }
+
+    /**
+     * User rule 2026-11-20: *"The minimum time target evolution action should be the same thing"* — minimum length target
+     * evolutions: one default (every task of the first tree, `minimum`, changing nothing), stored ones read by the
+     * scheduler, two at once on a task incoherent; an older build's minimum formula lifted into one.
+     */
+    @Test
+    fun the_minimum_length_target_is_evolutions_too() {
+        val s0 = account()
+        val a = id(s0, "A")
+        val minimumDefault = PresenceEvolutions.shown(s0, EvolutionTarget.Minimum).single()
+        assertEquals(PresenceEvolutions.MINIMUM_DEFAULT_ID, minimumDefault.id)
+        assertEquals("minimum", minimumDefault.formula)
+        assertEquals(setOf("A", "B", "C"), minimumDefault.taskIds.map { s0.tasks.getValue(it).title }.toSet())
+        assertEquals(1, PresenceEvolutions.shown(s0).size, "the presence list holds the presence default alone")
+        val taskA = s0.tasks.getValue(a)
+        // Stored as it is: no change.
+        val stored = with(s0, minimumDefault)
+        assertEquals(taskA.minimumMinutes.toDouble(), SchedulerDomain.minimumMinutesAt(stored, taskA, 0L))
+        assertTrue(FormulaCoherence.problems(stored, utc).isEmpty())
+        // A stored one of A: what the scheduler reads.
+        val doubled = with(s0, PresenceEvolution("m1", listOf(a), formula = "minimum * 2", target = EvolutionTarget.Minimum))
+        assertEquals(taskA.minimumMinutes * 2.0, SchedulerDomain.minimumMinutesAt(doubled, taskA, 0L))
+        assertEquals(listOf("m1", PresenceEvolutions.MINIMUM_DEFAULT_ID), PresenceEvolutions.involving(doubled, listOf(a), EvolutionTarget.Minimum).map { it.id })
+        assertTrue(FormulaCoherence.problems(doubled, utc).isEmpty())
+        // Two at once on A: incoherent.
+        val twice = with(doubled, PresenceEvolution("m2", listOf(a), formula = "30", target = EvolutionTarget.Minimum))
+        assertTrue(FormulaCoherence.problems(twice, utc).any { "minimum length target" in it.message }, "${FormulaCoherence.problems(twice, utc)}")
+        // Persisted-DB compatibility: an older build's minimum formula on a task is lifted into an evolution of it…
+        val older = SchedulerStateCodec.encode(s0.copy(tasks = s0.tasks + (a to taskA.copy(minimumFormula = "ramp(10, 20, 30, 60)"))))
+        val lifted = SchedulerStateCodec.decode(older)!!
+        val e = lifted.presenceEvolutions.single()
+        assertEquals(EvolutionTarget.Minimum, e.target)
+        assertEquals(listOf(a), e.taskIds)
+        assertEquals("", lifted.tasks.getValue(a).minimumFormula)
+        assertEquals(45.0, SchedulerDomain.minimumMinutesAt(lifted, lifted.tasks.getValue(a), 15 * DAY))
+        // …and an evolution written before the target existed is a presence ratio target's.
+        val presence = SchedulerStateCodec.encode(with(s0, evo("e1", listOf(a), "0.3")))
+        val withoutTarget = presence.replace(",\"target\":\"Presence\"", "")
+        assertFalse("\"target\"" in withoutTarget)
+        assertEquals(EvolutionTarget.Presence, SchedulerStateCodec.decode(withoutTarget)!!.presenceEvolutions.single().target)
+    }
+
     @Test
     fun priority_is_read_in_a_presence_formula_alone() {
-        assertNull(TimeFormula.problem("priority * 2", utc, allowPriority = true))
-        assertEquals(0.5, TimeFormula.parse("priority * 2", utc, allowPriority = true)!!.at(0L, 0.25)!!, 1e-12)
-        assertTrue(TimeFormula.parse("priority", utc, allowPriority = true)!!.readsPriority)
-        assertTrue(TimeFormula.problem("priority", utc) != null, "not in a weight or minimum formula")
+        assertNull(TimeFormula.problem("priority * 2", utc, target = EvolutionTarget.Presence))
+        assertEquals(0.5, TimeFormula.parse("priority * 2", utc, target = EvolutionTarget.Presence)!!.at(0L, 0.25)!!, 1e-12)
+        assertTrue(TimeFormula.parse("priority", utc, target = EvolutionTarget.Presence)!!.readsTaskValue)
+        assertTrue(TimeFormula.problem("priority", utc) != null, "not in a weight formula")
+        assertTrue(TimeFormula.problem("priority", utc, target = EvolutionTarget.Minimum) != null, "not in a minimum formula")
+        assertNull(TimeFormula.problem("minimum + 10", utc, target = EvolutionTarget.Minimum))
+        assertTrue(TimeFormula.problem("minimum", utc, target = EvolutionTarget.Presence) != null, "not in a presence formula")
     }
 
     /**

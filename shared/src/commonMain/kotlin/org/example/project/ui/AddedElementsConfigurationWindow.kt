@@ -984,9 +984,10 @@ private fun AddedActionBlocks(
         // User rule 2026-11-19: rows only — the evolutions, their tasks, what they are relative to, the periods, the
         // formula, the categories; and what is incoherent.
         SearchDomain.AddedAction.TaskPresenceFormula ->
-            PresenceEvolutionRows(state, added, rowId) { run(SearchDomain.AddedCommand.Raw(it)) }
+            EvolutionRows(org.example.project.scheduler.domain.EvolutionTarget.Presence, state, added, rowId) { run(SearchDomain.AddedCommand.Raw(it)) }
+        // User rule 2026-11-20: the minimum length target is the same thing — its evolutions, edited in the same rows.
         SearchDomain.AddedAction.TaskMinimumFormula ->
-            MinimumFormulaRows(state, taskIds) { run(SearchDomain.AddedCommand.Raw(it)) }
+            EvolutionRows(org.example.project.scheduler.domain.EvolutionTarget.Minimum, state, added, rowId) { run(SearchDomain.AddedCommand.Raw(it)) }
         // User rule 2026-11-13: the name of the tree(s) the added tasks belong to — the title of the task at its root.
         SearchDomain.AddedAction.TaskTreeName -> {
             val roots = SearchDomain.treeRootsOf(added).mapNotNull { state.tasks[it] }
@@ -1369,7 +1370,7 @@ private fun AddedActionBlocks(
         // The bin, over every added element of the kind; what it deleted leaves the added list too.
         SearchDomain.AddedAction.AlarmDelete, SearchDomain.AddedAction.TimerDelete, SearchDomain.AddedAction.ChronoDelete,
         SearchDomain.AddedAction.QuotaDelete, SearchDomain.AddedAction.WorkplaceDelete, SearchDomain.AddedAction.MdDelete,
-        SearchDomain.AddedAction.PresenceEvolutionDelete,
+        SearchDomain.AddedAction.PresenceEvolutionDelete, SearchDomain.AddedAction.MinimumEvolutionDelete,
         SearchDomain.AddedAction.ReminderDelete, SearchDomain.AddedAction.CategoryDelete -> {
             val kind = action.section ?: return
             val keys = added.filter { it.kind == kind }.map(SearchDomain::keyOf)

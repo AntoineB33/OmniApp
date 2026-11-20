@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.example.project.scheduler.domain.ElementTree
 import org.example.project.scheduler.domain.EvolutionPeriod
+import org.example.project.scheduler.domain.EvolutionTarget
 import org.example.project.scheduler.domain.FormulaCoherence
 import org.example.project.scheduler.domain.PresenceEvolution
 import org.example.project.scheduler.domain.PresenceEvolutions
@@ -30,7 +31,7 @@ import org.example.project.scheduler.state.SchedulerState
 /** The indent of a row under its action's title, as "Parents"' fields stand. */
 private val ROW_INDENT = 16.dp
 
-/** The six rows' grey texts — each row's name. */
+/** The rows' grey texts — each row's name (the evolutions' own: [evolutionsPlaceholder]). */
 internal enum class PresenceRow(val placeholder: String) {
     Evolutions("presence ratio target evolutions"),
     Tasks("tasks that get it"),
@@ -53,25 +54,32 @@ internal enum class PresenceRow(val placeholder: String) {
  * - **the time periods**, **the formula** ([TimeFormula]: the ratio, 0 to 1), **the categories** (a field opening the
  *   categories, the added ones those the evolutions carry);
  * - then each incoherence ([FormulaCoherence]), a row each, while the schedulers wait.
+ *
+ * User rule 2026-11-20 (*"The minimum time target evolution action should be the same thing"*): "Minimum length target"
+ * is the same rows over the minimum length target evolutions ([target] [EvolutionTarget.Minimum]) — less "relative to",
+ * a minimum being the task's own; and (*"Add a delete button"*) beside "New", the bin, over the evolutions edited.
  */
 @Composable
-internal fun PresenceEvolutionRows(
+internal fun EvolutionRows(
+    target: EvolutionTarget,
     state: SchedulerState,
     added: List<SearchDomain.Result>,
     rowId: String,
     run: (SchedulerIntent) -> Unit,
 ) {
     val s = SearchDomain.addedTaskIds(state, added)
-    val evolutionKey = { id: String -> SearchDomain.Kind.PresenceEvolution.name + "/" + id }
-    val all = PresenceEvolutions.shown(state)
+    val kind = SearchDomain.evolutionKindOf(target)
+    val evolutionKey = { id: String -> kind.name + "/" + id }
+    val all = PresenceEvolutions.shown(state, target)
     val allKeys = all.mapTo(HashSet()) { evolutionKey(it.id) }
+    val evolutionsPlaceholder = target.label + " evolutions"
 
     // --- 1. the evolutions, and their added elements list A
     // User rule 2026-11-20: every evolution, sorted by their involvement of S — configurations in its ▾.
-    val evolutionsOpened = SearchDomain.evolutionsFieldConfig(s)
-    var evolutionsConfig by rememberInsideConfig(embeddedSearchId("field:$rowId/${PresenceRow.Evolutions.placeholder}"), evolutionsOpened)
+    val evolutionsOpened = SearchDomain.evolutionsFieldConfig(s, target)
+    var evolutionsConfig by rememberInsideConfig(embeddedSearchId("field:$rowId/$evolutionsPlaceholder"), evolutionsOpened)
     val evolutionsShown = evolutionsConfig.copy(
-        kinds = setOf(SearchDomain.Kind.PresenceEvolution),
+        kinds = setOf(kind),
         added = evolutionsConfig.added.filter { it in allKeys },
     )
     // Anomaly 2026-11-20 (*"I selected the default presence ratio target evolution, but in relative to there is nothing"*):
@@ -93,7 +101,7 @@ internal fun PresenceEvolutionRows(
     Indented {
         Row(Modifier.fitsShownWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PopupSearchField(
-                placeholder = PresenceRow.Evolutions.placeholder + if (a.isEmpty()) "" else " · ${a.size} selected",
+                placeholder = evolutionsPlaceholder + if (a.isEmpty()) "" else " · ${a.size} selected",
                 state = state,
                 config = evolutionsShown,
                 onConfigChange = {
@@ -101,7 +109,7 @@ internal fun PresenceEvolutionRows(
                     evolutionsConfig = it
                 },
                 openedConfig = evolutionsOpened,
-                fieldId = "$rowId/${PresenceRow.Evolutions.placeholder}",
+                fieldId = "$rowId/$evolutionsPlaceholder",
                 modifier = Modifier.weight(1f),
                 openedParts = EMBEDDED_SEARCH_SPLITS.copy(addedRemoved = false),
                 // A selection replaces the one held; none (a press outside its rows, its closing) leaves it held.
@@ -109,9 +117,18 @@ internal fun PresenceEvolutionRows(
             )
             // A new evolution, given to the tasks of S, and added to A.
             FrameButton("New", enabled = s.isNotEmpty()) {
-                val id = PresenceEvolutions.mintId(state.presenceEvolutions.map { it.id })
-                run(SchedulerIntent.SetPresenceEvolutions(state.presenceEvolutions + PresenceEvolution(id, s)))
+                val id = PresenceEvolutions.mintId(state.presenceEvolutions.map { it.id }, target)
+                run(SchedulerIntent.SetPresenceEvolutions(state.presenceEvolutions + PresenceEvolution(id, s, target = target)))
                 evolutionsConfig = evolutionsConfig.copy(added = evolutionsConfig.added + evolutionKey(id))
+            }
+            // User rule 2026-11-20: the bin — every evolution of A deleted ([PresenceEvolutions.deleted]: a default one is
+            // marked gone), and out of the field's list.
+            FrameButton(if (a.size > 1) "🗑 Delete ${a.size}" else "🗑 Delete", enabled = a.isNotEmpty()) {
+                val ids = a.map { it.id }
+                run(SchedulerIntent.SetPresenceEvolutions(PresenceEvolutions.deleted(state, ids)))
+                val keys = ids.mapTo(HashSet(), evolutionKey)
+                evolutionsConfig = evolutionsConfig.copy(added = evolutionsConfig.added.filterNot { it in keys })
+                selectedInWindow = selectedInWindow.filterNot { it in keys }
             }
         }
     }
@@ -121,9 +138,14 @@ internal fun PresenceEvolutionRows(
     if (a.any { PresenceEvolutions.isDefault(it, state) }) {
         Indented {
             NoteText(
-                "The default evolution: every task of the first tree, relative to its root, at its priority in it (the formula " +
-                    "priority) — the actions \"Priority weights\" and \"Relative priority\" set it. An edit here writes it as an " +
-                    "evolution of its own, which then holds in its place",
+                if (target == EvolutionTarget.Minimum) {
+                    "The default evolution: every task of the first tree at its minimum time (the formula minimum) — the " +
+                        "action \"Minimum time\" sets it. An edit here writes it as an evolution of its own, which then holds in its place"
+                } else {
+                    "The default evolution: every task of the first tree, relative to its root, at its priority in it (the formula " +
+                        "priority) — the actions \"Priority weights\" and \"Relative priority\" set it. An edit here writes it as an " +
+                        "evolution of its own, which then holds in its place"
+                },
             )
         }
     }
@@ -156,7 +178,8 @@ internal fun PresenceEvolutionRows(
         )
     }
 
-    // --- 3. relative to: the tasks above every task of A, and the parent distance
+    // --- 3. relative to: the tasks above every task of A, and the parent distance — a presence ratio target's alone
+    if (target == EvolutionTarget.Presence) {
     val above = remember(state.cells, state.lists, state.tasks, aTasks) { PresenceEvolutions.commonAncestors(state, aTasks) }
     val relativeOpened = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task), sorts = SearchDomain.PICKER_SORTS, sortFollowsDefault = false)
     var relativeConfig by rememberInsideConfig(embeddedSearchId("field:$rowId/${PresenceRow.Relative.placeholder}"), relativeOpened)
@@ -190,6 +213,7 @@ internal fun PresenceEvolutionRows(
             },
         )
     }
+    }
 
     // --- 4. the time periods
     Indented { Text(PresenceRow.Periods.placeholder, style = MaterialTheme.typography.labelMedium) }
@@ -203,7 +227,7 @@ internal fun PresenceEvolutionRows(
                     from = period.fromMillis?.let { PresenceEvolutions.formatInstant(it) }.orEmpty(),
                     until = period.untilMillis?.let { PresenceEvolutions.formatInstant(it) }.orEmpty(),
                     onChange = { from, until ->
-                        edit({ e -> e.copy(periods = periods.toMutableList().also { it[index] = EvolutionPeriod(from, until) }) }, "presence/periods/$index")
+                        edit({ e -> e.copy(periods = periods.toMutableList().also { it[index] = EvolutionPeriod(from, until) }) }, "${target.name}/periods/$index")
                     },
                     onRemove = { edit({ e -> e.copy(periods = periods.filterIndexed { i, _ -> i != index }) }) },
                 )
@@ -218,12 +242,12 @@ internal fun PresenceEvolutionRows(
     val formulas = a.map { it.formula }.distinct()
     Indented {
         TypedFormulaRow(
-            label = PresenceRow.Formula.placeholder + " (the ratio, 0 to 1)",
-            allowPriority = true,
+            label = PresenceRow.Formula.placeholder + if (target == EvolutionTarget.Minimum) " (minutes)" else " (the ratio, 0 to 1)",
+            target = target,
             current = formulas.singleOrNull() ?: "",
             mixed = formulas.size > 1,
             enabled = a.isNotEmpty(),
-            onValid = { text -> edit({ e -> e.copy(formula = text) }, "presence/formula") },
+            onValid = { text -> edit({ e -> e.copy(formula = text) }, "${target.name}/formula") },
         )
     }
 
@@ -254,55 +278,6 @@ internal fun PresenceEvolutionRows(
         )
     }
 
-    FormulaProblems(state)
-}
-
-/**
- * User rule 2026-11-19: "Minimum length target", rows only: the time periods, then the formula (minutes) — written as ONE
- * formula of the instant on every added task ([TimeFormula.FormulaPeriods]).
- */
-@Composable
-internal fun MinimumFormulaRows(state: SchedulerState, taskIds: List<TaskId>, run: (SchedulerIntent) -> Unit) {
-    val texts = taskIds.mapNotNull { state.tasks[it]?.minimumFormula }.distinct()
-    val read = TimeFormula.FormulaPeriods.read(texts.singleOrNull().orEmpty())
-    val formula = read.firstOrNull()?.formula.orEmpty()
-    val spans = read.filter { it.from.isNotBlank() || it.until.isNotBlank() }.map { it.from to it.until }
-    fun write(nextSpans: List<Pair<String, String>>, nextFormula: String, editKey: String?) {
-        val text = if (nextFormula.isBlank()) "" else TimeFormula.FormulaPeriods.build(
-            if (nextSpans.isEmpty()) listOf(TimeFormula.Period("", "", nextFormula)) else nextSpans.map { TimeFormula.Period(it.first, it.second, nextFormula) },
-        )
-        if (TimeFormula.problem(text) == null) run(SchedulerIntent.SetTasksMinimumFormula(taskIds, text))
-    }
-    Indented { Text(PresenceRow.Periods.placeholder, style = MaterialTheme.typography.labelMedium) }
-    if (texts.size > 1) Indented(2) { NoteText("The added tasks have different formulas: an edit writes these on all of them") }
-    if (spans.isEmpty()) Indented(2) { NoteText("always") }
-    spans.forEachIndexed { index, (from, until) ->
-        androidx.compose.runtime.key(index) {
-            Indented(2) {
-                PeriodRow(
-                    from = from,
-                    until = until,
-                    onChange = { f, u ->
-                        write(spans.toMutableList().also { it[index] = (f?.let { m -> PresenceEvolutions.formatInstant(m) }.orEmpty()) to (u?.let { m -> PresenceEvolutions.formatInstant(m) }.orEmpty()) }, formula, null)
-                    },
-                    onRemove = { write(spans.filterIndexed { i, _ -> i != index }, formula, null) },
-                )
-            }
-        }
-    }
-    Indented(2) {
-        FrameButton("Add a period", enabled = formula.isNotBlank()) { write(spans + ("" to ""), formula, null) }
-    }
-    Indented {
-        TypedFormulaRow(
-            label = PresenceRow.Formula.placeholder + " (minutes; blank: the constant minimum)",
-            current = formula,
-            mixed = texts.size > 1,
-            enabled = taskIds.isNotEmpty(),
-            allowBlank = true,
-            onValid = { write(spans, it, null) },
-        )
-    }
     FormulaProblems(state)
 }
 
@@ -401,18 +376,18 @@ private fun TypedFormulaRow(
     mixed: Boolean,
     enabled: Boolean,
     allowBlank: Boolean = false,
-    /** A presence ratio target's formula: it may read `priority` (user rule 2026-11-20). */
-    allowPriority: Boolean = false,
+    /** A target evolution's formula: it may read the task's own value, `priority` or `minimum` (user rule 2026-11-20). */
+    target: EvolutionTarget? = null,
     onValid: (String) -> Unit,
 ) {
     var draft by remember(current) { mutableStateOf(current) }
-    val problem = TimeFormula.problem(draft, allowPriority = allowPriority)
+    val problem = TimeFormula.problem(draft, target = target)
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         OutlinedTextField(
             value = draft,
             onValueChange = {
                 draft = it
-                if (TimeFormula.problem(it, allowPriority = allowPriority) == null && (allowBlank || it.isNotBlank())) onValid(it.trim())
+                if (TimeFormula.problem(it, target = target) == null && (allowBlank || it.isNotBlank())) onValid(it.trim())
             },
             singleLine = true,
             enabled = enabled,
@@ -423,7 +398,11 @@ private fun TypedFormulaRow(
         )
         if (problem != null) NoteText(problem, color = MaterialTheme.colorScheme.error)
         else NoteText(
-            (if (allowPriority) "priority is each task's priority relative to what it is relative to, by the weights; " else "") +
+            when (target) {
+                EvolutionTarget.Presence -> "priority is each task's priority relative to what it is relative to, by the weights; "
+                EvolutionTarget.Minimum -> "minimum is each task's minimum time, in minutes; "
+                null -> ""
+            } +
                 "t is the instant in days; date(2026-12-01), ramp(t0, t1, a, b), step(t0, a, b), min, max, clamp, + - * / ^",
         )
     }

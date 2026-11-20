@@ -860,30 +860,35 @@ object SchedulerDomain {
         return formula.at(atMillis)?.coerceAtLeast(0.0) ?: stored
     }
 
-    /** User rule 2026-11-16 ([TimeFormula]): [task]'s minimum in minutes at [atMillis] — its formula's value, else [Task.minimumMinutes]. */
-    fun minimumMinutesAt(task: Task, atMillis: Long): Double {
+    /**
+     * [task]'s minimum in minutes at [atMillis]: its minimum length target evolution's value there (user rule 2026-11-20,
+     * [PresenceEvolutions.minimumAt]), else a formula an older build wrote on it (lifted into an evolution on decode), else
+     * [Task.minimumMinutes].
+     */
+    fun minimumMinutesAt(state: SchedulerState, task: Task, atMillis: Long): Double {
+        PresenceEvolutions.minimumAt(state, task, atMillis)?.let { return it }
         val formula = TimeFormula.parse(task.minimumFormula) ?: return task.minimumMinutes.toDouble()
         return formula.at(atMillis)?.coerceAtLeast(0.0) ?: task.minimumMinutes.toDouble()
     }
 
     /** Whether any weight or minimum of [state] is a formula that moves with time ([TimeFormula.Parsed.constant]). */
     fun hasMovingFormulas(state: SchedulerState): Boolean =
-        formulaTexts(state).any { TimeFormula.parse(it)?.constant == false }
+        parsedFormulas(state).any { !it.constant }
 
     /**
-     * Every formula of the instant [state] holds, blank ones left out: the weights', the minimums' and the presence ratio
-     * target evolutions' (each as ONE formula, its periods included, [PresenceEvolutions.effectiveText]). The one list
-     * the timeline reads.
+     * Every formula of the instant [state] holds, read: the weights', the minimums' an older build wrote, and the target
+     * evolutions' (each as ONE formula, its periods included, [PresenceEvolutions.effectiveText], read as its target's —
+     * a presence one may read `priority`, a minimum one `minimum`). The one list the timeline reads.
      */
-    fun formulaTexts(state: SchedulerState): List<String> =
-        (state.cells.values.map { it.weightFormula } + state.tasks.values.map { it.minimumFormula } +
-            state.presenceEvolutions.map(PresenceEvolutions::effectiveText))
-            .filter { it.isNotBlank() }.distinct()
+    fun parsedFormulas(state: SchedulerState): List<TimeFormula.Parsed> =
+        ((state.cells.values.map { it.weightFormula } + state.tasks.values.map { it.minimumFormula })
+            .filter { it.isNotBlank() }.distinct().mapNotNull { TimeFormula.parse(it) } +
+            state.presenceEvolutions.mapNotNull(PresenceEvolutions::parsed)).distinctBy { it.text }
 
     /** Every instant a formula of [state] may change pace at ([TimeFormula.Parsed.breakpoints]), in order. */
     fun formulaBreakpoints(state: SchedulerState): List<Long> =
-        formulaTexts(state)
-            .flatMap { TimeFormula.parse(it)?.breakpoints.orEmpty() }
+        parsedFormulas(state)
+            .flatMap { it.breakpoints }
             .distinct().sorted()
 
     /**
@@ -1069,7 +1074,7 @@ object SchedulerDomain {
             PlanTask(
                 id = id,
                 priority = priorities[id] ?: 0.0,
-                minimumMillis = ((task?.let { minimumMinutesAt(it, atMillis) } ?: 0.0) * MILLIS_PER_MINUTE).roundToLong(),
+                minimumMillis = ((task?.let { minimumMinutesAt(state, it, atMillis) } ?: 0.0) * MILLIS_PER_MINUTE).roundToLong(),
                 resilience = task?.resilience.orEmpty(),
                 credits = fulfilmentCredits(state.tasks, id, ids),
             )
@@ -1084,7 +1089,7 @@ object SchedulerDomain {
     private class FormulaTimeline(val state: SchedulerState, val leaves: List<TaskId>) : ScheduleFill.RuleStates {
         private val breakpoints = formulaBreakpoints(state)
         private val formulas =
-            formulaTexts(state).mapNotNull { TimeFormula.parse(it) }.filterNot { it.constant }
+            parsedFormulas(state).filterNot { it.constant }
 
         override fun at(x: Long): List<PlanTask> = ruleStateAt(state, leaves, x)
 
@@ -1095,7 +1100,9 @@ object SchedulerDomain {
             // Read at both ends and the middle of the piece: a formula smooth between its dates moves across it
             // exactly when these differ (a ramp flat before its start, flat after its end, reads alike).
             val probes = listOf(x, x + (end - x) / 2, end - 1)
-            return formulas.any { f -> probes.map { f.at(it) }.distinct().size > 1 }
+            // A formula reading the task's own value (`priority`, `minimum`) is probed as for a task whose value is 1
+            // (with none, it reads as no number at every probe and would never move).
+            return formulas.any { f -> probes.map { f.at(it, 1.0) }.distinct().size > 1 }
         }
     }
 
@@ -6284,7 +6291,7 @@ object SchedulerDomain {
             compareByDescending<TaskId> { priorities[it] ?: 0.0 }.thenBy { working.tasks[it]?.title.orEmpty() }
         val ordered = leaves.sortedWith(tieBreak)
         val minimumMillisOf = ordered.associateWith { id ->
-            ((working.tasks[id]?.let { minimumMinutesAt(it, nowMillis) } ?: 0.0) * MILLIS_PER_MINUTE).roundToLong()
+            ((working.tasks[id]?.let { minimumMinutesAt(working, it, nowMillis) } ?: 0.0) * MILLIS_PER_MINUTE).roundToLong()
         }
         val orderedIds = ordered.toHashSet()
         val planTasks =

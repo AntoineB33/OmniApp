@@ -7,6 +7,16 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.WellKnownIds
 import org.example.project.scheduler.state.SchedulerState
 
+/**
+ * User rule 2026-11-20 (*"The minimum time target evolution action should be the same thing"*): **what an evolution sets**
+ * — a task's presence ratio target, or its minimum length target. One element for both ([PresenceEvolution]), stored,
+ * synced, listed and edited the same way; [variable] is what its formula may read of the task ([TimeFormula]).
+ */
+enum class EvolutionTarget(val variable: String, val label: String) {
+    Presence("priority", "presence ratio target"),
+    Minimum("minimum", "minimum length target"),
+}
+
 /** One time period of a [PresenceEvolution]: from [fromMillis] until [untilMillis], null for an open side. */
 data class EvolutionPeriod(val fromMillis: Long? = null, val untilMillis: Long? = null)
 
@@ -31,17 +41,14 @@ data class PresenceEvolution(
     val parentDistance: Int = 1,
     val periods: List<EvolutionPeriod> = emptyList(),
     val formula: String = "",
+    /** User rule 2026-11-20: what it sets ([EvolutionTarget]); a minimum length target's has no relative task. */
+    val target: EvolutionTarget = EvolutionTarget.Presence,
 )
 
 object PresenceEvolutions {
     const val ID_PREFIX = "presence-"
 
-    fun mintId(used: Collection<String>): String {
-        val taken = used.toHashSet()
-        var n = 1
-        while ("$ID_PREFIX$n" in taken) n++
-        return "$ID_PREFIX$n"
-    }
+    fun mintId(used: Collection<String>): String = mintId(used, EvolutionTarget.Presence)
 
     /**
      * The evolution as ONE formula of the instant: its formula inside its periods (`periods(…)` over days), no value
@@ -55,19 +62,84 @@ object PresenceEvolutions {
         } + ")"
     }
 
-    fun parsed(e: PresenceEvolution): TimeFormula.Parsed? = TimeFormula.parse(effectiveText(e), allowPriority = true)
+    fun parsed(e: PresenceEvolution): TimeFormula.Parsed? = TimeFormula.parse(effectiveText(e), target = e.target)
 
     /**
-     * Its value at [atMillis] for a task of that [priority] relative to what it is relative to (its `priority`): null
-     * outside its periods, or where it reads as no number. Not clamped.
+     * Its value at [atMillis] for a task whose own value ([EvolutionTarget.variable]) is [task]: null outside its
+     * periods, or where it reads as no number. Not clamped.
      */
-    fun valueAt(e: PresenceEvolution, atMillis: Long, priority: Double = Double.NaN): Double? = parsed(e)?.at(atMillis, priority)
+    fun valueAt(e: PresenceEvolution, atMillis: Long, task: Double = Double.NaN): Double? = parsed(e)?.at(atMillis, task)
 
-    /** Which evolutions involve one of [taskIds]: the evolutions pop-up's list, the defaults included ([shown]). */
-    fun involving(state: SchedulerState, taskIds: Collection<TaskId>): List<PresenceEvolution> {
+    /** The stored evolutions of [target]. */
+    fun stored(state: SchedulerState, target: EvolutionTarget): List<PresenceEvolution> =
+        state.presenceEvolutions.filter { it.target == target }
+
+    /** Which evolutions of [target] involve one of [taskIds]: the evolutions pop-up's list, the defaults included ([shown]). */
+    fun involving(state: SchedulerState, taskIds: Collection<TaskId>, target: EvolutionTarget = EvolutionTarget.Presence): List<PresenceEvolution> {
         val ids = taskIds.toHashSet()
-        return shown(state).filter { e -> e.taskIds.any { it in ids } }
+        return shown(state, target).filter { e -> e.taskIds.any { it in ids } }
     }
+
+    // ----- the minimum length target ----------------------------------------------------------------
+
+    private class MinimumIndex(val evolutions: Any, val byTask: Map<TaskId, List<PresenceEvolution>>)
+
+    private var minimumIndex: MinimumIndex? = null
+
+    /**
+     * User rule 2026-11-20: [task]'s minimum in minutes at [atMillis] — the first stored minimum length target evolution
+     * of it that reads there (`minimum` its constant minimum time), never below 0; else the constant. The ONE reader
+     * ([SchedulerDomain.minimumMinutesAt]); the default evolution, derived, says the constant and is not read.
+     */
+    fun minimumAt(state: SchedulerState, task: org.example.project.scheduler.model.Task, atMillis: Long): Double? {
+        val known = minimumIndex
+        val index = if (known != null && known.evolutions === state.presenceEvolutions) known else {
+            val byTask = HashMap<TaskId, MutableList<PresenceEvolution>>()
+            for (e in state.presenceEvolutions) if (e.target == EvolutionTarget.Minimum && e.formula.isNotBlank()) {
+                for (t in e.taskIds) byTask.getOrPut(t) { ArrayList() } += e
+            }
+            MinimumIndex(state.presenceEvolutions, byTask).also { minimumIndex = it }
+        }
+        val list = index.byTask[task.id] ?: return null
+        for (e in list) valueAt(e, atMillis, task.minimumMinutes.toDouble())?.let { return it.coerceAtLeast(0.0) }
+        return null
+    }
+
+    /**
+     * The minimum formulas a build before 2026-11-20 wrote on a task ([org.example.project.scheduler.model.Task.minimumFormula],
+     * its periods inside it): each becomes a minimum length target evolution of that task, its id a function of the task
+     * (two devices lift alike), and the task's field is cleared.
+     */
+    fun liftTaskMinimumFormulas(state: SchedulerState): SchedulerState {
+        val carrying = state.tasks.values.filter { it.minimumFormula.isNotBlank() }
+        if (carrying.isEmpty()) return state
+        val known = state.presenceEvolutions.mapTo(HashSet()) { it.id }
+        val lifted = carrying.mapNotNull { task ->
+            val id = MINIMUM_ID_PREFIX + "task-" + task.id.value
+            if (id in known) null
+            else PresenceEvolution(id, listOf(task.id), formula = task.minimumFormula.trim(), target = EvolutionTarget.Minimum)
+        }
+        return state.copy(
+            presenceEvolutions = state.presenceEvolutions + lifted,
+            tasks = state.tasks + carrying.associate { it.id to it.copy(minimumFormula = "") },
+        )
+    }
+
+    // ----- deleting ------------------------------------------------------------------------------------
+
+    /**
+     * User rule 2026-11-20 (*"Add a delete button to delete a presence ratio target evolution"*): the stored list without
+     * the evolutions [ids]. A default one ([DEFAULT_IDS]) is derived, so deleting it stores what says it is gone — an
+     * evolution of no task and no formula under its id, which [shown] lists not and nothing reads.
+     */
+    fun deleted(state: SchedulerState, ids: Collection<String>): List<PresenceEvolution> {
+        val gone = ids.toHashSet()
+        val kept = state.presenceEvolutions.filterNot { it.id in gone }
+        val tombstones = DEFAULT_IDS.filter { (id, _) -> id in gone }.map { (id, target) -> PresenceEvolution(id, target = target) }
+        return kept + tombstones
+    }
+
+    private fun isTombstone(e: PresenceEvolution) = e.id in DEFAULT_ID_SET && e.taskIds.isEmpty() && e.formula.isBlank()
 
     /**
      * User rule 2026-11-20: *"the ones for the tasks that the field is for are placed first, then the ones the tasks are
@@ -75,10 +147,10 @@ object PresenceEvolutions {
      * where one of them is what the evolution is relative to (its relative task, or a task's ancestor at its parent
      * distance). Each evolution in the first group it falls in.
      */
-    fun involvementGroups(state: SchedulerState, taskIds: Collection<TaskId>): List<Set<String>> {
+    fun involvementGroups(state: SchedulerState, taskIds: Collection<TaskId>, target: EvolutionTarget = EvolutionTarget.Presence): List<Set<String>> {
         val s = taskIds.toHashSet()
         if (s.isEmpty()) return emptyList()
-        val all = shown(state)
+        val all = shown(state, target)
         val given = all.filter { e -> e.taskIds.any { it in s } }.mapTo(LinkedHashSet()) { it.id }
         val index = TreeIndex(state)
         val relative = all.filter { e -> e.id !in given && e.taskIds.any { t -> relativesOf(index, e, t).any { it in s } } }.mapTo(LinkedHashSet()) { it.id }
@@ -109,8 +181,29 @@ object PresenceEvolutions {
     /** The default evolution's formula: each task's priority relative to the first tree's root. */
     const val DEFAULT_FORMULA = "priority"
 
+    /** What a minimum length target evolution's id starts with. */
+    const val MINIMUM_ID_PREFIX = "minimum-"
+
+    /**
+     * User rule 2026-11-20 (*"The minimum time target evolution action should be the same thing"*): the default minimum
+     * length target evolution — every task of the first tree, always, `minimum`: each task's minimum time, constant.
+     */
+    const val MINIMUM_DEFAULT_ID = MINIMUM_ID_PREFIX + "default"
+
+    private val DEFAULT_IDS = listOf(DEFAULT_ID to EvolutionTarget.Presence, MINIMUM_DEFAULT_ID to EvolutionTarget.Minimum)
+    private val DEFAULT_ID_SET = DEFAULT_IDS.mapTo(HashSet()) { it.first }
+
     fun isDefault(e: PresenceEvolution, state: SchedulerState): Boolean =
-        e.id == DEFAULT_ID && state.presenceEvolutions.none { it.id == e.id }
+        e.id in DEFAULT_ID_SET && state.presenceEvolutions.none { it.id == e.id }
+
+    /** A new evolution's id, for [target]. */
+    fun mintId(used: Collection<String>, target: EvolutionTarget): String {
+        val prefix = if (target == EvolutionTarget.Minimum) MINIMUM_ID_PREFIX else ID_PREFIX
+        val taken = used.toHashSet()
+        var n = 1
+        while ("$prefix$n" in taken) n++
+        return "$prefix$n"
+    }
 
     private class DefaultsMemo(
         val cells: Any, val lists: Any, val tasks: Any, val evolutions: Any,
@@ -119,7 +212,7 @@ object PresenceEvolutions {
 
     private var defaultsMemo: DefaultsMemo? = null
 
-    /** The default evolution, unless a stored one holds its id (it was edited): none or one. */
+    /** The default evolutions, each unless a stored one holds its id (it was edited, or deleted). */
     fun defaults(state: SchedulerState): List<PresenceEvolution> {
         defaultsMemo?.let { m ->
             if (m.cells === state.cells && m.lists === state.lists && m.tasks === state.tasks && m.evolutions === state.presenceEvolutions) return m.value
@@ -130,18 +223,21 @@ object PresenceEvolutions {
     }
 
     private fun computeDefaults(state: SchedulerState): List<PresenceEvolution> {
-        if (state.presenceEvolutions.any { it.id == DEFAULT_ID }) return emptyList()
+        val stored = state.presenceEvolutions.mapTo(HashSet()) { it.id }
+        if (DEFAULT_IDS.all { it.first in stored }) return emptyList()
         val first = TaskTreesAsTasks.topTaskIds(state).firstOrNull() ?: return emptyList()
-        val under = TreeIndex(state).descendants(first)
+        val under = TreeIndex(state).descendants(first).toList()
         if (under.isEmpty()) return emptyList()
-        return listOf(PresenceEvolution(DEFAULT_ID, under.toList(), first, formula = DEFAULT_FORMULA))
+        return listOfNotNull(
+            PresenceEvolution(DEFAULT_ID, under, first, formula = DEFAULT_FORMULA).takeIf { DEFAULT_ID !in stored },
+            PresenceEvolution(MINIMUM_DEFAULT_ID, under, formula = EvolutionTarget.Minimum.variable, target = EvolutionTarget.Minimum)
+                .takeIf { MINIMUM_DEFAULT_ID !in stored },
+        )
     }
 
-    /** The stored evolutions, then the defaults: what the Search window lists and the rows edit. */
-    fun shown(state: SchedulerState): List<PresenceEvolution> {
-        val d = defaults(state)
-        return if (d.isEmpty()) state.presenceEvolutions else state.presenceEvolutions + d
-    }
+    /** The stored evolutions of [target] (a deleted default's mark left out), then its default: what is listed and edited. */
+    fun shown(state: SchedulerState, target: EvolutionTarget = EvolutionTarget.Presence): List<PresenceEvolution> =
+        state.presenceEvolutions.filter { it.target == target && !isTombstone(it) } + defaults(state).filter { it.target == target }
 
     // ----- the tree, as the evolutions read it -------------------------------------------------
 
@@ -232,8 +328,9 @@ object PresenceEvolutions {
     fun targetsAt(state: SchedulerState, index: TreeIndex, atMillis: Long, weights: () -> Map<TaskId, Double>): List<Target> {
         val out = ArrayList<Target>()
         for (e in state.presenceEvolutions) {
+            if (e.target != EvolutionTarget.Presence) continue
             val p = parsed(e) ?: continue
-            if (!p.readsPriority) {
+            if (!p.readsTaskValue) {
                 val r = p.at(atMillis) ?: continue
                 for (t in e.taskIds) {
                     if (t !in index.parents) continue
@@ -302,7 +399,7 @@ object PresenceEvolutions {
      * schedulers wait for them anyway.
      */
     fun adjust(state: SchedulerState, absolute: Map<TaskId, Double>, atMillis: Long): Map<TaskId, Double> {
-        if (state.presenceEvolutions.isEmpty()) return absolute
+        if (state.presenceEvolutions.none { it.target == EvolutionTarget.Presence }) return absolute
         val index = TreeIndex(state)
         val targets = resolveNested(targetsAt(state, index, atMillis) { absolute }, index)
         if (targets.isEmpty()) return absolute
@@ -404,8 +501,9 @@ object PresenceEvolutions {
     /** A Search row's name: the tasks it is given to and its formula. */
     fun title(state: SchedulerState, e: PresenceEvolution): String {
         if (isDefault(e, state)) {
-            val tree = e.relativeTask?.let { state.tasks[it]?.title.orEmpty().ifBlank { it.value } }.orEmpty()
-            return "every task of “$tree”: its priority in it, constant"
+            val tree = TaskTreesAsTasks.topTaskIds(state).firstOrNull()?.let { state.tasks[it]?.title.orEmpty().ifBlank { it.value } }.orEmpty()
+            return if (e.target == EvolutionTarget.Minimum) "every task of “$tree”: its minimum time, constant"
+            else "every task of “$tree”: its priority in it, constant"
         }
         val tasks = e.taskIds.take(3).joinToString(", ") { state.tasks[it]?.title.orEmpty().ifBlank { it.value } } +
             if (e.taskIds.size > 3) " and ${e.taskIds.size - 3} more" else ""
@@ -414,5 +512,5 @@ object PresenceEvolutions {
 
     /** A Search row's detail: what it is relative to, and when. */
     fun detail(state: SchedulerState, e: PresenceEvolution): String =
-        relativeText(state, e) + " · " + periodsText(e) + if (isDefault(e, state)) " · default" else ""
+        (if (e.target == EvolutionTarget.Presence) relativeText(state, e) + " · " else "") + periodsText(e) + if (isDefault(e, state)) " · default" else ""
 }

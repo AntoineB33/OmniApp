@@ -242,6 +242,10 @@ object SchedulerStateCodec {
             // User rule 2026-11-19: a place's presence ratio target is an evolution element: what the build of that
             // morning wrote on the cell is lifted.
             org.example.project.scheduler.domain.PresenceEvolutions.liftCellFormulas(it)
+        }.let {
+            // User rule 2026-11-20: a task's minimum formula is a minimum length target evolution — what an older build
+            // wrote on the task is lifted.
+            org.example.project.scheduler.domain.PresenceEvolutions.liftTaskMinimumFormulas(it)
         }.let(SchedulerReducer::settleDefaultSubtree)
 
     private fun migrateLegacyRoot(element: JsonElement): JsonElement =
@@ -2426,13 +2430,15 @@ private data class PersistedPresenceEvolution(
     val parentDistance: Int = 1,
     val periods: List<PersistedEvolutionPeriod> = emptyList(),
     val formula: String = "",
+    /** New 2026-11-20: what it sets ([org.example.project.scheduler.domain.EvolutionTarget]); absent = a presence ratio target. */
+    val target: String = "Presence",
 )
 
 @Serializable
 private data class PersistedEvolutionPeriod(val from: Long? = null, val until: Long? = null)
 
 private fun org.example.project.scheduler.domain.PresenceEvolution.toPersisted(): PersistedPresenceEvolution =
-    PersistedPresenceEvolution(id, taskIds.map { it.value }, relativeTask?.value, parentDistance, periods.map { PersistedEvolutionPeriod(it.fromMillis, it.untilMillis) }, formula)
+    PersistedPresenceEvolution(id, taskIds.map { it.value }, relativeTask?.value, parentDistance, periods.map { PersistedEvolutionPeriod(it.fromMillis, it.untilMillis) }, formula, target.name)
 
 private fun PersistedPresenceEvolution.toPresenceEvolution(): org.example.project.scheduler.domain.PresenceEvolution =
     org.example.project.scheduler.domain.PresenceEvolution(
@@ -2442,6 +2448,8 @@ private fun PersistedPresenceEvolution.toPresenceEvolution(): org.example.projec
         parentDistance = parentDistance.coerceAtLeast(1),
         periods = periods.map { org.example.project.scheduler.domain.EvolutionPeriod(it.from, it.until) },
         formula = formula,
+        target = org.example.project.scheduler.domain.EvolutionTarget.entries.firstOrNull { it.name == target }
+            ?: org.example.project.scheduler.domain.EvolutionTarget.Presence,
     )
 
 /** User rule 2026-11-01: one workplace setup. Its OS by name: one a later build added reads as the first this one knows. */
