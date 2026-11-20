@@ -74,7 +74,13 @@ internal fun PresenceEvolutionRows(
         filters = evolutionsConfig.filters.copy(excludedElements = others),
         added = evolutionsConfig.added.filter { it in involvingKeys },
     )
-    val a: List<PresenceEvolution> = evolutionsShown.added.mapNotNull { key -> involving.firstOrNull { evolutionKey(it.id) == key } }
+    // Anomaly 2026-11-20 (*"I selected the default presence ratio target evolution, but in relative to there is nothing"*):
+    // a row selected in the field's window is in its added elements (user rule 2026-11-15), so the rows below edit it as
+    // they edit an added one. Held once the window closes — a press on a row below closes it — until another row is
+    // selected there or the field's own list changes.
+    var selectedInWindow by androidx.compose.runtime.saveable.rememberSaveable(rowId) { mutableStateOf(emptyList<String>()) }
+    val a: List<PresenceEvolution> = (evolutionsShown.added + selectedInWindow).distinct()
+        .mapNotNull { key -> involving.firstOrNull { evolutionKey(it.id) == key } }
     fun edit(change: (PresenceEvolution) -> PresenceEvolution, editKey: String? = null) {
         val ids = a.mapTo(HashSet()) { it.id }
         // A default evolution of A (user rule 2026-11-20) is derived: edited, it is written, under its own id.
@@ -90,11 +96,16 @@ internal fun PresenceEvolutionRows(
                 placeholder = PresenceRow.Evolutions.placeholder + if (a.isEmpty()) "" else " · ${a.size} selected",
                 state = state,
                 config = evolutionsShown,
-                onConfigChange = { evolutionsConfig = it },
+                onConfigChange = {
+                    if (it.added != evolutionsConfig.added) selectedInWindow = emptyList()
+                    evolutionsConfig = it
+                },
                 openedConfig = evolutionsOpened,
                 fieldId = "$rowId/${PresenceRow.Evolutions.placeholder}",
                 modifier = Modifier.weight(1f),
                 openedParts = EMBEDDED_SEARCH_SPLITS.copy(addedRemoved = false),
+                // A selection replaces the one held; none (a press outside its rows, its closing) leaves it held.
+                onSelectedAdded = { keys -> if (keys.isNotEmpty()) selectedInWindow = keys.filter { it in involvingKeys } },
             )
             // A new evolution, given to the tasks of S, and added to A.
             FrameButton("New", enabled = s.isNotEmpty()) {

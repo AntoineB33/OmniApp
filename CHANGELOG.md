@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A row selected in the evolutions' window is what the rows edit — 2026-11-20
+
+- Anomaly: *"I selected the default presence ratio target evolution, but in relative to there is nothing"*. A row
+  selected in a field's Search window shows in that window's added elements (user rule 2026-11-15), but only the rows
+  ADDED reached the rows under the field, so "relative to" had no task to read. The window now tells its field the rows
+  selected (`SearchWindow`'s `onSelectedAdded`, carried by `EmbeddedSearchRequest` and `PopupSearchField`), and the
+  presence rows edit them as added ones — held once the window closes, since a press on a row below closes it, until
+  another row is selected there or the field's list changes. `PresenceEvolutionSelectionTest`.
+
 ### Default presence ratio target evolutions; the priority windows in a task's actions — 2026-11-20
 
 - Anomaly: clicking the "presence ratio target evolutions" field showed an empty list — a task had none until one was

@@ -527,6 +527,12 @@ fun SearchWindow(
      */
     barOutside: Boolean = false,
     /**
+     * Anomaly 2026-11-20 (*"I selected the default presence ratio target evolution, but in relative to there is
+     * nothing"*): told the rows the user selected that its added elements show without being added ([selectedOnly]), so
+     * the field it is the window of acts on them as it acts on the added ones.
+     */
+    onSelectedAdded: ((List<String>) -> Unit)? = null,
+    /**
      * User rule 2026-11-12: **a drop-down's list** ([OptionSearchMenu]): its rows are these options ([SearchDomain.Kind.Option]),
      * not the account's elements, a click on one ticking or picking it.
      */
@@ -1018,6 +1024,10 @@ fun SearchWindow(
         if (!selectionShowsAdded) emptyList()
         else ((if (userSelected) selectedShown else emptyList()) + subtreeSelected + childSelected).distinct().filter(::shownAsAdded)
     val notAdded = remember(selectedOnly) { selectedOnly.toSet() }
+    if (onSelectedAdded != null) {
+        val latestOnSelectedAdded by rememberUpdatedState(onSelectedAdded)
+        LaunchedEffect(selectedOnly) { latestOnSelectedAdded(selectedOnly) }
+    }
     val shownAddedRows =
         remember(addedRows, selectedOnly, results, state.tasks, state.cells) {
             if (selectedOnly.isEmpty()) {
@@ -2499,6 +2509,8 @@ class EmbeddedSearchRequest(
     val picker: SearchPicker? = null,
     /** Its bar is a field outside it ([PopupSearchField]). */
     val barOutside: Boolean = false,
+    /** The rows selected, not added, that its added elements show ([SearchWindow]'s `onSelectedAdded`). */
+    val onSelectedAdded: ((List<String>) -> Unit)? = null,
     /** The configurations tree in place of its list (a ▾ pop-up, [SearchTreeList]). */
     val treeList: SearchTreeList? = null,
     /** What it shows of itself, and where that is told; null: [EMBEDDED_SEARCH_SPLITS], kept by the window itself. */

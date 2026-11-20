@@ -398,6 +398,8 @@ internal fun PopupSearchField(
      * presence ratio target evolutions' window shows its added elements list too.
      */
     openedParts: SearchSplits = EMBEDDED_SEARCH_SPLITS,
+    /** The rows selected in its window and shown in its added elements without being added (anomaly 2026-11-20). */
+    onSelectedAdded: ((List<String>) -> Unit)? = null,
 ) {
     val search = LocalEmbeddedSearch.current
     val host = LocalFieldSearchPopupHost.current
@@ -509,7 +511,7 @@ internal fun PopupSearchField(
             search = search,
             embedded = EmbeddedSearchRequest(
                 config, onConfigChange, onDrop, canDrop, picker?.invoke(close), barOutside = true,
-                splits = parts, onSplitsChange = { parts = it },
+                splits = parts, onSplitsChange = { parts = it }, onSelectedAdded = onSelectedAdded,
             ),
             onClose = close,
             locals = locals,

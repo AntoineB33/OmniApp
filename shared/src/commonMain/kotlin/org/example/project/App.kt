@@ -5779,6 +5779,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 canDrop = request.canDrop,
                                 picker = request.picker,
                                 barOutside = request.barOutside,
+                                onSelectedAdded = request.onSelectedAdded,
                                 menuList = request.menuList,
                                 relevantSettings = request.relevantSettings,
                                 modifier = embeddedModifier,

@@ -155,7 +155,7 @@ root of a task tree, child of the first task element."* — and, of the trees an
 - **Edited in rows only** (user rule 2026-11-19: *"I only want rows in the 3 sections of any Search window"*;
   `PresenceEvolutionRows`): the task group's "Presence ratio target" holds six rows — the **evolutions** (a field whose
   Search window lists those involving the group's tasks, its added elements list showing: what is added there, A, is what
-  the rows below edit; "New" makes one for the group's tasks and adds it), the **tasks that get it** (a field whose added
+  the rows below edit, the rows SELECTED there too — anomaly 2026-11-20, `onSelectedAdded`, held once the window closes until another is selected or the list changes; "New" makes one for the group's tasks and adds it), the **tasks that get it** (a field whose added
   elements are A's tasks), **relative to** (a field listing the tasks above every task of A, with a "parent distance
   [n]" row at the top), the **time periods**, the **formula**, the **categories** (a field whose added elements are the
   categories A carries). Then each incoherence, a row. "Minimum length target" is rows too: the time periods and the
