@@ -1744,11 +1744,20 @@ suggestions before it was ever entered.
   each an option by its name (`optionKey`; `resolve` names it by its key), so its ▾'s "Default for this" and "Currently
   on" say what it lists; its rows are those that configuration keeps (included, not excluded). Never "Types: option",
   which is every option of the app. Its entries are given afresh at each opening; what is kept of its configuration is
-  only what its ▾ set otherwise. **The left-side menu too** (user rule 2026-11-21: *"every search window of the app always
-  respect only what is in 'Currently on'"*): its items (the page selector named "Page selector") are its "Included
-  elements", every item whatever its bar holds, no type searched; a stored "Types: option" is healed away. ONE funnel for
-  every window of given rows: `SearchDomain.givenListShown` (what it shows), `givenListKept` (the rows as given are not
-  stored), `keepsGiven` (a row is drawn only if kept). A row the search would list again as an included option is not.
+  only what its ▾ set otherwise. Superseded the same day by *Listed from*, below.
+- **Listed from** (user rule 2026-11-21: *"Make sure every search window of the app always respect only what is in
+  'Currently on'"* — *"I don't want to do it again"*). **A Search window lists only what its configuration says.** Where
+  its caller gives its rows — a drop-down's or right-click menu's entries, the left-side menu's items, the elements added
+  to a window (its added elements list), the actions on them (the actions section), the tasks a picker may pick, a ▾'s
+  configurations — its configuration says so: "Listed from" (`Filters.listedFrom`, `SearchDomain.ListedFrom`), on in
+  "Currently on" and "Default for this", naming the source and the rows. Its rows are those, **narrowed by the rest of its
+  configuration as a searched list is** (`SearchDomain.keptListed`, through `results(given = …)`): its types, filters,
+  excluded elements; never a row beside them. A window searching the account says "the account, searched". ONE funnel:
+  `SearchWindow` sets it from whichever row-source parameter it has (`listedFromOf`), first thing; never stored (the
+  caller gives it at every drawing), stripped from what its ▾ writes back. `ListedFromTest` fails on a new row-source
+  parameter of `SearchWindow` that the funnel does not read. The actions section's configuration is its own (its types
+  and filters kept, `keptOfSection`), no longer the window's filters copied in, which its ▾ listed and which narrowed
+  nothing there.
 - **WHERE TO SEARCH** (user rule 2026-11-16, *"Every Search window"*; `Filters.searchIn`, `searchChildren`,
   `childSearchIn`, `childDistance`, `SearchDomain.fieldsMatch`, `WhereToSearchTest`): what of a row the bars are
   matched against — its id (its key without its kind), its name (the only one by default, as before), its description

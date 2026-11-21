@@ -11,15 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
-### The left-side menu lists only what its "Currently on" says — 2026-11-21
+### Every Search window lists only what its configuration says: "Listed from" — 2026-11-21
 
 - User rule: *"In the down arrow of the left-side menu, in 'Currently on', there is only 'Types: option'. Make sure every
-  search window of the app always respect only what is in 'Currently on'."* The menu searched "Types: option" (nothing)
-  and drew its items beside that search. Its items are now its configuration's "Included elements", no type searched, and
-  its rows only those that configuration keeps — exclude an item in its ▾, or take it off "Included elements", and it is
-  gone from the menu. One funnel with the drop-downs and right-click menus (`SearchDomain.givenListShown`,
-  `givenListKept`, `keepsGiven`). A stored "Types: option" is healed on load; nothing new is stored unless the ▾ changes
-  the list. A type checked in a drop-down's ▾ is no longer reset by the funnel. `MenuSaysWhatItListsTest`; `task-tree.md`.
+  search window of the app always respect only what is in 'Currently on'."* Then: *"This is not the first time I asked
+  Claude Code to fix this kind of anomaly in other windows, and I don't want to do it again... I wanted to make the whole
+  project as unified as possible."*
+- The audit: six ways a caller gives a Search window rows (drop-down/right-click entries, the left-side menu's items, the
+  added elements list, the actions section, a picker's eligible tasks, a ▾'s configurations), each drawn beside a
+  configuration that did not say so. The calendar menu's fix (its entries as "Included elements") and a first fix of the
+  left-side menu the same way were per-window patches; both replaced.
+- Now one setting, **"Listed from"** (`Filters.listedFrom`), set by ONE funnel at the top of `SearchWindow`
+  (`listedFromOf`) from whichever row source it has, shown in "Currently on" and "Default for this", never stored. The rows
+  are those, narrowed by the window's types, filters and excluded elements through the funnel the added elements list
+  already used (`SearchDomain.keptListed` → `results(given = …)`). Drop-downs and the left-side menu are "Types: option"
+  again — now with where the options come from beside it. The actions section no longer shows the window's own filters
+  in its ▾ (they narrowed nothing there): its types and filters are its own (`keptOfSection`).
+- Guard: `ListedFromTest` fails on a new row source of `SearchWindow` the funnel does not read. Rule added to `CLAUDE.md`.
+- No migration: nothing new is stored. A left-side menu or drop-down kept on no type by the first fix is healed to
+  "option" on load.
 
 ### The sections' background menu is the window's; a ☆ button keeps the window's sections — 2026-11-21
 

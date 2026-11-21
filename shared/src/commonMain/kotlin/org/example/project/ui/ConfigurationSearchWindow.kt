@@ -520,6 +520,15 @@ internal fun SettingEditor(
             BoxBoundField(f.periodBoxesFrom, { filters(f.copy(periodBoxesFrom = it)) }) { onPickOnCalendar(SearchDomain.BoxBound.PeriodFrom) }
         SearchDomain.Setting.PeriodBoxesUntil ->
             BoxBoundField(f.periodBoxesUntil, { filters(f.copy(periodBoxesUntil = it)) }) { onPickOnCalendar(SearchDomain.BoxBound.PeriodUntil) }
+        // User rule 2026-11-21: where the rows its caller gives come from — the caller's, said and not set here; the rest of
+        // the configuration narrows them ([SearchDomain.ListedFrom]).
+        SearchDomain.Setting.ListedFrom ->
+            Text(
+                // None given: the window searches the account, which is where its rows come from.
+                text = f.listedFrom?.let { from -> from.source + if (from.titles.isEmpty()) "" else ": " + from.titles.joinToString(", ") }
+                    ?: "the account, searched",
+                style = MaterialTheme.typography.bodyMedium,
+            )
         // Set by "Blocks on the calendar": said here, with its way off (every block of the calendar).
         SearchDomain.Setting.BlockElements ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

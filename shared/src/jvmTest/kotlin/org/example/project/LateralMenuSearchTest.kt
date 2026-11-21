@@ -97,7 +97,7 @@ class LateralMenuSearchTest {
     @Test
     fun the_menu_opens_with_nothing_typed_and_its_items_given() {
         assertEquals("", LATERAL_MENU_SEARCH.query)
-        // User rule 2026-11-21: no type searched — its items are its "Included elements" (`MenuSaysWhatItListsTest`).
-        assertEquals(emptySet(), LATERAL_MENU_SEARCH.kinds)
+        // User rule 2026-11-21: its items are given, said by its "Listed from" (`MenuSaysWhatItListsTest`).
+        assertEquals(setOf(SearchDomain.Kind.Option), LATERAL_MENU_SEARCH.kinds)
     }
 }

@@ -50,8 +50,7 @@ class OptionSearchTest {
     @Test
     fun the_account_holds_no_option() {
         assertEquals(emptyList(), SearchDomain.itemResults(SchedulerState.empty(), Kind.Option, ""))
-        // Anomaly 2026-11-21: a drop-down searches no type — "option" would be every option of the app; its options are
-        // the elements it lists ([SearchDomain.optionListConfig], `MenuSaysWhatItListsTest`).
-        assertEquals(emptySet(), SearchDomain.OPTION_SEARCH.kinds)
+        // Its options are the ones given to it, said by its "Listed from" (`MenuSaysWhatItListsTest`): "option" narrows them.
+        assertEquals(setOf(Kind.Option), SearchDomain.OPTION_SEARCH.kinds)
     }
 }

@@ -311,42 +311,42 @@ object SearchDomain {
     fun isPickedRow(kind: Kind): Boolean = kind == Kind.Option || kind == Kind.Integer
 
     /**
-     * The drop-down's Search window as it is kept: no type searched, its bar empty, the order its options were given in.
-     * What it lists is said by [optionListConfig], from the options it is given each time it opens.
+     * The drop-down's Search window as it is kept: options, its bar empty, the order its options were given in. Its
+     * options are said by its "Listed from" ([ListedFrom]), given each time it opens.
      */
-    val OPTION_SEARCH: Config by lazy { Config(kinds = emptySet()) }
-
-    /**
-     * Anomaly 2026-11-21 (*"I right-click in the calendar, then in the down arrow, then in 'Default for this', and I only
-     * find type: option … that would mean every single option element of the app should appear in the right-click menu
-     * of the calendar"*): **what a drop-down's or a right-click menu's Search window lists, as its configuration says
-     * it** — no type searched, and its [names] as the elements always in the list ([Filters.includedElements], by
-     * [optionKey]), as a window of one element says its element. "Types: option" said every option of the app.
-     */
-    fun optionListConfig(names: List<String>, kept: Config = OPTION_SEARCH): Config =
-        kept.copy(kinds = kept.kinds - Kind.Option, filters = kept.filters.copy(includedElements = names.mapTo(LinkedHashSet(), ::optionKey)))
+    val OPTION_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Option)) }
 
     /**
      * User rule 2026-11-21 (*"In the down arrow of the left-side menu, in 'Currently on', there is only 'Types: option'.
-     * Make sure every search window of the app always respect only what is in 'Currently on'"*): **the one funnel of a
-     * Search window whose rows are given to it** — a drop-down, a right-click menu, the left-side menu. What it shows is
-     * its configuration [kept] saying its rows [names] as its "Included elements" ([optionListConfig]) unless its ▾ set
-     * others; "Types: option", which listed nothing and let the rows be drawn beside it, healed away.
+     * Make sure every search window of the app always respect only what is in 'Currently on'"*): **where the rows of a
+     * window come from when its caller gives them** — [source] said in words, [titles] the rows given, [keys] theirs.
+     * Its window's rows are those, narrowed by the rest of its configuration ([keptListed]); nothing is drawn beside what
+     * its configuration says. `task-tree.md` § *Listed from*.
      */
-    fun givenListShown(names: List<String>, kept: Config): Config =
-        if (kept.filters.includedElements.isEmpty()) optionListConfig(names, kept) else kept.copy(kinds = kept.kinds - Kind.Option)
-
-    /** What [givenListShown]'s window keeps of [next]: its rows as given ([names]) are no setting of its own, so not stored. */
-    fun givenListKept(next: Config, names: List<String>): Config =
-        if (next.filters.includedElements == names.mapTo(LinkedHashSet(), ::optionKey)) next.copy(filters = next.filters.copy(includedElements = emptySet()))
-        else next
-
-    /** Whether the row named [name] of a window of given rows is one its configuration [shown] keeps ([givenListShown]). */
-    fun keepsGiven(shown: Config, name: String): Boolean =
-        optionKey(name).let { it in shown.filters.includedElements && it !in shown.filters.excludedElements }
+    data class ListedFrom(val source: String, val keys: List<String> = emptyList(), val titles: List<String> = emptyList())
 
     /**
-     * An option as an element of a list ([optionListConfig]): by its name, what the user sees of it — the ids are the
+     * **The one funnel** (`SearchWindow`): [config] as its window shows it, its ▾'s "Currently on" and "Default for
+     * this" included — saying where its rows come from ([from]), every time it is drawn.
+     */
+    fun withListedFrom(config: Config, from: ListedFrom?): Config =
+        if (config.filters.listedFrom == from) config else config.copy(filters = config.filters.copy(listedFrom = from))
+
+    /** What the window keeps of a configuration its ▾ changed: never where its rows come from ([withListedFrom]). */
+    fun withoutListedFrom(config: Config): Config = withListedFrom(config, null)
+
+    /**
+     * **Which of the rows given to a window ([ListedFrom]) its configuration keeps**, by key: through [results] — the
+     * one funnel of given rows (anomaly 2026-11-14) — its types, filters and excluded elements, as a searched list. The
+     * bar is left to the list's own finder (a menu finds by its items' folders, a drop-down by its options), each
+     * keeping the order it was given.
+     */
+    fun keptListed(state: SchedulerState, config: Config, given: List<Result>): Set<String> =
+        if (given.isEmpty()) emptySet()
+        else results(state, config.searchedKinds, "", { emptyMap() }, config.filters, DEFAULT_SORTS, given = given).mapTo(HashSet(), ::keyOf)
+
+    /**
+     * An option as an element of a list ([ListedFrom]): by its name, what the user sees of it — the ids are the
      * caller's own (a menu's place of an entry), and change with the entries listed.
      */
     fun optionKey(name: String): String = Kind.Option.name + "/" + name
@@ -1595,6 +1595,14 @@ object SearchDomain {
          */
         val excludedElements: Set<String> = emptySet(),
         /**
+         * User rule 2026-11-21 (*"Make sure every search window of the app always respect only what is in 'Currently
+         * on'"*): **where the rows of a window whose rows its caller gives come from** ([ListedFrom]) — a menu's entries,
+         * the left-side menu's items, the elements added to a window, the actions on them, the tasks a picker may pick,
+         * a ▾'s configurations. Set by the one funnel ([withListedFrom], `SearchWindow`), never by hand; never stored
+         * (the caller gives it afresh at every drawing). Null: the window searches the account.
+         */
+        val listedFrom: ListedFrom? = null,
+        /**
          * User rule 2026-11-02: the elements always in the list, by key: **this overrides every other way of narrowing it**,
          * the filters, [excludedElements], the checked kinds and the search text ([results]).
          */
@@ -1738,6 +1746,7 @@ object SearchDomain {
          */
         fun isOn(setting: Setting): Boolean =
             when (setting) {
+                Setting.ListedFrom -> listedFrom != null
                 Setting.MatchCase -> matchCase
                 Setting.WholeWord -> wholeWord
                 Setting.Regex -> regex
@@ -2086,6 +2095,8 @@ object SearchDomain {
         CalendarAt(null, "Is on the calendar at"),
         /** The elements kept out of the list ([Filters.excludedElements]) and those always in it ([Filters.includedElements]). */
         ExcludedElements(null, "Excluded elements"),
+        /** User rule 2026-11-21: where the rows a caller gives come from ([Filters.listedFrom]). */
+        ListedFrom(null, "Listed from"),
         IncludedElements(null, "Included elements"),
         /** User rule 2026-11-12: only the elements with no parent of the checked kinds ([Filters.noParentOfKinds]). */
         NoParentOfKinds(null, "Has no parent of the types"),
@@ -2809,6 +2820,7 @@ object SearchDomain {
             Setting.CalendarAdd -> "Only what can be put on the calendar at the instant given."
             Setting.CalendarAt -> "Only what is on the calendar at the instant given."
             Setting.ExcludedElements -> "Elements always kept out of the list."
+            Setting.ListedFrom -> "Where the rows come from: what the window is given to list. The rest of its configuration narrows them."
             Setting.IncludedElements -> "Elements always in the list, whatever else narrows it."
             Setting.NoParentOfKinds -> "Only the elements with no parent of the types checked."
             Setting.ParentsOf -> "Only the parents of the elements given."

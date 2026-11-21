@@ -616,6 +616,18 @@ fun SearchWindow(
     onGeometryChange: (Offset, Size) -> Unit = { _, _ -> },
     onRaise: () -> Unit = {},
 ) {
+    // User rule 2026-11-21 (*"Make sure every search window of the app always respect only what is in 'Currently on'"*):
+    // **the one funnel of a window whose rows its caller gives** — its configuration, as everything in it reads it (its
+    // ▾'s "Currently on" and "Default for this" included), says where they come from ([SearchDomain.ListedFrom]); its
+    // rows are those, narrowed by the rest of it. Never stored: the caller gives it afresh at every drawing.
+    val listedFrom = remember(options, menuList, addedList, actionRows, picker, treeList) { listedFromOf(options, menuList, addedList, actionRows, picker, treeList) }
+    val givenConfigChange = onConfigChange
+    @Suppress("NAME_SHADOWING")
+    val config = SearchDomain.withListedFrom(config, listedFrom)
+    @Suppress("NAME_SHADOWING")
+    val onConfigChange: (SearchDomain.Config) -> Unit = { givenConfigChange(SearchDomain.withoutListedFrom(it)) }
+    @Suppress("NAME_SHADOWING")
+    val openedConfig = openedConfig?.let { SearchDomain.withListedFrom(it, listedFrom) }
     val frame = if (picker == null && !embedded) rememberWindowFrameState("Search", initialOffset, initialSize) else null
     val query = config.query
     // User rule 2026-11-04: the kinds searched are the checked ones among those offered ([SearchDomain.Config.searchedKinds]).
@@ -746,12 +758,19 @@ fun SearchWindow(
             val integers = options.integers
             remember(integers, query) { SearchDomain.integerResults(integers.highestLabel, integers.highest, integers.count, query) }
         } else if (options != null) {
-            remember(options.options, options.checked, query) {
-                SearchDomain.optionResults(options.options, query, options.checked, creates = options.onCreate != null)
+            remember(options.options, options.checked, query, config.kinds, filters) {
+                // Its entries, by name ([SearchDomain.optionKey]): an entry's id is its place, which changes with the list.
+                val keptKeys = SearchDomain.keptListed(state, config, options.options.map { (_, name) -> SearchDomain.ItemResult(SearchDomain.Kind.Option, name, name, "") })
+                val kept = options.options.filter { (_, name) -> SearchDomain.optionKey(name) in keptKeys }
+                SearchDomain.optionResults(kept, query, options.checked, creates = options.onCreate != null)
             }
         } else if (actionRows != null) {
             // The section has sorted and filtered them by its bar already ([SearchDomain.shownActionGroups]).
-            remember(actionRows.rows) { actionRows.rows.map { SearchDomain.ItemResult(SearchDomain.Kind.Action, it.key, it.title, it.detail) } }
+            remember(actionRows.rows, config.kinds, filters) {
+                val rows = actionRows.rows.map { SearchDomain.ItemResult(SearchDomain.Kind.Action, it.key, it.title, it.detail) }
+                val keptKeys = SearchDomain.keptListed(state, config, rows)
+                rows.filter { SearchDomain.keyOf(it) in keptKeys }
+            }
         } else
         remember(
             kinds, query, filters, sorts, allPaths, state.tasks, state.categories, state.periodKinds,
@@ -800,12 +819,15 @@ fun SearchWindow(
     // The left-side menu's items, as its bar keeps them ([MenuSearchRows]), then what its own search finds, as any Search
     // window's (anomaly 2026-11-19: *"only the background color is the only difference in the logic"*). Its items keep the
     // order the user gave them; what the search finds keeps the window's.
-    val menuItemRows = remember(menuList?.rows) { menuList?.rows.orEmpty().map { SearchDomain.ItemResult(SearchDomain.Kind.Option, it.key, it.title, "") } }
-    // Its items are its configuration's "Included elements" ([SearchDomain.givenListShown]), drawn above by the menu: the
-    // search lists them no second time.
-    val searched = if (menuList == null) listed else remember(listed) { listed.filterNot { it.kind == SearchDomain.Kind.Option } }
+    // Narrowed by its configuration as any given rows are ("Listed from", [SearchDomain.keptListed]).
+    val menuItemRows = remember(menuList?.rows, config.kinds, filters) {
+        val rows = menuList?.rows.orEmpty()
+        // By title, as an entry of a drop-down is named ([SearchDomain.optionKey]).
+        val keptKeys = SearchDomain.keptListed(state, config, rows.map { SearchDomain.ItemResult(SearchDomain.Kind.Option, it.title, it.title, "") })
+        rows.filter { SearchDomain.optionKey(it.title) in keptKeys }.map { SearchDomain.ItemResult(SearchDomain.Kind.Option, it.key, it.title, "") }
+    }
     val results: List<SearchDomain.Result> =
-        menuItemRows + if (arranging) remember(searched, config.arranged) { SearchDomain.arrangedResults(searched, config.arranged) } else searched
+        menuItemRows + if (arranging) remember(listed, config.arranged) { SearchDomain.arrangedResults(listed, config.arranged) } else listed
     val count = results.size
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
     // among the results (the question changed, the thing was deleted) reads as the first row.
@@ -2596,30 +2618,13 @@ internal fun OptionSearchMenu(
         val keptOpened = opened.copy(dropButtons = options.onDrop != null)
         var kept by rememberInsideConfig(listId, keptOpened)
         var typed by remember { mutableStateOf("") }
-        // Anomaly 2026-11-21: its configuration says what it lists — its options, as the elements always in it
-        // ([SearchDomain.optionListConfig]), no type searched — never "Types: option", every option of the app. Given
-        // afresh at each opening (a menu's entries change with where it opens), so kept only where its ▾ set others.
-        val names = options.options.map { it.second }
-        val listing = if (options.integers != null) null else SearchDomain.optionListConfig(names)
-        val given = listing?.filters?.includedElements
-        val config = (if (listing != null) SearchDomain.givenListShown(names, kept) else kept).copy(query = typed)
+        // User rule 2026-11-21: its entries are what it is given, said by its configuration's "Listed from" — the one
+        // funnel of every window of given rows, in [SearchWindow]. A build of that day kept it on no type: healed.
+        val config = kept.let { if (it.kinds.isEmpty()) it.copy(kinds = keptOpened.kinds) else it }.copy(query = typed)
         val setConfig = { next: SearchDomain.Config ->
             typed = next.query
-            kept = next.copy(query = "").let { n -> if (given != null) SearchDomain.givenListKept(n, names) else n }
+            kept = next.copy(query = "")
         }
-        // What it opens with, its ▾'s "Default for this" and Reset: what it lists.
-        val openedListing = listing?.let { SearchDomain.optionListConfig(names, keptOpened) } ?: keptOpened
-        // Its rows are those its configuration keeps (its ▾'s "Included elements", "Excluded elements"): one reading.
-        val shownOptions =
-            if (listing == null) options
-            else {
-                SearchOptions(
-                    options = options.options.filter { (_, name) -> SearchDomain.keepsGiven(config, name) },
-                    checked = options.checked, onClick = options.onClick, onSelectAll = options.onSelectAll, onSolo = options.onSolo,
-                    leading = options.leading, onNearEnd = options.onNearEnd, onDrop = options.onDrop, canDrop = options.canDrop,
-                    disabled = options.disabled, onCreate = options.onCreate, integers = options.integers, hoverPopup = options.hoverPopup,
-                )
-            }
         var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
         // No account is searched: the options are the rows.
         val nothing = remember { SchedulerState.empty() }
@@ -2641,8 +2646,8 @@ internal fun OptionSearchMenu(
             splits = splits,
             onSplitsChange = { splits = it },
             embedded = true,
-            openedConfig = openedListing,
-            options = shownOptions,
+            openedConfig = keptOpened,
+            options = options,
             onDrop = options.onDrop?.let { drop -> { row -> (row as? SearchDomain.ItemResult)?.id?.let(drop) } },
             canDrop = { row -> (row as? SearchDomain.ItemResult)?.id?.let { it != SearchDomain.SELECT_ALL_OPTION && options.canDrop(it) } == true },
             modifier = Modifier.width(width).height(height),
@@ -2652,6 +2657,36 @@ internal fun OptionSearchMenu(
     }
     }
 }
+
+/**
+ * User rule 2026-11-21: **where the rows a caller gives a [SearchWindow] come from** ([SearchDomain.ListedFrom]) — one
+ * statement per kind of given rows, every parameter of [SearchWindow] that gives rows read here (`ListedFromTest` fails
+ * on one that is not). Null: the window searches the account.
+ */
+internal fun listedFromOf(
+    options: SearchOptions?,
+    menuList: MenuSearchRows?,
+    addedList: AddedSearchRows?,
+    actionRows: ActionSearchRows?,
+    picker: SearchPicker?,
+    treeList: SearchTreeList?,
+): SearchDomain.ListedFrom? =
+    when {
+        options?.integers != null -> SearchDomain.ListedFrom("the integers this field takes")
+        options != null -> options.options.map { it.second }.let { SearchDomain.ListedFrom("the entries of this menu", it.map(SearchDomain::optionKey), it) }
+        menuList != null -> menuList.rows.map { it.title }.let { SearchDomain.ListedFrom("the items of the left-side menu", it.map(SearchDomain::optionKey), it) }
+        addedList != null -> SearchDomain.ListedFrom("the elements added to the window", addedList.rows.map(SearchDomain::keyOf), addedList.rows.map { it.name })
+        actionRows != null ->
+            SearchDomain.ListedFrom(
+                "the actions on the elements added to the window",
+                actionRows.rows.map { SearchDomain.Kind.Action.name + "/" + it.key },
+                actionRows.rows.map { it.title },
+            )
+        // The tasks a pick may give here (a parent that makes no cycle…): a rule of the caller's, not a list to show.
+        picker != null -> SearchDomain.ListedFrom("the tasks that can be picked here")
+        treeList != null -> SearchDomain.ListedFrom("the configurations of the window it opens from")
+        else -> null
+    }
 
 /**
  * User rule 2026-11-12: **what a Search window drawn inside another asks of `App`** ([LocalEmbeddedSearch]): its
@@ -2872,10 +2907,10 @@ private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
 
 
 /**
- * The left-side menu's Search window as it opens: no type searched, nothing typed — its items, given, are its "Included
- * elements" ([SearchDomain.givenListShown], [LateralMenu]).
+ * The left-side menu's Search window as it opens: nothing typed, its items given — said by its "Listed from"
+ * ([listedFromOf]) and narrowed by its types, options.
  */
-val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.Config(kinds = emptySet(), pageTypesOnly = false) }
+val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Option), pageTypesOnly = false) }
 
 /** What the left-side menu is about, on or off: its ▾'s "Relevant here" leads with it (user rule 2026-11-14). */
 val LATERAL_MENU_RELEVANT: List<SearchDomain.Setting> = listOf(SearchDomain.Setting.MenuCustomizing)

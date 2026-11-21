@@ -417,10 +417,16 @@ private fun AddedActionList(
     // ([SearchDomain.Config.toggledActionRows], through [toggle]): two lists of rows, two sets.
     val sectionId = embeddedSearchId(ACTIONS_SECTION_PART)
     var own by rememberInsideConfig(sectionId, ACTIONS_SECTION_OWN)
-    // Its configuration is this window's: the actions its type, its bar the section's; what it changes of it comes back.
-    val inner = config.copy(
-        kinds = setOf(SearchDomain.Kind.Action), pageTypesOnly = false, query = highlighted,
+    // Its configuration: the actions its type, its bar the section's, and of this window's only what lays out its actions
+    // (grouped, expanded, what the bar does); what it changes of it comes back. User rule 2026-11-21 (*"every search window
+    // of the app always respect only what is in 'Currently on'"*): never this window's filters, sorting or types, which its
+    // ▾'s "Currently on" listed and which narrow nothing here; where its rows come from is its "Listed from".
+    val inner = ACTIONS_SECTION_OWN.copy(
+        // Its own types and filters, set in its ▾, kept with it ([keptOfSection]).
+        kinds = own.kinds, filters = own.filters,
+        query = highlighted,
         added = own.added, toggledActionRows = own.toggledActionRows, actionSearch = own.actionSearch, actionQuery = own.actionQuery,
+        actionsGrouped = config.actionsGrouped, actionsExpanded = config.actionsExpanded, actionSearchSortsOnly = config.actionSearchSortsOnly,
     )
     val onInner = { next: SearchDomain.Config ->
         val current = latestConfig
@@ -433,7 +439,7 @@ private fun AddedActionList(
             )
         if (changed != current) onConfigChange(changed)
         // After the window's own: what the section keeps is written into the window's configuration as it then stands.
-        val kept = own.copy(added = next.added, toggledActionRows = next.toggledActionRows, actionSearch = next.actionSearch, actionQuery = next.actionQuery)
+        val kept = keptOfSection(own, next)
         if (kept != own) own = kept
     }
     // One action over some of its elements, as the section shows it — and as a context shows its state ([ActionContextsEditor]).
@@ -501,6 +507,17 @@ private fun AddedActionList(
       }
     }
 }
+
+/**
+ * What the actions section keeps of its own from what it changed ([next]): its added elements, its open rows, its bar —
+ * and, user rule 2026-11-21, the types and filters its ▾ sets, which narrow its rows ([SearchDomain.keptListed]). Before
+ * that day they were dropped here, while its ▾'s "Currently on" listed the window's own.
+ */
+internal fun keptOfSection(own: SearchDomain.Config, next: SearchDomain.Config): SearchDomain.Config =
+    own.copy(
+        added = next.added, toggledActionRows = next.toggledActionRows, actionSearch = next.actionSearch, actionQuery = next.actionQuery,
+        kinds = next.kinds, filters = next.filters,
+    )
 
 /**
  * What the actions section keeps of its own, as it opens: nothing added, no bar text. Its type is the action

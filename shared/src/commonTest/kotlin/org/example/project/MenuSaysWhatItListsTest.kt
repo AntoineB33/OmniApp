@@ -13,79 +13,63 @@ import org.example.project.scheduler.state.SchedulerState
 /**
  * Anomaly 2026-11-21: *"I right-click in the calendar, then in the down arrow, then in 'Default for this', and I only find
  * type: option. Same thing in 'Currently on'. If the logic was correct, that would mean every single option element of the
- * app should appear in the right-click menu of the calendar."* A menu's Search window says what it lists: its entries,
- * the elements always in it, and no type searched.
+ * app should appear in the right-click menu of the calendar."* — and user rule the same day: *"In the down arrow of the
+ * left-side menu, in 'Currently on', there is only 'Types: option'. Make sure every search window of the app always
+ * respect only what is in 'Currently on'."* A window of given rows says where they come from ("Listed from"), and its
+ * configuration narrows them as it narrows a searched list (`ListedFromTest` holds every row source to it).
  */
 class MenuSaysWhatItListsTest {
     private val entries = listOf("edit…", "add…", "Day")
+    private val keys = entries.map(SearchDomain::optionKey).toSet()
+    private val from = SearchDomain.ListedFrom("the entries of this menu", entries.map(SearchDomain::optionKey), entries)
+    private fun given() = entries.map { SearchDomain.ItemResult(Kind.Option, it, it, "") }
+
+    private fun leaves(config: SearchDomain.Config, label: String) =
+        SearchDomain.configurationTree(config, config).filterIsInstance<SearchDomain.ConfigurationCategory>().single { it.label == label }
+            .children.filterIsInstance<SearchDomain.ConfigurationLeaf>().map { it.setting }
 
     @Test
-    fun a_menu_searches_no_type_and_lists_its_entries_as_included_elements() {
-        val config = SearchDomain.optionListConfig(entries)
-        assertEquals(emptySet(), config.kinds)
-        assertEquals(entries.map(SearchDomain::optionKey).toSet(), config.filters.includedElements)
-        assertFalse(Kind.Option in config.searchedKinds, "\"type: option\" is every option of the app")
-    }
-
-    @Test
-    fun its_default_and_what_is_on_name_its_entries() {
-        val config = SearchDomain.optionListConfig(entries)
-        val tree = SearchDomain.configurationTree(config, config)
-        val roots = tree.filterIsInstance<SearchDomain.ConfigurationCategory>()
-        for (label in listOf(SearchDomain.DEFAULT_NODE_LABEL, "Currently on")) {
-            val node = roots.single { it.label == label }
-            val listed = node.children.filterIsInstance<SearchDomain.ConfigurationLeaf>().map { it.setting }
-            assertTrue(Setting.IncludedElements in listed, "$label: $listed")
+    fun currently_on_and_the_default_say_where_the_rows_come_from() {
+        for (opened in listOf(SearchDomain.OPTION_SEARCH, org.example.project.ui.LATERAL_MENU_SEARCH)) {
+            val shown = SearchDomain.withListedFrom(opened, from)
+            for (label in listOf(SearchDomain.DEFAULT_NODE_LABEL, "Currently on")) {
+                assertTrue(Setting.ListedFrom in leaves(shown, label), "$label: ${leaves(shown, label)}")
+            }
         }
     }
 
     @Test
+    fun where_the_rows_come_from_is_never_stored() {
+        val shown = SearchDomain.withListedFrom(SearchDomain.OPTION_SEARCH, from)
+        assertNull(SearchDomain.Config.decode(shown.encode())!!.filters.listedFrom)
+        assertEquals(SearchDomain.OPTION_SEARCH, SearchDomain.withoutListedFrom(shown))
+    }
+
+    @Test
+    fun the_configuration_narrows_the_given_rows_and_adds_none() {
+        val shown = SearchDomain.withListedFrom(SearchDomain.OPTION_SEARCH, from)
+        val state = SchedulerState.empty()
+        assertEquals(keys, SearchDomain.keptListed(state, shown, given()))
+        // An excluded entry: gone.
+        val excluded = shown.copy(filters = shown.filters.copy(excludedElements = setOf(SearchDomain.optionKey("Day"))))
+        assertEquals(keys - SearchDomain.optionKey("Day"), SearchDomain.keptListed(state, excluded, given()) intersect keys)
+        // Their type unchecked: none.
+        assertEquals(emptySet(), SearchDomain.keptListed(state, shown.copy(kinds = setOf(Kind.Task)), given()) intersect keys)
+    }
+
+    @Test
     fun an_entry_is_named_by_its_key() {
-        val keys = entries.map(SearchDomain::optionKey)
-        assertEquals(entries, SearchDomain.resolve(SchedulerState.empty(), keys).map { it.name })
+        assertEquals(entries, SearchDomain.resolve(SchedulerState.empty(), entries.map(SearchDomain::optionKey)).map { it.name })
         assertEquals("add…", SearchDomain.changedElementTitle(SchedulerState.empty(), SearchDomain.optionKey("add…")))
     }
 
-    /**
-     * User rule 2026-11-21: *"In the down arrow of the left-side menu, in 'Currently on', there is only 'Types: option'.
-     * Make sure every search window of the app always respect only what is in 'Currently on'."* A window of given rows —
-     * a drop-down, a right-click menu, the left-side menu — goes through ONE funnel: its rows are its "Included elements".
-     */
+    /** The actions section keeps the types and filters its ▾ sets: they narrow its rows, and are what its ▾ lists. */
     @Test
-    fun the_left_side_menu_lists_its_items_as_its_included_elements() {
-        val menu = org.example.project.ui.LATERAL_MENU_SEARCH
-        assertFalse(Kind.Option in menu.searchedKinds, "the menu opens on \"Types: option\" no more")
-        val shown = SearchDomain.givenListShown(entries, menu)
-        val on = SearchDomain.configurationTree(shown, shown).filterIsInstance<SearchDomain.ConfigurationCategory>().single { it.label == "Currently on" }
-        assertTrue(Setting.IncludedElements in on.children.filterIsInstance<SearchDomain.ConfigurationLeaf>().map { it.setting })
-        assertTrue(entries.all { SearchDomain.keepsGiven(shown, it) })
-    }
-
-    @Test
-    fun a_stored_types_option_is_healed_away() {
-        val older = SearchDomain.Config(kinds = setOf(Kind.Option), pageTypesOnly = false)
-        val read = SearchDomain.Config.decode(older.encode())!!
-        val shown = SearchDomain.givenListShown(entries, read)
-        assertFalse(Kind.Option in shown.searchedKinds)
-        assertEquals(entries.map(SearchDomain::optionKey).toSet(), shown.filters.includedElements)
-    }
-
-    @Test
-    fun its_rows_are_those_its_configuration_keeps() {
-        val shown = SearchDomain.givenListShown(entries, SearchDomain.OPTION_SEARCH)
-        // Excluded in its ▾: gone from the rows.
-        val excluded = shown.copy(filters = shown.filters.copy(excludedElements = setOf(SearchDomain.optionKey("Day"))))
-        assertEquals(listOf("edit…", "add…"), entries.filter { SearchDomain.keepsGiven(excluded, it) })
-        // Taken off its "Included elements": kept so, and gone from the rows.
-        val fewer = shown.copy(filters = shown.filters.copy(includedElements = setOf(SearchDomain.optionKey("add…"))))
-        val kept = SearchDomain.givenListKept(fewer, entries)
-        assertEquals(fewer, kept)
-        assertEquals(listOf("add…"), entries.filter { SearchDomain.keepsGiven(SearchDomain.givenListShown(entries, kept), it) })
-        // As given: no setting of its own, nothing stored — a new entry is listed as it comes.
-        assertEquals(emptySet(), SearchDomain.givenListKept(shown, entries).filters.includedElements)
-        // A type checked in its ▾ stays checked.
-        val typed = shown.copy(kinds = setOf(Kind.Task))
-        assertEquals(setOf(Kind.Task), SearchDomain.givenListShown(entries, SearchDomain.givenListKept(typed, entries)).kinds)
+    fun the_actions_section_keeps_what_its_arrow_sets() {
+        val own = org.example.project.ui.ACTIONS_SECTION_OWN
+        val next = own.copy(filters = SearchDomain.Filters(excludedElements = setOf("Action/x")))
+        assertEquals(next.filters, org.example.project.ui.keptOfSection(own, next).filters)
+        assertFalse(Kind.Task in org.example.project.ui.keptOfSection(own, next).kinds)
     }
 }
 
