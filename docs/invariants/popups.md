@@ -645,9 +645,14 @@ means.
     re-appearing, except if the caller changes"*; `SearchDomain.fieldWindowReopened`, `Config.addedFor`,
     `LocalFieldCaller`, `FieldWindowKeepsItsAddedListTest`): the caller of a field in a group of the actions section is
     that group's SET of elements (`fieldCallerOf`) — field F in the group of E1 and E2 is not field F once E3 joins the
-    group, whose window opens with no added element of the first (Ctrl+Z on the group's change brings the first back
-    while F was not opened since). A field whose added elements are its caller's own state, not its window's (the tasks
-    an evolution goes to, the categories it carries), says `caller = ""`: never lost on opening.
+    group, whose window opens with no added element of the first. **Lost as its group goes, not when it opens again**
+    (anomaly 2026-11-21: the task taken off A and added again, B still held what was added — the same set, but a group
+    made again is another caller): as a window's configuration changes (`App`'s `setSearchConfig`, `setSearchInside`),
+    every field window in `Config.inside` whose caller is no longer a group of the window it stands in (`callersOf`:
+    every element, each kind's, each one's, each kind's default configuration) is dropped with everything opened inside
+    it (`SearchDomain.withLostCallersDropped`); the change's History Unit holds what was dropped, so Ctrl+Z brings it
+    back. A field whose added elements are its caller's own state, not its window's (the tasks an evolution goes to, the
+    categories it carries), says `caller = ""`: never lost.
   - **The pop-ups left open come back after a restart, as the windows do** (anomaly 2026-11-15: *"I pinned the window
     …, I restart the app, and all the windows disappeared... Only the first one, the default search window,
     remains"*; `PopupMemory`, the `OpenPopups` placement row, local-only): a field's Search window left open, and a

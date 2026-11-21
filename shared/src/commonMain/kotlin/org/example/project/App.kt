@@ -1680,7 +1680,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // undo, which puts back what was.
         fun setSearchConfig(id: String, edited: SearchDomain.Config, follow: Boolean = true) {
             val before = searchConfigOf(id)
-            val config = if (follow) SearchDomain.withDefaultSortFollowed(before, edited) else edited
+            // User rule 2026-11-21: a field's window is lost with its caller, the group it stands in.
+            val config = SearchDomain.withLostCallersDropped(if (follow) SearchDomain.withDefaultSortFollowed(before, edited) else edited)
             if (config == before) return
             searchConfigs[id] = config
             updatePlacementById(id) { it.copy(config = config.encode()) }
@@ -1728,7 +1729,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun setSearchInside(id: String, inside: Map<String, String>) {
             val before = searchConfigOf(id)
             if (before.inside == inside) return
-            val config = before.copy(inside = inside)
+            // User rule 2026-11-21: a field's window is lost with its caller — a window inside changed its added elements too.
+            val config = SearchDomain.withLostCallersDropped(before.copy(inside = inside))
+            if (config == before) return
             searchConfigs[id] = config
             updatePlacementById(id) { it.copy(config = config.encode()) }
             val typedIn = SearchDomain.insideTypedIn(before.inside, inside)

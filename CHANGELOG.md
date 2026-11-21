@@ -25,6 +25,12 @@ Check here before assuming the code matches the docs.
   keeps its added elements while its caller — the set of elements of the actions-section group its field stands in
   (`fieldCallerOf`, `LocalFieldCaller`) — is the same (`fieldWindowReopened`). New `Config.addedFor` (stored, optional:
   a configuration written before reads none and keeps what it had). `FieldWindowKeepsItsAddedListTest`; `popups.md`.
+- Anomaly (same day): *"I add a task element in the added elements list of the window A, add an element in the 'added
+  elements' list in the window B from 'presence ratio target evolutions' field, remove the task from A, add it again,
+  re-open B, and find the same element"*. The caller was compared at B's opening, and the group made again had the same
+  set. Now a field's window is dropped as its group goes, when the window's configuration changes
+  (`SearchDomain.withLostCallersDropped`, `callersOf`), with what was opened inside it; Ctrl+Z of that change brings it
+  back.
 
 ### Pop-ups shrink rather than hide rows; the calendar's view in its right-click menu — 2026-11-21
 

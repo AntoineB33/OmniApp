@@ -340,6 +340,63 @@ object SearchDomain {
     fun fieldCallerOf(memberKeys: Collection<String>): String = memberKeys.distinct().sorted().joinToString(",")
 
     /**
+     * User rule 2026-11-21: **the callers a window's added elements [added] make** ([fieldCallerOf]) — the element sets of
+     * the groups of its actions section ([actionGroups]): every element, the elements of each kind (a creation row
+     * counting as its kind), each element alone, and each kind's creation row (its default configuration's group).
+     */
+    fun callersOf(added: List<String>): Set<String> {
+        if (added.isEmpty()) return emptySet()
+        fun kindOf(key: String): String = key.substringBefore('/').let { if (it == Kind.Creation.name) key.substringAfter('/') else it }
+        val out = HashSet<String>()
+        out += fieldCallerOf(added)
+        added.groupBy(::kindOf).forEach { (kind, keys) ->
+            out += fieldCallerOf(keys)
+            out += fieldCallerOf(listOf(Kind.Creation.name + "/" + kind))
+        }
+        added.forEach { out += fieldCallerOf(listOf(it)) }
+        return out
+    }
+
+    /**
+     * The window a field's window [key] (an id in [Config.inside]) stands in, by its id there ("" for the window holding
+     * [Config.inside]) — for a field of an actions section alone (`…/actions/field:…`, a context's `…/actions/actions/field:…`);
+     * null for any other.
+     */
+    private fun fieldOwnerOf(key: String): String? {
+        val at = key.lastIndexOf("/field:")
+        if (at < 0) return null
+        var section = key.substring(0, at)
+        if (!section.endsWith("/actions")) return null
+        // A context of an action is drawn by the section's own section (`…/actions/actions`), over the same group.
+        while (section.endsWith("/actions")) section = section.removeSuffix("/actions")
+        return section
+    }
+
+    /**
+     * User rule 2026-11-21 (anomaly: *"I add a task in the added elements list of the window A, add an element in the
+     * added elements list in the window B from the 'presence ratio target evolutions' field, remove the task from A, add
+     * it again, re-open B, and find the same element"*): **a field's window is lost with its caller** — every window of a
+     * field (and every one opened inside it) whose group ([Config.addedFor]) is no longer one of the window it stands in
+     * ([callersOf]) is dropped from [config]'s [Config.inside], as the window changes: the field of the group E1, E2 no
+     * longer exists once E3 joins or E1 leaves, and the group made again is another caller. What the window held before
+     * is its History Unit's: Ctrl+Z brings it back.
+     */
+    fun withLostCallersDropped(config: Config): Config {
+        if (config.inside.isEmpty()) return config
+        val decoded = config.inside.mapValues { (_, text) -> Config.decode(text) }
+        val gone = decoded.filter { (key, inner) ->
+            // "": a field whose added elements are its caller's own state (`PopupSearchField`'s `caller`), never lost.
+            val caller = inner?.addedFor?.takeIf { it.isNotEmpty() } ?: return@filter false
+            val owner = fieldOwnerOf(key) ?: return@filter false
+            // A window holding what it opens with is not kept: what it lists is not known here, so nothing is judged.
+            val ownerAdded = if (owner.isEmpty()) config.added else decoded[owner]?.added ?: return@filter false
+            caller !in callersOf(ownerAdded)
+        }.keys
+        if (gone.isEmpty()) return config
+        return config.copy(inside = config.inside.filterKeys { key -> gone.none { key == it || key.startsWith("$it/") || key.startsWith(it + "▾") } })
+    }
+
+    /**
      * User rule 2026-11-21: *"The 'added elements' list section of a window must be preserved between closing and
      * re-appearing, except if the caller changes."* **What a field's window opens with** — what it opens with by default
      * ([opened]), what its bar holds ([query]), and the added elements it had ([current]) while they were added for this

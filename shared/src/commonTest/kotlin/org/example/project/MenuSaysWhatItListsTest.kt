@@ -98,6 +98,51 @@ class FieldWindowKeepsItsAddedListTest {
         assertNull(read?.addedFor)
     }
 
+    /**
+     * Anomaly 2026-11-21: *"I add a task element in the added elements list of the window A, add an element in the 'added
+     * elements' list in the window B from 'presence ratio target evolutions' field, remove the task from the added elements
+     * list in A, add it again, re-open B, and find the same element in the added elements list..."*
+     */
+    @Test
+    fun the_field_s_window_is_lost_as_its_group_goes_and_not_back_with_it() {
+        val b = "/actions/field:action/element/Task/x/PresenceTarget/Presence ratio target evolutions"
+        val inB = "$b/actions/field:action/element/PresenceEvolution/e/ElementParents/list of parents"
+        val bConfig = opened.copy(added = listOf("PresenceEvolution/e"), addedFor = SearchDomain.fieldCallerOf(listOf("Task/x")))
+        val inBConfig = opened.copy(added = listOf("Task/z"), addedFor = SearchDomain.fieldCallerOf(listOf("PresenceEvolution/e")))
+        val a = SearchDomain.Config(added = listOf("Task/x"), inside = mapOf(b to bConfig.encode(), inB to inBConfig.encode()))
+        assertEquals(a, SearchDomain.withLostCallersDropped(a), "its group is there: kept")
+        // The task out of A: the field of the group of the task alone is gone, B with it, and what was opened inside B.
+        val removed = SearchDomain.withLostCallersDropped(a.copy(added = emptyList()))
+        assertEquals(emptyMap(), removed.inside)
+        // Added again: a new group, a new caller — nothing of B comes back.
+        assertEquals(emptyMap(), SearchDomain.withLostCallersDropped(removed.copy(added = listOf("Task/x"))).inside)
+        // Another element added beside it: the group of the task alone is still there.
+        assertEquals(a.inside, SearchDomain.withLostCallersDropped(a.copy(added = listOf("Task/x", "Task/y"))).inside)
+    }
+
+    @Test
+    fun the_field_of_a_group_of_several_is_lost_as_one_joins_or_leaves() {
+        val f = "/actions/field:action/kind/Task/ElementParents/list of parents"
+        val e1e2Config = opened.copy(added = listOf("Task/p"), addedFor = e1e2)
+        val a = SearchDomain.Config(added = listOf("Task/e1", "Task/e2"), inside = mapOf(f to e1e2Config.encode()))
+        assertEquals(a, SearchDomain.withLostCallersDropped(a))
+        assertEquals(emptyMap(), SearchDomain.withLostCallersDropped(a.copy(added = listOf("Task/e1", "Task/e2", "Task/e3"))).inside, "E3 joins")
+        assertEquals(emptyMap(), SearchDomain.withLostCallersDropped(a.copy(added = listOf("Task/e1"))).inside, "E2 leaves")
+        // An element of another kind beside them: the group of the tasks E1, E2 is still there.
+        assertEquals(a.inside, SearchDomain.withLostCallersDropped(a.copy(added = listOf("Task/e1", "Task/e2", "Chrono/c"))).inside)
+        // A context of the action, drawn one section deeper, is about the same group.
+        val context = "/actions/actions/field:action/kind/Task/ElementParents/context/0/list of parents"
+        val withContext = a.copy(inside = mapOf(context to e1e2Config.encode()))
+        assertEquals(withContext, SearchDomain.withLostCallersDropped(withContext))
+    }
+
+    @Test
+    fun a_field_whose_added_elements_are_its_caller_s_state_is_never_lost() {
+        val f = "/actions/field:action/element/Task/x/PresenceTarget/tasks that get it"
+        val a = SearchDomain.Config(added = listOf("Task/x"), inside = mapOf(f to opened.copy(query = "q", addedFor = "").encode()))
+        assertEquals(a.inside, SearchDomain.withLostCallersDropped(a.copy(added = emptyList())).inside)
+    }
+
     @Test
     fun the_caller_is_no_part_of_the_search() {
         val config = opened.copy(added = listOf("Task/x"), addedFor = e1e2)
