@@ -1025,6 +1025,15 @@ User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`),
 
 ### The right-click menu
 
+- **"add…" AND "edit…" SHOW THEIR SEARCH WINDOW WHEN HOVERED** (user rule 2026-11-21: *"Right-clicking in the calendar
+  must open a search window with options such like 'add' or 'edit'. Those two options open when hovered over windows to
+  precise what to add or edit."*; `CalendarMenuSearch`, `HoverPopupRow`, `MenuHoverPopupTest`). The menu is a Search
+  window of its entries; each of the two carries a hover pop-up (`MenuAction.hoverPopup`) that IS the Search window the
+  two bullets below describe — the same configurations (`calendarAddConfig` / `calendarAtConfig` at the right-click), drawn
+  through `LocalEmbeddedSearch` as every Search window inside another, its head hidden. It goes as the pointer leaves the
+  entry and it; a click on the entry, or a press in it, pins it (`popups.md` § hover pop-ups). Where `LocalEmbeddedSearch`
+  is absent, the click opens the window of the app as the bullets below say (`App.openCalendarSearch`). Each hover starts
+  afresh at its right-click: there is no ONE shared window to move, and "add…" does not deploy its type selector.
 - **THE MENU NAMES THINGS, NOT EDITORS** (`calendarEditChoices`, fed by the column's `menuHitsAt`). A point
   on the timeline carries as many truths as are drawn there — a task panel inside a restrictive period under
   a layer, with a reminder tag on it — and each has an editor, so a menu whose "Edit" silently took the

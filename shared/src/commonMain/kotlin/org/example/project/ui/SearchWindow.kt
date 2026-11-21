@@ -1882,7 +1882,10 @@ fun SearchWindow(
                             when (result) {
                                 is SearchDomain.TaskResult -> taskRow(index, result, false)
                                 // A picker's creation row makes the cell's new task at one click, as a task row picks.
-                                is SearchDomain.ItemResult -> Column(
+                                // User rule 2026-11-21: an option with a pop-up of its own shows it while hovered.
+                                is SearchDomain.ItemResult -> WithHoverPopup(
+                                    options?.hoverPopup?.takeIf { SearchDomain.isPickedRow(result.kind) }?.invoke(result.id),
+                                ) { Column(
                                     Modifier.fillMaxWidth().outsidePressPart(resultRows)
                                         .then(picker?.onNewTask?.let { make -> Modifier.pickOnClick(make) } ?: Modifier),
                                 ) {
@@ -1942,7 +1945,7 @@ fun SearchWindow(
                                             expandedElements, toggleElement, openers, onIntent, resultKindWidth, childSelection,
                                         )
                                     }
-                                }
+                                } }
                             }
                             }
                             }
@@ -2348,6 +2351,8 @@ class SearchOptions(
     val onCreate: ((String) -> Unit)? = null,
     /** User rule 2026-11-13: the list is one of integers ([IntegerRows]) and [options] is not read; [onNearEnd] gives more. */
     val integers: IntegerRows? = null,
+    /** User rule 2026-11-21: the pop-up an option shows while hovered ([MenuAction.hoverPopup]); null for none. */
+    val hoverPopup: ((String) -> (@Composable () -> Unit)?)? = null,
 )
 
 /**
@@ -2367,6 +2372,11 @@ class MenuAction(
     val enabled: Boolean = true,
     val keepsOpen: Boolean = false,
     val mark: (@Composable () -> Unit)? = null,
+    /**
+     * User rule 2026-11-21: a pop-up the entry shows while it is hovered, pinned by a click on it ([HoverPopupRow]) — the
+     * calendar's "add…" and "edit…" showing the Search window of what to add or edit. Null: none.
+     */
+    val hoverPopup: (@Composable () -> Unit)? = null,
     val onClick: () -> Unit,
 )
 
@@ -2401,6 +2411,7 @@ internal fun ActionMenu(name: String,
             },
             leading = if (actions.any { it.mark != null }) { id -> id.toIntOrNull()?.let(actions::getOrNull)?.mark?.invoke() } else null,
             disabled = actions.indices.filter { !actions[it].enabled }.mapTo(HashSet()) { it.toString() },
+            hoverPopup = if (actions.any { it.hoverPopup != null }) { id -> id.toIntOrNull()?.let(latest::getOrNull)?.hoverPopup } else null,
         ),
     )
 }
@@ -2515,6 +2526,7 @@ internal fun OptionSearchMenu(
         onSelectAll = { ids -> held = true; options.onSelectAll(ids) }, onSolo = holding(options.onSolo),
         leading = options.leading, onNearEnd = options.onNearEnd, onDrop = options.onDrop, canDrop = options.canDrop,
         disabled = options.disabled, onCreate = options.onCreate?.let(::holding), integers = options.integers,
+        hoverPopup = options.hoverPopup,
     )
     transientMenuDismissal(shown, close)
     // It is a Search window: its menu window shows it bare, and it wears a window's surface ([LocalPopupChrome]).

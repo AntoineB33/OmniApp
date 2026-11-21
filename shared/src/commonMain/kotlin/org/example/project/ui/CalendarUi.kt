@@ -7245,6 +7245,18 @@ private fun DayColumn(
         androidx.compose.runtime.key(anchor) {
             transientMenuDismissal(anchor != null) { closeMenu() }
         }
+        // User rule 2026-11-21: *"Right-clicking in the calendar must open a search window with options such like 'add' or
+        // 'edit'. Those two options open when hovered over windows to precise what to add or edit."* — each of the two
+        // entries shows, hovered, the Search window it used to open as a window of the app ([CalendarMenuSearch]); a click
+        // pins it ([HoverPopupRow]). Where no Search window can be drawn inside another (no `App`: a test), the click
+        // opens it as a window, as before.
+        val menuSearches = LocalEmbeddedSearch.current != null
+        fun addEntry(at: Long): MenuAction =
+            if (menuSearches) MenuAction("add…", hoverPopup = { CalendarMenuSearch(add = true, atMillis = at) }) {}
+            else MenuAction("add…") { onAddAt(at) }
+        fun editEntry(at: Long, hits: List<PlacedRecord>): MenuAction =
+            if (menuSearches) MenuAction("edit…", hoverPopup = { CalendarMenuSearch(add = false, atMillis = at) }) {}
+            else MenuAction("edit…") { onEditElementsAt(at, hits) }
         // User rule 2026-11-12: the menu is a Search window of its entries.
         // The entries, read while the menu is open alone.
         val calendarMenuActions: List<MenuAction> =
@@ -7269,7 +7281,7 @@ private fun DayColumn(
                         // there. A double-click on a block still opens the block's own editor.
                         val layerHits = anchor.let { a -> layerBands.filter { pressSpans(it, a.y, currentHourHeightPx) } }
                         if (calendarThingsAt(hits, layerHits).isNotEmpty()) {
-                            add(MenuAction("edit…") { onEditElementsAt(exactMillisAt(anchor.y), hits) })
+                            add(editEntry(exactMillisAt(anchor.y), hits))
                         }
                         // PRD §8 (phone): a touch drag scrolls the grid, so a block is moved by arming this entry and then
                         // dragging — the release commits. The generated sleep band is not a movable entity.
@@ -7277,7 +7289,7 @@ private fun DayColumn(
                     }
                     // PRD §8: **one "add" entry**, anchored at the right-click time ([CalendarElementsWindow] answers what,
                     // of which kind, with which configuration; nothing is laid until its Save).
-                    add(MenuAction("add…") { onAddAt(millisAt(anchor.y)) })
+                    add(addEntry(millisAt(anchor.y)))
                 }
             }
         ActionMenu("calendar grid menu",

@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar's "add…" and "edit…" show their Search window on hover — 2026-11-21
+
+- User rule: *"Right-clicking in the calendar must open a search window with options such like 'add' or 'edit'. Those two
+  options open when hovered over windows to precise what to add or edit."*
+- Before: the right-click menu (already a Search window of its entries since 2026-11-12) opened, on a CLICK of "add…" or
+  "edit…", a Search window of the app (`App.openCalendarSearch`).
+- Now: a menu entry can carry a pop-up of its own (`MenuAction.hoverPopup` → `SearchOptions.hoverPopup` → `HoverPopupRow`,
+  the ▾ tree's category-row machinery made general: `MenuHoverTracker`, `PopupOpener`, `MenuSide.SUBMENU`). The calendar's
+  two entries show, hovered, the same Search window they used to open (`CalendarMenuSearch`:
+  `SearchDomain.calendarAddConfig` / `calendarAtConfig` at the right-click, drawn through `LocalEmbeddedSearch`, head
+  hidden); a click pins it. Where no Search window can be drawn inside another (no `App`), the click opens the window as
+  before. `MenuHoverPopupTest`. No SQLite or Supabase change.
+- Not carried over: "add…" opening with the type selector deployed (user rule 2026-10-01) — a drop-down deployed by itself
+  in a hover pop-up would be a third pop-up under the pointer; and the one shared "add…/edit…" window moved by each
+  right-click — each hover pop-up starts afresh at its right-click.
+
 ### The Calendar menu button opens the actions section alone, at the calendar — 2026-11-21
 
 - User rule: *"The default 'Calendar' button in the left-side menu of the 'Task Scheduler' feature page must open a window

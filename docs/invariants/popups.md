@@ -396,6 +396,9 @@ means.
   - **A hover pop-up vanishes once the pointer has left it and all of its descendants** (`MenuHoverTracker`,
     `LocalMenuHover`: the configurations tree's), the menus opened inside it being its descendants — a category's
     child pop-up and the arrow in a pop-up's bar each a branch of the pop-up they stand in (`parent`).
+    **A menu entry that shows a pop-up when hovered goes through `HoverPopupRow`** (user rule 2026-11-21,
+    `MenuAction.hoverPopup`: the calendar's "add…" and "edit…") — the category row's tracker, opener and sides, never a
+    hover handler of its own.
   - **A PRESS ON WHAT OPENS A POP-UP IS ITS CLICK'S TO ANSWER — never the outside press's, never the keyboard's loss**
     (anomaly 2026-11-20: *"Often when I rapidly click on a down arrow, it appears and disappears in a blink. It also
     happens for rows that show a window when hovering over it."*; `ui/PopupOpener.kt`, `PopupOpenerTest`,
