@@ -25,11 +25,7 @@ private val CALENDAR_MENU_SEARCH_HEIGHT = 480.dp
  */
 @Composable
 internal fun CalendarMenuSearch(add: Boolean, atMillis: Long) {
-    val search = LocalEmbeddedSearch.current
-    androidx.compose.runtime.LaunchedEffect(add, atMillis) {
-        org.example.project.scheduler.platform.Diagnostics.log("[popup] calendar menu search: ${if (add) "add" else "edit"} at $atMillis drawn (search=${search != null})")
-    }
-    search ?: return
+    val search = LocalEmbeddedSearch.current ?: return
     val opened = remember(add, atMillis) {
         if (add) SearchDomain.calendarAddConfig(atMillis) else SearchDomain.calendarAtConfig(atMillis)
     }

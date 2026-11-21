@@ -34,6 +34,9 @@ Check here before assuming the code matches the docs.
   `SearchDomain.calendarAddConfig` / `calendarAtConfig` at the right-click, drawn through `LocalEmbeddedSearch`, head
   hidden); a click pins it. Where no Search window can be drawn inside another (no `App`), the click opens the window as
   before. `MenuHoverPopupTest`. No SQLite or Supabase change.
+- Same day, user rule: *"When a row shows a window when hovered over, there must be an arrow indicating it."* — the "◂"
+  of the ▾ tree's categories (`HoverPopupArrow`, now the one drawing) before the entry's name ("◂ add…"); at the row's end
+  it was past the menu's edge. The `[popup]` trace added for the right-click anomaly is removed.
 - Not carried over: "add…" opening with the type selector deployed (user rule 2026-10-01) — a drop-down deployed by itself
   in a hover pop-up would be a third pop-up under the pointer; and the one shared "add…/edit…" window moved by each
   right-click — each hover pop-up starts afresh at its right-click.

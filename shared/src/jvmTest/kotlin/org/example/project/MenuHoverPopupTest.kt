@@ -67,6 +67,15 @@ class MenuHoverPopupTest {
         try {
             frames(6)
             assertFalse(popupText in texts(), "nothing shown before the hover")
+            // User rule 2026-11-21: *"When a row shows a window when hovered over, there must be an arrow indicating it."*
+            // One arrow: on "add…", which opens a pop-up, and not on "other", on the same line as "add…", before it.
+            val arrows = onEdt {
+                scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                    .filter { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == "◂" } == true }
+                    .map { it.boundsInWindow }
+            }
+            assertEquals(1, arrows.size, "one arrow, on the entry with a pop-up: $arrows")
+            assertTrue(kotlin.math.abs(arrows.single().center.y - centerOf("add…").y) < 4f, "the arrow is on the add… row: $arrows")
 
             moveTo(centerOf("add…"))
             frames(6)

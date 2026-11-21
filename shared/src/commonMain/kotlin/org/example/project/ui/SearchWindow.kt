@@ -1883,9 +1883,9 @@ fun SearchWindow(
                                 is SearchDomain.TaskResult -> taskRow(index, result, false)
                                 // A picker's creation row makes the cell's new task at one click, as a task row picks.
                                 // User rule 2026-11-21: an option with a pop-up of its own shows it while hovered.
-                                is SearchDomain.ItemResult -> WithHoverPopup(
-                                    options?.hoverPopup?.takeIf { SearchDomain.isPickedRow(result.kind) }?.invoke(result.id),
-                                ) { Column(
+                                is SearchDomain.ItemResult -> {
+                                val hoverPopup = options?.hoverPopup?.takeIf { SearchDomain.isPickedRow(result.kind) }?.invoke(result.id)
+                                WithHoverPopup(hoverPopup) { Column(
                                     Modifier.fillMaxWidth().outsidePressPart(resultRows)
                                         .then(picker?.onNewTask?.let { make -> Modifier.pickOnClick(make) } ?: Modifier),
                                 ) {
@@ -1924,7 +1924,13 @@ fun SearchWindow(
                                             else addKeys(listOf(resultKey(result)))
                                         },
                                         checkBox = option?.checked?.takeIf { !selectAll && result.id != SearchDomain.CREATE_OPTION }?.let { result.id in it },
-                                        leading = option?.leading?.takeIf { !selectAll }?.let { draw -> { draw(result.id) } },
+                                        // User rule 2026-11-21: a row that shows a window when hovered says so by its arrow,
+                                        // before its name: at the row's far end it stood past the menu's edge, out of view.
+                                        leading = run {
+                                            val mark = option?.leading?.takeIf { !selectAll }
+                                            if (hoverPopup == null) mark?.let { draw -> { draw(result.id) } }
+                                            else { { HoverPopupArrow(); mark?.invoke(result.id) } }
+                                        },
                                         hasMenu = option == null,
                                         enabled = option == null || result.id !in option.disabled,
                                         onAdd = { addSelected() },
@@ -1946,6 +1952,7 @@ fun SearchWindow(
                                         )
                                     }
                                 } }
+                                }
                             }
                             }
                             }

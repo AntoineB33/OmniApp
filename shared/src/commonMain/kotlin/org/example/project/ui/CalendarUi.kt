@@ -7253,9 +7253,6 @@ private fun DayColumn(
             else MenuAction("edit…") { onEditElementsAt(at, hits) }
         // User rule 2026-11-12: the menu is a Search window of its entries.
         // The entries, read while the menu is open alone.
-        androidx.compose.runtime.LaunchedEffect(anchor) {
-            if (anchor != null) org.example.project.scheduler.platform.Diagnostics.log("[popup] calendar right-click at $anchor: hover windows=$menuSearches")
-        }
         val calendarMenuActions: List<MenuAction> =
             if (anchor == null) {
                 emptyList()

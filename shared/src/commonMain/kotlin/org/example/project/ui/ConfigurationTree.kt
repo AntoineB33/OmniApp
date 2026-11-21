@@ -572,7 +572,7 @@ private fun TreeColumn(
                             InfoHint(text = SearchDomain.nodeDescription(node.id.removePrefix(SearchDomain.FLAT_NODE_PREFIX)), modifier = Modifier.weight(1f)) {
                                 Text(node.label, style = MaterialTheme.typography.bodyMedium)
                             }
-                            Text("◂", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            HoverPopupArrow()
                         }
                         if (revealing) {
                             androidx.compose.runtime.CompositionLocalProvider(

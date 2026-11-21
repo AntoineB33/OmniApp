@@ -398,7 +398,10 @@ means.
     child pop-up and the arrow in a pop-up's bar each a branch of the pop-up they stand in (`parent`).
     **A menu entry that shows a pop-up when hovered goes through `HoverPopupRow`** (user rule 2026-11-21,
     `MenuAction.hoverPopup`: the calendar's "add…" and "edit…") — the category row's tracker, opener and sides, never a
-    hover handler of its own.
+    hover handler of its own. **Every row that opens a pop-up when hovered wears the arrow** (user rule 2026-11-21: *"When
+    a row shows a window when hovered over, there must be an arrow indicating it."*; `HoverPopupArrow`, the one drawing):
+    a tree's category at its end, a menu entry before its name (the option row's `leading` mark) — the menu's rows are
+    laid wider than the menu, and an arrow at their far end stood out of view (`MenuHoverPopupTest`).
   - **A PRESS ON WHAT OPENS A POP-UP IS ITS CLICK'S TO ANSWER — never the outside press's, never the keyboard's loss**
     (anomaly 2026-11-20: *"Often when I rapidly click on a down arrow, it appears and disappears in a blink. It also
     happens for rows that show a window when hovering over it."*; `ui/PopupOpener.kt`, `PopupOpenerTest`,
