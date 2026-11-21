@@ -35,20 +35,26 @@ internal fun HoverPopupRow(
     val callerList = LocalCallerList.current
     var open by remember { mutableStateOf(false) }
     val around = LocalMenuHover.current
-    val branch = rememberMenuHoverTracker(parent = around) { open = false }
+    val branch = rememberMenuHoverTracker(parent = around) { org.example.project.scheduler.platform.Diagnostics.log("[popup] hover row: closed by its tracker (pointer left)"); open = false }
     val opener = rememberPopupOpener()
     val latestOpen by rememberUpdatedState(open)
     Box(
         Modifier
             .reportsHover(branch)
             .popupOpener(opener, open)
-            .onHoverEnter { if (MenuHoverTracker.hoverActs(around)) open = true }
+            .onHoverEnter {
+                val acts = MenuHoverTracker.hoverActs(around)
+                org.example.project.scheduler.platform.Diagnostics.log("[popup] hover row: pointer in (opens=$acts, open=$open)")
+                if (acts) open = true
+            }
             // The row's own press handling (it picks the option) is left alone: the release is read, never consumed.
             .pointerInput(branch, opener) {
                 awaitPointerEventScope {
                     while (true) {
                         if (awaitPointerEvent().type != PointerEventType.Release) continue
-                        if (branch.clickedOpener(opener, latestOpen, toggles = false)) {
+                        val keep = branch.clickedOpener(opener, latestOpen, toggles = false)
+                        org.example.project.scheduler.platform.Diagnostics.log("[popup] hover row: released on it (was open=$latestOpen, open after=$keep)")
+                        if (keep) {
                             open = true
                             branch.pin()
                         }
@@ -67,7 +73,7 @@ internal fun HoverPopupRow(
                 androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
                     AppDropdownMenu(
                         expanded = true,
-                        onDismissRequest = { open = false },
+                        onDismissRequest = { org.example.project.scheduler.platform.Diagnostics.log("[popup] hover row: its pop-up dismissed"); open = false },
                         // The whole pop-up is the branch, wherever the platform's menu does not report its surface itself.
                         modifier = Modifier.reportsHover(branch),
                         properties = PopupProperties(focusable = true),

@@ -387,6 +387,7 @@ private class MenuSession(
     private val ownerListener = object : WindowAdapter() {
         override fun windowDeactivated(event: WindowEvent) {
             if (!ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
+                org.example.project.scheduler.platform.Diagnostics.log("[popup] menu $site: closed, its owner window deactivated (to ${event.oppositeWindow?.javaClass?.simpleName})")
                 dismiss.value()
             }
         }
@@ -398,7 +399,8 @@ private class MenuSession(
         }
         override fun windowLostFocus(event: WindowEvent) {
             if (focusable && !ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
-                keyboardLeft { dismiss.value() }
+                org.example.project.scheduler.platform.Diagnostics.log("[popup] menu $site: lost the keyboard to ${event.oppositeWindow?.javaClass?.simpleName}")
+                keyboardLeft { org.example.project.scheduler.platform.Diagnostics.log("[popup] menu $site: closed, keyboard left"); dismiss.value() }
             }
         }
     }
@@ -433,6 +435,7 @@ private class MenuSession(
                 // branch closed every pop-up up to the tree's root. Gone to a pop-up it hangs from, only what stands
                 // below that one closes — the keyboard's loss says the same ([gone]).
                 keyboardLeft {
+                    org.example.project.scheduler.platform.Diagnostics.log("[popup] menu $site: closed, active window now ${active?.javaClass?.simpleName}")
                     if (hover?.pinned == true) hover?.windowLeft(gone(active))
                     dismiss.value()
                 }
@@ -486,6 +489,7 @@ private class MenuSession(
 
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     private fun open() {
+        org.example.project.scheduler.platform.Diagnostics.log("[popup] menu $site: open (focusable=$focusable, anchor=$anchor, owner=${owner.javaClass.simpleName})")
         val window = MenuWindows.take(owner)
         dialog = window
         openedAt = System.nanoTime()
@@ -500,6 +504,7 @@ private class MenuSession(
             // A focusable menu is material's: Escape closes it. A non-focusable one never sees a key.
             onPreviewKeyEvent = { event ->
                 if (focusable && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    org.example.project.scheduler.platform.Diagnostics.log("[popup] menu $site: closed by Escape")
                     dismiss.value()
                     true
                 } else {
@@ -593,6 +598,7 @@ private class MenuSession(
             // at, never left where its first size put it (anomaly 2026-11-15: *"appear too far to the top"*).
             val shown = window.location.takeIf { window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN }
             val settled = System.nanoTime() - openedAt >= SETTLE_NANOS
+            if (window.size != fitted) org.example.project.scheduler.platform.Diagnostics.log("[popup] menu $site: fitted to ${fitted.width}x${fitted.height}")
             if (window.size != fitted) window.size = fitted
             // Settling, it is not kept where its first size put it — but a pop-up is put back against its caller by the edge
             // the pointer crossed rather than placed afresh, which moved it from under the pointer (anomaly 2026-11-19).
@@ -636,6 +642,7 @@ private class MenuSession(
     fun close() {
         closed = true
         val window = dialog ?: return
+        org.example.project.scheduler.platform.Diagnostics.log("[popup] menu $site: window gone (shown at ${window.location}, ${window.size.width}x${window.size.height})")
         dialog = null
         owner.removeWindowListener(ownerListener)
         owner.removeComponentListener(ownerMoves)
