@@ -33,6 +33,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
@@ -352,7 +353,17 @@ private class MenuSession(
     private var anchor: Rect? = null
     private var offsetPx = Offset.Zero
     private var dialog: ComposeDialog? = null
+    /** The size the content wants (AWT units) — what the menu is placed for. */
     private var size: Dimension? = null
+
+    /**
+     * User rule 2026-11-21 (*"even if it means reducing the size of the pop-up window"*): the size the window is shown at,
+     * less than [size] where [menuFit] shrank it to keep rows in view; null while it is [size].
+     */
+    private var shrunkTo: Dimension? = null
+
+    /** [shrunkTo] in the window's pixels, read by its content as it lays out ([MenuSurface]): it is laid out within it. */
+    private val cap = androidx.compose.runtime.mutableStateOf<IntSize?>(null)
     private var closed = false
 
     /**
@@ -512,7 +523,7 @@ private class MenuSession(
         size = MenuWindows.lastSize[site]
         window.size = size ?: Dimension(2, 2)
         // A size not known yet: composed and measured out of sight, shown where it belongs once it is ([fit]).
-        window.location = if (size == null) Point(-32000, -32000) else location()
+        if (size == null) window.location = Point(-32000, -32000) else applyPlacement(window, location())
         window.compositionLocalContext = locals.value
         window.setContent(
             // A focusable menu is material's: Escape closes it. A non-focusable one never sees a key.
@@ -573,7 +584,7 @@ private class MenuSession(
                 // A menu opened inside it is not opened by what opened it.
                 LocalPopupOpener provides null,
             ) {
-                MenuSurface(owner, modifier.value, content.value, ::fit)
+                MenuSurface(owner, modifier.value, content.value, cap, ::fit)
             }
         }
         // `popups.md`: a menu leaves on the first press outside it. A press in the app is the root observer's to see;
@@ -600,9 +611,19 @@ private class MenuSession(
             val scale = window.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
             // User rule 2026-11-16: no window outside the app — never larger than the app's window either.
             val app = appArea(owner)
-            val fitted = Dimension(
+            val reported = Dimension(
                 ceil(wanted.width / scale).toInt().coerceAtLeast(1).let { if (app != null) it.coerceAtMost(app.width.coerceAtLeast(1)) else it },
                 ceil(wanted.height / scale).toInt().coerceAtLeast(1).let { if (app != null) it.coerceAtMost(app.height.coerceAtLeast(1)) else it },
+            )
+            // Laid out within a shrunk size, the content says that size, not the one it wants: on an axis where it fills
+            // the cap, the size it wanted before stands (it may want more); where it is smaller than the cap, it is that.
+            val capped = shrunkTo
+            val before = size
+            fun wantedOn(reported: Int, cap: Int?, before: Int?): Int =
+                if (cap == null || reported < cap - 1 || before == null) reported else maxOf(before, reported)
+            val fitted = Dimension(
+                wantedOn(reported.width, capped?.width, before?.width),
+                wantedOn(reported.height, capped?.height, before?.height),
             )
             MenuWindows.lastSize[site] = fitted
             size = fitted
@@ -611,7 +632,7 @@ private class MenuSession(
             // at, never left where its first size put it (anomaly 2026-11-15: *"appear too far to the top"*).
             val shown = window.location.takeIf { window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN }
             val settled = System.nanoTime() - openedAt >= SETTLE_NANOS
-            if (window.size != fitted) window.size = fitted
+            if (capped == null && window.size != fitted) window.size = fitted
             // Settling, it is not kept where its first size put it — but a pop-up is put back against its caller by the edge
             // the pointer crossed rather than placed afresh, which moved it from under the pointer (anomaly 2026-11-19).
             place(keeping = shown, settling = !settled)
@@ -627,15 +648,28 @@ private class MenuSession(
         if (size == null) return
         // Dragged by its head: where the hand left it ([control]).
         if (heldByHand && window.isShowing) return
-        val at = menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow(), stuck = avoidsList, settling = settling)
-        if (window.location != at) {
-            window.location = at
-        }
-        noteFarSide(at)
+        val placed = menuPlacement(
+            owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow(), stuck = avoidsList, settling = settling,
+            shown = shrunkTo,
+        )
+        applyPlacement(window, placed)
     }
 
-    private fun location(): Point =
-        menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow(), stuck = avoidsList).also(::noteFarSide)
+    private fun location(): Placed =
+        menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow(), stuck = avoidsList)
+
+    /** The window at [placed]: its place, and its size — the content's, or less where [menuFit] shrank it ([cap]). */
+    private fun applyPlacement(window: ComposeDialog, placed: Placed) {
+        val wanted = size ?: placed.size
+        val shrunk = placed.size.takeIf { it.width < wanted.width || it.height < wanted.height }
+        shrunkTo = shrunk
+        val scale = window.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
+        val capPx = shrunk?.let { IntSize((it.width * scale).toInt(), (it.height * scale).toInt()) }
+        if (cap.value != capPx) cap.value = capPx
+        if (window.size != placed.size) window.size = placed.size
+        if (window.location != placed.at) window.location = placed.at
+        noteFarSide(placed.at)
+    }
 
     /**
      * User rule 2026-11-19: the side of this pop-up furthest from its caller ([farSideOf]), told to what it holds
@@ -644,7 +678,7 @@ private class MenuSession(
     private val farSide = androidx.compose.runtime.mutableStateOf<FarSide?>(null)
 
     private fun noteFarSide(at: Point) {
-        val shown = size ?: return
+        val shown = shrunkTo ?: size ?: return
         if (at.x <= OFF_SCREEN || at.y <= OFF_SCREEN) return
         val caller = rectOnScreen(owner, anchor ?: Rect.Zero, offsetPx)
         val next = farSideOf(IntRect(at.x, at.y, at.x + shown.width, at.y + shown.height), caller)
@@ -685,21 +719,34 @@ private fun MenuSurface(
     owner: AwtWindow,
     modifier: Modifier,
     content: @Composable ColumnScope.() -> Unit,
+    /** The size it is shown at where it was shrunk ([menuFit]), in pixels: it is laid out within it, never cut. */
+    cap: State<IntSize?>,
     onWanted: (IntSize) -> Unit,
 ) {
+    val within = Modifier.layout { measurable, constraints ->
+        val c = cap.value
+        val placeable = measurable.measure(
+            if (c == null) constraints
+            else constraints.copy(
+                minWidth = minOf(constraints.minWidth, c.width), maxWidth = minOf(constraints.maxWidth, c.width),
+                minHeight = minOf(constraints.minHeight, c.height), maxHeight = minOf(constraints.maxHeight, c.height),
+            ),
+        )
+        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+    }
     // Never taller than the screen it is on: past that the menu scrolls, as material's does.
     val tallest = remember(owner) { (workAreaAt(ScreenPoint(owner.x, owner.y))?.height ?: 2000).dp }
     // A menu opened inside a hover pop-up is one of its descendants ([LocalMenuHover]): the pointer over it holds the pop-up.
     // A Search window's menu ([LocalBareMenu]) is shown bare: it wears a window's surface itself (anomaly 2026-11-15, 5).
     if (LocalBareMenu.current) {
-        Box(Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true).onSizeChanged(onWanted)) {
+        Box(Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true).then(within).onSizeChanged(onWanted)) {
             androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides false) {
                 Column(modifier = modifier.heightIn(max = tallest), content = content)
             }
         }
         return
     }
-    Box(Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true).onSizeChanged(onWanted)) {
+    Box(Modifier.reportsHover(LocalMenuHover.current).wrapContentSize(align = Alignment.TopStart, unbounded = true).then(within).onSizeChanged(onWanted)) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainer,
             contentColor = MaterialTheme.colorScheme.onSurface,
@@ -880,6 +927,9 @@ private fun pointerIn(owner: AwtWindow): Offset? =
  * User rule 2026-11-16: *"No window must appear outside the app."* The room it has is the APP's window (its content, as
  * shown on the screen's work area) — no longer the screen's, which the 2026-11-15 rule gave it.
  */
+/** Where a menu window stands and the size it is shown at ([menuPlacement]), in AWT units. */
+private class Placed(val at: Point, val size: Dimension)
+
 private fun menuPlacement(
     owner: AwtWindow,
     anchor: Rect,
@@ -893,17 +943,31 @@ private fun menuPlacement(
     stuck: Boolean = false,
     /** In its first moments: never kept as it stands, only put back against its caller ([reStuck]). */
     settling: Boolean = false,
-): Point {
+    /** The size it is shown at now where it is shrunk ([menuFit]); null: [size]. */
+    shown: Dimension? = null,
+): Placed {
     val on = rectOnScreen(owner, anchor, offsetPx)
     val listOn = list?.let { rectOnScreen(owner, it, Offset.Zero) }
     val area = appArea(owner)
         ?: workAreaAt(ScreenPoint(on.left, on.top))?.let { IntRect(it.x, it.y, it.x + it.width, it.y + it.height) }
-        ?: return keeping ?: Point(on.left, on.bottom)
-    if (keeping != null && !settling && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn, stuck)) return keeping
+        ?: return Placed(keeping ?: Point(on.left, on.bottom), shown ?: size)
+    // Kept, it keeps the size it is shown at: a shrunk pop-up grows back when it is placed afresh (the app resized or moved).
+    val now = shown?.let { Dimension(minOf(it.width, size.width), minOf(it.height, size.height)) } ?: size
+    if (keeping != null && !settling && keepsSpot(IntOffset(keeping.x, keeping.y), IntSize(now.width, now.height), on, area, listOn, stuck)) {
+        return Placed(keeping, now)
+    }
     // A pop-up come off its caller by a change of size: back against it by the edge the pointer crossed (anomaly 2026-11-19).
-    if (keeping != null && stuck) reStuck(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn)?.let { return Point(it.x, it.y) }
+    if (keeping != null && stuck && shown == null) {
+        reStuck(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn)?.let { return Placed(Point(it.x, it.y), size) }
+    }
+    // User rule 2026-11-21: a pop-up stuck to its caller, shrunk rather than hiding its rows ([menuFit]); a right-click's
+    // menu at its size ([menuSpot]).
+    if (stuck) {
+        val fit = menuFit(on, IntSize(size.width, size.height), area, sides, listOn)
+        return Placed(Point(fit.at.x, fit.at.y), Dimension(fit.size.width, fit.size.height))
+    }
     val spot = menuSpot(on, IntSize(size.width, size.height), area, sides, listOn)
-    return Point(spot.x, spot.y)
+    return Placed(Point(spot.x, spot.y), size)
 }
 
 /** [r] (pixels of [owner]'s content, moved by [by]) on the screen, in AWT units. */

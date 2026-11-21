@@ -4115,6 +4115,26 @@ private fun MiniMonthDay(
 enum class CalendarPart { Grid, Day, Display, Locks }
 
 /**
+ * User rule 2026-11-21: **the calendar's view, in its right-click menu** — the parts of the calendar element that are its
+ * view (the day selector, the display, the locks), taken off its actions section ([SearchDomain.RETIRED_ACTIONS]), each an
+ * entry that shows it hovered.
+ */
+internal val CALENDAR_MENU_VIEW_PARTS: List<Pair<String, CalendarPart>> =
+    listOf("day…" to CalendarPart.Day, "display…" to CalendarPart.Display, "lock…" to CalendarPart.Locks)
+
+/** One of [CALENDAR_MENU_VIEW_PARTS] as its hover pop-up shows it: drawn by `App` ([element]), on a menu's surface. */
+@Composable
+internal fun CalendarMenuPart(element: @Composable (CalendarPart) -> Unit, part: CalendarPart) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Box(Modifier.padding(12.dp)) { element(part) }
+    }
+}
+
+/**
  * Draws one [CalendarPart] of the calendar of the Search window it is provided in — `App` provides it, since the
  * calendar reads and writes most of the app; the actions section only says where. Null outside the app (a preview).
  */
@@ -7251,6 +7271,14 @@ private fun DayColumn(
         fun editEntry(at: Long, hits: List<PlacedRecord>): MenuAction =
             if (menuSearches) MenuAction("edit…", hoverPopup = { CalendarMenuSearch(add = false, atMillis = at) }) {}
             else MenuAction("edit…") { onEditElementsAt(at, hits) }
+        // User rule 2026-11-21: *"In the right-click menu of the calendar, add the option to select the day, and all the
+        // other options for the calendar view. Remove them from the action section of the calendar element."* — the day
+        // selector, the display and the locks, each shown hovered as the actions section drew it ([CalendarMenuPart]).
+        // Only where `App` draws this calendar as a Search window's element: elsewhere there is no view to set.
+        val calendarElement = LocalCalendarElement.current
+        fun viewEntries(): List<MenuAction> =
+            if (calendarElement == null) emptyList()
+            else CALENDAR_MENU_VIEW_PARTS.map { (label, part) -> MenuAction(label, hoverPopup = { CalendarMenuPart(calendarElement, part) }) {} }
         // User rule 2026-11-12: the menu is a Search window of its entries.
         // The entries, read while the menu is open alone.
         val calendarMenuActions: List<MenuAction> =
@@ -7284,6 +7312,8 @@ private fun DayColumn(
                     // PRD §8: **one "add" entry**, anchored at the right-click time ([CalendarElementsWindow] answers what,
                     // of which kind, with which configuration; nothing is laid until its Save).
                     add(addEntry(millisAt(anchor.y)))
+                    // The calendar's own view, after what acts on what is drawn — never inside a "restrictive period" chooser.
+                    if (branch.isEmpty()) addAll(viewEntries())
                 }
             }
         ActionMenu("calendar grid menu",

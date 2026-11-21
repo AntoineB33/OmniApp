@@ -16,9 +16,16 @@ User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`),
 `CalendarElementPart`; `CalendarElementTest`.
 
 - **There is no calendar window.** A Search window holding the calendar element draws the calendar in its actions
-  section: the element's actions are the calendar itself (`AddedAction.CalendarGrid`), its day selector, its display,
-  its locks, and the account's switches the calendar window held (drawn by the menu's own code,
-  `CALENDAR_ACTION_CONTROLS`). Everything this file says of "the calendar" is said of that grid.
+  section: the element's actions are the calendar itself (`AddedAction.CalendarGrid`) and the account's switches the
+  calendar window held (drawn by the menu's own code, `CALENDAR_ACTION_CONTROLS`). Everything this file says of "the
+  calendar" is said of that grid.
+- **The calendar's VIEW is in its right-click menu, not in the actions section** (user rule 2026-11-21: *"In the
+  right-click menu of the calendar, add the option to select the day, and all the other options for the calendar view.
+  Remove them from the action section of the calendar element."*; `CALENDAR_MENU_VIEW_PARTS`, `CalendarMenuPart`). The
+  menu's "day…", "display…" and "lock…" each show, hovered, the part the actions section drew (`CalendarPart.Day`,
+  `Display`, `Locks`, drawn by `App` as before). Their actions (`AddedAction.CalendarDay`, `CalendarDisplay`,
+  `CalendarLocks`) are retired (`RETIRED_ACTIONS`): no longer listed, kept so an item of the lateral menu made from one
+  still draws it.
 - **"Open the calendar" is ONE funnel**: `openWindowOnItsPage(FloatingWindow.Calendar, …)` — the lateral menu's button,
   a notification's click, "go to calendar", "Drag on the calendar", a box bound picked on the calendar, the element's
   row. With no view asked it brings back an open Search window showing the calendar (the focused one first), else

@@ -369,6 +369,22 @@ means.
     no spot held the pop-up the last resort slid it back over the row. `keepsSpot` never keeps it on the row as shown. **A pop-up opened by a hover inside
     a menu is never that menu's right-click** (`RightPresses.window === owner`): opened within 750 ms of the right-click,
     with the pointer already on its row, it was placed as a right-click's menu — no list, not stuck.
+  - **…and it is MADE SMALLER rather than hide its caller's rows, the left and the top first** (user rule 2026-11-21:
+    *"Make sure the pop-up window is stuck to the caller (a row or a button). Its position and sizes must be adjusted for
+    the best. It must avoid as much as possible to hide the rows in the same section as the caller, even if it means
+    reducing the size of the pop-up window. It must prioritize appearing to the left and to the top (I often work with a
+    video playing in a picture-in-picture window on the bottom right corner of my laptop screen)."*; `menuFit`,
+    `MenuSession.shrunkTo`, `MenuSurface`'s cap, `MenuPlacementTest`). Every pop-up that is not a right-click's menu is
+    placed by `menuFit`: whole where `menuSpot`'s spot holds it stuck and hiding no row; else shrunk on a side of its
+    caller hiding no row (a row's left or right as the list shows it, above the first row, below the last; any side of
+    a field or a button), the spot keeping the most of it, the sides' order breaking ties; never under
+    `POPUP_MIN_WIDTH` × `POPUP_MIN_HEIGHT` (240 × 160), below which it keeps its size and hides the fewest rows. The window
+    is shown at the shrunk size and its content LAID OUT within it (it scrolls or narrows, never cut); the size it wants
+    is kept apart (`size`), so a pop-up placed afresh (the app moved or resized) grows back. **The left and the top
+    first**: `MenuSide.SUBMENU` is left, above, right, below (it was left, right, below, above, 2026-11-04); beside its
+    row a pop-up reaches UP from it (its bottom on the row's bottom), down only where the room's top stops it; above or
+    below its caller it reaches left. `MenuSide.POPUP` already led with the left, then above. A right-click's menu keeps
+    `DEFAULT` (below first, 2026-10-14) at its own size.
   - **In the Search window a ROW's right-click menu opens AT THE POINTER** (user rule 2026-10-13: *"for the
     elements in the result list of the Search window, the menu still appears at the left of the element instead of
     the mouse position"*; `AppDropdownMenu`'s `atPointer`, `LocalRowMenusAtPointer`, provided by `SearchWindow`).

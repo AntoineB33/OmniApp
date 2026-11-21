@@ -6104,7 +6104,11 @@ object SearchDomain {
      * same way (user rule 2026-10-13): its button stands beside "Open all", in the first micro group of every group.
      */
     val RETIRED_ACTIONS: Set<AddedAction> =
-        setOf(AddedAction.DragOnCalendar, AddedAction.ClearList, AddedAction.ElementAddParent, AddedAction.ElementRemoveParent)
+        setOf(
+            AddedAction.DragOnCalendar, AddedAction.ClearList, AddedAction.ElementAddParent, AddedAction.ElementRemoveParent,
+            // User rule 2026-11-21: the calendar's view is its right-click menu's (`CalendarUi`'s CALENDAR_MENU_VIEW_PARTS).
+            AddedAction.CalendarDay, AddedAction.CalendarDisplay, AddedAction.CalendarLocks,
+        )
 
     /** The general actions about the calendar: listed for the elements that can be on it ([CALENDAR_ADD_KINDS]). */
     val CALENDAR_ACTIONS: Set<AddedAction> =

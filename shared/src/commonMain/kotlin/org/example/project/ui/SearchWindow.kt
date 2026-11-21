@@ -879,11 +879,29 @@ fun SearchWindow(
     LaunchedEffect(results.firstOrNull()?.let(::resultKey)) { if (stayAtTop) listState.scrollToItem(0) }
     LaunchedEffect(selected) { minTimeEditTaskId = null }
     // User rule 2026-11-01: the actions section STARTS at the group asked for ([ActionSearchRows.reveal]).
+    // User rule 2026-11-21 (*"scrolled up at maximum where the parent of the 'Calendar' row doesn't appear. It must be this
+    // way even if I change the rows appearing in the action section"*): the row asked for stands at the very top, its
+    // parent just out of view — however few rows follow it. Where the list ends too soon to scroll it there, the list is
+    // given the room it lacks after its last row ([revealRoomPx]), then scrolled again.
+    var revealRoomPx by remember { mutableStateOf(0) }
     LaunchedEffect(actionRows?.reveal) {
         val (key, _) = actionRows?.reveal ?: return@LaunchedEffect
+        revealRoomPx = 0
         withFrameNanos { }
         val at = results.indexOfFirst { (it as? SearchDomain.ItemResult)?.id == key }
-        if (at >= 0) listState.scrollToItem(at)
+        if (at < 0) return@LaunchedEffect
+        listState.scrollToItem(at)
+        withFrameNanos { }
+        val info = listState.layoutInfo
+        val row = info.visibleItemsInfo.firstOrNull { it.index == at } ?: return@LaunchedEffect
+        val last = info.visibleItemsInfo.lastOrNull() ?: return@LaunchedEffect
+        // Still below the top: the list ended first. Room enough for the row and what follows it to fill the viewport.
+        if (row.offset > info.viewportStartOffset && last.index == info.totalItemsCount - 1) {
+            val fromRowToEnd = last.offset + last.size - row.offset
+            revealRoomPx = (info.viewportSize.height - fromRowToEnd - info.afterContentPadding).coerceAtLeast(0)
+            withFrameNanos { }
+            listState.scrollToItem(at)
+        }
     }
     // A drop-down's list with no end ([SearchOptions.onNearEnd]): more is asked as its last rows come in view.
     val latestOnNearEnd by rememberUpdatedState(options?.onNearEnd)
@@ -1671,7 +1689,9 @@ fun SearchWindow(
                     LazyColumn(
                         state = listState,
                         verticalArrangement = Arrangement.spacedBy(menuList?.rowGap ?: 0.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = menuList?.bottomPadding ?: 0.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            bottom = (menuList?.bottomPadding ?: 0.dp) + with(LocalDensity.current) { revealRoomPx.toDp() },
+                        ),
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(end = SCROLLBAR_ROOM)

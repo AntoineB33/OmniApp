@@ -37,7 +37,6 @@ import org.example.project.ui.SearchWindow
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
 class CalendarButtonWindowTest {
     private val width = 1000
-    private val height = 700
 
     @Test
     fun the_calendar_buttons_window_shows_the_calendar() = check(broughtBack = false)
@@ -50,7 +49,15 @@ class CalendarButtonWindowTest {
     @Test
     fun the_calendar_window_it_brings_back_shows_the_calendar_alone_too() = check(broughtBack = true)
 
-    private fun check(broughtBack: Boolean) {
+    /**
+     * User rule 2026-11-21: *"scrolled up at maximum where the parent of the 'Calendar' row doesn't appear. It must be this
+     * way even if I change the rows appearing in the action section"* — a short calendar in a tall window, the rows after it
+     * too few to fill the list: the "Calendar" row still stands at the top, its group out of view.
+     */
+    @Test
+    fun the_calendar_row_is_at_the_top_however_few_rows_follow_it() = check(broughtBack = false, height = 2400, gridDp = 120)
+
+    private fun check(broughtBack: Boolean, height: Int = 700, gridDp: Int = 520) {
         val splitsAsked = mutableStateOf(if (broughtBack) SearchSplits() else SearchSplits.actionsOnly(SearchSplits()))
         val revealAsked = mutableStateOf(if (broughtBack) null else SearchDomain.calendarActionRowId())
         val config0 = SearchDomain.calendarWindowConfig(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Calendar), calendarDayMode = true))
@@ -68,7 +75,7 @@ class CalendarButtonWindowTest {
                     LocalCalendarElement provides { part ->
                         if (part == CalendarPart.Grid) {
                             org.example.project.ui.CalendarGridWithProblems(account) {
-                                Box(Modifier.fillMaxWidth().height(520.dp)) { Text("THE CALENDAR GRID") }
+                                Box(Modifier.fillMaxWidth().height(gridDp.dp)) { Text("THE CALENDAR GRID") }
                             }
                         } else {
                             Text("calendar part $part")
@@ -127,6 +134,16 @@ class CalendarButtonWindowTest {
             // …nor the search section: the actions' head starts at the window's left edge, not right of a search column.
             val actions = shown.first { it.first == "Actions on the added elements" }
             assertTrue(actions.second.left < 100f, "the actions take the whole width: $actions")
+            // The "Calendar" row at the top of the list, its group ("Calendar" too, one level out) not drawn at all — nor
+            // pinned over it: one "Calendar" shown, and no row between the bar and it.
+            val calendarRows = shown.filter { it.first == "Calendar" }
+            assertTrue(calendarRows.size == 1, "the Calendar row alone, not its group: $calendarRows")
+            val bar = shown.first { it.first == "Search" }
+            val calendarRow = calendarRows.single()
+            assertTrue(
+                shown.none { (t, b) -> t.isNotBlank() && b.top > bar.second.bottom && b.bottom < calendarRow.second.top - 1f },
+                "nothing between the bar and the Calendar row: $calendarRow",
+            )
         } finally {
             onEdt { scene.close() }
         }

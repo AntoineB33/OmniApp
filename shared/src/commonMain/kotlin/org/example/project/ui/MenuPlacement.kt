@@ -51,6 +51,74 @@ internal fun menuSpot(
     return spotOff({ row }, size, area, sides, acrossRow = true, pick = { spots -> spots.minByOrNull(::hides) })
 }
 
+/** Where a pop-up stands and the size it is shown at ([menuFit]): its own, or less where that keeps rows in view. */
+internal data class MenuFit(val at: IntOffset, val size: IntSize)
+
+/**
+ * The least a pop-up is shrunk to rather than hide a row or leave its caller ([menuFit]), in screen units: smaller, it
+ * would show too little to be used, and it covers rows at its own size instead.
+ */
+internal const val POPUP_MIN_WIDTH = 240
+internal const val POPUP_MIN_HEIGHT = 160
+
+/**
+ * User rule 2026-11-21: *"Make sure the pop-up window is stuck to the caller (a row or a button). Its position and sizes
+ * must be adjusted for the best. It must avoid as much as possible to hide the rows in the same section as the caller,
+ * even if it means reducing the size of the pop-up window. It must prioritize appearing to the left and to the top."*
+ * **Where a pop-up (not a right-click's menu) stands, and at what size**, in this order:
+ *  1. [menuSpot]'s spot, where it holds the pop-up WHOLE, stuck to its caller and hiding no row of its [list];
+ *  2. else the pop-up made smaller, on a side of its caller where it hides no row: at the left or the right of the row
+ *     as the list shows it, above the first row, below the last; of a field or a button, any side. The spot keeping the
+ *     most of it wins, [sides]' order (left and top first) breaking ties. Never below [POPUP_MIN_WIDTH] x
+ *     [POPUP_MIN_HEIGHT] (or its own size, when smaller). Beside its caller it reaches up first, above or below it left;
+ *  3. else [menuSpot]'s spot at its own size: the one hiding the fewest rows.
+ */
+internal fun menuFit(
+    anchor: IntRect,
+    size: IntSize,
+    area: IntRect,
+    sides: List<MenuSide> = MenuSide.POPUP,
+    list: IntRect? = null,
+): MenuFit {
+    val spot = menuSpot(anchor, size, area, sides, list)
+    val caller = if (list == null) anchor else shownRow(anchor, list)
+    fun rect(at: IntOffset, s: IntSize) = IntRect(at.x, at.y, at.x + s.width, at.y + s.height)
+    fun inArea(r: IntRect) = r.left >= area.left && r.top >= area.top && r.right <= area.right && r.bottom <= area.bottom
+    fun hidesNone(r: IntRect) = list == null || !r.overlaps(list)
+    val shown = rect(spot, size)
+    if (inArea(shown) && !shown.overlaps(caller) && hidesNone(shown) && stuckTo(shown, anchor, list)) return MenuFit(spot, size)
+    // Above or below a row only from the first or the last: elsewhere the rows between would be hidden, or the pop-up
+    // would stand away from its row.
+    val first = list == null || caller.top <= list.top + 1
+    val last = list == null || caller.bottom >= list.bottom - 1
+    val minW = minOf(size.width, POPUP_MIN_WIDTH)
+    val minH = minOf(size.height, POPUP_MIN_HEIGHT)
+    // Along a side, inside the room and across the caller (its start at or before the caller's, its end at or after).
+    fun along(preferred: Int, lo: Int, hi: Int, length: Int, callerStart: Int, callerEnd: Int): Int =
+        preferred.coerceIn(lo, maxOf(lo, hi - length))
+            .coerceIn(minOf(callerEnd - length, callerStart), maxOf(callerEnd - length, callerStart))
+    val shrunk = sides.distinct().mapNotNull { side ->
+        val left = side == MenuSide.Left || side == MenuSide.LeftTop
+        val horizontal = left || side == MenuSide.Right || side == MenuSide.RightTop
+        val above = side == MenuSide.Above || side == MenuSide.AboveEnd
+        if (!horizontal && (if (above) !first else !last)) return@mapNotNull null
+        val w = minOf(size.width, if (!horizontal) area.width else if (left) caller.left - area.left else area.right - caller.right)
+        val h = minOf(size.height, if (horizontal) area.height else if (above) caller.top - area.top else area.bottom - caller.bottom)
+        if (w < minW || h < minH) return@mapNotNull null
+        val at =
+            if (horizontal) {
+                IntOffset(if (left) caller.left - w else caller.right, along(caller.bottom - h, area.top, area.bottom, h, caller.top, caller.bottom))
+            } else {
+                IntOffset(along(caller.right - w, area.left, area.right, w, caller.left, caller.right), if (above) caller.top - h else caller.bottom)
+            }
+        val r = rect(at, IntSize(w, h))
+        if (inArea(r) && !r.overlaps(caller) && hidesNone(r)) MenuFit(at, IntSize(w, h)) else null
+    }
+    // The most of the pop-up kept; the sides' order breaks ties (maxBy keeps the first of equals).
+    shrunk.maxByOrNull { it.size.width.toLong() * it.size.height }?.let { return it }
+    return MenuFit(spot, size)
+}
+
 /**
  * User rule 2026-11-21: **the row a pop-up hangs from, as its [list] shows it** — the list's width at the row's height. A
  * row may be laid out wider than the list that shows it (a menu's rows are, their end out of view): its sides are the
@@ -88,6 +156,10 @@ private fun spotOff(
         val hi = maxOf(row.bottom - size.height, row.top)
         return slid.coerceIn(lo, hi)
     }
+    // User rule 2026-11-21: *"It must prioritize appearing to the left and to the top"* (a picture-in-picture video in the
+    // screen's bottom right corner): a row's pop-up beside its row reaches up from it, its bottom on the row's bottom,
+    // sliding down only where the top of the room stops it.
+    fun sideTop(anchor: IntRect): Int = if (acrossRow) anchor.bottom - size.height else anchor.top
     fun whole(x: Int, y: Int): IntOffset? =
         if (x >= area.left && y >= area.top && x + size.width <= area.right && y + size.height <= area.bottom) IntOffset(x, y) else null
     fun on(side: MenuSide): IntOffset? {
@@ -95,8 +167,8 @@ private fun spotOff(
         return when (side) {
             MenuSide.Below -> if (anchor.bottom + size.height <= area.bottom) IntOffset(slideX(anchor.left), maxOf(anchor.bottom, area.top)) else null
             MenuSide.Above -> if (anchor.top - size.height >= area.top) IntOffset(slideX(anchor.left), minOf(anchor.top - size.height, area.bottom - size.height)) else null
-            MenuSide.Right -> if (anchor.right + size.width <= area.right) IntOffset(maxOf(anchor.right, area.left), slideY(anchor.top)) else null
-            MenuSide.Left -> if (anchor.left - size.width >= area.left) IntOffset(minOf(anchor.left - size.width, area.right - size.width), slideY(anchor.top)) else null
+            MenuSide.Right -> if (anchor.right + size.width <= area.right) IntOffset(maxOf(anchor.right, area.left), slideY(sideTop(anchor))) else null
+            MenuSide.Left -> if (anchor.left - size.width >= area.left) IntOffset(minOf(anchor.left - size.width, area.right - size.width), slideY(sideTop(anchor))) else null
             // A pop-up's four spots hold it whole where they stand, unslid — sliding is only the fallback below.
             MenuSide.LeftTop -> whole(anchor.left - size.width, anchor.top)
             MenuSide.AboveEnd -> whole(anchor.right - size.width, anchor.top - size.height)
@@ -197,9 +269,11 @@ enum class MenuSide {
 
         /**
          * User rule 2026-11-04, the configurations tree's: a category's children open at its left, else at its right, else
-         * below, else above — over its grandparents' pop-ups if that is where there is room.
+         * below, else above — over its grandparents' pop-ups if that is where there is room. User rule 2026-11-21: *"It must
+         * prioritize appearing to the left and to the top"* — at its left, else above, else at its right, else below (a row's
+         * pop-up still takes the spot hiding the fewest rows first, [menuFit]).
          */
-        val SUBMENU: List<MenuSide> = listOf(Left, Right, Below, Above)
+        val SUBMENU: List<MenuSide> = listOf(Left, Above, Right, Below)
 
         /**
          * User rule 2026-11-15 (second of the day), a pop-up opened from a field or a button (a click, a hover, a key —

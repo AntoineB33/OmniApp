@@ -9,6 +9,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.example.project.ui.MenuSide
 import org.example.project.ui.keepsSpot
+import org.example.project.ui.menuFit
 import org.example.project.ui.menuSpot
 import org.example.project.ui.stuckTo
 import org.example.project.ui.reStuck
@@ -179,14 +180,20 @@ class MenuPlacementTest {
         val last = IntRect(400, 530, 900, 560)
         // Room at the left: there, against the row, across its height.
         val left = menuSpot(last, pop, screen, sub, list)
-        assertEquals(IntOffset(100, 500), left, "at the left of the last row, slid up to stay on the screen, the row within its height")
+        // User rule 2026-11-21 (*"prioritize appearing to the left and to the top"*): reaching UP from the row, its bottom on
+        // the row's bottom.
+        assertEquals(IntOffset(100, 260), left, "at the left of the last row, reaching up, the row within its height")
         assertTrue(stuckTo(rect(left), last, list))
-        // No room at the left: at the right of the row AS SHOWN — the list's edge, not the row's far end out of view.
+        // No room at the left, a row in the middle (above would hide the row over it): at the right of the row AS SHOWN —
+        // the list's edge, not the row's far end out of view.
         val tight = IntRect(150, 0, 1000, 800)
-        val shownList = IntRect(160, 500, 400, 560)
+        val shownList = IntRect(160, 470, 400, 560)
         val wideRow = IntRect(160, 500, 700, 530)
         val right = menuSpot(wideRow, pop, tight, sub, shownList)
         assertEquals(400, right.x, "at the list's right edge, not at 700: $right")
+        // From the FIRST row, above it hides nothing: there, before the right (the top first, user rule 2026-11-21).
+        val fromTop = menuSpot(wideRow, pop, tight, sub, IntRect(160, 500, 400, 560))
+        assertEquals(200, fromTop.y, "above the first row: $fromTop")
         assertTrue(stuckTo(rect(right), wideRow, shownList))
         // Neither side has room: below — from the LAST row only, against it.
         val narrow = IntRect(300, 0, 750, 900)
@@ -206,6 +213,39 @@ class MenuPlacementTest {
         val spot = menuSpot(middle, IntSize(300, 150), narrow, sub, longList)
         assertEquals(IntOffset(320, 140), spot, "above the row: 3 rows hidden rather than 5")
         assertFalse(IntRect(spot.x, spot.y, spot.x + 300, spot.y + 150).overlaps(shownRow(middle, longList)), "not on the row")
+    }
+
+    /**
+     * User rule 2026-11-21: *"It must avoid as much as possible to hide the rows in the same section as the caller, even if
+     * it means reducing the size of the pop-up window. It must prioritize appearing to the left and to the top."*
+     */
+    @Test
+    fun a_pop_up_is_made_smaller_rather_than_hide_the_rows_of_its_caller() {
+        val sub = MenuSide.SUBMENU
+        // A list in the middle of the app's window, a row in its middle: 260 px at its left, 250 at its right, the pop-up
+        // 400 wide. Whole, it could only stand over rows; made 260 wide, it stands at the row's left and hides none.
+        val app = IntRect(0, 0, 1000, 800)
+        val list = IntRect(260, 100, 750, 700)
+        val row = IntRect(260, 400, 750, 430)
+        val fit = menuFit(row, IntSize(400, 300), app, sub, list)
+        assertEquals(IntSize(260, 300), fit.size, "as wide as the room at the left: $fit")
+        assertEquals(IntOffset(0, 130), fit.at, "at the row's left, reaching up from it")
+        val shown = IntRect(fit.at.x, fit.at.y, fit.at.x + fit.size.width, fit.at.y + fit.size.height)
+        assertFalse(shown.overlaps(list), "no row hidden")
+        assertTrue(stuckTo(shown, row, list), "stuck to its row")
+        // Room for the whole pop-up at the left: its own size.
+        assertEquals(IntSize(200, 300), menuFit(row, IntSize(200, 300), app, sub, list).size)
+        // Too little room on every side that hides nothing: its own size, hiding the fewest rows.
+        val tight = IntRect(150, 0, 900, 800)
+        val cramped = menuFit(row, IntSize(400, 300), tight, sub, list)
+        assertEquals(IntSize(400, 300), cramped.size, "never below the least size: $cramped")
+        // A button with no side holding its pop-up whole: shrunk, against it, never over it.
+        val button = IntRect(100, 380, 900, 420)
+        val pop = menuFit(button, IntSize(500, 500), app)
+        val popRect = IntRect(pop.at.x, pop.at.y, pop.at.x + pop.size.width, pop.at.y + pop.size.height)
+        assertFalse(popRect.overlaps(button), "not over its button: $pop")
+        assertTrue(stuckTo(popRect, button), "stuck to its button: $pop")
+        assertEquals(IntSize(500, 380), pop.size, "above it (the top first), as tall as the room: $pop")
     }
 
     /**

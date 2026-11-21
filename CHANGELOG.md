@@ -11,6 +11,23 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pop-ups shrink rather than hide rows; the calendar's view in its right-click menu — 2026-11-21
+
+- User rule: *"Make sure the pop-up window is stuck to the caller (a row or a button). Its position and sizes must be
+  adjusted for the best. It must avoid as much as possible to hide the rows in the same section as the caller, even if
+  it means reducing the size of the pop-up window. It must prioritize appearing to the left and to the top."* Now
+  `menuFit` places every pop-up (not a right-click's menu): whole where it hides no row, else shrunk (to 240 × 160 at
+  least) on a side hiding none, else as before. `MenuSide.SUBMENU` is left, above, right, below (was left, right, below,
+  above); a row's pop-up reaches up from its row (it hung down). `popups.md`.
+- User rule: *"The window of the default 'Calendar' button must appear with the action section scrolled up at maximum
+  where the parent of the 'Calendar' row doesn't appear. It must be this way even if I change the rows appearing in the
+  action section."* The actions section's reveal scrolled the row to the top only while enough rows followed it; where
+  the list ends first it is now given the room it lacks after its last row (`SearchWindow`'s `revealRoomPx`).
+  `CalendarButtonWindowTest` checks a short calendar in a tall window.
+- User rule: *"In the right-click menu of the calendar, add the option to select the day, and all the other options for
+  the calendar view. Remove them from the action section of the calendar element."* "day…", "display…", "lock…" in the
+  menu, each shown on hover; `CalendarDay`, `CalendarDisplay`, `CalendarLocks` retired from the actions. `calendar.md`.
+
 ### The calendar's right-click menu vanished as it opened — 2026-11-21
 
 - Anomaly: *"The right-click doesn't work..."* — a `[popup]` trace of one reproduction on the release app: the menu
