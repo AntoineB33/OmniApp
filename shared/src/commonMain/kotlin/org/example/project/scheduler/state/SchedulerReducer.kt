@@ -3616,7 +3616,7 @@ object SchedulerReducer {
                 rulesSink = { rules = it },
                 cycleSink = { cycle = it },
                 idleSink = { idle = it },
-                searchBudget = SearchBudget.of(searchMillis) { abandoned(generation) },
+                searchBudget = SearchBudget.paced(searchMillis, advanced.planResources) { abandoned(generation) },
                 extraSeeds = seeds,
                 instant = instant,
                 searchSink = { report, cost ->
@@ -3970,7 +3970,7 @@ object SchedulerReducer {
                 idleSink = { idle = it },
                 extraSeeds = seeds,
                 unrollOnly = unrollOnly,
-                searchBudget = SearchBudget.of(searchMillis) { abandoned(generation) },
+                searchBudget = SearchBudget.paced(searchMillis, advanced.planResources) { abandoned(generation) },
                 searchSink = { report, cost ->
                     search = report
                     score = cost

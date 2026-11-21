@@ -160,7 +160,8 @@ internal fun progressiveStageCapMillis(
  * capped at [PROGRESSIVE_STAGE_SEARCH_MILLIS] — and `docs/scheduler_requirements.md`, user rule 2026-11-18: **`q` of
  * it**: 0 searches nothing (the fastest run, the least CPU), 1 every millisecond the pace leaves
  * ([org.example.project.scheduler.state.SchedulerState.planResources]). The pace itself is never given up: a step is
- * published within the ten seconds whatever `q` is.
+ * published within the ten seconds whatever `q` is. Below 1, the search gives back what it does not use: it stops once
+ * it has gone `q²` of this without finding anything better (`SearchBudget.paced`, built by the plan reductions).
  */
 internal fun pacedStepSearchMillis(spanMillis: Long, planHoursPerSecond: Double, q: Double): Long {
     val predicted =

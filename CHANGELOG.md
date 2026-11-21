@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The default `q` no longer runs the fans for half an hour per change — 2026-11-21
+
+- User request: *"I don't want my fans to make a noise for hours with the default q value and a task tree that is not
+  particularly complex."* Measured on a 12-task tree at `q = 0.25`: every ten-minute step spent its whole grant
+  (~1.75 s), and SCIP, which does not stop at a small time limit (a window given 1 ms took 0.7 s), overran it — one run to
+  `now + 168 h` was **31 min of wall time, 45 min of CPU**, started again at every change of the rules. Over 140 step
+  searches on 4-, 12- and 30-task trees the search improved the plan once, by 0.36 % of the score; a day planned at 0.25
+  measured exactly like one planned at 0.
+- Below `q = 1` a step's search now **stops once it has gone `q²` of its grant without finding anything better**
+  (`SearchBudget.paced`, `progressed`; `pace · q³`), and OR-Tools starts a window only while the budget can pay what a
+  window costs on this device (`MipScheduleSolver.windowFloorMillis`, learned from the windows that overran). At 1 the
+  search still uses all the pace allows. Same tree, same day: **1.5 min of wall time, 1.9 min of CPU per run**, the same
+  schedule quality. The grant and the pace are unchanged. `DefaultQCostTest`.
+
 ### The Search bars' keystrokes are a history list of their own; a pin persists, by caller — 2026-11-21
 
 - User rule: *"make them isolated lists. Two pins can't share history units"* (asked: the Search bars only). A bar's

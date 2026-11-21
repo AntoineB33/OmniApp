@@ -77,7 +77,9 @@ data class PeriodCrossing(
 
 /**
  * `docs/scheduler_requirements.md`: **the "allocated resources quantity" hyperparameter `q` in [0, 1]** until the user
- * sets another — a quarter of what the pace allows: a run to `now + 168 h` searches about two seconds per ten-minute step.
+ * sets another — a quarter of what the pace allows, given back once the search has gone `q²` of it without a gain
+ * (`SearchBudget.paced`): a run to `now + 168 h` on a 12-task tree is about a minute and a half (2026-11-21; it was half an
+ * hour when every step spent its whole grant).
  */
 const val DEFAULT_PLAN_RESOURCES: Double = 0.25
 

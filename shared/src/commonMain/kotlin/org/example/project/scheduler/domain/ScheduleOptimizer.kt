@@ -347,6 +347,8 @@ class ScheduleOptimizer(
         val extraGranted = !budget.expired()
         val searchStart = kotlin.time.TimeSource.Monotonic.markNow()
         if (extraGranted && runs.isNotEmpty()) {
+            // The search's patience ([SearchBudget.paced]) counts from here, not from the passes before it.
+            budget.progressed()
             // The exhaustive search first: where it finishes, nothing over the candidate lengths is better and the
             // solver has nothing left to find. It keeps a share of the time back for the solver when it does not.
             val external = solver
@@ -650,6 +652,7 @@ class ScheduleOptimizer(
                 val done = c.copy()
                 model.settle(done)
                 if (better(done.cost, bestCost)) {
+                    budget.progressed()
                     bestCost = done.cost
                     bestRuns = coalesce(path.toList())
                 }

@@ -1,5 +1,6 @@
 package org.example.project.scheduler.domain
 
+import kotlin.time.TimeSource
 import com.google.ortools.linearsolver.MPSolver
 import com.google.ortools.linearsolver.MPVariable
 import kotlin.math.abs
@@ -46,6 +47,17 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
     var windowsKept: Int = 0
         private set
 
+    /**
+     * **What a window costs at the least on this device**, millis: SCIP does not stop at a small time limit (its
+     * presolve and root relaxation run whatever the limit says — a window given 1 ms took 0.7 s, 2026-11-21), so a
+     * window started with a few milliseconds left overran the step's search by most of a second, every step. Learned
+     * from the windows that overran their limit; a window is begun only while the budget can pay for it. 0 until one
+     * has been measured.
+     */
+    @Volatile
+    var windowFloorMillis: Long = 0L
+        private set
+
     override fun improve(
         model: ScoreModel,
         start: ScoreCursor,
@@ -65,14 +77,22 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
             else runs.firstOrNull { model.fixedAt(it.fromU) < 0 }?.toU ?: start.u
         var improved = false
         var sweep = 0
-        while (!budget.expired() && sweep++ < MAX_SWEEPS) {
+        fun affordable() = !budget.expired() && budget.remainingMillis() >= windowFloorMillis
+        while (affordable() && sweep++ < MAX_SWEEPS) {
             var changed = false
             var a = floor
-            while (a < untilU - ScoreModel.EPS && !budget.expired()) {
+            while (a < untilU - ScoreModel.EPS && affordable()) {
                 val b = minOf(untilU, a + span)
                 if (b - a > ScoreModel.MIN_WINDOW_MILLIS) {
                     windowsAsked++
+                    val offered = minOf(budget.remainingMillis(), WINDOW_TIME_LIMIT_MILLIS)
+                    val began = TimeSource.Monotonic.markNow()
                     val proposal = runCatching { solveWindow(model, start, untilU, runs, a, b, budget) }.getOrNull()
+                    val took = began.elapsedNow().inWholeMilliseconds
+                    if (took > offered) {
+                        val floor0 = windowFloorMillis
+                        windowFloorMillis = if (floor0 <= 0L) took else (0.7 * floor0 + 0.3 * took).toLong()
+                    }
                     if (proposal != null) {
                         val c = scorer.score(start, proposal)
                         if (ScheduleOptimizer.better(c, cost)) {
@@ -81,6 +101,7 @@ internal class MipScheduleSolver : ExternalScheduleSolver {
                             changed = true
                             improved = true
                             windowsKept++
+                            budget.progressed()
                         }
                     }
                 }

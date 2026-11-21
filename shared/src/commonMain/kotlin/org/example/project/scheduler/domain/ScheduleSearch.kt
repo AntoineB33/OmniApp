@@ -38,9 +38,35 @@ class SearchBudget private constructor(
      * it is asked, at every checkpoint it already has, whether to stop where it stands.
      */
     private val abandoned: () -> Boolean,
+    /** How long the search may go on finding nothing better before it stops ([paced]); null: to the [deadline]. */
+    private val patience: Patience? = null,
 ) {
-    /** True once no further time may be spent (always true for [NONE]). This is DEGRADATION, not abandonment. */
-    fun expired(): Boolean = deadline?.hasPassedNow() ?: true
+    /**
+     * The search's patience, shared by every [share] of one budget: the passes are one search, and a gain found by
+     * any of them is progress for all.
+     */
+    private class Patience(val millis: Long) {
+        var since: TimeMark = TimeSource.Monotonic.markNow()
+    }
+
+    /**
+     * True once no further time may be spent (always true for [NONE]): the deadline has passed, or the search has gone
+     * its patience without finding anything better ([paced]). This is DEGRADATION, not abandonment.
+     */
+    fun expired(): Boolean {
+        val d = deadline ?: return true
+        if (d.hasPassedNow()) return true
+        val p = patience ?: return false
+        return p.since.elapsedNow().inWholeMilliseconds >= p.millis
+    }
+
+    /**
+     * The search found something better than what it held (or is starting): its patience runs again from now. Every
+     * pass that lowers the score says so — the exhaustive search at a better continuation, the solver at a kept window.
+     */
+    fun progressed() {
+        patience?.since = TimeSource.Monotonic.markNow()
+    }
 
     /** True when the fill has been superseded and must stop where it stands. */
     fun abandoned(): Boolean = abandoned.invoke()
@@ -54,21 +80,47 @@ class SearchBudget private constructor(
     fun remainingMillis(): Long {
         val d = deadline ?: return 0L
         val left = -d.elapsedNow().inWholeMilliseconds
-        return left.coerceAtLeast(0L)
+        val patient = patience?.let { it.millis - it.since.elapsedNow().inWholeMilliseconds } ?: Long.MAX_VALUE
+        return minOf(left, patient).coerceAtLeast(0L)
     }
 
     /** A budget ending at the earlier of this one and [millis] from now — to give one pass a share of the rest. */
     fun share(millis: Long): SearchBudget =
         if (deadline == null) SearchBudget(null, abandoned)
-        else of(minOf(remainingMillis(), millis.coerceAtLeast(0L)), abandoned)
+        else {
+            // The deadline alone is shared out; the patience is the same one (above).
+            val left = minOf(-deadline.elapsedNow().inWholeMilliseconds, millis).coerceAtLeast(0L)
+            if (left <= 0L) SearchBudget(null, abandoned)
+            else SearchBudget(TimeSource.Monotonic.markNow() + left.milliseconds, abandoned, patience)
+        }
 
     companion object {
         /** No time past the step-bounded passes: display fills, adoptions, and the tests that pin the rollout. */
-        val NONE: SearchBudget = SearchBudget(null) { false }
+        val NONE: SearchBudget = SearchBudget(null, abandoned = { false })
 
         fun of(millis: Long, abandoned: () -> Boolean = { false }): SearchBudget =
             if (millis <= 0L) SearchBudget(null, abandoned)
             else SearchBudget(TimeSource.Monotonic.markNow() + millis.milliseconds, abandoned)
+
+        /**
+         * `docs/scheduler_requirements.md`, the "allocated resources quantity" hyperparameter **`q`**: a step's search
+         * granted [grantMillis] (already `q` of what the pace leaves it, `SchedulerEngine.pacedStepSearchMillis`) that,
+         * below `q = 1`, **stops once it has gone `q²` of its grant without finding anything better** — `pace · q³`.
+         * At 1 it uses all the time the pace allows, as the requirements say; lower, it spends its time where it is
+         * finding gains and gives the rest back.
+         *
+         * Measured 2026-11-21 on 4-, 12- and 30-task trees: the searches of 140 ten-minute steps at `q = 0.25`
+         * improved the plan once, by 0.36 % of the score, and a day planned at 0.25 scored the same on the
+         * simulations' measure as one planned at 0; spending every grant whole made one run to `now + 168 h` 31 min
+         * of wall time and 45 min of CPU, started again at every change of the rules.
+         */
+        fun paced(grantMillis: Long, q: Double, abandoned: () -> Boolean = { false }): SearchBudget {
+            if (grantMillis <= 0L) return SearchBudget(null, abandoned)
+            val deadline = TimeSource.Monotonic.markNow() + grantMillis.milliseconds
+            val share = if (q.isNaN()) 0.0 else q.coerceIn(0.0, 1.0)
+            if (share >= 1.0) return SearchBudget(deadline, abandoned)
+            return SearchBudget(deadline, abandoned, Patience((grantMillis * share * share).toLong()))
+        }
     }
 }
 

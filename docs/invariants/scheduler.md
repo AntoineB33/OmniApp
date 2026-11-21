@@ -539,7 +539,9 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
 - **The platform solver runs only where the exhaustive search did not finish, and is never trusted.**
   `ExternalScheduleSolver` (desktop: `MipScheduleSolver`, OR-Tools SCIP over windows of the continuation) returns a
   continuation that `accepted` checks against every hard constraint and `score` re-scores over the whole
-  continuation; it is kept only when `J` goes down. Measured 2026-09-17 (ADR 0001 § 12): it improves on the
+  continuation; it is kept only when `J` goes down. **SCIP does not stop at a small time limit** (a window given 1 ms
+  took 0.7 s, 2026-11-21): a window is begun only while the budget can pay `MipScheduleSolver.windowFloorMillis`, what
+  the windows that overran their limit cost on this device — else every step reaching it overran by most of a second. Measured 2026-09-17 (ADR 0001 § 12): it improves on the
   step-bounded passes only on small cases, where the exhaustive search finishes first anyway — keep it behind the
   exhaustive search, never in front of it.
 - **The search never trusts a seed either.** A seed is a statement about OTHER rules or another environment: its
@@ -708,7 +710,14 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
   Each step searches **`q` of what the ten-second pace leaves it** (`pacedStepSearchMillis`;
   `SchedulerState.planResources`, local-only, persisted, never synced, in [0, 1], 0.25 until the user sets another in
   the calendar's configuration section; read at every step): 0 searches nothing (the fastest run, the least CPU), 1
-  every millisecond the pace leaves. The pace itself is never given up (`PlanResourcesTest`). Until then (2026-09-18 →
+  every millisecond the pace leaves. The pace itself is never given up (`PlanResourcesTest`).
+  - **Below `q = 1` a step gives back the grant it is not using** (user request 2026-11-21, *"I don't want my fans to make
+    a noise for hours with the default q value"*; `SearchBudget.paced`): the search stops once it has gone `q²` of its
+    grant without lowering the score (`progressed`, called by every pass that does), so `pace · q³` at the least. Every
+    step spending its whole grant made one run on a 12-task tree 31 min of wall time and 45 min of CPU at the default,
+    started again at every rule change — for nothing: 140 step searches on three trees improved the plan once, by
+    0.36 %, and a day planned at 0.25 measured like one planned at 0. Now 1.5 min, the same quality (`DefaultQCostTest`).
+    **Never make the default spend its grant whole again without measuring what the search buys on a real tree.** Until then (2026-09-18 →
   2026-11-18) the goal was the latest of the week's end, the calendar's end and `now + 10 min`, the 168 h ceiling capped
   a far calendar, and a run stopped at a calculation time limit (`planCalculationLimitSeconds`, latched by
   `extensionStoodDown`): all removed. Each extension keeps the head, so a run the line is in continues to its minimum
