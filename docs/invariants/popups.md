@@ -356,6 +356,16 @@ means.
     **The ▾ configurations tree is the exception** (user rule 2026-11-16, *"Yes, next to the ▾"*): it hangs next to its
     arrow even over the list (`ConfigurationTreeArrow` provides no list). Opened by a hover, it must be reached by the
     pointer crossing straight onto it; off the list, it stood across the whole list from the arrow and closed first.
+  - **…and it is STUCK TO ITS ROW** (user rule 2026-11-21: *"Make sure every pop-up window that appears from a caller is
+    stuck to the caller. Here, the caller is the row, so if it is the last row the window can appear on the left, the
+    right or the bottom."*; `menuSpot`, `shownRow`, `stuckTo`, `MenuPlacementTest`). The row is the row **as the list
+    shows it** — the list's width at the row's height: a menu's rows are laid wider than the menu, and "at the right of
+    the row" stood off their far end, out of view. At its left or right the pop-up keeps the row within its height as it
+    slides along; below the list only from the LAST row shown, above it only from the FIRST — from any other row those
+    spots stand away from it. Only where no spot touching the row holds the pop-up whole does it go off the list's bottom
+    or top all the same (the list stays in view), then the side with the most room. **A pop-up opened by a hover inside
+    a menu is never that menu's right-click** (`RightPresses.window === owner`): opened within 750 ms of the right-click,
+    with the pointer already on its row, it was placed as a right-click's menu — no list, not stuck.
   - **In the Search window a ROW's right-click menu opens AT THE POINTER** (user rule 2026-10-13: *"for the
     elements in the result list of the Search window, the menu still appears at the left of the element instead of
     the mouse position"*; `AppDropdownMenu`'s `atPointer`, `LocalRowMenusAtPointer`, provided by `SearchWindow`).

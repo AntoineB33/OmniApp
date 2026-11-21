@@ -37,6 +37,13 @@ Check here before assuming the code matches the docs.
 - Same day, user rule: *"When a row shows a window when hovered over, there must be an arrow indicating it."* — the "◂"
   of the ▾ tree's categories (`HoverPopupArrow`, now the one drawing) before the entry's name ("◂ add…"); at the row's end
   it was past the menu's edge. The `[popup]` trace added for the right-click anomaly is removed.
+- Same day, user rule: *"Make sure every pop-up window that appears from a caller is stuck to the caller. Here, the
+  caller is the row, so if it is the last row the window can appear on the left, the right or the bottom."* — a row's
+  pop-up (`menuSpot` with a list) is placed off the row AS SHOWN (`shownRow`: the menu's rows are laid wider than the
+  menu, and its right side stood off their hidden end), keeps the row within its height as it slides, and goes below
+  only from the last row shown, above only from the first; `stuckTo` reads the same row. A hover pop-up opened just after
+  the right-click that opened its menu was taken for a right-click's menu (no list, not stuck): a right-click's menu now
+  hangs from the window the right press landed in (`RightPresses.window === owner`).
 - Not carried over: "add…" opening with the type selector deployed (user rule 2026-10-01) — a drop-down deployed by itself
   in a hover pop-up would be a third pop-up under the pointer; and the one shared "add…/edit…" window moved by each
   right-click — each hover pop-up starts afresh at its right-click.

@@ -31,23 +31,65 @@ internal fun menuSpot(
     sides: List<MenuSide> = MenuSide.DEFAULT,
     list: IntRect? = null,
 ): IntOffset {
-    fun anchorFor(side: MenuSide): IntRect = when {
-        list == null -> anchor
-        side == MenuSide.Left || side == MenuSide.Right || side == MenuSide.LeftTop || side == MenuSide.RightTop ->
-            IntRect(minOf(anchor.left, list.left), anchor.top, maxOf(anchor.right, list.right), anchor.bottom)
-        else -> IntRect(minOf(anchor.left, list.left), minOf(anchor.top, list.top), maxOf(anchor.right, list.right), maxOf(anchor.bottom, list.bottom))
+    if (list == null) return spotOff({ anchor }, size, area, sides)
+    // User rule 2026-11-21: *"Make sure every pop-up window that appears from a caller is stuck to the caller. Here, the
+    // caller is the row, so if it is the last row the window can appear on the left, the right or the bottom."* The row as
+    // the list SHOWS it ([shownRow]); below only from the last row shown, above only from the first — anywhere else, off
+    // the list's bottom or top stood away from the row. Off the row's sides, it stays across the row ([acrossRow]).
+    val row = shownRow(anchor, list)
+    val touching = sides.filter { side ->
+        when (side) {
+            MenuSide.Below, MenuSide.BelowEnd -> row.bottom >= list.bottom - 1
+            MenuSide.Above, MenuSide.AboveEnd -> row.top <= list.top + 1
+            else -> true
+        }
     }
-    return spotOff({ anchorFor(it) }, size, area, sides)
+    // Where no spot touching the row holds it whole, off the list's bottom or top (2026-11-16): away from the row, but
+    // the list it is in stays in view — the last resort before covering it.
+    val whole = IntRect(list.left, minOf(anchor.top, list.top), list.right, maxOf(anchor.bottom, list.bottom))
+    return spotOff(
+        { side -> if (side in touching) row else whole }, size, area, touching,
+        acrossRow = true, then = sides.filter { it !in touching },
+    )
 }
+
+/**
+ * User rule 2026-11-21: **the row a pop-up hangs from, as its [list] shows it** — the list's width at the row's height. A
+ * row may be laid out wider than the list that shows it (a menu's rows are, their end out of view): its sides are the
+ * list's edges, never the row's own far end.
+ */
+internal fun shownRow(anchor: IntRect, list: IntRect): IntRect = IntRect(list.left, anchor.top, list.right, anchor.bottom)
+
 
 private fun spotOff(
     anchorOf: (MenuSide) -> IntRect,
     size: IntSize,
     area: IntRect,
     sides: List<MenuSide>,
+    /**
+     * A row's pop-up (user rule 2026-11-21): sliding along the side it stands on, it never leaves the row — at its left or
+     * right it keeps the row's height within its own, below or above the row's width within its own ([acrossRow]).
+     */
+    acrossRow: Boolean = false,
+    /** Tried whole after [sides] (a row's pop-up: the spots off its list that do not touch it); weighed with them after. */
+    then: List<MenuSide> = emptyList(),
 ): IntOffset {
-    fun slideX(x: Int) = x.coerceIn(area.left, maxOf(area.left, area.right - size.width))
-    fun slideY(y: Int) = y.coerceIn(area.top, maxOf(area.top, area.bottom - size.height))
+    fun slideX(x: Int): Int {
+        val slid = x.coerceIn(area.left, maxOf(area.left, area.right - size.width))
+        if (!acrossRow) return slid
+        val row = anchorOf(MenuSide.Left)
+        // Its left at or before the row's, its right at or after the row's (one narrower than the row: inside it).
+        return slid.coerceIn(minOf(row.right - size.width, row.left), maxOf(row.right - size.width, row.left))
+    }
+    fun slideY(y: Int): Int {
+        val slid = y.coerceIn(area.top, maxOf(area.top, area.bottom - size.height))
+        if (!acrossRow) return slid
+        val row = anchorOf(MenuSide.Left)
+        // Its top at or above the row's, its bottom at or below the row's (one that is not as tall as the row: inside it).
+        val lo = minOf(row.bottom - size.height, row.top)
+        val hi = maxOf(row.bottom - size.height, row.top)
+        return slid.coerceIn(lo, hi)
+    }
     fun whole(x: Int, y: Int): IntOffset? =
         if (x >= area.left && y >= area.top && x + size.width <= area.right && y + size.height <= area.bottom) IntOffset(x, y) else null
     fun on(side: MenuSide): IntOffset? {
@@ -64,12 +106,12 @@ private fun spotOff(
             MenuSide.RightTop -> whole(anchor.right, anchor.top)
         }
     }
-    for (side in sides) on(side)?.let { return it }
+    for (side in sides + then) on(side)?.let { return it }
     // No side holds it whole: the side with the most room for its size, the menu pushed back onto the screen.
     // A pop-up's side is weighed on both axes: the room off the anchor for its depth, and the screen along the side for
     // its length (it may slide along that side, never off the anchor).
     fun fit(room: Int, need: Int) = minOf(1f, room.toFloat() / need.coerceAtLeast(1))
-    val room = sides.maxByOrNull { side ->
+    val room = (sides + then).maxByOrNull { side ->
         val anchor = anchorOf(side)
         when (side) {
             MenuSide.Below -> (area.bottom - anchor.bottom).toFloat() / size.height.coerceAtLeast(1)
@@ -125,14 +167,13 @@ internal fun keepsSpot(
  * size. Null where that spot does not hold it (off the screen, over its caller or its list): it is then placed afresh.
  */
 internal fun reStuck(current: IntOffset, size: IntSize, anchor: IntRect, area: IntRect, list: IntRect? = null): IntOffset? {
-    val row = list?.let { IntRect(minOf(anchor.left, it.left), anchor.top, maxOf(anchor.right, it.right), anchor.bottom) } ?: anchor
-    val whole = list?.let { IntRect(minOf(anchor.left, it.left), minOf(anchor.top, it.top), maxOf(anchor.right, it.right), maxOf(anchor.bottom, it.bottom)) } ?: anchor
+    val row = list?.let { shownRow(anchor, it) } ?: anchor
     val at =
         when {
             // At its caller's left: its right edge back on the caller's left edge.
             current.x < row.left && current.y < row.bottom && current.y + size.height > row.top -> IntOffset(row.left - size.width, current.y)
             // Above it: its bottom edge back on the caller's top edge.
-            current.y < whole.top -> IntOffset(current.x, whole.top - size.height)
+            current.y < row.top -> IntOffset(current.x, row.top - size.height)
             // At its right, or below: the touching edge (its left, its top) has not moved.
             else -> current
         }
@@ -188,9 +229,9 @@ val LocalCallerList = androidx.compose.runtime.compositionLocalOf<(() -> android
 
 /**
  * User rule 2026-11-19: *"Make sure every window that appears by hovering over something, the caller, is always stuck to the
- * caller."* **Whether a pop-up at [at] still touches what it hangs from**: one of its sides on one of [anchor]'s, or — a row
- * of a [list] — on the list's edge at the row's height, or its bottom or top ([menuSpot]'s anchors), the two overlapping
- * along that side. A pixel of rounding is no gap.
+ * caller."* **Whether a pop-up at [at] still touches what it hangs from**: one of its sides on one of [anchor]'s — a row of a
+ * [list]: of the row as the list shows it ([shownRow], user rule 2026-11-21) — the two overlapping along that side. A pixel of
+ * rounding is no gap.
  */
 internal fun stuckTo(at: IntRect, anchor: IntRect, list: IntRect? = null): Boolean {
     fun near(a: Int, b: Int) = kotlin.math.abs(a - b) <= 1
@@ -199,11 +240,9 @@ internal fun stuckTo(at: IntRect, anchor: IntRect, list: IntRect? = null): Boole
         val acrossX = at.left < r.right && r.left < at.right || (r.width == 0 && at.left <= r.left && r.left <= at.right)
         return (acrossY && (near(at.right, r.left) || near(at.left, r.right))) || (acrossX && (near(at.bottom, r.top) || near(at.top, r.bottom)))
     }
-    if (touches(anchor)) return true
-    list ?: return false
-    val row = IntRect(minOf(anchor.left, list.left), anchor.top, maxOf(anchor.right, list.right), anchor.bottom)
-    val whole = IntRect(minOf(anchor.left, list.left), minOf(anchor.top, list.top), maxOf(anchor.right, list.right), maxOf(anchor.bottom, list.bottom))
-    return touches(row) || touches(whole)
+    // User rule 2026-11-21: a row of a list is the row as the list shows it ([shownRow]) — its own far end may be out of
+    // view, and the list's bottom or top is the row's only for the last or the first row shown.
+    return touches(if (list == null) anchor else shownRow(anchor, list))
 }
 
 /** The side of a pop-up furthest from what it hangs from ([farSideOf]): where the ▾ of its search bar stands. */

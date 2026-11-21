@@ -161,6 +161,42 @@ class MenuPlacementTest {
     }
 
     /**
+     * User rule 2026-11-21: *"Make sure every pop-up window that appears from a caller is stuck to the caller. Here, the
+     * caller is the row, so if it is the last row the window can appear on the left, the right or the bottom."*
+     */
+    @Test
+    fun a_rows_pop_up_is_stuck_to_the_row_below_it_only_from_the_last_row() {
+        val sub = MenuSide.SUBMENU
+        val pop = IntSize(300, 300)
+        fun rect(at: IntOffset) = IntRect(at.x, at.y, at.x + pop.width, at.y + pop.height)
+        // A menu's list, its rows laid wider than it (their end out of view): 400..640 shown, the rows 400..900.
+        val list = IntRect(400, 500, 640, 560)
+        val first = IntRect(400, 500, 900, 530)
+        val last = IntRect(400, 530, 900, 560)
+        // Room at the left: there, against the row, across its height.
+        val left = menuSpot(last, pop, screen, sub, list)
+        assertEquals(IntOffset(100, 500), left, "at the left of the last row, slid up to stay on the screen, the row within its height")
+        assertTrue(stuckTo(rect(left), last, list))
+        // No room at the left: at the right of the row AS SHOWN — the list's edge, not the row's far end out of view.
+        val tight = IntRect(150, 0, 1000, 800)
+        val shownList = IntRect(160, 500, 400, 560)
+        val wideRow = IntRect(160, 500, 700, 530)
+        val right = menuSpot(wideRow, pop, tight, sub, shownList)
+        assertEquals(400, right.x, "at the list's right edge, not at 700: $right")
+        assertTrue(stuckTo(rect(right), wideRow, shownList))
+        // Neither side has room: below — from the LAST row only, against it.
+        val narrow = IntRect(300, 0, 750, 900)
+        val below = menuSpot(IntRect(320, 530, 730, 560), pop, narrow, sub, IntRect(320, 500, 730, 560))
+        assertEquals(560, below.y, "below the last row: $below")
+        assertTrue(stuckTo(rect(below), IntRect(320, 530, 730, 560), IntRect(320, 500, 730, 560)))
+        // From the first row, below the list would stand away from it: not there (above, touching it, is).
+        val fromFirst = menuSpot(IntRect(320, 500, 730, 530), pop, narrow, sub, IntRect(320, 500, 730, 560))
+        assertTrue(stuckTo(rect(fromFirst), IntRect(320, 500, 730, 530), IntRect(320, 500, 730, 560)), "from the first row: $fromFirst")
+        // Below the list from a row that is not the last is not stuck to that row.
+        assertFalse(stuckTo(IntRect(400, 560, 700, 860), first, list), "below the list, under another row")
+    }
+
+    /**
      * User rule 2026-11-19: the down arrow of a window that appears stands on its left or right side, whichever is further
      * from the caller, and what it opens tries that side first.
      */

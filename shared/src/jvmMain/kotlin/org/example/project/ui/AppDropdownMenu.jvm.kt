@@ -179,7 +179,11 @@ private fun HangingMenu(
     // menu stood on where the first right-click had put it, as if the second had done nothing.
     val rightPress = RightPresses.count
     val opening = remember(owner) { intArrayOf(rightPress, 0) }
-    val openedOnRight = remember(owner) { RightPresses.justPressed() }
+    // Anomaly 2026-11-21 (*"every pop-up window that appears from a caller is stuck to the caller"*): a right-click's menu
+    // hangs from the window the right press landed in. A pop-up a hover opened in a menu just after the right-click that
+    // opened that menu (the pointer is often on its row already) hangs from the menu's window: it is no right-click's
+    // menu, and is stuck to its row like any other pop-up.
+    val openedOnRight = remember(owner) { RightPresses.justPressed() && RightPresses.window === owner }
     val current = remember(owner) { arrayOfNulls<MenuSession>(1) }
     if (openedOnRight && rightPress != opening[0]) {
         opening[0] = rightPress
