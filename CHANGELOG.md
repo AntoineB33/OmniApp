@@ -36,6 +36,16 @@ Check here before assuming the code matches the docs.
   push is recorded BEFORE the history is tried, so a history failure never re-sends the account. `FakeSupabase` now
   refuses a mixed-key batch like PostgREST, and `RowSyncTest` reproduces the live failure (it fails on the old client).
 
+### History re-sent on every reconcile; own pushes poking reconciles — 2026-11-22
+
+- Live, right after the fix above: all 3 110 History Units went up sealed, then marking the discarded redo branch failed
+  (42703: the filter named `window`, the column is `unit_window`) and, as the units were recorded only after that step,
+  each reconcile re-sent them (5 times before it went quiet). Older bug, reached only by the first full history push.
+- And every push of this device came back as a "remote change": Realtime writes `"device_id": "…"` with a space, which
+  the echo filter's pattern did not allow — what turned the 2026-11-21 failure into a loop.
+- Fixed all three (`unit_window`; units recorded before the drop step; any spacing). `FakeSupabase` now evaluates `or`
+  filters and refuses a column the table does not have; `RowSyncTest` reproduces the 42703 and the spaced frame.
+
 ### A week of one user, end to end: `UserJourneyTest` — 2026-11-21
 
 - A compliant simulated user (takes each pose the calendar draws, sleeps at night) lives a nested-priority account with

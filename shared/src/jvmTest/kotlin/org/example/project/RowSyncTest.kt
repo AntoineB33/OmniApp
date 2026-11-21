@@ -256,6 +256,24 @@ class RowSyncTest {
         assertEquals(org.example.project.scheduler.sync.SyncState.Idle, desk.sync.state.value)
         val units = server.table("history_unit").rows.values
         assertTrue(units.size >= 3 && units.any { it["undone"].toString() == "true" } && units.any { it["undone"].toString() == "false" }, "the mixed batch was accepted: $units")
+
+        // A new edit discards the undone unit: its row is marked dropped, through the window filter on `unit_window`
+        // (live 2026-11-22: the filter named a column `window` that does not exist, and the history was re-sent each time).
+        val historyWrites = server.table("history_unit").writes
+        desk.act(SchedulerIntent.SetCellTitle(desk.state.lists[desk.state.rootListId]!!.cellIds[0], "Write"))
+        desk.sync.reconcile()
+        assertEquals(org.example.project.scheduler.sync.SyncState.Idle, desk.sync.state.value, "${desk.sync.state.value}")
+        assertTrue(server.table("history_unit").rows.values.any { it["dropped"].toString() == "true" }, "the discarded redo was marked dropped")
+        desk.sync.reconcile()
+        assertTrue(server.table("history_unit").writes - historyWrites <= 3, "only the new unit and the drop were written: ${server.table("history_unit").writes - historyWrites}")
+    }
+
+    @Test
+    fun a_change_this_device_wrote_is_recognised_however_realtime_spaces_it() {
+        // Realtime sends the record with a space after each colon (live 2026-11-22): every own push poked a reconcile.
+        val frame = """{"event":"postgres_changes","payload":{"data":{"record":{"user_id": "u", "revision": 7, "device_id": "desk"}}}}"""
+        assertEquals("desk", org.example.project.scheduler.sync.RealtimePhoenix.changeWriterDeviceId(frame))
+        assertEquals("desk", org.example.project.scheduler.sync.RealtimePhoenix.changeWriterDeviceId("""{"device_id":"desk"}"""))
     }
 
     /** A realistic account, built once. */

@@ -493,7 +493,8 @@ class RemoteSnapshotClient(
                 url.parameters.append("dropped", "is.false")
                 url.parameters.append("time_millis", "lt.$newestAppliedMillis")
                 if (windows != null) {
-                    val terms = windows.map { "window.eq.$it" } + listOfNotNull("window.is.null".takeIf { withUnstamped })
+                    // The column is `unit_window` (migration 20260917000000); `window` does not exist (42703, live 2026-11-22).
+                    val terms = windows.map { "unit_window.eq.$it" } + listOfNotNull("unit_window.is.null".takeIf { withUnstamped })
                     url.parameters.append("or", terms.joinToString(",", "(", ")"))
                 }
                 setBody("""{"dropped":true,"delta":""}""")

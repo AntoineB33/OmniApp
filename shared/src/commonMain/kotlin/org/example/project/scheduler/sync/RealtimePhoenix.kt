@@ -67,7 +67,10 @@ internal object RealtimePhoenix {
      * column), or null when the frame names none. A device's own write reaches its own socket too; reconciling on
      * that echo would be a whole round of requests for nothing, at every edit.
      */
-    fun changeWriterDeviceId(text: String): String? = Regex("\"device_id\":\"([^\"]*)\"").find(text)?.groupValues?.get(1)
+    fun changeWriterDeviceId(text: String): String? = WRITER.find(text)?.groupValues?.get(1)
+
+    /** Realtime writes the record as `"device_id": "…"`, a space after the colon (live 2026-11-22): any spacing. */
+    private val WRITER = Regex("\"device_id\"\\s*:\\s*\"([^\"]*)\"")
 
     /**
      * True for the `system` frame confirming the postgres_changes subscription is LIVE and streaming

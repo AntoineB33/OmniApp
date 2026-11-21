@@ -431,6 +431,14 @@ class FakeSupabase(
         val rest = path.removePrefix("/rest/v1/")
         if (rest.startsWith("rpc/")) return rpc(rest.removePrefix("rpc/"), user, body)
         val table = tables[rest] ?: return HttpStatusCode.NotFound to """{"message":"relation $rest does not exist"}"""
+        // Postgres refuses a filter on a column the table does not have (42703): the `window` / `unit_window` slip that
+        // re-sent the history every six seconds on 2026-11-22. A column is known once any row of the table holds it.
+        val known = table.rows.values.flatMapTo(HashSet()) { it.keys }
+        if (known.isNotEmpty()) {
+            filterColumns(request).firstOrNull { it !in known }?.let { column ->
+                return HttpStatusCode.BadRequest to """{"code":"42703","details":null,"hint":null,"message":"column $rest.$column does not exist"}"""
+            }
+        }
         val filter = filterOf(request, user)
         val prefer = request.headers["Prefer"].orEmpty()
         val result =
@@ -671,14 +679,32 @@ class FakeSupabase(
      * The PostgREST filters the app uses (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `is`), always scoped to the
      * caller's own rows (RLS).
      */
+    /** The columns a request filters on, `or=(a.eq.x,b.is.null)` terms included. */
+    private fun filterColumns(request: HttpRequestData): List<String> =
+        request.url.parameters.entries()
+            .filter { (k, _) -> k !in setOf("select", "order", "limit", "on_conflict", "columns") }
+            .flatMap { (k, values) -> if (k == "or") values.flatMap { orTerms(it).map { t -> t.first } } else listOf(k) }
+
+    /** `(a.eq.x,b.is.null)` → [(a, eq.x), (b, is.null)]. */
+    private fun orTerms(expr: String): List<Pair<String, String>> =
+        expr.removePrefix("(").removeSuffix(")").split(",").map { it.substringBefore('.') to it.substringAfter('.') }
+
     private fun filterOf(request: HttpRequestData, user: String): (JsonObject) -> Boolean {
-        val conditions =
+        val all =
             request.url.parameters.entries()
                 .filter { (k, _) -> k !in setOf("select", "order", "limit", "on_conflict", "columns") }
                 .flatMap { (k, values) -> values.map { k to it } }
+        val conditions = all.filter { it.first != "or" }
+        val alternatives = all.filter { it.first == "or" }.map { orTerms(it.second) }
         return { row ->
             scalarOf(row, "user_id") == user &&
-                conditions.all { (col, expr) ->
+                alternatives.all { terms -> terms.any { (col, expr) -> matches(row, col, expr) } } &&
+                conditions.all { (col, expr) -> matches(row, col, expr) }
+        }
+    }
+
+    private fun matches(row: JsonObject, col: String, expr: String): Boolean =
+        listOf(col to expr).all { (col, expr) ->
                     val v = scalarOf(row, col)
                     val op = expr.substringBefore('.')
                     val arg = expr.substringAfter('.')
@@ -701,8 +727,6 @@ class FakeSupabase(
                         else -> true
                     }
                 }
-        }
-    }
 
     private fun scalarOf(row: JsonObject, column: String): String? = row[column]?.let(::scalar)
 

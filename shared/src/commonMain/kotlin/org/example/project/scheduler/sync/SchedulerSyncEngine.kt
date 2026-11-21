@@ -770,6 +770,10 @@ open class SchedulerSyncEngine(
                     )
                 }
             for (batch in rows.chunked(WRITE_BATCH)) withAuth(session) { client.upsertHistoryUnits(it, batch) }
+            // Recorded as soon as the units are up, BEFORE the redo branches are marked: a failure there must not
+            // send every unit again at the next reconcile (live 2026-11-22, 3 110 units re-sent every six seconds).
+            base = base.copy(historyPushedAt = changed.maxOf { it.second.changedAtMillis })
+            setMeta(meta().copy(baseSnapshot = encodeBase(base)))
             // A redo branch a new edit discarded: its rows are this device's undone units older than its newest
             // applied one, which the local history no longer holds.
             // Only a NEW unit can have discarded one, so only a category this push committed into is asked.
@@ -806,7 +810,6 @@ open class SchedulerSyncEngine(
                 val newestApplied = list.filter { it.ownedBy(me) && !it.undone && !it.delta.authoredByApp }.maxOfOrNull { it.timeMillis } ?: continue
                 withAuth(session) { client.dropHistoryBranch(it, me, category, newestApplied) }
             }
-            base = base.copy(historyPushedAt = changed.maxOf { it.second.changedAtMillis })
             Diagnostics.log("reconcile: pushed ${rows.size} history unit(s)")
         }
 
