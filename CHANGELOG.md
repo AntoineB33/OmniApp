@@ -26,6 +26,16 @@ Check here before assuming the code matches the docs.
   now measures the sealed traffic (its devices were given the account key; before, they would have refused to sync and
   passed vacuously): database 45.0 MB a year, egress 478 MB a month, both under a tenth.
 
+### Encrypted re-upload loop on the first online launch — 2026-11-21
+
+- Live on the release desktop: the first sealed re-push sent 1 651 entity rows, then its History batch was refused
+  (PGRST102 "All object keys must match": the unit rows left default-valued fields out, so a batch of mixed units had
+  different keys). Nothing was recorded as done, so every Realtime poke re-sent the whole account: 40 times in 90 s
+  until the app was taken offline. The server was measured after: 1 651 rows, all sealed, 43 MB, no dead rows left.
+- Fixed: history and Claude-log rows are written with every column (`HistoryUnitWrite`, `ClaudeLogWrite`); the entity
+  push is recorded BEFORE the history is tried, so a history failure never re-sends the account. `FakeSupabase` now
+  refuses a mixed-key batch like PostgREST, and `RowSyncTest` reproduces the live failure (it fails on the old client).
+
 ### A week of one user, end to end: `UserJourneyTest` — 2026-11-21
 
 - A compliant simulated user (takes each pose the calendar draws, sleeps at night) lives a nested-priority account with

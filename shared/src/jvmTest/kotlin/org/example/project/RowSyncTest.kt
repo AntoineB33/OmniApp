@@ -233,6 +233,31 @@ class RowSyncTest {
         assertEquals("Read", title)
     }
 
+    @Test
+    fun a_batch_of_mixed_history_units_is_accepted_and_a_failed_history_push_never_resends_the_entity_rows() = runTest {
+        val server = FakeSupabase({ t0 })
+        val desk = Device("desk", server, this, QuotaAccount.state)
+        desk.sync.signIn("a@b.c", "pw")
+        // Units of every shape in one batch: some undone, some stamped with a window, some not (PGRST102 if the keys differ).
+        repeat(3) { i -> desk.act(SchedulerIntent.SetCellTitle(desk.state.lists[desk.state.rootListId]!!.cellIds[0], "Read $i")) }
+        desk.act(SchedulerIntent.AddPeriodKind("commute"))
+        desk.act(SchedulerIntent.Undo)
+        var failHistory = true
+        server.dropAnswer = { call -> failHistory && call == "POST history_unit" }
+        desk.sync.reconcile()
+        val entityWrites = server.table("scheduler_entity").writes
+        assertTrue(entityWrites > 100, "the account's rows went up")
+        assertTrue(desk.sync.state.value is org.example.project.scheduler.sync.SyncState.Error, "the history push failed")
+
+        // Retries, as Realtime pokes would: the entity rows are NOT sent again, only the history is retried.
+        failHistory = false
+        repeat(3) { desk.sync.reconcile() }
+        assertEquals(entityWrites, server.table("scheduler_entity").writes, "a failed history push re-sent the account")
+        assertEquals(org.example.project.scheduler.sync.SyncState.Idle, desk.sync.state.value)
+        val units = server.table("history_unit").rows.values
+        assertTrue(units.size >= 3 && units.any { it["undone"].toString() == "true" } && units.any { it["undone"].toString() == "false" }, "the mixed batch was accepted: $units")
+    }
+
     /** A realistic account, built once. */
     private object QuotaAccount {
         val state: SchedulerState by lazy { org.example.project.quota.QuotaScenario.account() }

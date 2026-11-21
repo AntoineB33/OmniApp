@@ -446,6 +446,12 @@ class FakeSupabase(
                     HttpStatusCode.OK to JsonArray(hits.map { select(it, request) }).toString()
                 }
                 HttpMethod.Post -> {
+                    // PostgREST refuses a batch whose objects do not all have the same keys (PGRST102): the bug that
+                    // re-sent a whole account every three seconds on 2026-11-21.
+                    val keySets = parseRows(body).map { it.keys }.toSet()
+                    if (keySets.size > 1) {
+                        return HttpStatusCode.BadRequest to """{"code":"PGRST102","details":null,"hint":null,"message":"All object keys must match"}"""
+                    }
                     val incoming = parseRows(body).map { JsonObject(it + ("user_id" to JsonPrimitive(user))) }.map { generated(table, it) }
                     if (prefer.contains("ignore-duplicates")) {
                         incoming.forEach { table.insert(it, user) }

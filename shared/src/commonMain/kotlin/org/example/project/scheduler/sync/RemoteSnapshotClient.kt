@@ -405,13 +405,14 @@ class RemoteSnapshotClient(
     suspend fun insertClaudeLogs(session: SupabaseSession, deviceId: String, rows: List<ClaudeLogRow>) {
         if (rows.isEmpty()) return
         val key = requireKey()
+        // Every column for every row ([ClaudeLogWrite]): a batch's objects must all have the same keys (PGRST102).
         val sealed =
             rows.map {
                 val at = E2ee.claudeLogPlace(it.entryId)
-                it.copy(
-                    userId = session.userId, deviceId = deviceId, revision = null,
-                    sessionTitle = it.sessionTitle?.let { t -> E2ee.encrypt(key, t, "$at|title") },
-                    project = E2ee.encrypt(key, it.project, "$at|project"),
+                ClaudeLogWrite(
+                    userId = session.userId, deviceId = deviceId, entryId = it.entryId, kind = it.kind, timeMillis = it.timeMillis,
+                    session = it.session, sessionTitle = it.sessionTitle?.let { t -> E2ee.encrypt(key, t, "$at|title") },
+                    project = E2ee.encrypt(key, it.project, "$at|project"), ordinal = it.ordinal,
                     body = E2ee.encrypt(key, it.body, "$at|body"),
                 )
             }
@@ -508,7 +509,10 @@ class RemoteSnapshotClient(
                 authHeaders(session)
                 header("Prefer", "resolution=merge-duplicates,return=minimal")
                 contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(rows.map { it.copy(userId = session.userId, delta = E2ee.encrypt(requireKey(), it.delta, E2ee.historyPlace(it.deviceId, it.category, it.deviceSeq))) }))
+                // Every column written for every row ([HistoryUnitWrite]): PostgREST refuses a batch whose objects do not
+                // all have the same keys (PGRST102), and the default-valued fields a plain encode leaves out differ
+                // from unit to unit — which only a batch of many units showed (2026-11-21, the first sealed re-push).
+                setBody(json.encodeToString(rows.map { HistoryUnitWrite.of(it, session.userId, E2ee.encrypt(requireKey(), it.delta, E2ee.historyPlace(it.deviceId, it.category, it.deviceSeq))) }))
             }
         if (!response.status.isSuccess()) throw response.toException()
     }
@@ -1058,6 +1062,45 @@ data class ClaudeLogRow(
     val ordinal: Int,
     val body: String,
     val revision: Long? = null,
+)
+
+/**
+ * One History Unit row as WRITTEN: every column, none defaulted, so every object of a batch has the same keys
+ * (PostgREST's PGRST102); `revision` is the server's and never sent.
+ */
+@Serializable
+private data class HistoryUnitWrite(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    val category: String,
+    @SerialName("device_seq") val deviceSeq: Long,
+    @SerialName("time_millis") val timeMillis: Long,
+    @SerialName("chrono_id") val chronoId: Long,
+    val tainted: Boolean,
+    val undone: Boolean,
+    val dropped: Boolean,
+    @SerialName("unit_window") val window: String?,
+    val delta: String,
+) {
+    companion object {
+        fun of(row: HistoryUnitRow, userId: String, delta: String) =
+            HistoryUnitWrite(userId, row.deviceId, row.category, row.deviceSeq, row.timeMillis, row.chronoId, row.tainted, row.undone, row.dropped, row.window, delta)
+    }
+}
+
+/** One Claude Code log row as WRITTEN: every column, none defaulted (PGRST102); `revision` and `size_bytes` are the server's. */
+@Serializable
+private data class ClaudeLogWrite(
+    @SerialName("user_id") val userId: String,
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("entry_id") val entryId: String,
+    val kind: String,
+    @SerialName("time_millis") val timeMillis: Long?,
+    val session: String,
+    @SerialName("session_title") val sessionTitle: String?,
+    val project: String,
+    val ordinal: Int,
+    val body: String,
 )
 
 /** One History Unit row, both ways. [delta] is the unit's own row text (`SchedulerStateCodec.encodeUnit`). */

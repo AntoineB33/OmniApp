@@ -732,9 +732,13 @@ open class SchedulerSyncEngine(
             for (batch in writes.chunked(WRITE_BATCH)) withAuth(session) { client.upsertEntities(it, me, batch) }
             Diagnostics.log("reconcile: pushed ${writes.size} entity row(s)")
         }
-        base = base.copy(rows = EntityRows.join(local), pulledAtMillis = now, pending = emptyList())
+        base = base.copy(rows = EntityRows.join(local), pulledAtMillis = now, pending = emptyList(), sealed = true)
+        // The entity rows are on the server, sealed, BEFORE the history is tried: a failure there must not leave this
+        // device believing it still owes every row (2026-11-21: a history batch refused by the server re-sent the whole
+        // account at every retry, one every three seconds). `historyPushedAt` keeps what the history still owes.
+        setMeta(meta().copy(lastKnownRevision = base.entityCursor, dirty = false, baseSnapshot = encodeBase(base)))
 
-        base = syncHistory(session, me, base).copy(sealed = true)
+        base = syncHistory(session, me, base)
         if (reseal) Diagnostics.log("reconcile: the account's rows are now all end-to-end encrypted on the server")
         setMeta(meta().copy(lastKnownRevision = base.entityCursor, dirty = false, baseSnapshot = encodeBase(base)))
     }
