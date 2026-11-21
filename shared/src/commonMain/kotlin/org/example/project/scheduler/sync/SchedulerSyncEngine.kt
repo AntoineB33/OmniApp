@@ -507,6 +507,11 @@ open class SchedulerSyncEngine(
     }
 
     private suspend fun runReconcile(session: SupabaseSession) {
+        // `docs/invariants/sync-and-accounts.md` § *End-to-end encryption*: a device with no key sends no content, so the
+        // force-logout marker (raised when another device moved the account to encryption, against builds WITHOUT it)
+        // is not about it. Checked first, so such a device is not signed out to a guest before its own sign-in with the
+        // password — or the launcher's credentials — gets it the key and records that marker as its baseline.
+        if (!keyReady()) throw E2eeException(E2ee.SIGN_IN_FOR_ENCRYPTION)
         // Remote force-logout (account-empty script, scripts/account1-empty-and-open.bat): if the account's
         // server-side `account_logout` marker advanced past the baseline this device recorded at login, drop the
         // session locally and push NOTHING — otherwise a still-running device would re-seed the snapshot the

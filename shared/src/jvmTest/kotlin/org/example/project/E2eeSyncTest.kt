@@ -89,11 +89,15 @@ class E2eeSyncTest {
                 user,
             )
         }
-        // A device still on a build without encryption, signed in before: it must never get to push.
+        // A device still on a build without encryption, signed in before: it must never get to push. (Played here by a
+        // device that HAS a key, as an old build pushes without one; a keyless device of this build sends nothing anyway.)
         val oldToken = server.tokenFor(user)
         val old = Device(
             "old-phone", server, this, SchedulerState.empty(),
-            SyncMeta(deviceId = "old-phone", accessToken = oldToken, refreshToken = oldToken, userId = user, email = "a@b.c", acknowledgedLogoutAtMillis = 0L),
+            SyncMeta(
+                deviceId = "old-phone", accessToken = oldToken, refreshToken = oldToken, userId = user, email = "a@b.c",
+                acknowledgedLogoutAtMillis = 0L, contentKey = E2ee.ContentKey.random().encoded(),
+            ),
         )
         old.sync.restoreSession()
         val desk = Device("desk", server, this)
@@ -154,6 +158,31 @@ class E2eeSyncTest {
         assertTrue(server.table("scheduler_entity").rows.isEmpty(), "no content left the device")
         val state = desk.sync.state.value
         assertTrue(state is SyncState.Error && E2ee.SIGN_IN_FOR_ENCRYPTION in state.message, "it says why: $state")
+    }
+
+    @Test
+    fun a_device_without_its_key_is_not_signed_out_by_another_devices_move_and_gets_the_key_by_signing_in() = runTest {
+        val server = FakeSupabase({ t0 }).apply { checkPasswords = true }
+        val user = server.registerLegacy("a@b.c", "pw")
+        // The offline desktop: this build, signed in before the account moved, no key yet.
+        val token = server.tokenFor(user)
+        val desk = Device(
+            "desk", server, this, SchedulerState.empty().copy(alarms = listOf(alarm)),
+            SyncMeta(deviceId = "desk", accessToken = token, refreshToken = token, userId = user, email = "a@b.c", acknowledgedLogoutAtMillis = 0L),
+        )
+        desk.sync.restoreSession()
+        // The phone moves the account (and raises the marker).
+        val phone = Device("phone", server, this)
+        phone.sync.signIn("a@b.c", "pw")
+        phone.sync.reconcile()
+        // The desktop comes online: still on its account, sending nothing, until it signs in.
+        desk.sync.reconcile()
+        assertEquals(user, desk.store.meta.userId, "not signed out to a guest")
+        desk.sync.signIn("a@b.c", "pw")
+        desk.sync.reconcile()
+        assertEquals(SyncState.Idle, desk.sync.state.value)
+        assertEquals(phone.sync.contentKey?.encoded(), desk.sync.contentKey?.encoded(), "the account's one key")
+        server.nothingReadable()
     }
 
     @Test
