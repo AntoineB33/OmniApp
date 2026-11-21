@@ -28,12 +28,15 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.example.project.scheduler.domain.MdDomain
 import org.example.project.scheduler.domain.MdElement
 import org.example.project.scheduler.domain.SearchDomain
+import org.example.project.scheduler.platform.claudeCodeOpensHere
+import org.example.project.scheduler.platform.openClaudeCodeOn
 import org.example.project.scheduler.state.SchedulerState
 
 /**
@@ -112,6 +115,38 @@ internal fun MdAssociatedEditor(
 }
 
 /**
+ * User rule 2026-11-21: *"In the actions of an md document, there must be one to open Claude Code to directly ask it
+ * questions that Claude Code will easily access the graph of md files, starting in the directory path of the folder
+ * containing all the md files the action is associated with."* ([SearchDomain.AddedAction.MdAskClaude]). The press writes
+ * every md element into the device's md folder, the added ones named as where to start ([MdDomain.claudeFolderFiles]),
+ * and opens Claude Code there; the folder, or what went wrong, is said under it.
+ */
+@Composable
+internal fun MdAskClaudeButton(state: SchedulerState, added: List<SearchDomain.Result>) {
+    val ids = added.filter { it.kind == SearchDomain.Kind.Md }.mapNotNull { (it as? SearchDomain.ItemResult)?.id }
+    var opening by remember { mutableStateOf(false) }
+    var said by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    val here = remember { claudeCodeOpensHere() }
+    val latest by androidx.compose.runtime.rememberUpdatedState(state)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        FrameButton(if (opening) "Opening…" else "Ask Claude Code", enabled = here && !opening && ids.isNotEmpty()) {
+            opening = true
+            said = null
+            openClaudeCodeOn(MdDomain.claudeFolderFiles(latest, ids)) { folder, error ->
+                opening = false
+                said = if (error != null) error to true else ("Opened in " + folder) to false
+            }
+        }
+        val note = said
+        when {
+            !here -> NoteText("This device does not open Claude Code: use the desktop app.")
+            note != null -> if (note.second) NoteText(note.first, color = MaterialTheme.colorScheme.error) else NoteText(note.first)
+            else -> NoteText("Writes the md elements into a folder, a file each, and opens Claude Code there. Edits made there stay there.")
+        }
+    }
+}
+
+/**
  * One md element: its text drawn as markdown ([renderMarkdown]); a click turns it into its text field, which writes as it
  * is typed ([onText], one History Unit per field through its edit key) and is drawn again once it loses the focus.
  */
@@ -130,7 +165,7 @@ internal fun MdBlock(md: MdElement, modifier: Modifier = Modifier, onText: (Stri
                 draft = it
                 onText(it)
             },
-            placeholder = { Text("markdown") },
+            placeholder = { Text("markdown — [[Name]] links an md element, [[>Name]] makes it a child") },
             textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
             modifier = modifier.heightIn(min = 72.dp).focusRequester(focus).onFocusChanged { f ->
                 if (f.isFocused) hadFocus = true
@@ -152,7 +187,8 @@ internal fun MdBlock(md: MdElement, modifier: Modifier = Modifier, onText: (Stri
 
 /**
  * The markdown an md element's text says, drawn: `#` headings, `-` / `*` / `1.` list items, `>` quotes, `**bold**`,
- * `*italic*` / `_italic_` and `` `code` ``. Whatever else is drawn as it is written.
+ * `*italic*` / `_italic_`, `` `code` `` and the links to other md elements, `[[Name]]` / `[[>Name]]` (a child). Whatever
+ * else is drawn as it is written.
  */
 internal fun renderMarkdown(text: String): AnnotatedString =
     buildAnnotatedString {
@@ -184,6 +220,18 @@ internal fun renderMarkdown(text: String): AnnotatedString =
 private fun AnnotatedString.Builder.inline(line: String) {
     var i = 0
     while (i < line.length) {
+        // User rule 2026-11-21: `[[Name]]` is a link to another md element, drawn underlined; `[[>Name]]` makes it a child,
+        // drawn with "▸" in front ([MdDomain.links]).
+        if (line.startsWith("[[", i)) {
+            val close = line.indexOf("]]", i + 2)
+            val link = if (close > i) MdDomain.links(line.substring(i, close + 2)).singleOrNull() else null
+            if (link != null) {
+                if (link.child) append("▸")
+                withStyle(SpanStyle(textDecoration = TextDecoration.Underline)) { append(link.shown) }
+                i = close + 2
+                continue
+            }
+        }
         val (mark, style) =
             when {
                 line.startsWith("**", i) -> "**" to SpanStyle(fontWeight = FontWeight.Bold)

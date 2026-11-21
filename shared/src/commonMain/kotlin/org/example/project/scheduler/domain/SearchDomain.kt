@@ -5339,6 +5339,11 @@ object SearchDomain {
         // User rule 2026-11-19: an md element's text, the elements it is associated with, and the kind's New / Duplicate / bin.
         MdText(Kind.Md, "Text"),
         MdAssociated(Kind.Md, "Associated with"),
+        /**
+         * User rule 2026-11-21: Claude Code opened on the md elements' folder, to be asked about the graph of md files
+         * ([MdDomain.claudeFolderFiles]).
+         */
+        MdAskClaude(Kind.Md, "Ask Claude Code"),
         MdNew(Kind.Md, "New"),
         MdDuplicate(Kind.Md, "Duplicate"),
         MdDelete(Kind.Md, "Delete"),
@@ -5422,7 +5427,7 @@ object SearchDomain {
         return when (action) {
             // A command with nothing to read: the same for every element it is offered for.
             AddedAction.TaskEdit, AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar, AddedAction.PeriodTaskSearch,
-            AddedAction.WorkplaceApply -> Unit
+            AddedAction.WorkplaceApply, AddedAction.MdAskClaude -> Unit
             AddedAction.TaskStartNow -> (row as? TaskResult)?.let { SchedulerDomain.isPlaceableTask(state, it.taskId) }
             AddedAction.TaskMinimumTime -> task?.minimumMinutes
             AddedAction.TaskResilience -> task?.resilience
@@ -5911,6 +5916,7 @@ object SearchDomain {
             AddedAction.ElementMd -> "md markdown text notes note add associate dissociate"
             AddedAction.MdText -> "md markdown text notes edit"
             AddedAction.MdAssociated -> "associated with elements dissociate"
+            AddedAction.MdAskClaude -> "claude code ask questions ai graph links children folder files terminal open obsidian"
             AddedAction.TaskPriorityWeights -> "priority weights table weight columns chart share sub-list absolute priority"
             AddedAction.TaskRelativePriority -> "relative priority manager percentage relative to ancestor chains pins absolute priority"
             AddedAction.TaskPresenceFormula -> "presence ratio target evolutions tasks relative to parent distance time periods formula categories new"

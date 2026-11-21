@@ -199,6 +199,32 @@ class MenuHoverTrackerTest {
     }
 
     /**
+     * Anomaly 2026-11-21: *"I go to down arrow, then in 'Currently on'. In this window A I click on the type selector field,
+     * then I click again on A, and A disappears…"* — the type field's drop-down reports to A's tracker; the press back in A
+     * closes the drop-down, the keyboard going to A's own window. A stays, pinned, and so does the tree it hangs from.
+     */
+    @Test
+    fun the_keyboard_coming_back_to_the_pop_up_from_its_own_drop_down_closes_nothing() = runTest {
+        var treeLeft = 0
+        var branchLeft = 0
+        val tree = MenuHoverTracker(this) { treeLeft++ }
+        val branch = MenuHoverTracker(this, parent = tree) { branchLeft++ }
+        val branchWindow = Any()
+        val dropDownWindow = Any()
+        branch.windows += branchWindow
+        branch.windows += dropDownWindow
+        branch.windowFocused()
+        branch.pin()
+        // The drop-down's window, left for A's own.
+        branch.windowLeft { branchWindow in it }
+        assertEquals(0 to 0, treeLeft to branchLeft)
+        assertTrue(branch.pinned && tree.pinned)
+        // Left for a window of no pop-up of the tree: everything closes, as ever.
+        branch.windowLeft { false }
+        assertEquals(1 to 1, treeLeft to branchLeft)
+    }
+
+    /**
      * User rule 2026-11-11: the pop-ups the keyboard went to, and the app's window it went back to, are positions walked
      * before the app's own. Anomaly 2026-11-11: hovered in and out several times, the walk showed the pop-up once, hid
      * it, and never showed it again — two openings of one pop-up were one position, the window between them none.

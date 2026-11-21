@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### md links and children, "Ask Claude Code"; a pop-up kept when its drop-down closes — 2026-11-21
+
+- User rule: *"Just like in Obsidian, in an md document, the user can add [[link to another md document]]. The user can
+  define if this link makes the pointed md file a child of this md file (choose how it is indicated)."* `[[Name]]` links,
+  `[[>Name]]` makes the named md element a child (`MdDomain.links`, `resolve`, `childIdsOf`). Derived from the text — no
+  new stored field, no migration — and read by `ElementTree` (children, parents, the parent index). Drawn underlined, a
+  child with "▸". `MdLinkTest`; `task-tree.md`.
+- User rule: *"In the actions of an md document, there must be one to open Claude Code to directly ask it questions that
+  Claude Code will easily access the graph of md files, starting in the directory path of the folder containing all the
+  md files the action is associated with."* An md element's "Ask Claude Code" writes every md element into
+  `<state dir>/md` (a file each, by title) with a `CLAUDE.md` guide to the graph and where to start, and opens `claude`
+  there in a terminal (`MdDomain.claudeFolderFiles`, `openClaudeCodeOn`; desktop only). One-way: an edit made in the
+  folder does not reach the app. `MdFolderWriteTest`; `PLATFORMS.md`.
+- Anomaly: *"I go to down arrow, then in 'Currently on'. In this window A I click on the type selector field, then I
+  click again on A, and A disappears…"* The type field's drop-down reports to A's hover tracker; the press back in A that
+  closed it took the keyboard to A's own window, which `MenuHoverTracker.windowLeft(goneTo)` looked for among A's
+  ancestors only, so it closed A. It now checks A first. `MenuHoverTrackerTest`; `popups.md`. Not reproduced headless
+  (the desktop pop-ups are OS windows): reasoned from the code path, to be confirmed on the rebuilt app.
+
 ### The default `q` no longer runs the fans for half an hour per change — 2026-11-21
 
 - User request: *"I don't want my fans to make a noise for hours with the default q value and a task tree that is not

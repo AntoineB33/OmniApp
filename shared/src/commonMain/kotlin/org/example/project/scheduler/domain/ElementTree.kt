@@ -62,6 +62,12 @@ object ElementTree {
         if (kindOf(key) == Kind.SearchConfiguration) {
             return (SearchDomain.configurationChildIds(idOf(key)).map { Kind.SearchConfiguration.name + "/" + it } + links).distinct()
         }
+        // User rule 2026-11-21: an md element's children are the md elements its text links to as children (`[[>Name]]`),
+        // derived from the text ([MdDomain.childIdsOf]), then its links.
+        if (kindOf(key) == Kind.Md) {
+            val md = state.mdElements.firstOrNull { it.id == idOf(key) } ?: return links
+            return (MdDomain.childIdsOf(state.mdElements, md).map(MdDomain::keyOf) + links).distinct()
+        }
         val derived = claudeChildren(key, claudeLogs)
         val own = if (derived.isEmpty()) links else (derived + links).distinct()
         val taskId = taskIdOf(key)
@@ -92,6 +98,8 @@ object ElementTree {
     /** The direct parents of [key], categories included: a task's are the tree's and what it carries, then the links'. */
     fun parentsOf(state: SchedulerState, key: String): List<String> {
         val links = state.elementLinks.filter { it.child == key }.map { it.parent }
+        // User rule 2026-11-21: the md elements whose text makes it their child ([MdDomain.childIdsOf]).
+        if (kindOf(key) == Kind.Md) return (MdDomain.parentIdsOf(state.mdElements, idOf(key)).map(MdDomain::keyOf) + links).distinct()
         val taskId = taskIdOf(key) ?: return links
         val parents = TaskPathsDomain.places(state, taskId).map { SearchDomain.taskKey(it.second) }.distinct()
         val categories = state.tasks[taskId]?.categoryIds.orEmpty().map(::categoryKey)
@@ -108,6 +116,7 @@ object ElementTree {
         for ((task, parents) in TaskPathsDomain.allParents(state)) parents.forEach { add(SearchDomain.taskKey(task), SearchDomain.taskKey(it)) }
         for (task in state.tasks.values) task.categoryIds.forEach { add(SearchDomain.taskKey(task.id), categoryKey(it)) }
         for (link in state.elementLinks) add(link.child, link.parent)
+        for ((child, parents) in MdDomain.parentIndex(state.mdElements)) parents.forEach { add(child, it) }
         return out
     }
 
@@ -198,6 +207,11 @@ object ElementTree {
         if (child in claudeChildren(parent, claudeLogs)) return false
         // Nor what the configurations tree makes a child of one of its nodes.
         if (kindOf(parent) == Kind.SearchConfiguration && idOf(child) in SearchDomain.configurationChildIds(idOf(parent))) return false
+        // Nor what an md text makes a child (`[[>Name]]`): the text says it, and is where it is taken out.
+        if (kindOf(parent) == Kind.Md && kindOf(child) == Kind.Md) {
+            val md = state.mdElements.firstOrNull { it.id == idOf(parent) }
+            if (md != null && idOf(child) in MdDomain.childIdsOf(state.mdElements, md)) return false
+        }
         val taskId = taskIdOf(child) ?: return true
         if (kindOf(parent) != Kind.Task) return true
         val places = TaskPathsDomain.places(state, taskId)

@@ -481,6 +481,11 @@ means.
       pop-up window"*; `MenuHoverTracker.windowLeft(goneTo)`): the press on a category's row pins the row's branch, and
       the keyboard leaving the branch's pop-up for the row's had closed the whole tree. The row's click opens the branch
       again, pinned.
+    - **The keyboard coming back to the pop-up's OWN window closes nothing of it** (anomaly 2026-11-21: *"I go to down
+      arrow, then in 'Currently on'. In this window A I click on the type selector field, then I click again on A, and A
+      disappears"*): a drop-down opened inside a pop-up reports to its tracker, and the press back in the pop-up that
+      closed it made the pop-up's window the active one; `windowLeft(goneTo)` read that against the ancestors alone and
+      closed the pop-up. It reads the tracker itself first. `MenuHoverTrackerTest`.
     The keyboard's place is ONE fact of the app (`MenuHoverTracker.focused`), cleared as a pop-up closes or leaves the
     composition — a tracker left "focused and pinned" would hold every hover of the app back.
     A menu that holds the keyboard stays only while a window of ITS tree is the active one (`activeListener`, once it

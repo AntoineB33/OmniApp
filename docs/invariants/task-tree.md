@@ -86,6 +86,19 @@ child of the other."* (`MdDomain`, `MdElementTest`).
   a task is made with a text (a paste, the default sub-tree). A copy carries a task's md texts as its `text:` (`copiedText`);
   a duplicated task is associated with what the original is. **A tree change that made md elements is ONE History Unit**
   (`TreeAndMdDelta`, through `treeChangeDelta`): the tree's diff carries no md element, and one Ctrl+Z takes both back.
+- **Links between md elements are Obsidian's `[[Name]]`; `[[>Name]]` makes the named md element a CHILD** (user rule
+  2026-11-21, *"choose how it is indicated"*; `MdDomain.links`, `CHILD_MARK`). `[[Name|shown]]` and `[[Name#heading]]`
+  read as in Obsidian. A name resolves to the md element of that title, case aside, else of that file name, else of that
+  id (`MdDomain.resolve`); one of no md element is a link to nothing yet. Drawn underlined, a child link with "▸" first.
+  **The child is derived from the text, never stored**: `ElementTree.childrenOf` / `parentsOf` / `parentIndex` read it
+  (`MdDomain.childIdsOf`, the one funnel), and no ✕ of the tree takes it out (`canUnlink`): the text does. A plain link
+  makes neither a parent nor a child, and neither does an association.
+- **"Ask Claude Code"** (`AddedAction.MdAskClaude`, user rule 2026-11-21): the press writes every md element into the
+  device's md folder (`<state dir>/md`, a file each named by its title, `MdDomain.fileNames`, so a `[[Title]]` names a
+  file beside it) with a `CLAUDE.md` guide — how links read, the added md elements as where to start, the graph as the
+  app resolves it, what each is associated with (`MdDomain.claudeFolderFiles`) — and opens Claude Code in a terminal
+  there (`openClaudeCodeOn`, desktop only, `docs/PLATFORMS.md`). The folder's `.md` files are written again at every
+  press: an edit made there does not reach the app.
 
 ### A task tree IS a task under the root
 

@@ -91,7 +91,11 @@ class MenuHoverTracker(
         if (focused === this) focused = null
         if (!pinned) return
         // A press on what opens it (the ▾, a category's row) never reaches here: its click answers it ([PopupOpeners]).
-        val target = walkingTo ?: goneTo?.let { test -> generateSequence(parent) { it.parent }.firstOrNull { test(it.windows) } }
+        // Anomaly 2026-11-21 (*"in 'Currently on' … I click on the type selector field, then I click again on A, and A
+        // disappears"*): a drop-down opened inside the pop-up reports to this tracker, and the press back in the pop-up
+        // that closed the drop-down took the keyboard to the pop-up's OWN window — read against its ancestors alone, that
+        // was nowhere, and the pop-up closed. Gone to its own window, nothing of it closes.
+        val target = walkingTo ?: goneTo?.let { test -> generateSequence(this) { it.parent }.firstOrNull { test(it.windows) } }
         var at: MenuHoverTracker? = this
         while (at != null && at !== target) {
             val above = at.parent

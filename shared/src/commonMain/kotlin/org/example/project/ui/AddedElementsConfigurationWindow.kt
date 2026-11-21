@@ -828,6 +828,7 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.ElementMd -> MdElementsEditor(state, added, run)
         SearchDomain.AddedAction.MdText -> MdTextEditor(state, added, run)
         SearchDomain.AddedAction.MdAssociated -> MdAssociatedEditor(state, added, run)
+        SearchDomain.AddedAction.MdAskClaude -> MdAskClaudeButton(state, added)
         // Retired ([SearchDomain.RETIRED_ACTIONS]): what an item of the lateral menu made from one before still draws.
         SearchDomain.AddedAction.ElementAddParent -> ElementParentEditor(state, added, config, run)
         SearchDomain.AddedAction.ElementRemoveParent -> {
