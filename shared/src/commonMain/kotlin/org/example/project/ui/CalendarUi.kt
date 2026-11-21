@@ -1793,17 +1793,29 @@ fun LateralMenu(
         // Anomaly 2026-11-14: the parts its background menu shows or hides are kept across a restart ([rememberKeptParts]).
         // User rule 2026-11-14: its header is never shown, whatever was kept.
         var splits by rememberKeptParts(LATERAL_MENU_ID, EMBEDDED_SEARCH_SPLITS, fixed = { it.copy(headerRemoved = true) })
-        val shownConfig = config ?: held
-        val setConfig: (org.example.project.scheduler.domain.SearchDomain.Config) -> Unit = { if (config == null) held = it else onConfigChange(it) }
+        val keptConfig = config ?: held
+        val query = keptConfig.query
+        val given = items(query)
+        // User rule 2026-11-21 (*"in 'Currently on', there is only 'Types: option'. Make sure every search window of the
+        // app always respect only what is in 'Currently on'"*): its items are what its configuration lists, its "Included
+        // elements" ([SearchDomain.givenListShown]), every item whatever the bar holds — not rows drawn beside a search of
+        // "Types: option". Its rows are those that configuration keeps.
+        val names = remember(given.rows, query) { (if (query.isEmpty()) given.rows else items("").rows).map(::menuRowName) }
+        val shownConfig = org.example.project.scheduler.domain.SearchDomain.givenListShown(listOf(PAGE_SELECTOR_NAME) + names, keptConfig)
+        // What it opens with, its ▾'s "Default for this" and Reset: its items, nothing else.
+        val openedConfig = org.example.project.scheduler.domain.SearchDomain.givenListShown(listOf(PAGE_SELECTOR_NAME) + names, LATERAL_MENU_SEARCH)
+        val setConfig: (org.example.project.scheduler.domain.SearchDomain.Config) -> Unit = { next ->
+            val stored = org.example.project.scheduler.domain.SearchDomain.givenListKept(next, listOf(PAGE_SELECTOR_NAME) + names)
+            if (config == null) held = stored else onConfigChange(stored)
+        }
         val menuRows = run {
-                val query = (config ?: held).query
-                val given = items(query)
                 // User rule 2026-11-14: *"The feature page selector must be an element, so it must appear below the
                 // search bar"* — the first of the menu's rows, found by the bar as the items are: by the page it shows,
                 // or by any page it leads to. Never moved: the items are dragged below it.
-                val selector = pageSelectorAnswers(query, page)
+                val selector = pageSelectorAnswers(query, page) && org.example.project.scheduler.domain.SearchDomain.keepsGiven(shownConfig, PAGE_SELECTOR_NAME)
                 MenuSearchRows(
-                    rows = listOfNotNull(GivenRow(PAGE_SELECTOR_ROW, page.label, movable = false).takeIf { selector }) + given.rows,
+                    rows = listOfNotNull(GivenRow(PAGE_SELECTOR_ROW, page.label, movable = false).takeIf { selector }) +
+                        given.rows.filter { org.example.project.scheduler.domain.SearchDomain.keepsGiven(shownConfig, menuRowName(it)) },
                     row = { key, arranging ->
                         // In a box of its own: open, its list is a node of the layout, and the column's gap, given to
                         // it, moved every item under it (anomaly 2026-11-01, `LateralMenuShiftTest`).
@@ -1833,7 +1845,7 @@ fun LateralMenu(
                     onDrop = null,
                     splits = splits,
                     onSplitsChange = { splits = it },
-                    openedConfig = LATERAL_MENU_SEARCH,
+                    openedConfig = openedConfig,
                     menuList = menuRows,
                     relevantSettings = LATERAL_MENU_RELEVANT,
                 ),
@@ -1852,7 +1864,7 @@ fun LateralMenu(
                 onDismiss = {},
                 config = shownConfig,
                 onConfigChange = setConfig,
-                openedConfig = LATERAL_MENU_SEARCH,
+                openedConfig = openedConfig,
                 relevantSettings = LATERAL_MENU_RELEVANT,
                 onOpenConfigurations = {},
                 splits = splits,
@@ -1874,6 +1886,12 @@ val LocalMenuControlHost = androidx.compose.runtime.compositionLocalOf<MenuContr
 
 /** The left-side menu's page selector as a row of its list ([LateralMenu]): no item of the user's has this id. */
 internal const val PAGE_SELECTOR_ROW: String = "page-selector"
+
+/** The page selector as its menu's configuration names it ([LateralMenu]): the same whatever page it shows. */
+internal const val PAGE_SELECTOR_NAME: String = "Page selector"
+
+/** An item of the left-side menu as its configuration names it: its title ([SearchDomain.givenListShown]). */
+internal fun menuRowName(row: GivenRow): String = row.title
 
 /**
  * What the controls of the app that can stand in the lateral menu ([MenuControl]) read and do — `App`'s, handed to

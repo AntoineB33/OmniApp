@@ -4606,6 +4606,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 val menuSearchConfig =
                     searchConfigs[org.example.project.ui.LATERAL_MENU_ID]
                         ?: (SearchDomain.Config.decode(placements[org.example.project.ui.LATERAL_MENU_ID]?.config) ?: org.example.project.ui.LATERAL_MENU_SEARCH)
+                            // Healed: a build before 2026-11-21 kept it on "Types: option", its items drawn beside it.
+                            .let { it.copy(kinds = it.kinds - SearchDomain.Kind.Option) }
                             .also { searchConfigs[org.example.project.ui.LATERAL_MENU_ID] = it }
                 LaunchedEffect(menuSearchConfig.menuCustomizing) {
                     menuCustomizer.active = menuSearchConfig.menuCustomizing

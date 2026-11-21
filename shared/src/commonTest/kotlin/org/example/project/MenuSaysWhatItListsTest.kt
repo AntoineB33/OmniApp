@@ -45,6 +45,48 @@ class MenuSaysWhatItListsTest {
         assertEquals(entries, SearchDomain.resolve(SchedulerState.empty(), keys).map { it.name })
         assertEquals("add…", SearchDomain.changedElementTitle(SchedulerState.empty(), SearchDomain.optionKey("add…")))
     }
+
+    /**
+     * User rule 2026-11-21: *"In the down arrow of the left-side menu, in 'Currently on', there is only 'Types: option'.
+     * Make sure every search window of the app always respect only what is in 'Currently on'."* A window of given rows —
+     * a drop-down, a right-click menu, the left-side menu — goes through ONE funnel: its rows are its "Included elements".
+     */
+    @Test
+    fun the_left_side_menu_lists_its_items_as_its_included_elements() {
+        val menu = org.example.project.ui.LATERAL_MENU_SEARCH
+        assertFalse(Kind.Option in menu.searchedKinds, "the menu opens on \"Types: option\" no more")
+        val shown = SearchDomain.givenListShown(entries, menu)
+        val on = SearchDomain.configurationTree(shown, shown).filterIsInstance<SearchDomain.ConfigurationCategory>().single { it.label == "Currently on" }
+        assertTrue(Setting.IncludedElements in on.children.filterIsInstance<SearchDomain.ConfigurationLeaf>().map { it.setting })
+        assertTrue(entries.all { SearchDomain.keepsGiven(shown, it) })
+    }
+
+    @Test
+    fun a_stored_types_option_is_healed_away() {
+        val older = SearchDomain.Config(kinds = setOf(Kind.Option), pageTypesOnly = false)
+        val read = SearchDomain.Config.decode(older.encode())!!
+        val shown = SearchDomain.givenListShown(entries, read)
+        assertFalse(Kind.Option in shown.searchedKinds)
+        assertEquals(entries.map(SearchDomain::optionKey).toSet(), shown.filters.includedElements)
+    }
+
+    @Test
+    fun its_rows_are_those_its_configuration_keeps() {
+        val shown = SearchDomain.givenListShown(entries, SearchDomain.OPTION_SEARCH)
+        // Excluded in its ▾: gone from the rows.
+        val excluded = shown.copy(filters = shown.filters.copy(excludedElements = setOf(SearchDomain.optionKey("Day"))))
+        assertEquals(listOf("edit…", "add…"), entries.filter { SearchDomain.keepsGiven(excluded, it) })
+        // Taken off its "Included elements": kept so, and gone from the rows.
+        val fewer = shown.copy(filters = shown.filters.copy(includedElements = setOf(SearchDomain.optionKey("add…"))))
+        val kept = SearchDomain.givenListKept(fewer, entries)
+        assertEquals(fewer, kept)
+        assertEquals(listOf("add…"), entries.filter { SearchDomain.keepsGiven(SearchDomain.givenListShown(entries, kept), it) })
+        // As given: no setting of its own, nothing stored — a new entry is listed as it comes.
+        assertEquals(emptySet(), SearchDomain.givenListKept(shown, entries).filters.includedElements)
+        // A type checked in its ▾ stays checked.
+        val typed = shown.copy(kinds = setOf(Kind.Task))
+        assertEquals(setOf(Kind.Task), SearchDomain.givenListShown(entries, SearchDomain.givenListKept(typed, entries)).kinds)
+    }
 }
 
 /**

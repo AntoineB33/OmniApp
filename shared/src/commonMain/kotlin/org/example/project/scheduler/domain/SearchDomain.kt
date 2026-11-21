@@ -324,7 +324,26 @@ object SearchDomain {
      * [optionKey]), as a window of one element says its element. "Types: option" said every option of the app.
      */
     fun optionListConfig(names: List<String>, kept: Config = OPTION_SEARCH): Config =
-        kept.copy(kinds = emptySet(), filters = kept.filters.copy(includedElements = names.mapTo(LinkedHashSet(), ::optionKey)))
+        kept.copy(kinds = kept.kinds - Kind.Option, filters = kept.filters.copy(includedElements = names.mapTo(LinkedHashSet(), ::optionKey)))
+
+    /**
+     * User rule 2026-11-21 (*"In the down arrow of the left-side menu, in 'Currently on', there is only 'Types: option'.
+     * Make sure every search window of the app always respect only what is in 'Currently on'"*): **the one funnel of a
+     * Search window whose rows are given to it** — a drop-down, a right-click menu, the left-side menu. What it shows is
+     * its configuration [kept] saying its rows [names] as its "Included elements" ([optionListConfig]) unless its ▾ set
+     * others; "Types: option", which listed nothing and let the rows be drawn beside it, healed away.
+     */
+    fun givenListShown(names: List<String>, kept: Config): Config =
+        if (kept.filters.includedElements.isEmpty()) optionListConfig(names, kept) else kept.copy(kinds = kept.kinds - Kind.Option)
+
+    /** What [givenListShown]'s window keeps of [next]: its rows as given ([names]) are no setting of its own, so not stored. */
+    fun givenListKept(next: Config, names: List<String>): Config =
+        if (next.filters.includedElements == names.mapTo(LinkedHashSet(), ::optionKey)) next.copy(filters = next.filters.copy(includedElements = emptySet()))
+        else next
+
+    /** Whether the row named [name] of a window of given rows is one its configuration [shown] keeps ([givenListShown]). */
+    fun keepsGiven(shown: Config, name: String): Boolean =
+        optionKey(name).let { it in shown.filters.includedElements && it !in shown.filters.excludedElements }
 
     /**
      * An option as an element of a list ([optionListConfig]): by its name, what the user sees of it — the ids are the

@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The left-side menu lists only what its "Currently on" says — 2026-11-21
+
+- User rule: *"In the down arrow of the left-side menu, in 'Currently on', there is only 'Types: option'. Make sure every
+  search window of the app always respect only what is in 'Currently on'."* The menu searched "Types: option" (nothing)
+  and drew its items beside that search. Its items are now its configuration's "Included elements", no type searched, and
+  its rows only those that configuration keeps — exclude an item in its ▾, or take it off "Included elements", and it is
+  gone from the menu. One funnel with the drop-downs and right-click menus (`SearchDomain.givenListShown`,
+  `givenListKept`, `keepsGiven`). A stored "Types: option" is healed on load; nothing new is stored unless the ▾ changes
+  the list. A type checked in a drop-down's ▾ is no longer reset by the funnel. `MenuSaysWhatItListsTest`; `task-tree.md`.
+
 ### The sections' background menu is the window's; a ☆ button keeps the window's sections — 2026-11-21
 
 - User rule: *"The right-click menu of the background of the three sections of the search window must be only for the

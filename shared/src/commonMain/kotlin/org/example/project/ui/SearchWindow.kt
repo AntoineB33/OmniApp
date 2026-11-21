@@ -801,8 +801,11 @@ fun SearchWindow(
     // window's (anomaly 2026-11-19: *"only the background color is the only difference in the logic"*). Its items keep the
     // order the user gave them; what the search finds keeps the window's.
     val menuItemRows = remember(menuList?.rows) { menuList?.rows.orEmpty().map { SearchDomain.ItemResult(SearchDomain.Kind.Option, it.key, it.title, "") } }
+    // Its items are its configuration's "Included elements" ([SearchDomain.givenListShown]), drawn above by the menu: the
+    // search lists them no second time.
+    val searched = if (menuList == null) listed else remember(listed) { listed.filterNot { it.kind == SearchDomain.Kind.Option } }
     val results: List<SearchDomain.Result> =
-        menuItemRows + if (arranging) remember(listed, config.arranged) { SearchDomain.arrangedResults(listed, config.arranged) } else listed
+        menuItemRows + if (arranging) remember(searched, config.arranged) { SearchDomain.arrangedResults(searched, config.arranged) } else searched
     val count = results.size
     // PRD §5: the selected row lives in the state, by its result key, so `Alt+←` can put it back. A key no longer
     // among the results (the question changed, the thing was deleted) reads as the first row.
@@ -2599,10 +2602,10 @@ internal fun OptionSearchMenu(
         val names = options.options.map { it.second }
         val listing = if (options.integers != null) null else SearchDomain.optionListConfig(names)
         val given = listing?.filters?.includedElements
-        val config = (if (listing != null && kept.filters.includedElements.isEmpty()) SearchDomain.optionListConfig(names, kept) else kept).copy(query = typed)
+        val config = (if (listing != null) SearchDomain.givenListShown(names, kept) else kept).copy(query = typed)
         val setConfig = { next: SearchDomain.Config ->
             typed = next.query
-            kept = next.copy(query = "").let { n -> if (given != null && n.filters.includedElements == given) n.copy(filters = n.filters.copy(includedElements = emptySet()), kinds = keptOpened.kinds) else n }
+            kept = next.copy(query = "").let { n -> if (given != null) SearchDomain.givenListKept(n, names) else n }
         }
         // What it opens with, its ▾'s "Default for this" and Reset: what it lists.
         val openedListing = listing?.let { SearchDomain.optionListConfig(names, keptOpened) } ?: keptOpened
@@ -2610,10 +2613,8 @@ internal fun OptionSearchMenu(
         val shownOptions =
             if (listing == null) options
             else {
-                val included = config.filters.includedElements
-                val excluded = config.filters.excludedElements
                 SearchOptions(
-                    options = options.options.filter { (_, name) -> SearchDomain.optionKey(name).let { it in included && it !in excluded } },
+                    options = options.options.filter { (_, name) -> SearchDomain.keepsGiven(config, name) },
                     checked = options.checked, onClick = options.onClick, onSelectAll = options.onSelectAll, onSolo = options.onSolo,
                     leading = options.leading, onNearEnd = options.onNearEnd, onDrop = options.onDrop, canDrop = options.canDrop,
                     disabled = options.disabled, onCreate = options.onCreate, integers = options.integers, hoverPopup = options.hoverPopup,
@@ -2870,8 +2871,11 @@ private const val REMOVE_OTHERS_LABEL: String = "remove the others"
 private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
 
 
-/** The left-side menu's Search window as it opens: its items are given, not searched; nothing typed. */
-val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Option), pageTypesOnly = false) }
+/**
+ * The left-side menu's Search window as it opens: no type searched, nothing typed — its items, given, are its "Included
+ * elements" ([SearchDomain.givenListShown], [LateralMenu]).
+ */
+val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.Config(kinds = emptySet(), pageTypesOnly = false) }
 
 /** What the left-side menu is about, on or off: its ▾'s "Relevant here" leads with it (user rule 2026-11-14). */
 val LATERAL_MENU_RELEVANT: List<SearchDomain.Setting> = listOf(SearchDomain.Setting.MenuCustomizing)

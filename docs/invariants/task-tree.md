@@ -1744,7 +1744,11 @@ suggestions before it was ever entered.
   each an option by its name (`optionKey`; `resolve` names it by its key), so its ▾'s "Default for this" and "Currently
   on" say what it lists; its rows are those that configuration keeps (included, not excluded). Never "Types: option",
   which is every option of the app. Its entries are given afresh at each opening; what is kept of its configuration is
-  only what its ▾ set otherwise. (The left-side menu still opens on "Types: option", its items given beside its search.)
+  only what its ▾ set otherwise. **The left-side menu too** (user rule 2026-11-21: *"every search window of the app always
+  respect only what is in 'Currently on'"*): its items (the page selector named "Page selector") are its "Included
+  elements", every item whatever its bar holds, no type searched; a stored "Types: option" is healed away. ONE funnel for
+  every window of given rows: `SearchDomain.givenListShown` (what it shows), `givenListKept` (the rows as given are not
+  stored), `keepsGiven` (a row is drawn only if kept). A row the search would list again as an included option is not.
 - **WHERE TO SEARCH** (user rule 2026-11-16, *"Every Search window"*; `Filters.searchIn`, `searchChildren`,
   `childSearchIn`, `childDistance`, `SearchDomain.fieldsMatch`, `WhereToSearchTest`): what of a row the bars are
   matched against — its id (its key without its kind), its name (the only one by default, as before), its description
