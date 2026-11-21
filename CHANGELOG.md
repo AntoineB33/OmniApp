@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The sections' background menu is the window's; a ☆ button keeps the window's sections — 2026-11-21
+
+- User rule: *"The right-click menu of the background of the three sections of the search window must be only for the
+  whole search window, even if the three sections are search windows themselves."* The actions section and the added
+  elements list open no background menu of their own (`isSearchSection`); the right-click goes on to the whole window's.
+  `task-tree.md`.
+- Anomaly: *"I save a window that has the search result and the added elements list sections hidden, but when I click
+  the created button, it opens the window with both sections showing."* The ☆ made a button with the configuration only;
+  it now keeps the window's layout, sections and open rows as it is made, through the same funnel as "Update"
+  (`keptWindowState`). `CustomMenuButtonsTest`. Buttons made before keep no layout: "Update" on them saves it.
+
 ### md links and children, "Ask Claude Code"; a pop-up kept when its drop-down closes — 2026-11-21
 
 - User rule: *"Just like in Obsidian, in an md document, the user can add [[link to another md document]]. The user can

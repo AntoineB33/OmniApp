@@ -2803,6 +2803,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             }
         }
 
+        // What a menu button keeps of the window [frameId] — made by its ☆ or updated: where it stands, its sections
+        // ([windowLayoutOf]), a Search window's open rows (user rule 2026-11-19), and [config] when given.
+        fun keptWindowState(buttons: List<CustomMenuButton>, buttonId: String, frameId: String, config: String?): List<CustomMenuButton> {
+            val rows = searchSplits[frameId]?.takeIf { lateralWindowOf(frameId) == FloatingWindow.Search }
+                ?.let(org.example.project.ui.ButtonExpandedRows::of)
+            return CustomMenuButtons.updated(buttons, buttonId, config, windowLayoutOf(frameId), rows)
+        }
         // PRD §7: a button made from a window's head (☆): at the bottom of the menu, its title open for typing
         // with a default name all selected — a lateral-menu window's own title (a copy's followed by its number,
         // like its frame id), a per-object window's object and what it is ("Tea timer").
@@ -2811,7 +2818,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val kind = lateralWindowOf(key)
             // Named after what it opens — a new window of that kind, not this copy of it.
             val name = objectKey?.buttonTitle(schedulerState) ?: kind?.title ?: title
-            val (list, id) = CustomMenuButtons.added(menuButtons, key, name, windowConfigOf(key))
+            val (added, id) = CustomMenuButtons.added(menuButtons, key, name, windowConfigOf(key))
+            // Anomaly 2026-11-21 (*"I save a window that has the search result and the added elements list sections
+            // hidden, but when I click the created button, it opens the window with both sections showing"*): the button
+            // keeps the window as it stands when it is made, not only once updated — its layout, its sections, its open rows.
+            val list = frameId?.let { keptWindowState(added, id, it, config = null) } ?: added
             setMenuButtons(list)
             // The window it was made from is its window: the head's "Remove from menu" finds it there.
             if (frameId != null) menuButtonWindows[id] = frameId
@@ -4656,12 +4667,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             canUpdate = { menuButtonCanUpdate(it) },
                             onUpdate = { button ->
                                 menuButtonWindowOf(button)?.let { frameId ->
-                                    val layout = windowLayoutOf(frameId)
                                     val config = lateralWindowOf(frameId)?.let { windowConfigOf(frameId) }
-                                    // A Search window's open rows go with it (user rule 2026-11-19).
-                                    val rows = searchSplits[frameId]?.takeIf { lateralWindowOf(frameId) == FloatingWindow.Search }
-                                        ?.let(org.example.project.ui.ButtonExpandedRows::of)
-                                    setMenuButtons(CustomMenuButtons.updated(menuButtons, button.id, config, layout, rows))
+                                    setMenuButtons(keptWindowState(menuButtons, button.id, frameId, config))
                                 }
                             },
                             onReset = { resetMenuButtons() },

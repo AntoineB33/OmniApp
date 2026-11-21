@@ -3,6 +3,7 @@ package org.example.project
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.example.project.ui.CustomMenuButton
 import org.example.project.ui.CustomMenuButtons
@@ -231,5 +232,30 @@ class CustomMenuButtonsTest {
         assertEquals(two, CustomMenuButtons.decode(CustomMenuButtons.encode(two)))
         // A list written before items could be actions reads with none.
         assertTrue(CustomMenuButtons.decode("""{"buttons":[{"id":"b1","window":"Search","title":"S"}],"seeded":true}""").single { it.id == "b1" }.action == null)
+    }
+
+    /**
+     * Anomaly 2026-11-21: *"I save a window that has the search result and the added elements list sections hidden, but
+     * when I click the created button, it opens the window with both sections showing"* — the ☆ button keeps the
+     * window's sections as it is made ([CustomMenuButtons.updated] over the new button), and they read back as taken off.
+     */
+    @Test
+    fun a_button_made_from_a_window_keeps_its_hidden_sections() {
+        val shown = org.example.project.ui.SearchSplits(searchRemoved = true, addedRemoved = true)
+        val layout = org.example.project.ui.WindowLayout(10f, 20f, 800f, 600f, listOf(shown.left, shown.topRight), shown.hiddenFlags)
+        val (added, id) = CustomMenuButtons.added(emptyList(), "Search", "Mine", config = null)
+        val made = CustomMenuButtons.updated(added, id, config = null, layout = layout).single { it.id == id }
+        val kept = assertNotNull(CustomMenuButtons.decodeLayout(made.layout))
+        val back = org.example.project.ui.SearchSplits.of(kept.splits[0], kept.splits[1], kept.hidden)
+        assertTrue(back.searchRemoved && back.addedRemoved)
+        assertFalse(back.actionsRemoved)
+    }
+
+    /** User rule 2026-11-21: a section of a Search window has no background menu of its own; a window that is none has. */
+    @Test
+    fun only_the_whole_search_window_has_a_background_menu() {
+        assertFalse(org.example.project.ui.isSearchSection(actionRows = null, addedList = null))
+        val added = org.example.project.ui.AddedSearchRows(emptyList(), androidx.compose.runtime.mutableStateOf(null), { _, _ -> }, {}, {}, {})
+        assertTrue(org.example.project.ui.isSearchSection(actionRows = null, addedList = added))
     }
 }

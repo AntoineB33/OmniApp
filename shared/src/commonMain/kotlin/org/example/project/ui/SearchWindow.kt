@@ -1372,7 +1372,11 @@ fun SearchWindow(
       Box(
           Modifier.fillMaxWidth().weight(1f)
               // A right-click no row, field or control answered (they consume theirs): the window's own menu.
-              .then(contextMenuModifier(enabled = true, key = "search-background") { backgroundMenu = true }),
+              // User rule 2026-11-21: *"The right-click menu of the background of the three sections of the search window
+              // must be only for the whole search window, even if the three sections are search windows themselves."* A
+              // section — the actions section, the added elements list — has no background menu of its own: its right-click
+              // goes on to the window it is a section of ([isSearchSection]).
+              .then(contextMenuModifier(enabled = !isSearchSection(actionRows, addedList), key = "search-background") { backgroundMenu = true }),
       ) {
       SearchPartsMenu(
           open = backgroundMenu,
@@ -2694,6 +2698,13 @@ class SearchTreeList(
  * Null where no `App` provides one (a test): nothing is drawn.
  */
 val LocalEmbeddedSearch = androidx.compose.runtime.compositionLocalOf<(@Composable (EmbeddedSearchRequest, Modifier) -> Unit)?> { null }
+
+/**
+ * User rule 2026-11-21: **whether a Search window is a section of another** — the actions section ([ActionSearchRows]) or
+ * the added elements list ([AddedSearchRows]): the background right-click menu is the whole window's, never a section's.
+ */
+internal fun isSearchSection(actionRows: ActionSearchRows?, addedList: AddedSearchRows?): Boolean =
+    actionRows != null || addedList != null
 
 /** An embedded Search window's parts: no head, no actions, no added elements — the search section alone. */
 val EMBEDDED_SEARCH_SPLITS: SearchSplits = SearchSplits(headerRemoved = true, actionsRemoved = true, addedRemoved = true)

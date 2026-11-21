@@ -1368,8 +1368,10 @@ suggestions before it was ever entered.
     others"): it is added to **the section's own list** (`Kind.Action` rows, by key; one whose row is gone is not
     listed), kept with the window under `<window>/actions` (`Config.inside`: its added rows, its own actions section's
     bar and open rows — the rows open in the section itself stay `Config.toggledActionRows`, two lists, two sets). The
-    section's background menu is its own: it shows its actions and its added elements; holding added rows, it opens
-    with both shown. **An added action has "Contexts and states"** (`AddedAction.ActionContexts`): the elements it acts
+    section has **no background menu of its own** (user rule 2026-11-21: *"The right-click menu of the background of the
+    three sections of the search window must be only for the whole search window, even if the three sections are search
+    windows themselves"*; `isSearchSection`): a right-click on its background, as on the added elements list's, is the
+    whole window's. Holding added rows, it opens with its actions and added elements shown. **An added action has "Contexts and states"** (`AddedAction.ActionContexts`): the elements it acts
     on gathered by the state it has for them (`SearchDomain.actionContexts`, `actionStateOf`) — *"if the same state …
     is set the same for the task elements A, B and C, then the context element will have the values A, B and C, and the
     state element will be the exact 'list of parents' element the user would find in the action section of A, B or
