@@ -44,6 +44,13 @@ Check here before assuming the code matches the docs.
   only from the last row shown, above only from the first; `stuckTo` reads the same row. A hover pop-up opened just after
   the right-click that opened its menu was taken for a right-click's menu (no list, not stuck): a right-click's menu now
   hangs from the window the right press landed in (`RightPresses.window === owner`).
+- Same day: *"Sometimes the window appears on the caller. When the caller is a row, the window that appears must hide as
+  little as possible the other rows."* — `menuSpot` takes, of the spots against the row that hold the pop-up whole, the
+  one hiding the least of the list (left/right, then below or above whichever hides fewer rows); no longer off the list's
+  bottom from a middle row, nor slid back over the row; `keepsSpot` never keeps it on the row.
+- Same day: *"the right-click must work, even if the right-click menu is already open"* — the old menu window's loss of
+  the keyboard, told after the right press that had already closed and reopened the calendar's menu, closed it again.
+  A loss to the app's window after a right press there is now left to the app (`MenuSession.rightPressedInApp`).
 - Not carried over: "add…" opening with the type selector deployed (user rule 2026-10-01) — a drop-down deployed by itself
   in a hover pop-up would be a third pop-up under the pointer; and the one shared "add…/edit…" window moved by each
   right-click — each hover pop-up starts afresh at its right-click.

@@ -36,21 +36,19 @@ internal fun menuSpot(
     // caller is the row, so if it is the last row the window can appear on the left, the right or the bottom."* The row as
     // the list SHOWS it ([shownRow]); below only from the last row shown, above only from the first — anywhere else, off
     // the list's bottom or top stood away from the row. Off the row's sides, it stays across the row ([acrossRow]).
+    //
+    // Same day: *"Sometimes the window appears on the caller. When the caller is a row, the window that appears must hide
+    // as little as possible the other rows."* Every spot against the row that holds the pop-up whole is a candidate — at
+    // its left or right (hiding no row), below or above it (hiding the rows there, none from the last or the first row) —
+    // and the one hiding the least of the list wins, the sides' order breaking ties. Off the list's bottom or top from a
+    // row in the middle stood away from it, and no spot at all slid the pop-up back over the row.
     val row = shownRow(anchor, list)
-    val touching = sides.filter { side ->
-        when (side) {
-            MenuSide.Below, MenuSide.BelowEnd -> row.bottom >= list.bottom - 1
-            MenuSide.Above, MenuSide.AboveEnd -> row.top <= list.top + 1
-            else -> true
-        }
+    fun hides(at: IntOffset): Long {
+        val w = minOf(at.x + size.width, list.right) - maxOf(at.x, list.left)
+        val h = minOf(at.y + size.height, list.bottom) - maxOf(at.y, list.top)
+        return if (w <= 0 || h <= 0) 0L else w.toLong() * h
     }
-    // Where no spot touching the row holds it whole, off the list's bottom or top (2026-11-16): away from the row, but
-    // the list it is in stays in view — the last resort before covering it.
-    val whole = IntRect(list.left, minOf(anchor.top, list.top), list.right, maxOf(anchor.bottom, list.bottom))
-    return spotOff(
-        { side -> if (side in touching) row else whole }, size, area, touching,
-        acrossRow = true, then = sides.filter { it !in touching },
-    )
+    return spotOff({ row }, size, area, sides, acrossRow = true, pick = { spots -> spots.minByOrNull(::hides) })
 }
 
 /**
@@ -71,8 +69,8 @@ private fun spotOff(
      * right it keeps the row's height within its own, below or above the row's width within its own ([acrossRow]).
      */
     acrossRow: Boolean = false,
-    /** Tried whole after [sides] (a row's pop-up: the spots off its list that do not touch it); weighed with them after. */
-    then: List<MenuSide> = emptyList(),
+    /** Which of the spots that hold it whole, in the order of [sides], it takes: the first by default. */
+    pick: (List<IntOffset>) -> IntOffset? = { it.firstOrNull() },
 ): IntOffset {
     fun slideX(x: Int): Int {
         val slid = x.coerceIn(area.left, maxOf(area.left, area.right - size.width))
@@ -106,12 +104,12 @@ private fun spotOff(
             MenuSide.RightTop -> whole(anchor.right, anchor.top)
         }
     }
-    for (side in sides + then) on(side)?.let { return it }
+    pick(sides.mapNotNull(::on))?.let { return it }
     // No side holds it whole: the side with the most room for its size, the menu pushed back onto the screen.
     // A pop-up's side is weighed on both axes: the room off the anchor for its depth, and the screen along the side for
     // its length (it may slide along that side, never off the anchor).
     fun fit(room: Int, need: Int) = minOf(1f, room.toFloat() / need.coerceAtLeast(1))
-    val room = (sides + then).maxByOrNull { side ->
+    val room = sides.maxByOrNull { side ->
         val anchor = anchorOf(side)
         when (side) {
             MenuSide.Below -> (area.bottom - anchor.bottom).toFloat() / size.height.coerceAtLeast(1)
@@ -156,7 +154,10 @@ internal fun keepsSpot(
 ): Boolean {
     val at = IntRect(current.x, current.y, current.x + size.width, current.y + size.height)
     val onScreen = at.left >= area.left && at.top >= area.top && at.right <= area.right && at.bottom <= area.bottom
-    return onScreen && !at.overlaps(anchor) && (list == null || !at.overlaps(list)) && (!stuck || stuckTo(at, anchor, list))
+    // A row's pop-up (user rule 2026-11-21): never on the row as the list shows it — over other rows only where [menuSpot]
+    // found no spot that hides fewer, which a pop-up stuck to the row keeps.
+    val caller = if (list == null) anchor else shownRow(anchor, list)
+    return onScreen && !at.overlaps(caller) && (!stuck || stuckTo(at, anchor, list))
 }
 
 /**

@@ -361,9 +361,12 @@ means.
     right or the bottom."*; `menuSpot`, `shownRow`, `stuckTo`, `MenuPlacementTest`). The row is the row **as the list
     shows it** — the list's width at the row's height: a menu's rows are laid wider than the menu, and "at the right of
     the row" stood off their far end, out of view. At its left or right the pop-up keeps the row within its height as it
-    slides along; below the list only from the LAST row shown, above it only from the FIRST — from any other row those
-    spots stand away from it. Only where no spot touching the row holds the pop-up whole does it go off the list's bottom
-    or top all the same (the list stays in view), then the side with the most room. **A pop-up opened by a hover inside
+    slides along. **Of the spots against the row that hold it whole, it takes the one hiding the least of the list**
+    (same day: *"Sometimes the window appears on the caller. When the caller is a row, the window that appears must hide
+    as little as possible the other rows."*): at the row's left or right (none hidden), below the last row or above the
+    first (none), else below or above a middle row, whichever hides fewer rows — the sides' order breaking ties. This
+    takes back the 2026-11-16 "below or above the LIST" for a row's pop-up: that spot stood away from the row, and where
+    no spot held the pop-up the last resort slid it back over the row. `keepsSpot` never keeps it on the row as shown. **A pop-up opened by a hover inside
     a menu is never that menu's right-click** (`RightPresses.window === owner`): opened within 750 ms of the right-click,
     with the pointer already on its row, it was placed as a right-click's menu — no list, not stuck.
   - **In the Search window a ROW's right-click menu opens AT THE POINTER** (user rule 2026-10-13: *"for the
@@ -538,6 +541,12 @@ means.
     outside windows"*): the same day a menu kept off Firefox's picture-in-picture by its four spots, then by being made
     shorter, and the app's windows moved and shrank away from every window over the app as they opened. All of it was
     taken back for the one rule that answers the anomaly: a menu is not always on top (above).
+  - **A right-click in the app's window while a menu is open is the app's to answer, never the menu window's loss of the
+    keyboard** (anomaly 2026-11-21: *"the right-click must work, even if the right-click menu is already open"*;
+    `MenuSession.rightPressedInApp`). The root observer closes the open menus on that press and what was right-clicked
+    opens its menu, in the same event; the keyboard's loss is told after it, and closing the menu then closed the one just
+    opened (the calendar's: one menu, its anchor moved). A loss to the app's window after a right press there since the
+    menu opened does nothing.
   - **A right-click outside an open right-click menu that leaves it open opens it AFRESH** (user rule 2026-11-15:
     *"Right-click must open the right-click menu even if a right-click menu was already open."*; `HangingMenu`, keyed on
     `RightPresses.count`): the same row's again, another row sharing the one menu, a row of the pop-up it hangs from — a

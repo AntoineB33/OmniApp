@@ -12,6 +12,7 @@ import org.example.project.ui.keepsSpot
 import org.example.project.ui.menuSpot
 import org.example.project.ui.stuckTo
 import org.example.project.ui.reStuck
+import org.example.project.ui.shownRow
 import org.example.project.ui.FarSide
 import org.example.project.ui.arrowTreeSides
 import org.example.project.ui.farSideOf
@@ -129,12 +130,15 @@ class MenuPlacementTest {
         // No room at the left (the list starts at the edge), nor above or below it: off its right edge.
         val wide = IntRect(0, 100, 700, 700)
         assertEquals(IntOffset(700, 400), menuSpot(IntRect(20, 400, 680, 430), menu, screen, popup, wide), "off the list's right edge")
-        // A list across the whole width and short: below the LIST, not below the row.
+        // A list across the whole width and short, no room at the row's sides: against the row all the same, below it
+        // (user rule 2026-11-21: stuck to the row, hiding as few other rows as it can) — no longer off the list's bottom.
         val strip = IntRect(0, 100, 1000, 300)
-        val at = menuSpot(IntRect(20, 150, 980, 180), menu, screen, popup, strip)
-        assertTrue(at.y >= strip.bottom || at.y + menu.height <= strip.top, "above or below the list alone: $at")
-        // Shown where it hides the list, it is placed again.
-        assertFalse(keepsSpot(IntOffset(400, 430), menu, row, screen, list), "over the list: placed again")
+        val stripRow = IntRect(20, 150, 980, 180)
+        val at = menuSpot(stripRow, menu, screen, popup, strip)
+        assertEquals(180, at.y, "right below the row: $at")
+        assertTrue(stuckTo(IntRect(at.x, at.y, at.x + menu.width, at.y + menu.height), stripRow, strip))
+        // Shown on its row, it is placed again; beside the list, it stays.
+        assertFalse(keepsSpot(IntOffset(400, 380), menu, row, screen, list), "over the row: placed again")
         assertTrue(keepsSpot(IntOffset(150, 400), menu, row, screen, list), "off the list: it stays")
     }
 
@@ -194,6 +198,14 @@ class MenuPlacementTest {
         assertTrue(stuckTo(rect(fromFirst), IntRect(320, 500, 730, 530), IntRect(320, 500, 730, 560)), "from the first row: $fromFirst")
         // Below the list from a row that is not the last is not stuck to that row.
         assertFalse(stuckTo(IntRect(400, 560, 700, 860), first, list), "below the list, under another row")
+        // Same day: *"Sometimes the window appears on the caller. When the caller is a row, the window that appears must
+        // hide as little as possible the other rows."* A long list, a row in its middle, no room at either side: against
+        // the row, on the side hiding fewer rows (here above: 3 rows of it, against 5 below) — never on the row.
+        val longList = IntRect(320, 200, 730, 500)
+        val middle = IntRect(320, 290, 730, 320)
+        val spot = menuSpot(middle, IntSize(300, 150), narrow, sub, longList)
+        assertEquals(IntOffset(320, 140), spot, "above the row: 3 rows hidden rather than 5")
+        assertFalse(IntRect(spot.x, spot.y, spot.x + 300, spot.y + 150).overlaps(shownRow(middle, longList)), "not on the row")
     }
 
     /**

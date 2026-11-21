@@ -396,11 +396,23 @@ private class MenuSession(
         }
     }
     private var heldKeyboard = false
+    /**
+     * Anomaly 2026-11-21 (*"the right-click must work, even if the right-click menu is already open"*): **a right-click in the
+     * app's window is the app's to answer** — its root observer closes the open menus on that press, and what was
+     * right-clicked opens its menu there, in the same event. The keyboard leaving this window is told after that event: closing
+     * the menu then closed the one the right-click had just opened (the calendar's: one menu, its anchor moved). So the loss of
+     * the keyboard to the app's window by a right press since this menu opened does nothing here.
+     */
+    private fun rightPressedInApp(): Boolean =
+        RightPresses.presses != pressesAtOpen && RightPresses.justPressed() &&
+            RightPresses.window === generateSequence(owner) { it.owner }.last()
+
     private val focusListener = object : WindowFocusListener {
         override fun windowGainedFocus(event: WindowEvent) {
             heldKeyboard = true
         }
         override fun windowLostFocus(event: WindowEvent) {
+            if (rightPressedInApp()) return
             if (focusable && !ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
                 keyboardLeft { dismiss.value() }
             }
@@ -428,6 +440,8 @@ private class MenuSession(
             // The keyboard settling as it opens ([settling]): nothing to close. Never taken back: two pop-ups that did took it
             // from each other without end (anomaly 2026-11-15, *"a window that blinks continuously"*).
             if (!ours(active) && settling(active)) return@invokeLater
+            // A right-click in the app's window: the app closed the menus and opened the right-clicked one ([rightPressedInApp]).
+            if (!ours(active) && rightPressedInApp()) return@invokeLater
             if (!ours(active)) {
                 // Back in the app by a press on another of its windows — which no loss of the keyboard told the pop-up,
                 // having lost it to the other application: it closes as a press elsewhere in the app closes it.
