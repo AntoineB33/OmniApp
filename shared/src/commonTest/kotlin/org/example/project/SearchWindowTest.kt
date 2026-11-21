@@ -777,6 +777,8 @@ class SearchWindowTest {
                 SearchDomain.Setting.CalendarAdd,
                 SearchDomain.Setting.CalendarAt,
                 SearchDomain.Setting.ExcludedElements,
+                // User rule 2026-11-21: where the rows a caller gives come from (`ListedFromTest`).
+                SearchDomain.Setting.ListedFrom,
                 SearchDomain.Setting.IncludedElements,
                 SearchDomain.Setting.NoParentOfKinds,
                 SearchDomain.Setting.ParentsOf,
