@@ -1780,8 +1780,7 @@ fun LateralMenu(
         // visible after the whole menu slides off-screen.
         // The menu of the margin round the Search window, in a box of no height: open, a menu is a node of the layout.
         Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-            transientMenuDismissal(backgroundMenu) { backgroundMenu = false }
-            // At the pointer (anomaly 2026-11-01): declared here, it hung from the top of the menu, wherever the click was.
+                // At the pointer (anomaly 2026-11-01): declared here, it hung from the top of the menu, wherever the click was.
             // User rule 2026-11-12: the menu is a Search window of its entries.
             ActionMenu("LateralMenu", open = backgroundMenu, onDismiss = { backgroundMenu = false }, actions = ownActions, atPointer = true)
         }
@@ -7236,15 +7235,10 @@ private fun DayColumn(
             }
         }
         // User rule 2026-10-11: *"When the user right-clicks on the calendar, then right-clicks elsewhere, it must open
-        // the right-click menu. Right now, it simply closes the previous one."* A focusable menu EATS the press that
-        // closes it, so the second right-click never reached the column. Like every other right-click menu of the app
-        // it is non-focusable and dismissed by the app-root observer ([transientMenuDismissal], `PopupWindows.kt`):
-        // the press outside closes it AND goes on to do what it was aimed at — a right-click opens the menu there, a
-        // left click selects. Registered per anchor: the same press closes the menu (root, Initial pass) and opens it
-        // again (the column), so "open" never reads false in between and one registration would be the closed one's.
-        androidx.compose.runtime.key(anchor) {
-            transientMenuDismissal(anchor != null) { closeMenu() }
-        }
+        // the right-click menu. Right now, it simply closes the previous one."* The press outside closes it AND goes on to
+        // do what it was aimed at — a right-click opens the menu there. The menu registers itself with the app-root
+        // observer ([ActionMenu]), once: a second registration here (anomaly 2026-11-21) was closed by the menu's own as
+        // it opened, and the menu with it.
         // User rule 2026-11-21: *"Right-clicking in the calendar must open a search window with options such like 'add' or
         // 'edit'. Those two options open when hovered over windows to precise what to add or edit."* — each of the two
         // entries shows, hovered, the Search window it used to open as a window of the app ([CalendarMenuSearch]); a click

@@ -2513,8 +2513,12 @@ internal fun OptionSearchMenu(
     var held by remember { mutableStateOf(false) }
     val shown = open || held
     val latestDismiss by rememberUpdatedState(onDismiss)
+    // Each time it is closed: a menu closed and opened again by one press (a right-click elsewhere on the calendar) is
+    // registered again, though no frame saw it closed ([transientMenuDismissal] below).
+    var closings by remember { mutableStateOf(0) }
     val close = {
         held = false
+        closings++
         latestDismiss()
     }
     fun holding(act: (String) -> Unit): (String) -> Unit = { id ->
@@ -2528,7 +2532,12 @@ internal fun OptionSearchMenu(
         disabled = options.disabled, onCreate = options.onCreate?.let(::holding), integers = options.integers,
         hoverPopup = options.hoverPopup,
     )
-    transientMenuDismissal(shown, close)
+    // Anomaly 2026-11-21 (*"The right-click doesn't work..."*): the ONE registration of this menu with the host that closes
+    // menus on a press outside them. A caller registering the same menu again was closed by this one opening — the host
+    // closes every other menu as one opens — and took the menu with it: the calendar's right-click menu was gone in the
+    // frame it opened, the left-side menu's background menu too. Keyed on [closings], so a press that closes the menu and
+    // opens it again registers it again.
+    androidx.compose.runtime.key(closings) { transientMenuDismissal(shown, close) }
     // It is a Search window: its menu window shows it bare, and it wears a window's surface ([LocalPopupChrome]).
     androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
     AppDropdownMenu(

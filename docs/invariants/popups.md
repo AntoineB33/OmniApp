@@ -1013,6 +1013,12 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   is selected in the same gesture. **Wherever a menu is given `focusable = false`, the
   `transientMenuDismissal` registration must come with it** — a non-focusable menu nobody registered never
   closes at all.
+- **ONE registration per menu, never two** (anomaly 2026-11-21, *"The right-click doesn't work..."*;
+  `CalendarRightClickMenuTest`). `ActionMenu` / `OptionSearchMenu` register themselves; the host closes every other menu
+  as one opens, so a caller that registered the same menu again was closed by the menu's own registration in the frame
+  it opened — the calendar's right-click menu and the left-side menu's background menu vanished at once. A press that
+  closes a menu and opens it again (a right-click elsewhere) is registered again by the menu itself (keyed on its
+  closings), which is what the calendar's per-anchor copy had been for.
 - **The one exception is a menu that holds text fields** (the quota's resilience values, `QuotaResilienceEditor`): a
   field in a popup that cannot be focused cannot be typed into, so that menu is `focusable = true`, registers nothing
   with the observer, and leaves through its own `onDismissRequest` on the first press outside — which it consumes.

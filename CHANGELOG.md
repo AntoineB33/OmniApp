@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The calendar's right-click menu vanished as it opened — 2026-11-21
+
+- Anomaly: *"The right-click doesn't work..."* — a `[popup]` trace of one reproduction on the release app: the menu
+  window opened and was gone 15–130 ms later, with no close reason of its own.
+- Cause: two registrations of one menu with the host that closes menus on an outside press (`TransientMenuHost.open`
+  closes every other menu). Since 2026-11-12 `ActionMenu` registers itself; the calendar (per anchor) and the left-side
+  menu's background menu still registered it too, so the menu's own registration closed the caller's, which closed the
+  menu. Not caused by the hover windows below: the headless test fails the same way without them.
+- Now: one registration, the menu's (`OptionSearchMenu`), keyed on its closings so a press that closes and reopens it
+  registers it again; the two callers' copies are gone. `CalendarRightClickMenuTest` right-clicks the real grid.
+
 ### The calendar's "add…" and "edit…" show their Search window on hover — 2026-11-21
 
 - User rule: *"Right-clicking in the calendar must open a search window with options such like 'add' or 'edit'. Those two
