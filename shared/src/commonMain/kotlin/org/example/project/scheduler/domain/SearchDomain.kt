@@ -310,8 +310,46 @@ object SearchDomain {
     /** Whether [kind]'s rows are given by the field the list opens from, a click picking one: an option, an integer. */
     fun isPickedRow(kind: Kind): Boolean = kind == Kind.Option || kind == Kind.Integer
 
-    /** The drop-down's Search window as it opens: its options, its bar empty, the order they were given in. */
-    val OPTION_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Option)) }
+    /**
+     * The drop-down's Search window as it is kept: no type searched, its bar empty, the order its options were given in.
+     * What it lists is said by [optionListConfig], from the options it is given each time it opens.
+     */
+    val OPTION_SEARCH: Config by lazy { Config(kinds = emptySet()) }
+
+    /**
+     * Anomaly 2026-11-21 (*"I right-click in the calendar, then in the down arrow, then in 'Default for this', and I only
+     * find type: option … that would mean every single option element of the app should appear in the right-click menu
+     * of the calendar"*): **what a drop-down's or a right-click menu's Search window lists, as its configuration says
+     * it** — no type searched, and its [names] as the elements always in the list ([Filters.includedElements], by
+     * [optionKey]), as a window of one element says its element. "Types: option" said every option of the app.
+     */
+    fun optionListConfig(names: List<String>, kept: Config = OPTION_SEARCH): Config =
+        kept.copy(kinds = emptySet(), filters = kept.filters.copy(includedElements = names.mapTo(LinkedHashSet(), ::optionKey)))
+
+    /**
+     * An option as an element of a list ([optionListConfig]): by its name, what the user sees of it — the ids are the
+     * caller's own (a menu's place of an entry), and change with the entries listed.
+     */
+    fun optionKey(name: String): String = Kind.Option.name + "/" + name
+
+    /**
+     * User rule 2026-11-21: **the caller of a field's window** ([Config.addedFor]) — the elements of the group of the
+     * actions section the field stands in, by their keys, in any order: the field in the group of E1 and E2 is one caller,
+     * the same field once E3 joins the group another.
+     */
+    fun fieldCallerOf(memberKeys: Collection<String>): String = memberKeys.distinct().sorted().joinToString(",")
+
+    /**
+     * User rule 2026-11-21: *"The 'added elements' list section of a window must be preserved between closing and
+     * re-appearing, except if the caller changes."* **What a field's window opens with** — what it opens with by default
+     * ([opened]), what its bar holds ([query]), and the added elements it had ([current]) while they were added for this
+     * [caller] (or for no caller said: kept from before it was said); else those it opens with by default.
+     */
+    fun fieldWindowReopened(current: Config, opened: Config, caller: String, query: String): Config {
+        val keeps = current.addedFor == null || current.addedFor == caller
+        val added = if (keeps) current.added else opened.added
+        return opened.copy(query = query, added = added, addedFor = caller.takeIf { added.isNotEmpty() })
+    }
 
     /** The kinds of the settings page: the app's settings, whose actions are their controls ([AppSettingEntry]). */
     val SETTINGS_KINDS: List<Kind> = listOf(Kind.AppSetting, Kind.WorkplaceSetup)
@@ -787,6 +825,13 @@ object SearchDomain {
          */
         val added: List<String> = emptyList(),
         /**
+         * User rule 2026-11-21: **the caller the [added] elements were added for** — a field's window ([PopupSearchField]):
+         * the set of elements of the actions section's group its field stands in, by their keys ([fieldCallerOf]). Its
+         * added elements come back when the field opens it again from that caller, and are lost from another (*"the field
+         * F for only E1 and E2 doesn't exist anymore"*). Null: added from no such caller, or nothing added.
+         */
+        val addedFor: String? = null,
+        /**
          * The **actions' filter** (user rule 2026-10-01): what finds an action by name — the Added elements
          * configurations window's bar — applied to that window AND to this window's top right quarter. Kept with the
          * rest of the configuration, so it belongs to this Search window and not to the configurations window.
@@ -989,6 +1034,7 @@ object SearchDomain {
                     periodBoxesFromMillis = filters.periodBoxesFrom,
                     periodBoxesUntilMillis = filters.periodBoxesUntil,
                     added = added,
+                    addedFor = addedFor,
                     actionQuery = actionQuery,
                     toggledActionRows = toggledActionRows.sorted(),
                     actionsGrouped = actionsGrouped,
@@ -1133,6 +1179,7 @@ object SearchDomain {
                     // Heals the index-shaped history-unit keys of builds before 2026-10-03 ([historyUnitId]): an
                     // index named whichever unit had shifted into it, so the key no longer means what was added.
                     added = stored.added.distinct().filterNot(::isLegacyHistoryUnitKey),
+                    addedFor = stored.addedFor,
                     actionQuery = stored.actionQuery,
                     // The retracted groups an older build kept ([Stored.collapsedActionGroups]) were open by default:
                     // read as rows toggled from today's default (closed), they would open what was closed. Dropped.
@@ -1807,6 +1854,7 @@ object SearchDomain {
         withDefaultSort(config).copy(
             sortFollowsDefault = false,
             added = emptyList(),
+            addedFor = null,
             actionQuery = "",
             toggledActionRows = emptySet(),
             actionSearch = "",
@@ -3075,6 +3123,8 @@ object SearchDomain {
         val periodBoxesFromMillis: Long? = null,
         val periodBoxesUntilMillis: Long? = null,
         val added: List<String> = emptyList(),
+        /** New 2026-11-21: absent = added from no field's caller ([Config.addedFor]). */
+        val addedFor: String? = null,
         /** New 2026-10-01: absent from an older build's = no filter, the first period. */
         val actionQuery: String = "",
         /** New 2026-10-10: absent from an older build's = every group of actions open. Read no more since 2026-11-12. */
@@ -4882,6 +4932,14 @@ object SearchDomain {
         val kinds = keys.mapNotNullTo(LinkedHashSet()) { key -> Kind.entries.firstOrNull { it.name == key.substringBefore('/') } }
         val found = HashMap<String, Result>()
         for (kind in kinds) {
+            // An option is no element of the account: it is named by its key ([optionKey]).
+            if (kind == Kind.Option) {
+                keys.filter { it.startsWith(Kind.Option.name + "/") }.forEach { key ->
+                    val name = key.substringAfter('/')
+                    found.getOrPut(key) { ItemResult(Kind.Option, name, name, "") }
+                }
+                continue
+            }
             // Anomaly 2026-11-15 (*"the added elements list is empty"*: the global root, added from a "list of parents"
             // that lists it, was dropped here): a key is named by the very rows a search lists ([kindRows]), with
             // everything any list can show — the global root, and a window as one window or one window TYPE, whichever

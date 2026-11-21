@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A menu says what it lists; a field's window keeps its added elements per caller — 2026-11-21
+
+- Anomaly: *"I right-click in the calendar, then in the down arrow, then in 'Default for this', and I only find type:
+  option. Same thing in 'Currently on'. If the logic was correct, that would mean every single option element of the app
+  should appear in the right-click menu of the calendar."* Every drop-down and right-click menu opened on
+  `OPTION_SEARCH` = "Types: option" while its rows were given beside it. Now it searches no type and holds its entries
+  as its "Included elements" (`SearchDomain.optionListConfig`, an option keyed by its name, `optionKey`), its rows
+  those that configuration keeps, its ▾'s "Default for this" what it opened on. `MenuSaysWhatItListsTest`;
+  `task-tree.md`. The left-side menu still opens on "Types: option" (its items beside its own search).
+- User rule: *"The 'added elements' list section of a window must be preserved between closing and re-appearing, except
+  if the caller changes."* A field's window reset its whole configuration at every opening (anomaly 2026-11-15); it now
+  keeps its added elements while its caller — the set of elements of the actions-section group its field stands in
+  (`fieldCallerOf`, `LocalFieldCaller`) — is the same (`fieldWindowReopened`). New `Config.addedFor` (stored, optional:
+  a configuration written before reads none and keeps what it had). `FieldWindowKeepsItsAddedListTest`; `popups.md`.
+
 ### Pop-ups shrink rather than hide rows; the calendar's view in its right-click menu — 2026-11-21
 
 - User rule: *"Make sure the pop-up window is stuck to the caller (a row or a button). Its position and sizes must be

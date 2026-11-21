@@ -2583,13 +2583,35 @@ internal fun OptionSearchMenu(
         androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides listId) {
         // Its configuration is kept with that window ([rememberInsideConfig]) — but what is typed in its bar, which
         // finds an entry for this opening and starts empty at the next.
-        var kept by rememberInsideConfig(listId, opened.copy(dropButtons = options.onDrop != null))
+        val keptOpened = opened.copy(dropButtons = options.onDrop != null)
+        var kept by rememberInsideConfig(listId, keptOpened)
         var typed by remember { mutableStateOf("") }
-        val config = kept.copy(query = typed)
+        // Anomaly 2026-11-21: its configuration says what it lists — its options, as the elements always in it
+        // ([SearchDomain.optionListConfig]), no type searched — never "Types: option", every option of the app. Given
+        // afresh at each opening (a menu's entries change with where it opens), so kept only where its ▾ set others.
+        val names = options.options.map { it.second }
+        val listing = if (options.integers != null) null else SearchDomain.optionListConfig(names)
+        val given = listing?.filters?.includedElements
+        val config = (if (listing != null && kept.filters.includedElements.isEmpty()) SearchDomain.optionListConfig(names, kept) else kept).copy(query = typed)
         val setConfig = { next: SearchDomain.Config ->
             typed = next.query
-            kept = next.copy(query = "")
+            kept = next.copy(query = "").let { n -> if (given != null && n.filters.includedElements == given) n.copy(filters = n.filters.copy(includedElements = emptySet()), kinds = keptOpened.kinds) else n }
         }
+        // What it opens with, its ▾'s "Default for this" and Reset: what it lists.
+        val openedListing = listing?.let { SearchDomain.optionListConfig(names, keptOpened) } ?: keptOpened
+        // Its rows are those its configuration keeps (its ▾'s "Included elements", "Excluded elements"): one reading.
+        val shownOptions =
+            if (listing == null) options
+            else {
+                val included = config.filters.includedElements
+                val excluded = config.filters.excludedElements
+                SearchOptions(
+                    options = options.options.filter { (_, name) -> SearchDomain.optionKey(name).let { it in included && it !in excluded } },
+                    checked = options.checked, onClick = options.onClick, onSelectAll = options.onSelectAll, onSolo = options.onSolo,
+                    leading = options.leading, onNearEnd = options.onNearEnd, onDrop = options.onDrop, canDrop = options.canDrop,
+                    disabled = options.disabled, onCreate = options.onCreate, integers = options.integers, hoverPopup = options.hoverPopup,
+                )
+            }
         var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
         // No account is searched: the options are the rows.
         val nothing = remember { SchedulerState.empty() }
@@ -2611,7 +2633,8 @@ internal fun OptionSearchMenu(
             splits = splits,
             onSplitsChange = { splits = it },
             embedded = true,
-            options = options,
+            openedConfig = openedListing,
+            options = shownOptions,
             onDrop = options.onDrop?.let { drop -> { row -> (row as? SearchDomain.ItemResult)?.id?.let(drop) } },
             canDrop = { row -> (row as? SearchDomain.ItemResult)?.id?.let { it != SearchDomain.SELECT_ALL_OPTION && options.canDrop(it) } == true },
             modifier = Modifier.width(width).height(height),

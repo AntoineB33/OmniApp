@@ -221,7 +221,9 @@ class ParentsActionTest {
                 assertTrue(texts().any { it.startsWith("Added elements") && it.endsWith("1") }, "the added elements hold the parent: ${texts()}")
                 if (reopen) {
                     // Anomaly 2026-11-15: *"when I click on list of parents it must open the default window for this
-                    // element"* — nothing added, its parts the default ones.
+                    // element"* — its parts the default ones; user rule 2026-11-21: *"The 'added elements' list section of
+                    // a window must be preserved between closing and re-appearing, except if the caller changes"* — the
+                    // same group (the same elements) calls it, so what was added is still there.
                     escape()
                     assertTrue(popups.request == null, "closed: ${texts()}")
                     click(find("list of parents"))
@@ -232,7 +234,7 @@ class ParentsActionTest {
                     click(find("Show the added elements"))
                     closeMenu()
                     frames(6)
-                    assertEquals(1, texts().count { it.startsWith("Added elements") && it.endsWith("1") }, "nothing added in a fresh opening: ${texts()}")
+                    assertEquals(2, texts().count { it.startsWith("Added elements") && it.endsWith("1") }, "the same caller: its added parent kept: ${texts()}")
                     assertTrue(texts().count { it.startsWith("Added elements") } >= 2, "its added elements shown: ${texts()}")
                 }
             }

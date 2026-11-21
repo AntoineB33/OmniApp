@@ -444,10 +444,14 @@ private fun AddedActionList(
             val run = { command: SearchDomain.AddedCommand ->
                 SearchDomain.addedIntents(state, members, command, nowMillis()).forEach(onIntent)
             }
-            AddedActionEditor(
-                state, action, members, config, onConfigChange, handlers, run, nowMillis,
-                onOpenEach = { onOpenEach(members) }, onClear = { onClear(members) }, titled = false, rowId = rowId,
-            )
+            // User rule 2026-11-21: its fields' windows are called by this group's elements — another set, another caller,
+            // whose windows open with no added element of this one's ([LocalFieldCaller]).
+            androidx.compose.runtime.CompositionLocalProvider(LocalFieldCaller provides SearchDomain.fieldCallerOf(members.map(SearchDomain::keyOf))) {
+                AddedActionEditor(
+                    state, action, members, config, onConfigChange, handlers, run, nowMillis,
+                    onOpenEach = { onOpenEach(members) }, onClear = { onClear(members) }, titled = false, rowId = rowId,
+                )
+            }
         }
     }
     // The section its own actions are about is the one it stands in ([ActionSectionHost.parent]).

@@ -172,6 +172,8 @@ internal fun EvolutionRows(
             },
             openedConfig = tasksOpened,
             fieldId = "$rowId/${PresenceRow.Tasks.placeholder}",
+            // Its added elements are the evolutions' own (A's), not its window's: never lost on opening.
+            caller = "",
             modifier = Modifier.fillMaxWidth(),
             openedParts = EMBEDDED_SEARCH_SPLITS.copy(addedRemoved = false),
             onDrop = { row -> taskIdOfKey(SearchDomain.keyOf(row))?.let { t -> edit({ e -> e.copy(taskIds = e.taskIds - t) }) } },
@@ -272,6 +274,8 @@ internal fun EvolutionRows(
             },
             openedConfig = categoriesOpened,
             fieldId = "$rowId/${PresenceRow.Categories.placeholder}",
+            // Its added elements are the evolutions' own (A's), not its window's: never lost on opening.
+            caller = "",
             modifier = Modifier.fillMaxWidth(),
             openedParts = EMBEDDED_SEARCH_SPLITS.copy(addedRemoved = false),
             onDrop = { row -> ElementTree.parentIntents(state, aKeys, SearchDomain.keyOf(row), on = false).forEach(run) },

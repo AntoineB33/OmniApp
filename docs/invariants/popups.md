@@ -640,7 +640,14 @@ means.
     it must open the default window for this element"*; `PopupSearchField.openFresh`): a click or a letter typed opens
     it with what it opens with (its `openedConfig`, the bar's text kept), its default parts, and nothing of what was
     opened inside it before (`ArrowSearches.forgetInside`, `SearchPartsStore.forgetInside`, `PopupMemory`). Only a
-    restart brings one back as it was left (below).
+    restart brings one back as it was left (below). **But its added elements list, while its caller is the same** (user
+    rule 2026-11-21: *"The 'added elements' list section of a window must be preserved between closing and
+    re-appearing, except if the caller changes"*; `SearchDomain.fieldWindowReopened`, `Config.addedFor`,
+    `LocalFieldCaller`, `FieldWindowKeepsItsAddedListTest`): the caller of a field in a group of the actions section is
+    that group's SET of elements (`fieldCallerOf`) — field F in the group of E1 and E2 is not field F once E3 joins the
+    group, whose window opens with no added element of the first (Ctrl+Z on the group's change brings the first back
+    while F was not opened since). A field whose added elements are its caller's own state, not its window's (the tasks
+    an evolution goes to, the categories it carries), says `caller = ""`: never lost on opening.
   - **The pop-ups left open come back after a restart, as the windows do** (anomaly 2026-11-15: *"I pinned the window
     …, I restart the app, and all the windows disappeared... Only the first one, the default search window,
     remains"*; `PopupMemory`, the `OpenPopups` placement row, local-only): a field's Search window left open, and a

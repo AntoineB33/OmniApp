@@ -1722,6 +1722,14 @@ suggestions before it was ever entered.
   the way to it** — "Recent", "Currently on", "Relevant here", "Default for this", the flat list — drawn small above
   its name (`ConfigurationLeaf.pathed`, `homePathOf`: *"This search configuration will show in its row the path
   search > where to search"*). Reset is one of those rows alone.
+- **A MENU'S CONFIGURATION SAYS WHAT IT LISTS** (anomaly 2026-11-21: *"in 'Default for this', I only find type: option
+  … that would mean every single option element of the app should appear in the right-click menu of the calendar"*;
+  `SearchDomain.optionListConfig`, `optionKey`, `MenuSaysWhatItListsTest`): every drop-down's and right-click menu's
+  Search window (`OptionSearchMenu`, `ActionMenu`) searches no type and holds its entries as its "Included elements",
+  each an option by its name (`optionKey`; `resolve` names it by its key), so its ▾'s "Default for this" and "Currently
+  on" say what it lists; its rows are those that configuration keeps (included, not excluded). Never "Types: option",
+  which is every option of the app. Its entries are given afresh at each opening; what is kept of its configuration is
+  only what its ▾ set otherwise. (The left-side menu still opens on "Types: option", its items given beside its search.)
 - **WHERE TO SEARCH** (user rule 2026-11-16, *"Every Search window"*; `Filters.searchIn`, `searchChildren`,
   `childSearchIn`, `childDistance`, `SearchDomain.fieldsMatch`, `WhereToSearchTest`): what of a row the bars are
   matched against — its id (its key without its kind), its name (the only one by default, as before), its description

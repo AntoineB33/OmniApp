@@ -374,6 +374,13 @@ internal class FieldSearchPopupHost {
 internal val LocalFieldSearchPopupHost = staticCompositionLocalOf<FieldSearchPopupHost?> { null }
 
 /**
+ * User rule 2026-11-21: **the caller of the fields drawn here** ([SearchDomain.fieldCallerOf]) — the elements of the group of
+ * the actions section they stand in. A field's window keeps its added elements between closing and opening again while
+ * its caller is the same ([SearchDomain.fieldWindowReopened]). "": no group, one caller.
+ */
+internal val LocalFieldCaller = androidx.compose.runtime.compositionLocalOf { "" }
+
+/**
  * User rule 2026-11-12: **a field with its grey text ([placeholder]) that opens, on a click, a headless Search window under
  * it** — the Search window's search section alone, as a cell's Edit Mode shows it ([CellEditPopupLayer]): the field is its
  * search bar (its text is [config]'s query), with the bar's cross and configurations arrow. [picker]: its rows are picked
@@ -400,9 +407,20 @@ internal fun PopupSearchField(
     openedParts: SearchSplits = EMBEDDED_SEARCH_SPLITS,
     /** The rows selected in its window and shown in its added elements without being added (anomaly 2026-11-20). */
     onSelectedAdded: ((List<String>) -> Unit)? = null,
+    /**
+     * Who opens its window ([LocalFieldCaller]): its added elements come back while it is the same. "" for a field whose
+     * added elements are its caller's own state (the tasks an evolution goes to), never the window's to keep or lose.
+     */
+    caller: String = LocalFieldCaller.current,
 ) {
     val search = LocalEmbeddedSearch.current
     val host = LocalFieldSearchPopupHost.current
+    // What its window adds is added for its caller ([SearchDomain.Config.addedFor]).
+    val latestCaller by androidx.compose.runtime.rememberUpdatedState(caller)
+    val latestChange by androidx.compose.runtime.rememberUpdatedState(onConfigChange)
+    val onConfigChange: (SearchDomain.Config) -> Unit = remember {
+        { next -> latestChange(next.copy(addedFor = latestCaller.takeIf { next.added.isNotEmpty() })) }
+    }
     var open by remember { mutableStateOf(false) }
     // User rule 2026-11-13: the field's window has an id — the window's it stands in, and the field.
     val windowId = embeddedSearchId("field:$fieldId")
@@ -436,12 +454,15 @@ internal fun PopupSearchField(
     // by the user — a click, a letter typed — its window is its DEFAULT one: its configuration what it opens with
     // ([openedConfig]; what the bar holds kept), its parts the default ones, and nothing of what was opened inside it
     // before — the windows inside it, their parts, their pop-ups left open. Brought back after a restart ([PopupMemory]),
-    // it is as it was left instead. It had kept, across openings, what an earlier one had added.
+    // it is as it was left instead.
+    // User rule 2026-11-21 (*"The 'added elements' list section of a window must be preserved between closing and
+    // re-appearing, except if the caller changes"*): but its added elements, while its caller is the same
+    // ([SearchDomain.fieldWindowReopened]) — the field in the group of other elements is another caller.
     val registry = LocalArrowSearches.current
     val arrowRoot = LocalArrowRoot.current
     val partsStore = LocalSearchPartsStore.current
     fun openFresh(query: String) {
-        onConfigChange(openedConfig.copy(query = query))
+        onConfigChange(SearchDomain.fieldWindowReopened(config, openedConfig, caller, query))
         parts = openedParts
         if (windowId != null) {
             if (registry != null && arrowRoot != null && windowId.startsWith(arrowRoot)) registry.forgetInside(arrowRoot, windowId.removePrefix(arrowRoot))
