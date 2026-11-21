@@ -329,8 +329,13 @@ open class SchedulerSyncEngine(
                 (stored ?: E2ee.ContentKey.random()).also { client.putAccountKey(s, E2ee.wrap(it, keys, s.userId)) }
             }
         if (legacy) {
+            // BEFORE any row is sealed: a device still on a build without encryption reads a sealed row as missing and
+            // would push a tombstone for every one — the whole account deleted. The force-logout marker it already
+            // obeys signs it out at its next reconcile, pushing nothing. This device records the marker as its own
+            // baseline right after ([authenticate] → [recordLogoutBaseline]), so it alone stays signed in.
+            client.markLogout(s)
             client.updatePassword(s, keys.loginSecret)
-            Diagnostics.log("account moved to end-to-end encryption: the server no longer holds the password")
+            Diagnostics.log("account moved to end-to-end encryption: the server no longer holds the password; its other devices are signed out")
         }
         return key
     }
@@ -849,6 +854,9 @@ open class SchedulerSyncEngine(
     }
 
     private fun setMeta(m: SyncMeta) = metaStore.saveSyncMeta(m)
+
+    /** An account with credentials is active and this device has no key for it: only a sign-in with the password opens it. */
+    val needsPasswordForKey: Boolean get() = meta().let { it.userId != null && it.email != null && it.contentKey == null }
 
     /** The active account's content key ([E2ee]) on this device, or null — what the peer channel seals with. */
     val contentKey: E2ee.ContentKey? get() = client.contentKey

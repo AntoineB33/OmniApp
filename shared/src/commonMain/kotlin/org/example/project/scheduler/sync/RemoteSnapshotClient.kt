@@ -519,6 +519,22 @@ class RemoteSnapshotClient(
      * clears the snapshot; [SchedulerSyncEngine] records it as a per-login baseline and signs the device out
      * when it advances, so a still-running app can't re-seed the snapshot the empty just deleted.
      */
+    /**
+     * Advances the account's force-logout marker (`account_logout`, its trigger stamps `now()`): every OTHER device signed
+     * in to the account signs itself out at its next reconcile and pushes nothing. A device that reads the marker after
+     * writing it keeps its session ([SchedulerSyncEngine] records it as its baseline).
+     */
+    suspend fun markLogout(session: SupabaseSession) {
+        val response =
+            http.post("${config.restUrl}/account_logout") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(listOf(LogoutMarkRow(session.userId))))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
     suspend fun fetchLogoutAt(session: SupabaseSession): Long? {
         val response =
             http.get("${config.restUrl}/account_logout") {
@@ -839,6 +855,8 @@ class RemoteSnapshotClient(
 @Serializable private data class EmailPasswordBody(val email: String, val password: String)
 
 @Serializable private data class PasswordBody(val password: String)
+
+@Serializable private data class LogoutMarkRow(@SerialName("user_id") val userId: String)
 
 @Serializable private data class AccountKeyRow(@SerialName("user_id") val userId: String? = null, val wrapped: String)
 

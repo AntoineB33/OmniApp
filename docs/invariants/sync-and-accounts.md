@@ -217,7 +217,11 @@ user chose the key (the account password) and what stays readable (below). `sche
   from before encryption** answers the login secret with 400: the device signs in with the password once, stores the
   wrapped key and moves the GoTrue password to the login secret (`adoptPasswordKey`). **A device already signed in when
   it got this build has no password**: a guest makes its key; an account with credentials syncs nothing and says
-  `SIGN_IN_FOR_ENCRYPTION` until the user signs in again. Forgetting the password loses the server copy (the devices
+  `SIGN_IN_FOR_ENCRYPTION` until the user signs in again — or, when its launcher hands the credentials in (the account
+  scripts, the release install), signs in again with them at launch (`TaskSchedulerViewModel.connect`,
+  `needsPasswordForKey`). **The legacy move raises the force-logout marker before any row is sealed**
+  (`RemoteSnapshotClient.markLogout`): a device still on a build without encryption reads a sealed row as missing and
+  would push a tombstone for every row; the marker it already obeys signs it out first, pushing nothing. Forgetting the password loses the server copy (the devices
   keep theirs and send it again under a new account).
 - **Old rows are written again sealed.** A device that synced before encryption (`RowBase.sealed` false, a cursor) pushes
   every row and every own History Unit once; any device rewrites a row it pulls in clear (`EntityRow.sealed`). A Claude

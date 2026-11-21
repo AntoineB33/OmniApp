@@ -476,6 +476,8 @@ class FakeSupabase(
 
     /** A table's generated columns, as Postgres computes them on insert (migration 20261019000000's `size_bytes`). */
     private fun generated(table: PgTable, row: JsonObject): JsonObject {
+        // Migration 20260709000000's touch_account_logout: the marker is stamped with the server's own clock.
+        if (table.name == "account_logout") return JsonObject(row + ("logout_at" to JsonPrimitive(kotlin.time.Instant.fromEpochMilliseconds(clock()).toString())))
         if (table.name != "claude_log_entry") return row
         fun bytes(column: String) = row[column]?.let(::scalar)?.encodeToByteArray()?.size?.toLong() ?: 0L
         return JsonObject(row + ("size_bytes" to JsonPrimitive(bytes("body") + bytes("session_title") + bytes("project") + 300)))

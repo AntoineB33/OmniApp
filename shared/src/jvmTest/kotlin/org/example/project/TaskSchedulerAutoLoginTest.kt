@@ -79,6 +79,10 @@ class TaskSchedulerAutoLoginTest {
                         )
                     }
 
+                    // The account's wrapped encryption key: none yet, so a sign-in makes and stores one.
+                    path.endsWith("/account_key") ->
+                        respond(if (request.method == HttpMethod.Get) "[]" else "", HttpStatusCode.OK, jsonHeader)
+
                     path.endsWith("/scheduler_snapshot") && request.method == HttpMethod.Get -> {
                         val arr =
                             server.payload?.let { """[{"payload":${json.encodeToString(it)},"revision":${server.revision}}]""" }
@@ -125,6 +129,26 @@ class TaskSchedulerAutoLoginTest {
         assertEquals(true, awaitUntil { meta.loadSyncMeta()?.userId == "user-1" }, "auto-login did not complete")
         assertEquals("account1@omniapp.local", server.lastEmail)
         assertEquals("account1@omniapp.local", meta.loadSyncMeta()!!.email, "not a guest account")
+    }
+
+    @Test
+    fun a_session_restored_without_an_encryption_key_signs_in_again_with_the_launch_credentials() {
+        // An install from before end-to-end encryption: signed in, no key. Only the password opens the account's key,
+        // and the release launcher hands it in — so the launch signs in again rather than syncing nothing.
+        val server = FakeServer()
+        val meta = FakeMetaStore(
+            SyncMeta(deviceId = "d", accessToken = "at", refreshToken = "rt", userId = "user-1", email = "account3@omniapp.local"),
+        )
+        val sync = SchedulerSyncEngine(client(server), meta, json).also { it.restoreSession() }
+        TaskSchedulerViewModel(
+            store = null,
+            saveDispatcher = Dispatchers.Default,
+            syncEngine = sync,
+            startupLogin = { StartupLogin("account3", "pw") },
+        )
+        assertEquals(true, awaitUntil { meta.loadSyncMeta()?.contentKey != null }, "the launch did not get the key")
+        assertEquals("account3@omniapp.local", server.lastEmail)
+        assertEquals("user-1", meta.loadSyncMeta()!!.userId, "the same account")
     }
 
     @Test

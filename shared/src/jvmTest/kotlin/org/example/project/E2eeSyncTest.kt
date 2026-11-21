@@ -89,11 +89,23 @@ class E2eeSyncTest {
                 user,
             )
         }
+        // A device still on a build without encryption, signed in before: it must never get to push.
+        val oldToken = server.tokenFor(user)
+        val old = Device(
+            "old-phone", server, this, SchedulerState.empty(),
+            SyncMeta(deviceId = "old-phone", accessToken = oldToken, refreshToken = oldToken, userId = user, email = "a@b.c", acknowledgedLogoutAtMillis = 0L),
+        )
+        old.sync.restoreSession()
         val desk = Device("desk", server, this)
         desk.sync.signIn("a@b.c", "pw")
         desk.sync.reconcile()
 
         assertEquals(listOf(alarm.label), desk.state.alarms.map { it.label }, "the row in clear was read")
+        assertTrue(desk.sync.isSignedIn && desk.sync.state.value == SyncState.Idle, "the migrating device stays signed in: ${desk.sync.state.value}")
+        val writes = server.table("scheduler_entity").writes
+        old.sync.reconcile()
+        assertEquals(writes, server.table("scheduler_entity").writes, "the other devices are signed out before they push anything")
+        assertTrue(old.store.meta.userId != user, "the old device left the account")
         server.nothingReadable()
         assertNotNull(server.table("account_key").rows.values.singleOrNull(), "the wrapped key is stored")
 

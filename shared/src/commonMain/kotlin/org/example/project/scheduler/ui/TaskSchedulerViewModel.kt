@@ -233,7 +233,19 @@ class TaskSchedulerViewModel(
         // already on account 1/2/3 instead of on a guest account. Otherwise PRD §5 applies: the app is
         // always connected to an account, so a device without one creates its GUEST account here.
         // Both of those land in [watchAccountChanges], which reconciles once against the new account.
-        if (engine.isSignedIn) {
+        // `docs/invariants/sync-and-accounts.md` § *End-to-end encryption*: a session restored from a build without
+        // encryption has no key, and only the password opens it. A launcher that hands the credentials in (the account
+        // scripts, the release install) signs in again with them — the same account, now with its key — instead of
+        // leaving the device saying "sign in again".
+        val creds = if (engine.isSignedIn && engine.needsPasswordForKey) startupLogin() else null
+        if (creds != null) {
+            // The same account: no account change follows, so this launch reconciles here once the key is in.
+            refreshRealtimeSubscription()
+            saveScope.launch {
+                runCatching { engine.signIn(usernameToEmail(creds.username), creds.password) }
+                engine.reconcile()
+            }
+        } else if (engine.isSignedIn) {
             refreshRealtimeSubscription()
             // STARTUP RECONCILE — the app checks the server for remote changes every launch.
             //
