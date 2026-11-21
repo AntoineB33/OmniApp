@@ -146,6 +146,7 @@ class TaskSchedulerViewModel(
                 refreshAuth = { engine.refreshRealtimeAuth() },
                 ownDeviceId = { engine.deviceId },
                 onRemoteChange = { syncNow() },
+                peerKey = { engine.contentKey },
             )
         }
 

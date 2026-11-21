@@ -150,7 +150,12 @@ class SyncPayloadTest {
             sync.reconcile()
 
             assertTrue(server.rows.isNotEmpty(), "the reconcile seeded the empty remote")
-            val snapshot = PersistedSnapshot(EntityRows.join(server.rows), emptyList(), emptyList())
+            // User rule 2026-11-21: the server receives no row it can read.
+            assertTrue(server.rows.values.all { org.example.project.scheduler.sync.E2ee.isEncrypted(it) }, "every row goes sealed")
+            assertTrue(server.rows.values.none { "\"title\"" in it }, "no title on the wire")
+            val key = assertNotNull(sync.contentKey, "a guest makes its own key")
+            val opened = server.rows.mapValues { (k, v) -> org.example.project.scheduler.sync.E2ee.decrypt(key, v, org.example.project.scheduler.sync.E2ee.entityPlace(k.kind, k.id)) }
+            val snapshot = PersistedSnapshot(EntityRows.join(opened), emptyList(), emptyList())
             val pushed = assertNotNull(SchedulerStateCodec.decodeSnapshot(snapshot), "the wire payload decodes")
 
             // Derived panels are stripped; the authoritative pinned panel survives.

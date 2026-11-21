@@ -55,6 +55,9 @@ class PauseCueGatewayTest {
                         HttpStatusCode.OK,
                         jsonHeader,
                     )
+                } else if (request.url.encodedPath.endsWith("/account_key")) {
+                    // The sign-in's encryption key: none on the server yet, so it makes and stores one.
+                    respond(if (request.method.value == "GET") "[]" else "", HttpStatusCode.OK, jsonHeader)
                 } else {
                     cap.method = request.method.value
                     cap.path = request.url.encodedPath

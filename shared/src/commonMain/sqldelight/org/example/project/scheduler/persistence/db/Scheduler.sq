@@ -87,12 +87,16 @@ CREATE TABLE sync_meta (
 -- "absent here" cannot be told from "added there". Written by the same statement that advances the revision
 -- (seed / push / pull), so the two can never drift apart. NULL means "no ancestor known" (a v9 DB just
 -- upgraded, or an account never yet synced on this device), and the engine then falls back to the plain pull.
+--
+-- `e2ee_key` (added in 20.sqm) is the account's end-to-end encryption content key, base64, in clear: this device's
+-- own copy of what the server holds only wrapped (`scheduler/sync/E2ee.kt`). NULL until made or unwrapped here.
 CREATE TABLE account_sync (
     account_id TEXT NOT NULL PRIMARY KEY,
     last_known_revision INTEGER NOT NULL DEFAULT 0,
     dirty INTEGER NOT NULL DEFAULT 0,
     acknowledged_logout_at INTEGER,
-    base_payload TEXT
+    base_payload TEXT,
+    e2ee_key TEXT
 );
 
 -- Floating-window geometry (position/size) and visibility, persisted LOCALLY ONLY. This is deliberately
@@ -320,12 +324,12 @@ INSERT OR REPLACE INTO sync_meta(id, device_id, access_token, refresh_token, use
 VALUES (0, ?, ?, ?, ?, ?);
 
 selectAccountSync:
-SELECT last_known_revision, dirty, acknowledged_logout_at, base_payload
+SELECT last_known_revision, dirty, acknowledged_logout_at, base_payload, e2ee_key
 FROM account_sync WHERE account_id = ?;
 
 upsertAccountSync:
-INSERT OR REPLACE INTO account_sync(account_id, last_known_revision, dirty, acknowledged_logout_at, base_payload)
-VALUES (?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO account_sync(account_id, last_known_revision, dirty, acknowledged_logout_at, base_payload, e2ee_key)
+VALUES (?, ?, ?, ?, ?, ?);
 
 selectAllPlacements:
 SELECT window_id, x, y, width, height, visible, fill_width, fill_height, minimized, config FROM window_placement;

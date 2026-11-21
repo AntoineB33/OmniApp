@@ -76,6 +76,11 @@ class RealtimeSnapshotSubscriber(
     /** Invoked on every server-side change to the subscribed row — pokes a reconcile. Best-effort/idempotent. */
     private val onRemoteChange: suspend () -> Unit,
     private val httpClient: HttpClient = HttpClient { install(WebSockets) },
+    /**
+     * The account's end-to-end encryption key ([E2ee]): every peer message goes sealed with it, and none is sent while
+     * there is none. Null (a test, no account) sends nothing on the peer channel.
+     */
+    private val peerKey: () -> E2ee.ContentKey? = { null },
 ) : SnapshotChangeSubscription, SchedulerPeerChannel {
     // The account whose snapshot row we subscribe to (its userId), or null while signed out. [supervise] keys
     // the socket on this so an account switch drops the old subscription and a sign-out closes it entirely.
@@ -150,7 +155,8 @@ class RealtimeSnapshotSubscriber(
             while (peerOutbox.tryReceive().isSuccess) Unit
             val peerSender = launch {
                 for (message in peerOutbox) {
-                    val text = PeerMessage.encode(message)
+                    val key = peerKey() ?: continue
+                    val text = E2ee.encrypt(key, PeerMessage.encode(message), E2ee.peerPlace(userId))
                     emit { RealtimePhoenix.broadcastFrame(peerTopic, peerJoinRef, it, text) }
                 }
             }
@@ -171,7 +177,12 @@ class RealtimeSnapshotSubscriber(
                         Diagnostics.log("realtime snapshot recv: ${text.take(600)}")
                     }
                     RealtimePhoenix.broadcastMessage(text, peerTopic)?.let { body ->
-                        PeerMessage.decode(body)?.let { _peerMessages.tryEmit(it) }
+                        // A sealed message is opened with the account's key; one that does not open is dropped, like any
+                        // message this build does not understand. A peer still on an older build sends in clear.
+                        val opened =
+                            if (!E2ee.isEncrypted(body)) body
+                            else peerKey()?.let { key -> runCatching { E2ee.decrypt(key, body, E2ee.peerPlace(userId)) }.getOrNull() }
+                        opened?.let(PeerMessage::decode)?.let { _peerMessages.tryEmit(it) }
                         continue
                     }
                     when (RealtimePhoenix.joinReplyStatus(text, peerTopic)) {

@@ -189,6 +189,8 @@ class FakeSupabase(
         table("device_break", listOf("user_id"))
         table("screen_break_rule", listOf("user_id", "break_kind", "start_ms"))
         table("device_away", listOf("user_id", "device_id"))
+        // Migration 20261121000000: the account's content key, wrapped (E2ee).
+        table("account_key", listOf("user_id"))
         // pg_cron logs every run of every job here; `pause-cue-setup.sql` purges it ([cronLogRetentionMillis]).
         table("cron.job_run_details", listOf("runid"))
     }
@@ -234,6 +236,15 @@ class FakeSupabase(
      * kind `forgotten` in their place. The 30 days untouched are the caller's [untilMillis] here: the fake keeps no
      * update time. Returns how many rows were forgotten.
      */
+    /**
+     * Migration 20261121000000's `entity_meta()`: what the server can read of an entity row — the structure the device
+     * wrote beside the ciphertext, or the JSON payload of a row from before encryption, or nothing.
+     */
+    fun structureOf(row: JsonObject): String =
+        (row["meta"] as? JsonObject)?.toString()
+            ?: row["payload"]?.let(::scalar)?.takeIf { !org.example.project.scheduler.sync.E2ee.isEncrypted(it) }
+            ?: "{}"
+
     fun forgetOldHistory(limitBytes: Long, untilMillis: Long): Int {
         val entity = table("scheduler_entity")
         val used = listOf("scheduler_entity", "history_unit", "claude_log_entry").sumOf { tables[it]?.liveBytes ?: 0L }
@@ -246,7 +257,9 @@ class FakeSupabase(
         val historyRows =
             live.groupBy { it["user_id"]?.let(::scalar) }.flatMap { (_, rows) ->
                 val byKey = rows.associateBy { org.example.project.scheduler.sync.EntityRows.Key(it["kind"]?.let(::scalar).orEmpty(), it["entity_id"]?.let(::scalar).orEmpty()) }
-                org.example.project.scheduler.sync.ForgottenRows.coveredKeys(byKey.mapValues { it.value["payload"]?.let(::scalar).orEmpty() }, marker)
+                // Migration 20261121000000's entity_meta(): the structure the device wrote beside the ciphertext, or the
+                // JSON payload of a row from before encryption.
+                org.example.project.scheduler.sync.ForgottenRows.coveredKeys(byKey.mapValues { (_, row) -> structureOf(row) }, marker)
                     .map(byKey::getValue)
             }
         val chosen = historyRows.sortedBy { it["revision"]?.let(::scalar)?.toLongOrNull() ?: 0L }
@@ -358,6 +371,14 @@ class FakeSupabase(
 
     private var nextUser = 0
     private val userByEmail = HashMap<String, String>()
+
+    /** GoTrue's passwords, per user: only checked when [checkPasswords] (the end-to-end encryption flows, `E2eeSyncTest`). */
+    val passwords = HashMap<String, String>()
+    var checkPasswords = false
+
+    /** An account made before end-to-end encryption: its GoTrue password is the password itself. */
+    fun registerLegacy(email: String, password: String): String =
+        userByEmail.getOrPut(email) { "user-${nextUser++}" }.also { passwords[it] = password }
     private val userByToken = HashMap<String, String>()
 
     /** A token for [userId], as a device restored from its saved session already holds. */
@@ -513,11 +534,22 @@ class FakeSupabase(
         val email = args?.get("email")?.jsonPrimitive?.content
         val refresh = args?.get("refresh_token")?.jsonPrimitive?.content
         val bearer = request.headers["Authorization"]?.removePrefix("Bearer ")?.let(userByToken::get)
+        val password = args?.get("password")?.jsonPrimitive?.content
         val user =
             when {
                 refresh != null -> userByToken[refresh] ?: return HttpStatusCode.BadRequest to """{"error":"refresh token not found"}"""
-                email != null -> userByEmail.getOrPut(email) { "user-${nextUser++}" }
-                path.endsWith("/user") && bearer != null -> bearer
+                // PUT /auth/v1/user: the signed-in account's own credentials change (a guest claimed, a password moved).
+                path.endsWith("/user") && bearer != null -> {
+                    if (email != null) userByEmail[email] = bearer
+                    if (password != null) passwords[bearer] = password
+                    bearer
+                }
+                email != null && checkPasswords && request.url.parameters["grant_type"] == "password" -> {
+                    val known = userByEmail[email]
+                    if (known == null || passwords[known] != password) return HttpStatusCode.BadRequest to """{"error":"invalid_grant","error_description":"Invalid login credentials"}"""
+                    known
+                }
+                email != null -> userByEmail.getOrPut(email) { "user-${nextUser++}" }.also { if (password != null && path.endsWith("/signup")) passwords[it] = password }
                 else -> "user-${nextUser++}"
             }
         val token = tokenFor(user)

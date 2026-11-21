@@ -1,5 +1,6 @@
 package org.example.project.quota
 
+import org.example.project.scheduler.sync.E2ee
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.ktor.client.HttpClient
 import java.util.Properties
@@ -48,6 +49,9 @@ class QuotaScenario(private val test: TestScope, val server: FakeSupabase, val t
 
     private val config = SupabaseConfig("https://quota.supabase.co", "anon")
 
+    /** Each account's content key, shared by its devices. */
+    private val accountKeys = HashMap<String, String>()
+
     inner class Device(val id: String, val userId: String, initial: SchedulerState, kind: DeviceKind) {
         var active = true
         private val store =
@@ -55,6 +59,9 @@ class QuotaScenario(private val test: TestScope, val server: FakeSupabase, val t
                 .also {
                     val token = server.tokenFor(userId)
                     it.saveSyncMeta(SyncMeta(deviceId = id, accessToken = token, refreshToken = token, userId = userId, email = "$userId@quota"))
+                    // The account's one encryption key (E2ee), as a sign-in gives it to each of its devices: what is
+                    // measured is the SEALED traffic, ciphertext and the clean-up's `meta` included.
+                    it.saveSyncMeta(it.loadSyncMeta()!!.copy(contentKey = accountKeys.getOrPut(userId) { E2ee.ContentKey.random().encoded() }))
                 }
         val realtime = FakeRealtime(id)
         val sync = SchedulerSyncEngine(RemoteSnapshotClient(config, HttpClient(server.engine(kotlinx.coroutines.test.StandardTestDispatcher(test.testScheduler)))), store, activeSessionStore = store, clock = { t0.value + test.testScheduler.currentTime })

@@ -92,10 +92,27 @@ def _request(method, url, key, body=None, token=None, prefer=None):
             return e.code, {"raw": raw}
 
 
+def login_secret(email, password):
+    """What GoTrue is given as the password since end-to-end encryption (2026-11-21): never the password itself.
+
+    The same derivation as the app's E2ee.passwordKeys (shared/src/commonMain/.../scheduler/sync/E2ee.kt), pinned by
+    E2eeTest: PBKDF2-HMAC-SHA256(password, "omniapp-e2ee-v1|" + email, 600000) then HKDF-SHA256 "omniapp auth v1".
+    """
+    import base64, hashlib, hmac
+    master = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), ("omniapp-e2ee-v1|" + email.strip().lower()).encode("utf-8"), 600000, 32)
+    prk = hmac.new(b"\x00" * 32, master, hashlib.sha256).digest()
+    return base64.b64encode(hmac.new(prk, b"omniapp auth v1\x01", hashlib.sha256).digest()).decode("ascii")
+
+
 def sign_in(base, key, email, password):
     status, payload = _request(
-        "POST", base + "/auth/v1/token?grant_type=password", key, {"email": email, "password": password}
+        "POST", base + "/auth/v1/token?grant_type=password", key, {"email": email, "password": login_secret(email, password)}
     )
+    if status == 400:
+        # An account the app has not moved to end-to-end encryption yet still has the password itself.
+        status, payload = _request(
+            "POST", base + "/auth/v1/token?grant_type=password", key, {"email": email, "password": password}
+        )
     if status != 200:
         raise SystemExit("    [x] sign-in failed for {} ({}): {}".format(email, status, payload))
     return payload["access_token"], payload["user"]["id"]
@@ -104,7 +121,7 @@ def sign_in(base, key, email, password):
 def cmd_signup(user, password):
     base, key, domain = cfg()
     email = username_to_email(user, domain)
-    status, payload = _request("POST", base + "/auth/v1/signup", key, {"email": email, "password": password})
+    status, payload = _request("POST", base + "/auth/v1/signup", key, {"email": email, "password": login_secret(email, password)})
     if status in (200, 201):
         print("    Created account {}.".format(email))
         return 0

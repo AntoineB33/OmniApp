@@ -11,6 +11,32 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### End-to-end encryption of everything the account stores on the server — 2026-11-21
+
+- User rule: *"Make sure any data sent to the internet is crypted (even Supabase can read user's data)."* The user chose
+  the account password as the key's source and to keep readable what the server computes on (timestamps, ids, break
+  times, push tokens). `docs/invariants/sync-and-accounts.md` § *End-to-end encryption*.
+- Task tree, calendar, settings rows, History Units, Claude Code log texts and peer broadcast messages are now deflated and
+  AES-256-GCM sealed on the device (`E2ee`, `RawDeflate`); GoTrue receives a secret derived from the password, never the
+  password. New dependency `dev.whyoleg.cryptography` 0.5.0 (JDK / WebCrypto / OpenSSL providers).
+- **Supabase migration 20261121000000** (`account_key`, `scheduler_entity.meta`, `entity_meta()`, `forget_old_history`
+  reading `meta`) — `scripts\deploy-supabase.bat`; `REQUIRED_SERVER_MIGRATION` moved to it.
+- **SQLite 20.sqm** (schema v21): `account_sync.e2ee_key`. Test: `SchedulerStoreTest.upgrades_pre_e2ee_v20_db_and_keeps_its_data`.
+- Existing accounts move on their next password sign-in; a device already signed in must sign in once more. `ServerQuotaTest`
+  now measures the sealed traffic (its devices were given the account key; before, they would have refused to sync and
+  passed vacuously): database 45.0 MB a year, egress 478 MB a month, both under a tenth.
+
+### A week of one user, end to end: `UserJourneyTest` — 2026-11-21
+
+- A compliant simulated user (takes each pose the calendar draws, sleeps at night) lives a nested-priority account with
+  the production screen breaks and a set of tasks ("Podcast run": Exercise 100 %, Spanish 20 %) through the reducer for a
+  week. Holds: shares within `TOLERATED`, ≤ 20 min of screen between look-aways, ≤ 60 min between 5-min poses, ≤ 2 h
+  between 15-min rests, no screen task in a pose, nothing at night, never two tasks at once.
+- Measured: Applications 0.94×, Interview prep 0.92×, Spanish 0.93×, **Exercise 1.27×** its share (outside `GOAL`). A set
+  of tasks' credit only fills a deficit, and a task refused by a period has no target there, so the podcast run's time in
+  the commute (where Exercise itself is refused) counts nothing toward Exercise and Exercise gets its whole share on its
+  own runs. Open question for the user, not changed.
+
 ### Every Search window lists only what its configuration says: "Listed from" — 2026-11-21
 
 - User rule: *"In the down arrow of the left-side menu, in 'Currently on', there is only 'Types: option'. Make sure every

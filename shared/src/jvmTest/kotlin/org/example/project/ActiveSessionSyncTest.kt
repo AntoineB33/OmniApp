@@ -95,6 +95,13 @@ class ActiveSessionSyncTest {
                             jsonHeader,
                         )
 
+                    // No device has made the account's encryption key yet: the sign-in makes and stores one.
+                    path.endsWith("/account_key") && request.method == HttpMethod.Get ->
+                        respond("[]", HttpStatusCode.OK, jsonHeader)
+
+                    path.endsWith("/account_key") ->
+                        respond("", HttpStatusCode.Created, jsonHeader)
+
                     (path.endsWith("/scheduler_entity") || path.endsWith("/history_unit")) && request.method == HttpMethod.Get ->
                         respond("[]", HttpStatusCode.OK, jsonHeader)
 

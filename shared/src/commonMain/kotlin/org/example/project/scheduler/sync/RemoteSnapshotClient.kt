@@ -130,6 +130,23 @@ class RemoteSnapshotClient(
     @kotlin.concurrent.Volatile
     var offline: Boolean = false
 
+    /**
+     * The active account's end-to-end encryption key ([E2ee]), set by [SchedulerSyncEngine]. Every content value this
+     * client writes is sealed with it and every one it reads is opened with it, HERE, so no caller can send a task, a
+     * history unit or a log in clear: with no key, such a write throws [E2eeException] before any request is made.
+     */
+    @kotlin.concurrent.Volatile
+    var contentKey: E2ee.ContentKey? = null
+
+    private fun requireKey(): E2ee.ContentKey =
+        contentKey ?: throw E2eeException("no end-to-end encryption key for this account: nothing is sent")
+
+    /** A value read back: opened when it was sealed; a row from before encryption (or the server's own) as it is. */
+    private suspend fun opened(text: String?, where: String): String? {
+        if (text == null || !E2ee.isEncrypted(text)) return text
+        return E2ee.decrypt(requireKey(), text, where)
+    }
+
     // Every Supabase HTTP call this client makes (the only calls the app makes) is surfaced here so the History
     // window's local-only "Supabase usage" column can show the account's draw-down on the free-plan limits.
     // replay so the collector, wired slightly after construction by the ViewModel, still catches the launch's
@@ -228,6 +245,43 @@ class RemoteSnapshotClient(
         return SupabaseSession(token.accessToken, token.refreshToken, token.user.id)
     }
 
+    /** Sets the signed-in account's password alone (`PUT /auth/v1/user`): the move to a derived login secret ([E2ee]). */
+    suspend fun updatePassword(session: SupabaseSession, password: String) {
+        val response =
+            http.put("${config.authUrl}/user") {
+                authHeaders(session)
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(PasswordBody(password)))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
+    // ---- The account's wrapped content key (migration 20261121000000, [E2ee]) ----
+
+    /** The account's content key as the server holds it, wrapped; null when no device has made one yet. */
+    suspend fun fetchAccountKey(session: SupabaseSession): String? {
+        val response =
+            http.get("${config.restUrl}/account_key") {
+                authHeaders(session)
+                url.parameters.append("user_id", "eq.${session.userId}")
+                url.parameters.append("select", "wrapped")
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+        return json.decodeFromString<List<AccountKeyRow>>(response.bodyAsText()).firstOrNull()?.wrapped
+    }
+
+    /** Stores (or replaces) the account's wrapped content key. */
+    suspend fun putAccountKey(session: SupabaseSession, wrapped: String) {
+        val response =
+            http.post("${config.restUrl}/account_key") {
+                authHeaders(session)
+                header("Prefer", "resolution=merge-duplicates,return=minimal")
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(listOf(AccountKeyRow(session.userId, wrapped))))
+            }
+        if (!response.status.isSuccess()) throw response.toException()
+    }
+
     // ---- Data (PostgREST) ----
 
     /** Returns this user's remote snapshot, or `null` if the row does not exist yet (first device). */
@@ -317,18 +371,27 @@ class RemoteSnapshotClient(
                 url.parameters.append("limit", limit.toString())
             }
         if (!response.status.isSuccess()) throw response.toException()
-        return json.decodeFromString(response.bodyAsText())
+        return json.decodeFromString<List<EntityRow>>(response.bodyAsText())
+            .map { it.copy(payload = opened(it.payload, E2ee.entityPlace(it.kind, it.entityId)), sealed = E2ee.isEncrypted(it.payload)) }
     }
 
-    /** Upserts entity rows (a deletion is a row with `deleted = true` and no payload); the answer is minimal. */
+    /**
+     * Upserts entity rows (a deletion is a row with `deleted = true` and no payload); the answer is minimal. Each payload
+     * goes sealed, with its bare structure beside it in clear ([E2ee.entityMeta]) for the server's own clean-up.
+     */
     suspend fun upsertEntities(session: SupabaseSession, deviceId: String, rows: List<EntityWrite>) {
         if (rows.isEmpty()) return
+        val sealed =
+            rows.map {
+                val payload = it.payload?.let { text -> E2ee.encrypt(requireKey(), text, E2ee.entityPlace(it.kind, it.entityId)) }
+                EntityUpsert(session.userId, it.kind, it.entityId, payload, it.payload == null, deviceId, it.payload?.let { text -> E2ee.entityMeta(it.kind, it.entityId, text) })
+            }
         val response =
             http.post("${config.restUrl}/scheduler_entity") {
                 authHeaders(session)
                 header("Prefer", "resolution=merge-duplicates,return=minimal")
                 contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(rows.map { EntityUpsert(session.userId, it.kind, it.entityId, it.payload, it.payload == null, deviceId) }))
+                setBody(json.encodeToString(sealed))
             }
         if (!response.status.isSuccess()) throw response.toException()
     }
@@ -341,12 +404,23 @@ class RemoteSnapshotClient(
      */
     suspend fun insertClaudeLogs(session: SupabaseSession, deviceId: String, rows: List<ClaudeLogRow>) {
         if (rows.isEmpty()) return
+        val key = requireKey()
+        val sealed =
+            rows.map {
+                val at = E2ee.claudeLogPlace(it.entryId)
+                it.copy(
+                    userId = session.userId, deviceId = deviceId, revision = null,
+                    sessionTitle = it.sessionTitle?.let { t -> E2ee.encrypt(key, t, "$at|title") },
+                    project = E2ee.encrypt(key, it.project, "$at|project"),
+                    body = E2ee.encrypt(key, it.body, "$at|body"),
+                )
+            }
         val response =
             http.post("${config.restUrl}/claude_log_entry") {
                 authHeaders(session)
                 header("Prefer", "resolution=ignore-duplicates,return=minimal")
                 contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(rows.map { it.copy(userId = session.userId, deviceId = deviceId, revision = null) }))
+                setBody(json.encodeToString(sealed))
             }
         if (!response.status.isSuccess()) throw response.toException()
     }
@@ -364,7 +438,14 @@ class RemoteSnapshotClient(
                 url.parameters.append("limit", limit.toString())
             }
         if (!response.status.isSuccess()) throw response.toException()
-        return json.decodeFromString(response.bodyAsText())
+        return json.decodeFromString<List<ClaudeLogRow>>(response.bodyAsText()).map {
+            val at = E2ee.claudeLogPlace(it.entryId)
+            it.copy(
+                sessionTitle = opened(it.sessionTitle, "$at|title"),
+                project = opened(it.project, "$at|project")!!,
+                body = opened(it.body, "$at|body")!!,
+            )
+        }
     }
 
     /** The account's History Unit rows another device wrote after [sinceRevision], oldest first. */
@@ -379,7 +460,8 @@ class RemoteSnapshotClient(
                 url.parameters.append("limit", limit.toString())
             }
         if (!response.status.isSuccess()) throw response.toException()
-        return json.decodeFromString(response.bodyAsText())
+        return json.decodeFromString<List<HistoryUnitRow>>(response.bodyAsText())
+            .map { it.copy(delta = opened(it.delta, E2ee.historyPlace(it.deviceId, it.category, it.deviceSeq)).orEmpty()) }
     }
 
     /**
@@ -426,7 +508,7 @@ class RemoteSnapshotClient(
                 authHeaders(session)
                 header("Prefer", "resolution=merge-duplicates,return=minimal")
                 contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(rows.map { it.copy(userId = session.userId) }))
+                setBody(json.encodeToString(rows.map { it.copy(userId = session.userId, delta = E2ee.encrypt(requireKey(), it.delta, E2ee.historyPlace(it.deviceId, it.category, it.deviceSeq))) }))
             }
         if (!response.status.isSuccess()) throw response.toException()
     }
@@ -756,6 +838,10 @@ class RemoteSnapshotClient(
 
 @Serializable private data class EmailPasswordBody(val email: String, val password: String)
 
+@Serializable private data class PasswordBody(val password: String)
+
+@Serializable private data class AccountKeyRow(@SerialName("user_id") val userId: String? = null, val wrapped: String)
+
 @Serializable private data class RefreshBody(@SerialName("refresh_token") val refreshToken: String)
 
 @Serializable
@@ -918,6 +1004,8 @@ data class EntityRow(
     val payload: String? = null,
     val deleted: Boolean = false,
     val revision: Long,
+    /** Whether the server held it sealed ([E2ee]); a row in clear is written again, sealed, by the next push. */
+    @kotlinx.serialization.Transient val sealed: Boolean = false,
 )
 
 /** One entity row to write: [payload] null is a deletion. */
@@ -931,6 +1019,8 @@ private data class EntityUpsert(
     val payload: String?,
     val deleted: Boolean,
     @SerialName("device_id") val deviceId: String,
+    /** The bare structure the server's clean-up reads ([E2ee.entityMeta]); null for a deletion. */
+    val meta: kotlinx.serialization.json.JsonObject?,
 )
 
 /**

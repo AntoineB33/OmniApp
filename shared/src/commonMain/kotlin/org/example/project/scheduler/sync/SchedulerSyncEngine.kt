@@ -254,6 +254,7 @@ open class SchedulerSyncEngine(
         val m = meta()
         if (m.accessToken != null && m.refreshToken != null && m.userId != null) {
             session = SupabaseSession(m.accessToken, m.refreshToken, m.userId)
+            keyReady()
             _state.value = if (_offline.value) SyncState.Offline else SyncState.Idle
             publishAccount()
             Diagnostics.log("restored persisted session (${m.email ?: "guest account"})")
@@ -279,7 +280,7 @@ open class SchedulerSyncEngine(
         if (session != null) return true
         if (_offline.value || _serverChangePending.value) return false
         return try {
-            authenticate(email = null) { client.signUpGuest() }
+            authenticate(email = null, call = { client.signUpGuest() })
             true
         } catch (e: Exception) {
             Diagnostics.log("guest-account creation failed (${e.message}); staying local, will retry")
@@ -291,8 +292,48 @@ open class SchedulerSyncEngine(
      * Signs in to an existing account, switching this device to it. The account being left keeps its own
      * local partition and its remote data untouched — nothing is deleted, and signing back in restores it.
      */
-    suspend fun signIn(email: String, password: String) =
-        authenticate(email) { client.signIn(email, password) }
+    suspend fun signIn(email: String, password: String) {
+        if (_offline.value || _serverChangePending.value) throw WorkingOfflineException()
+        val keys = E2ee.passwordKeys(email, password)
+        var legacy = false
+        authenticate(
+            email,
+            call = {
+                try {
+                    client.signIn(email, keys.loginSecret)
+                } catch (e: SupabaseException) {
+                    // An account from before end-to-end encryption still has the password itself as its GoTrue password:
+                    // signed in with it this once, then moved to the derived secret ([adoptPasswordKey]).
+                    if (e.status != 400) throw e
+                    client.signIn(email, password).also { legacy = true }
+                }
+            },
+            keyFor = { s, stored -> adoptPasswordKey(s, keys, stored, legacy) },
+        )
+    }
+
+    /**
+     * `docs/invariants/sync-and-accounts.md` § *End-to-end encryption*: the account's content key after a sign-in with
+     * the password — the one the server holds wrapped, opened with it; or, when no device has made one yet, the one this
+     * device already holds for the account (a guest being claimed elsewhere never is) or a new one, wrapped and stored.
+     * A [legacy] account (signed in with the password itself) is then moved to the derived login secret, so the server
+     * never receives the password again.
+     */
+    private suspend fun adoptPasswordKey(s: SupabaseSession, keys: E2ee.PasswordKeys, stored: E2ee.ContentKey?, legacy: Boolean): E2ee.ContentKey {
+        val wrapped = client.fetchAccountKey(s)
+        val key =
+            if (wrapped != null) {
+                E2ee.unwrap(wrapped, keys, s.userId)
+                    ?: throw E2eeException("this password does not open the account's encryption key")
+            } else {
+                (stored ?: E2ee.ContentKey.random()).also { client.putAccountKey(s, E2ee.wrap(it, keys, s.userId)) }
+            }
+        if (legacy) {
+            client.updatePassword(s, keys.loginSecret)
+            Diagnostics.log("account moved to end-to-end encryption: the server no longer holds the password")
+        }
+        return key
+    }
 
     /**
      * "Create an account" (PRD §5). On a **guest** account this gives THAT account the [email] and
@@ -304,16 +345,25 @@ open class SchedulerSyncEngine(
     suspend fun createAccount(email: String, password: String) {
         if (_offline.value) throw WorkingOfflineException()
         val current = session
+        val keys = E2ee.passwordKeys(email, password)
         if (current == null || !isGuest) {
-            authenticate(email) { client.signUp(email, password) }
+            authenticate(
+                email,
+                call = { client.signUp(email, keys.loginSecret) },
+                keyFor = { s, stored -> (stored ?: E2ee.ContentKey.random()).also { client.putAccountKey(s, E2ee.wrap(it, keys, s.userId)) } },
+            )
             return
         }
         mutex.withLock {
             _state.value = SyncState.Syncing
             try {
-                withAuth(current) { client.updateCredentials(it, email, password) }
+                // The guest's own key, wrapped by the new password, so the account's other devices-to-be can open it.
+                val key = meta().contentKey?.let(E2ee.ContentKey::decoded) ?: E2ee.ContentKey.random()
+                withAuth(current) { client.putAccountKey(it, E2ee.wrap(key, keys, it.userId)) }
+                withAuth(current) { client.updateCredentials(it, email, keys.loginSecret) }
                 // Same account, so no account switch: only the credentials (and the displayed identity) change.
-                setMeta(meta().copy(email = email))
+                setMeta(meta().copy(email = email, contentKey = key.encoded()))
+                client.contentKey = key
                 publishAccount()
                 _state.value = SyncState.Idle
                 Diagnostics.log("guest account claimed as $email (same account, data kept)")
@@ -335,6 +385,13 @@ open class SchedulerSyncEngine(
     private suspend fun authenticate(
         email: String?,
         call: suspend () -> SupabaseSession,
+        /**
+         * The account's content key ([E2ee]), given what this device already stored for it. By default: that one, or —
+         * for a guest, whose key never leaves the device — a new one.
+         */
+        keyFor: suspend (SupabaseSession, E2ee.ContentKey?) -> E2ee.ContentKey? = { _, stored ->
+            stored ?: if (email == null) E2ee.ContentKey.random() else null
+        },
     ) = mutex.withLock {
         // A sign-in while another server awaits the restart would land on the old one ([serverChosen]).
         if (_offline.value || _serverChangePending.value) throw WorkingOfflineException()
@@ -343,8 +400,13 @@ open class SchedulerSyncEngine(
             val s = call()
             beforeAccountSwitch?.invoke()
             session = s
+            client.contentKey = null
             persistSession(s, email)
             if (email == null) metaStore.adoptUnclaimedAccountData(s.userId)
+            // Saved once the account is the active one: its bookkeeping row is its own ([SyncMetaStore.saveSyncMeta]).
+            val key = keyFor(s, meta().contentKey?.let(E2ee.ContentKey::decoded))
+            if (key != null) setMeta(meta().copy(contentKey = key.encoded()))
+            client.contentKey = key
             // Published before the (network) logout-baseline fetch, so the owner swaps to this account's
             // local partition as soon as the account exists rather than one round-trip later.
             publishAccount()
@@ -353,6 +415,9 @@ open class SchedulerSyncEngine(
             Diagnostics.log(if (email == null) "guest account created (${s.userId})" else "signed in as $email")
         } catch (e: SupabaseException) {
             _state.value = SyncState.Error(e.message ?: "auth failed")
+            throw e
+        } catch (e: E2eeException) {
+            _state.value = SyncState.Error(e.message ?: "encryption key unavailable")
             throw e
         }
     }
@@ -369,6 +434,7 @@ open class SchedulerSyncEngine(
         Diagnostics.log("signed out")
         beforeAccountSwitch?.invoke()
         session = null
+        client.contentKey = null
         val m = meta()
         metaStore.saveSyncMeta(m.copy(accessToken = null, refreshToken = null, userId = null, email = null))
         publishAccount()
@@ -420,7 +486,7 @@ open class SchedulerSyncEngine(
                     // applied before the response is read), which is exactly the lost-acknowledgement case
                     // [runReconcile] repairs on the next pass — and without this line that whole episode was
                     // invisible in the diagnostics timeline.
-                    Diagnostics.log("reconcile FAILED (transport): ${e.message}")
+                    Diagnostics.log("reconcile FAILED (transport): ${e::class.simpleName}: ${e.message}")
                     _state.value = SyncState.Error(e.message ?: "offline")
                 }
             }
@@ -520,6 +586,11 @@ open class SchedulerSyncEngine(
          * state. Absent from a base written before 2026-11-03: nothing forgotten.
          */
         val forgotten: String? = null,
+        /**
+         * Whether this device has written every row of the account sealed ([E2ee]) since it got the key. False in a base
+         * written before end-to-end encryption: the next reconcile re-sends everything ([rowReconcile]).
+         */
+        val sealed: Boolean = false,
     )
 
     /** The history the server forgot for this account, as last pulled ([ForgottenRows]); null when nothing was. */
@@ -567,9 +638,15 @@ open class SchedulerSyncEngine(
      * document sync needed has nothing left to repair.
      */
     private suspend fun rowReconcile(session: SupabaseSession) {
+        if (!keyReady()) throw E2eeException(E2ee.SIGN_IN_FOR_ENCRYPTION)
         val m = meta()
         val me = m.deviceId
         var base = rowBase(m)
+        // `docs/invariants/sync-and-accounts.md` § *End-to-end encryption*: a device that synced before encryption writes
+        // every row and every own History Unit again, sealed, over what it left in clear. A device new to the account
+        // has written nothing; it rewrites only the rows it pulls in clear (another device's, not yet moved).
+        val reseal = !base.sealed && base.entityCursor > 0
+        if (reseal) base = base.copy(historyPushedAt = 0L)
         if (_forgotten.value == null) _forgotten.value = ForgottenRows.marker(base.forgotten)
 
         val now = clock()
@@ -628,8 +705,9 @@ open class SchedulerSyncEngine(
             Diagnostics.log("reconcile: pulled ${pulled.size} entity row(s) up to revision $cursor${if (full) " (full read)" else ""}")
         }
 
+        val inClear = pulled.filter { !it.sealed && !it.deleted && it.payload != null }.mapTo(HashSet()) { EntityRows.Key(it.kind, it.entityId) }
         val changed = LinkedHashMap<EntityRows.Key, String?>()
-        for ((key, value) in local) if (serverRows[key] != value) changed[key] = value
+        for ((key, value) in local) if (reseal || key in inClear || serverRows[key] != value) changed[key] = value
         for (key in serverRows.keys) if (key !in local) changed[key] = null
         // A push whose answer never came may still have landed: whatever it wrote is written again, as it is now.
         for (pending in base.pending) {
@@ -646,7 +724,8 @@ open class SchedulerSyncEngine(
         }
         base = base.copy(rows = EntityRows.join(local), pulledAtMillis = now, pending = emptyList())
 
-        base = syncHistory(session, me, base)
+        base = syncHistory(session, me, base).copy(sealed = true)
+        if (reseal) Diagnostics.log("reconcile: the account's rows are now all end-to-end encrypted on the server")
         setMeta(meta().copy(lastKnownRevision = base.entityCursor, dirty = false, baseSnapshot = encodeBase(base)))
     }
 
@@ -770,6 +849,33 @@ open class SchedulerSyncEngine(
     }
 
     private fun setMeta(m: SyncMeta) = metaStore.saveSyncMeta(m)
+
+    /** The active account's content key ([E2ee]) on this device, or null — what the peer channel seals with. */
+    val contentKey: E2ee.ContentKey? get() = client.contentKey
+
+    /**
+     * Puts the active account's content key ([E2ee]) in the client, and says whether there is one. A guest that has
+     * none (an install from before end-to-end encryption) makes it here: its key never leaves the device. An account
+     * with credentials that has none must be signed in to again — only the password opens the key the server holds —
+     * and until then nothing of its content is sent or read.
+     */
+    private fun keyReady(): Boolean {
+        val m = meta()
+        if (m.userId == null) return false
+        val stored = m.contentKey
+        if (stored != null) {
+            if (client.contentKey?.encoded() != stored) client.contentKey = E2ee.ContentKey.decoded(stored)
+            return true
+        }
+        if (m.email == null) {
+            val key = E2ee.ContentKey.random()
+            setMeta(m.copy(contentKey = key.encoded()))
+            client.contentKey = key
+            return true
+        }
+        client.contentKey = null
+        return false
+    }
 
     /**
      * Runs [block] with the current bearer token, transparently refreshing once on a 401 (the access token
@@ -911,6 +1017,7 @@ open class SchedulerSyncEngine(
      */
     open suspend fun syncClaudeLogs(batches: List<List<ClaudeLogRow>>, cursor: Long, pull: Boolean = true): ClaudeLogSync? {
         val current = onlineSession() ?: return null
+        if (!keyReady()) return null
         val me = deviceId
         val pushed = HashSet<String>()
         val pulled = ArrayList<ClaudeLogRow>()

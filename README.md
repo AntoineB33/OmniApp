@@ -212,8 +212,8 @@ The shared business logic — state holders, MVI intents, the scheduler, the und
 ```bash
 ./gradlew :shared:jvmTest                  # Desktop (JVM) — the fastest, run this one first
 ./gradlew :shared:testAndroidHostTest      # Android target
-./gradlew :shared:wasmJsTest               # Wasm
-./gradlew :shared:jsTest                   # JS
+./gradlew :shared:wasmJsBrowserTest -Pomniapp.webTests   # Wasm, in headless Chrome (off unless asked)
+./gradlew :shared:jsBrowserTest -Pomniapp.webTests       # JS, in headless Chrome (off unless asked)
 ./gradlew :shared:iosSimulatorArm64Test    # iOS (Native), macOS only
 ./gradlew checkChange                     # The one gate: tests + every target this machine can build
 ```

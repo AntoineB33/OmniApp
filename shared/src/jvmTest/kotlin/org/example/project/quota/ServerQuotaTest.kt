@@ -218,8 +218,9 @@ class ServerQuotaTest {
             live.mapNotNull { row ->
                 val kind = (row["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
                 val id = (row["entity_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
-                val payload = (row["payload"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
-                org.example.project.scheduler.sync.EntityRows.Key(kind, id) to (payload to row)
+                (row["payload"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
+                // What the server can read of it (a sealed payload is not): the structure beside it.
+                org.example.project.scheduler.sync.EntityRows.Key(kind, id) to (server.structureOf(row) to row)
             }.toMap()
         val covered = org.example.project.scheduler.sync.ForgottenRows.coveredKeys(byKey.mapValues { it.value.first }, marker)
         return covered.sumOf { table.rowBytes(byKey.getValue(it).second) }

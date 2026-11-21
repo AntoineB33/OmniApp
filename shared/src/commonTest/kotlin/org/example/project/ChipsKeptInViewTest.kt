@@ -5,6 +5,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 import org.example.project.ui.HourWindow
 import org.example.project.ui.exactVisibleHourWindow
 import org.example.project.ui.keptInView
@@ -34,7 +35,7 @@ class ChipsKeptInViewTest {
         val kept = keptInView(placed, h, view.first, view.second) { it }
         // The last ends on the edge, each one above the next, none overlapping.
         assertEquals(List(10) { i -> 300.dp + h * i }, kept.map { it.second })
-        kept.forEach { (_, y) -> assert(y >= view.first && y + h <= view.second) { "$y is out of the view" } }
+        kept.forEach { (_, y) -> assertTrue(y >= view.first && y + h <= view.second, "$y is out of the view") }
     }
 
     @Test

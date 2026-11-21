@@ -185,6 +185,45 @@ without overwriting the choice (`account3-deploy-windows-offline.bat` installs a
   or creates the guest. Edits made offline *before any account existed* stay in the unclaimed partition, which only
   a guest adopts — the usual rule, not an exception.
 
+### End-to-end encryption
+
+User rule 2026-11-21: *"Make sure any data sent to the internet is crypted (even Supabase can read user's data)."* The
+user chose the key (the account password) and what stays readable (below). `scheduler/sync/E2ee.kt`, migration
+20261121000000, `E2eeTest`, `RawDeflateTest`, `SyncPayloadTest`.
+
+- **The keys are made on the device.** PBKDF2-SHA256(password, `omniapp-e2ee-v1|` + email, 600 000) is the master;
+  HKDF of it gives the **login secret** GoTrue is sent IN PLACE OF the password (so the server never receives the
+  password) and the **key-encryption key**, which wraps the account's random 32-byte **content key**. The server holds
+  only the wrapped key (`account_key`); each device keeps the clear one in `account_sync.e2ee_key` (20.sqm, local-only,
+  per account). The derivation is pinned by `E2eeTest` and repeated in `scripts/internal/account_db_admin.py`: change
+  one, change both, or every account is locked out of its server copy.
+- **One funnel: `RemoteSnapshotClient`.** Every content value it writes is raw-DEFLATEd (`RawDeflate`, common code) then
+  AES-256-GCM sealed, `e1:` + base64, bound by its associated data to where it is stored (`E2ee.entityPlace`,
+  `historyPlace`, `claudeLogPlace`, `peerPlace`); every one it reads is opened there. **With no key it sends no
+  content** (`E2eeException` before the request). Sealed: `scheduler_entity.payload`, `history_unit.delta`, a Claude
+  log's `session_title` / `project` / `body`, and every message on the peers' broadcast channel (none is sent without a key).
+- **Readable on purpose** (the user's choice: the features the server computes stay): timestamps, device ids, push
+  tokens, break due times and windows, the away flag, the rows' kinds and ids, the history rows' category / window /
+  flags, and `scheduler_entity.meta` — the bare structure `forget_old_history` walks (`occurrences`, `childListId`,
+  `parentListId`, a panel's `end`, the `serverDatabaseLimitBytes` value; `E2ee.entityMeta`). **Never add a title, a note
+  or any text to `meta`**, and never make server SQL read a payload: it is a ciphertext (`entity_meta()` reads `meta`,
+  or the JSON payload of a row from before encryption).
+- **Compression comes before the seal** because a ciphertext does not compress and base64 adds a third: measured on the
+  release account's 3 178 rows, sealed alone 1.46× the plaintext (egress over budget in `ServerQuotaTest`), deflated
+  then sealed 0.66×.
+- **The flows.** A guest makes its key on the device and it never leaves it (no password to wrap it with). "Create
+  account" wraps the guest's key with the new password before setting the credentials. A sign-in derives the keys,
+  signs in with the login secret, and opens the wrapped key (or makes and stores one when no device has). **An account
+  from before encryption** answers the login secret with 400: the device signs in with the password once, stores the
+  wrapped key and moves the GoTrue password to the login secret (`adoptPasswordKey`). **A device already signed in when
+  it got this build has no password**: a guest makes its key; an account with credentials syncs nothing and says
+  `SIGN_IN_FOR_ENCRYPTION` until the user signs in again. Forgetting the password loses the server copy (the devices
+  keep theirs and send it again under a new account).
+- **Old rows are written again sealed.** A device that synced before encryption (`RowBase.sealed` false, a cursor) pushes
+  every row and every own History Unit once; any device rewrites a row it pulls in clear (`EntityRow.sealed`). A Claude
+  log already on the server stays as it was until the server's 300 KB bound evicts it (log rows are insert-only).
+- **Every device of an account must run a build with encryption**: an older build cannot read a sealed row.
+
 ### A device never pulls its own write back
 
 A pull excludes this device's rows (`device_id <> me`) and every write is an idempotent upsert keyed by the entity

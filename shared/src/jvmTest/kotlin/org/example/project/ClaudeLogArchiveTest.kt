@@ -116,7 +116,9 @@ class ClaudeLogArchiveTest {
         val store =
             store("user-logs").also {
                 val token = server.tokenFor("user-logs")
+                // Two devices of one account hold its one encryption key (E2ee): what a sign-in on each gives them.
                 it.saveSyncMeta(SyncMeta(deviceId = id, accessToken = token, refreshToken = token, userId = "user-logs"))
+                it.saveSyncMeta(it.loadSyncMeta()!!.copy(contentKey = ACCOUNT_KEY))
             }
         val sync =
             SchedulerSyncEngine(
@@ -132,6 +134,8 @@ class ClaudeLogArchiveTest {
             sync.syncClaudeLogs(logs.pushBatches(account), logs.cursor(account))?.let(logs::applySync)
         }
     }
+
+    private val ACCOUNT_KEY = org.example.project.scheduler.sync.E2ee.ContentKey.random().encoded()
 
     @Test
     fun a_phone_gets_the_logs_the_desktop_read_and_the_server_keeps_only_its_bound() = runTest {

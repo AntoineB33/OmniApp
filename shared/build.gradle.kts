@@ -62,6 +62,7 @@ kotlin {
             implementation(libs.sqldelight.androidDriver)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.androidx.core.ktx)
+            implementation(libs.cryptography.provider.jdk)
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
@@ -80,6 +81,7 @@ kotlin {
             implementation(libs.ktor.client.websockets)
             implementation(libs.ktor.client.contentNegotiation)
             implementation(libs.ktor.serialization.kotlinxJson)
+            implementation(libs.cryptography.core)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -90,6 +92,7 @@ kotlin {
             implementation(libs.ktor.client.cio)
             // PRD §15: desktop event-based session lock/unlock detection (Windows WTSRegisterSessionNotification).
             implementation(libs.jna.platform)
+            implementation(libs.cryptography.provider.jdk)
             // `docs/invariants/scheduler.md` § *The best score*: the desktop's own solver (OR-Tools SCIP), asked while a
             // fill's wall-time budget lasts. Only the Windows native library is shipped — the deployed desktop is
             // Windows; elsewhere the loader fails and the scheduler runs without a platform solver.
@@ -109,13 +112,16 @@ kotlin {
         iosMain.dependencies {
             implementation(libs.sqldelight.nativeDriver)
             implementation(libs.ktor.client.darwin)
+            implementation(libs.cryptography.provider.openssl3.prebuilt)
         }
         jsMain.dependencies {
             implementation(libs.wrappers.browser)
             implementation(libs.ktor.client.js)
+            implementation(libs.cryptography.provider.webcrypto)
         }
         wasmJsMain.dependencies {
             implementation(libs.ktor.client.js)
+            implementation(libs.cryptography.provider.webcrypto)
         }
     }
 }

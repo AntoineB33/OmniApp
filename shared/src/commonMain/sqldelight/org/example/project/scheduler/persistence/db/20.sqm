@@ -1,0 +1,7 @@
+-- Schema v20 -> v21: the account's end-to-end encryption key, on this device.
+--
+-- Added 2026-11-21 (user rule: "any data sent to the internet is crypted -- even Supabase can read user's data";
+-- scheduler/sync/E2ee.kt). Per account, next to the rest of its sync bookkeeping. Nothing to carry over: an older
+-- build sent everything in clear, and the engine makes the key (a guest) or asks for the password (a signed-in account).
+
+ALTER TABLE account_sync ADD COLUMN e2ee_key TEXT;

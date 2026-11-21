@@ -14,14 +14,15 @@ plugins {
 
 allprojects {
     tasks.configureEach {
+        // `-Pomniapp.webTests` runs the common tests in a headless browser on a machine that has one (the end-to-end
+        // encryption's WebCrypto half, `E2eeTest`); off by default, as before.
+        val webTestsAsked = project.hasProperty("omniapp.webTests")
+        val isWebTestTask = name == "wasmJsBrowserTest" || name == "wasmJsTest" || name == "jsBrowserTest" || name == "jsTest"
         val isMachineSpecificCheckTask = name == "kotlinStoreYarnLock" ||
             name == "kotlinWasmStoreYarnLock" ||
             name == "kotlinUpgradeYarnLock" ||
             name == "verifyCommonMainSchedulerDatabaseMigration" ||
-            name == "wasmJsBrowserTest" ||
-            name == "wasmJsTest" ||
-            name == "jsBrowserTest" ||
-            name == "jsTest" ||
+            (isWebTestTask && !webTestsAsked) ||
             name == "allTests"
 
         val isAppleTargetCheckTask = name.startsWith("compileKotlinIos") ||

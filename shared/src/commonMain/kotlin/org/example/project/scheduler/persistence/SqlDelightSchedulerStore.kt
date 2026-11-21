@@ -231,6 +231,7 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                 email = row.email,
                 acknowledgedLogoutAtMillis = account?.acknowledged_logout_at,
                 baseSnapshot = account?.base_payload,
+                contentKey = account?.e2ee_key,
             )
         }
 
@@ -261,6 +262,7 @@ class SqlDelightSchedulerStore(private val database: SchedulerDatabase) :
                     dirty = if (meta.dirty) 1L else 0L,
                     acknowledged_logout_at = meta.acknowledgedLogoutAtMillis,
                     base_payload = meta.baseSnapshot,
+                    e2ee_key = meta.contentKey,
                 )
             }
         }

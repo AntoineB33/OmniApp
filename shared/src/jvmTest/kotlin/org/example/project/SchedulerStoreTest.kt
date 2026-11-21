@@ -1848,75 +1848,7 @@ class SchedulerStoreTest {
             val url = "jdbc:sqlite:${dbFile.absolutePath}"
             val raw = JdbcSqliteDriver(url, Properties())
             // The v19 shape, exactly as 18.sqm left it.
-            raw.execute(null, "CREATE TABLE app_state (account_id TEXT NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
-            raw.execute(
-                null,
-                "CREATE TABLE history_unit (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
-                    "seq INTEGER NOT NULL, time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, " +
-                    "debug_tainted INTEGER NOT NULL, delta_length INTEGER NOT NULL DEFAULT -1, " +
-                    "delta_hash INTEGER, delta TEXT NOT NULL, window TEXT, " +
-                    "PRIMARY KEY (account_id, category, seq))",
-                0,
-            )
-            raw.execute(
-                null,
-                "CREATE TABLE history_pointer (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
-                    "pointer INTEGER NOT NULL, PRIMARY KEY (account_id, category))",
-                0,
-            )
-            raw.execute(
-                null,
-                "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
-                    "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
-                0,
-            )
-            raw.execute(
-                null,
-                "CREATE TABLE account_sync (account_id TEXT NOT NULL PRIMARY KEY, " +
-                    "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
-                    "acknowledged_logout_at INTEGER, base_payload TEXT)",
-                0,
-            )
-            raw.execute(
-                null,
-                "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
-                    "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
-                    "visible INTEGER NOT NULL, fill_width INTEGER NOT NULL DEFAULT 0, " +
-                    "fill_height INTEGER NOT NULL DEFAULT 0, minimized INTEGER NOT NULL DEFAULT 0, config TEXT)",
-                0,
-            )
-            raw.execute(
-                null,
-                "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
-                    "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
-                0,
-            )
-            raw.execute(
-                null,
-                "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
-                    "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '', " +
-                    "PRIMARY KEY (device_id, start_ms))",
-                0,
-            )
-            raw.execute(null, "CREATE TABLE sleep_scan_checkpoint (id INTEGER NOT NULL PRIMARY KEY, scanned_through INTEGER NOT NULL)", 0)
-            raw.execute(null, "CREATE TABLE device_away_span (start_ms INTEGER NOT NULL PRIMARY KEY, end_ms INTEGER NOT NULL)", 0)
-            raw.execute(null, "CREATE TABLE network_mode (id INTEGER NOT NULL PRIMARY KEY, offline INTEGER NOT NULL)", 0)
-            raw.execute(
-                null,
-                "CREATE TABLE screen_break_history (start_ms INTEGER NOT NULL, label TEXT NOT NULL, " +
-                    "end_ms INTEGER NOT NULL, by_hand INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (start_ms, label))",
-                0,
-            )
-            raw.execute(null, "CREATE TABLE screen_break_front (id INTEGER NOT NULL PRIMARY KEY, until_ms INTEGER NOT NULL, line_ms INTEGER NOT NULL, machine TEXT)", 0)
-            raw.execute(
-                null,
-                "CREATE TABLE claude_log_entry (account_id TEXT NOT NULL, entry_id TEXT NOT NULL, kind TEXT NOT NULL, " +
-                    "time_millis INTEGER, session TEXT NOT NULL, session_title TEXT, project TEXT NOT NULL, " +
-                    "ordinal INTEGER NOT NULL, path TEXT NOT NULL, on_server INTEGER NOT NULL DEFAULT 0, " +
-                    "text TEXT NOT NULL, PRIMARY KEY (account_id, entry_id))",
-                0,
-            )
-            raw.execute(null, "CREATE TABLE claude_log_sync (account_id TEXT NOT NULL PRIMARY KEY, pulled_revision INTEGER NOT NULL)", 0)
+            createV19Shape(raw)
             raw.execute(null, "INSERT INTO network_mode(id, offline) VALUES (0, 1)", 0)
             raw.execute(null, "INSERT INTO claude_log_sync(account_id, pulled_revision) VALUES ('user-1', 42)", 0)
             raw.execute(null, "INSERT INTO app_state(account_id, payload) VALUES ('user-1', ?)", 1) { bindString(0, payload) }
@@ -1944,6 +1876,124 @@ class SchedulerStoreTest {
             assertEquals(mine, org.example.project.scheduler.sync.SupabaseConfig.chosen(store))
             store.saveServerChoice(null)
             assertEquals(null, store.loadServerChoice(), "back to the built-in one")
+            driver.close()
+        } finally {
+            dbFile.delete()
+        }
+    }
+
+    /** The tables as 18.sqm left them (schema v19). */
+    private fun createV19Shape(raw: JdbcSqliteDriver) {
+        raw.execute(null, "CREATE TABLE app_state (account_id TEXT NOT NULL PRIMARY KEY, payload TEXT NOT NULL)", 0)
+        raw.execute(
+            null,
+            "CREATE TABLE history_unit (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                "seq INTEGER NOT NULL, time_millis INTEGER NOT NULL, chrono_id INTEGER NOT NULL, " +
+                "debug_tainted INTEGER NOT NULL, delta_length INTEGER NOT NULL DEFAULT -1, " +
+                "delta_hash INTEGER, delta TEXT NOT NULL, window TEXT, " +
+                "PRIMARY KEY (account_id, category, seq))",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE history_pointer (account_id TEXT NOT NULL, category TEXT NOT NULL, " +
+                "pointer INTEGER NOT NULL, PRIMARY KEY (account_id, category))",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE sync_meta (id INTEGER NOT NULL PRIMARY KEY, device_id TEXT NOT NULL, " +
+                "access_token TEXT, refresh_token TEXT, user_id TEXT, email TEXT)",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE account_sync (account_id TEXT NOT NULL PRIMARY KEY, " +
+                "last_known_revision INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, " +
+                "acknowledged_logout_at INTEGER, base_payload TEXT)",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE window_placement (window_id TEXT NOT NULL PRIMARY KEY, x REAL NOT NULL, " +
+                "y REAL NOT NULL, width REAL NOT NULL DEFAULT 0, height REAL NOT NULL DEFAULT 0, " +
+                "visible INTEGER NOT NULL, fill_width INTEGER NOT NULL DEFAULT 0, " +
+                "fill_height INTEGER NOT NULL DEFAULT 0, minimized INTEGER NOT NULL DEFAULT 0, config TEXT)",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE device_sleep_gap (device_id TEXT NOT NULL, sleep_start INTEGER NOT NULL, " +
+                "sleep_end INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY (device_id, sleep_start))",
+            0,
+        )
+        raw.execute(
+            null,
+            "CREATE TABLE device_active_session (device_id TEXT NOT NULL, start_ms INTEGER NOT NULL, " +
+                "end_ms INTEGER NOT NULL, updated_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '', " +
+                "PRIMARY KEY (device_id, start_ms))",
+            0,
+        )
+        raw.execute(null, "CREATE TABLE sleep_scan_checkpoint (id INTEGER NOT NULL PRIMARY KEY, scanned_through INTEGER NOT NULL)", 0)
+        raw.execute(null, "CREATE TABLE device_away_span (start_ms INTEGER NOT NULL PRIMARY KEY, end_ms INTEGER NOT NULL)", 0)
+        raw.execute(null, "CREATE TABLE network_mode (id INTEGER NOT NULL PRIMARY KEY, offline INTEGER NOT NULL)", 0)
+        raw.execute(
+            null,
+            "CREATE TABLE screen_break_history (start_ms INTEGER NOT NULL, label TEXT NOT NULL, " +
+                "end_ms INTEGER NOT NULL, by_hand INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (start_ms, label))",
+            0,
+        )
+        raw.execute(null, "CREATE TABLE screen_break_front (id INTEGER NOT NULL PRIMARY KEY, until_ms INTEGER NOT NULL, line_ms INTEGER NOT NULL, machine TEXT)", 0)
+        raw.execute(
+            null,
+            "CREATE TABLE claude_log_entry (account_id TEXT NOT NULL, entry_id TEXT NOT NULL, kind TEXT NOT NULL, " +
+                "time_millis INTEGER, session TEXT NOT NULL, session_title TEXT, project TEXT NOT NULL, " +
+                "ordinal INTEGER NOT NULL, path TEXT NOT NULL, on_server INTEGER NOT NULL DEFAULT 0, " +
+                "text TEXT NOT NULL, PRIMARY KEY (account_id, entry_id))",
+            0,
+        )
+        raw.execute(null, "CREATE TABLE claude_log_sync (account_id TEXT NOT NULL PRIMARY KEY, pulled_revision INTEGER NOT NULL)", 0)
+    }
+
+    /**
+     * Persisted-DB compatibility (CLAUDE.md): a DB written by the previous schema (v20 — no end-to-end encryption key)
+     * must still load, with 20.sqm adding `account_sync.e2ee_key` on open: the account's bookkeeping is kept, it has no
+     * key yet (the engine then makes or asks for one), and a key saved after the upgrade round-trips.
+     */
+    @Test
+    fun upgrades_pre_e2ee_v20_db_and_keeps_its_data() {
+        val dbFile = File.createTempFile("scheduler-v20", ".db").also { it.delete() }
+        try {
+            val url = "jdbc:sqlite:${dbFile.absolutePath}"
+            val raw = JdbcSqliteDriver(url, Properties())
+            createV19Shape(raw)
+            raw.execute(null, "CREATE TABLE server_choice (id INTEGER NOT NULL PRIMARY KEY, base_url TEXT NOT NULL, anon_key TEXT NOT NULL)", 0)
+            raw.execute(
+                null,
+                "INSERT INTO sync_meta(id, device_id, access_token, refresh_token, user_id, email) " +
+                    "VALUES (0, 'dev-1', 'at', 'rt', 'user-1', 'u1@x.y')",
+                0,
+            )
+            raw.execute(
+                null,
+                "INSERT INTO account_sync(account_id, last_known_revision, dirty, acknowledged_logout_at, base_payload) " +
+                    "VALUES ('user-1', 77, 1, 5, 'base')",
+                0,
+            )
+            raw.execute(null, "PRAGMA user_version = 20", 0)
+            raw.close()
+
+            val driver = JdbcSqliteDriver(url, Properties(), SchedulerDatabase.Schema)
+            val store = SqlDelightSchedulerStore(SchedulerDatabase(driver))
+            val meta = store.loadSyncMeta()!!
+            assertEquals(77L, meta.lastKnownRevision, "the upgrade kept the account's bookkeeping")
+            assertEquals(true, meta.dirty)
+            assertEquals(5L, meta.acknowledgedLogoutAtMillis)
+            assertEquals("base", meta.baseSnapshot)
+            assertEquals(null, meta.contentKey, "no key yet")
+            store.saveSyncMeta(meta.copy(contentKey = "a2V5"))
+            assertEquals("a2V5", store.loadSyncMeta()!!.contentKey, "a key saved after the upgrade round-trips")
+            assertEquals(77L, store.loadSyncMeta()!!.lastKnownRevision)
             driver.close()
         } finally {
             dbFile.delete()

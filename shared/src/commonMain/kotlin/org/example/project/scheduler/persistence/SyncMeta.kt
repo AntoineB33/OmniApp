@@ -48,6 +48,11 @@ data class SyncMeta(
      * until the next successful push/pull records one.
      */
     val baseSnapshot: String? = null,
+    /**
+     * The account's end-to-end encryption content key, base64 (`scheduler/sync/E2ee.kt`): per account, like the rest of
+     * the bookkeeping. Null until this device made it (a guest) or unwrapped it with the password (a signed-in account).
+     */
+    val contentKey: String? = null,
 )
 
 /** Durable storage for [SyncMeta]; implemented by the platform store next to the scheduler payload. */
