@@ -468,10 +468,11 @@ class SearchBarPin(
 
 /**
  * User rule 2026-11-20: **every Search window's bar has its pin** — the Search window and its copies, the left-side menu,
- * a ▾ window, a list drawn inside a window. Found by the window itself from its own id ([LocalArrowOwner]) and the id of
- * the window that stores its configuration ([LocalArrowRoot]); `App` gives it. Null: outside the app (a test).
+ * a ▾ window, a list drawn inside a window. Found by the window itself from its own id ([LocalArrowOwner]), the id of
+ * the window that stores its configuration ([LocalArrowRoot]) and the caller of the field's window it is drawn in
+ * ([LocalFieldCaller], "" outside one); `App` gives it. Null: outside the app (a test).
  */
-val LocalSearchBarPins = androidx.compose.runtime.compositionLocalOf<((owner: String, root: String) -> SearchBarPin)?> { null }
+val LocalSearchBarPins = androidx.compose.runtime.compositionLocalOf<((owner: String, root: String, caller: String) -> SearchBarPin)?> { null }
 
 /** A key that changes the bar's text, or a modifier on its own: the run of keystrokes goes on. Any other ends it. */
 internal fun typesInBar(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
@@ -628,11 +629,13 @@ fun SearchWindow(
         val owner = LocalArrowOwner.current
         val root = LocalArrowRoot.current
         val pins = LocalSearchBarPins.current
+        // Drawn in a field's window, its pin is that window's caller's (user rule 2026-11-21).
+        val caller = LocalFieldCaller.current
         // A window drawn inside another under that window's own id is not that window: its bar is another bar. The
         // left-side menu, drawn inside the app under its own id, is the one embedded window that stores itself.
         val borrowed = embedded && owner == root && menuList == null
         if (barOutside || borrowed || owner == null || root == null || pins == null || !owner.startsWith(root)) null
-        else remember(pins, owner, root) { pins(owner, root) }
+        else remember(pins, owner, root, caller) { pins(owner, root, caller) }
     }
     // The elements the window this one is a section of shows as added only because they are selected ([LocalNotAdded]).
     val notAddedAbove = LocalNotAdded.current

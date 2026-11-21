@@ -96,7 +96,16 @@ data class SchedulerHistory(
  * changes), and otherwise the units of [Main] and [Calendar] **made in the focused window** — the unit's
  * window, not its category, is what "relative to the focused window" reads (`SchedulerReducer.undoIn`).
  */
-enum class HistoryCategory { Edit, Selection, Calendar, Main, WindowNav }
+enum class HistoryCategory {
+    Edit, Selection, Calendar, Main, WindowNav,
+
+    /**
+     * User rule 2026-11-21 (*"make them isolated lists. Two pins can't share history units"*): **the keystrokes of the
+     * Search bars** ([ExternalKeys.SEARCH_TEXT]) — a list of their own, each bar's units walked by that bar's ↑ / ↓ alone
+     * (`SchedulerReducer.searchTextStep`), never by Ctrl+Z or Ctrl+Shift+Z. Local to the device ([Delta.localOnly]).
+     */
+    SearchText,
+}
 
 /**
  * PRD §5/§6: the three history chords, as the History window's third filter dimension — "show me only what
@@ -127,6 +136,8 @@ val HistoryCategory.chords: Set<HistoryChord>
         HistoryCategory.Edit, HistoryCategory.Calendar, HistoryCategory.Main -> setOf(HistoryChord.Undo)
         HistoryCategory.Selection -> setOf(HistoryChord.Selection, HistoryChord.Position)
         HistoryCategory.WindowNav -> setOf(HistoryChord.Position)
+        // Walked by the arrows of its own bar, which is no chord.
+        HistoryCategory.SearchText -> emptySet()
     }
 
 /**
@@ -287,6 +298,8 @@ data class SchedulerHistories(
     val calendar: SchedulerHistory = SchedulerHistory(),
     val main: SchedulerHistory = SchedulerHistory(),
     val windowNav: SchedulerHistory = SchedulerHistory(),
+    /** The Search bars' keystrokes ([HistoryCategory.SearchText]). */
+    val searchText: SchedulerHistory = SchedulerHistory(),
     /**
      * User rule 2026-11-12: **the whole app's pin** — the `deviceSeq` of this device's unit the whole history
      * (`Ctrl+Shift+Z` / `Ctrl+Shift+Y`) stands on, `0` before the first. Null: never moved since it was introduced, read
@@ -303,6 +316,7 @@ data class SchedulerHistories(
             HistoryCategory.Calendar -> calendar
             HistoryCategory.Main -> main
             HistoryCategory.WindowNav -> windowNav
+            HistoryCategory.SearchText -> searchText
         }
 
     fun withCategory(category: HistoryCategory, history: SchedulerHistory): SchedulerHistories =
@@ -312,7 +326,27 @@ data class SchedulerHistories(
             HistoryCategory.Calendar -> copy(calendar = history)
             HistoryCategory.Main -> copy(main = history)
             HistoryCategory.WindowNav -> copy(windowNav = history)
+            HistoryCategory.SearchText -> copy(searchText = history)
         }
+
+    /**
+     * Healed on load (2026-11-21): the Search bars' keystrokes written into [main] before they had a list of their own
+     * ([HistoryCategory.SearchText]) moved there, in time order — so Ctrl+Z no longer walks them, and their bar's ↑ / ↓
+     * still does. [main]'s pointer stays on the unit it stood on (or the last other one before it). The same object when
+     * there are none.
+     */
+    fun withSearchTextApart(): SchedulerHistories {
+        fun isKeystroke(unit: HistoryUnit) = (unit.delta as? ExternalDelta)?.key?.startsWith(ExternalKeys.SEARCH_TEXT) == true
+        if (main.units.none(::isKeystroke)) return this
+        val moved = main.units.filter(::isKeystroke)
+        val kept = main.units.filterNot(::isKeystroke)
+        val pointer = main.units.take(main.pointer + 1).count { !isKeystroke(it) } - 1
+        val texts = (searchText.units + moved).sortedWith(compareBy({ it.timeMillis }, { it.chronoId }, { it.deviceId }, { it.deviceSeq }))
+        return copy(
+            main = SchedulerHistory(pointer = pointer, units = kept),
+            searchText = SchedulerHistory(pointer = texts.indexOfLast { !it.undone }, units = texts),
+        )
+    }
 
     /** Every category's history, in a fixed order — for queries that span the whole timeline. */
     fun all(): List<Pair<HistoryCategory, SchedulerHistory>> =
@@ -609,10 +643,12 @@ sealed interface Delta {
 
 /** These histories without the units of local-only view state ([Delta.localOnly]): the same object when there are none. */
 internal fun SchedulerHistories.withoutLocalOnlyUnits(): SchedulerHistories {
-    val units = main.units
-    if (units.none { it.delta.localOnly }) return this
+    // The Search bars' keystrokes are all local ([HistoryCategory.SearchText]).
+    val apart = if (searchText.units.isEmpty()) this else copy(searchText = SchedulerHistory())
+    val units = apart.main.units
+    if (units.none { it.delta.localOnly }) return apart
     val kept = units.filterNot { it.delta.localOnly }
-    return withCategory(HistoryCategory.Main, SchedulerHistory(pointer = kept.indexOfLast { !it.undone }, units = kept))
+    return apart.withCategory(HistoryCategory.Main, SchedulerHistory(pointer = kept.indexOfLast { !it.undone }, units = kept))
 }
 
 /** Tree + title index fields affected by structural / edit mutations. */
@@ -1387,6 +1423,7 @@ data class SchedulerState(
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, other.histories.forCategory(HistoryCategory.WindowNav))
                 .withCategory(HistoryCategory.Selection, other.histories.forCategory(HistoryCategory.Selection))
+                .withCategory(HistoryCategory.SearchText, other.histories.forCategory(HistoryCategory.SearchText))
                 .copy(wholePin = other.histories.wholePin),
         )
 

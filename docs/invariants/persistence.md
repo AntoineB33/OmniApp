@@ -71,7 +71,8 @@ window's list, which recorded nothing). Undoable, from the window it was made in
   the user's). A text field typed into is one unit per run of keystrokes (`coalesceKey`) — except **a Search window's
   bar, one unit a keystroke** (user rule 2026-11-20, `ExternalKeys.SEARCH_TEXT`: its text alone, before and after;
   `ExternalDelta.runStart`, stored, marks a keystroke the user did something else before; never pushed, `Delta.synced`;
-  merged with the one before it at the cap rather than evicting a change; `popups.md` § *Search bars*). A window that
+  in a history list of its own, `HistoryCategory.SearchText`, which no chord walks and whose store rows are a category
+  like the others — user rule 2026-11-21; merged with the one before it at its cap; `popups.md` § *Search bars*). A window that
   closes hands
   the focus to the one under it, so its close is stamped with — and undone from — that window.
 - **An account setting** — defining, deleting, resetting or duplicating a kind of period, its drawing and combination

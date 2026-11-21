@@ -489,7 +489,8 @@ object SchedulerStateCodec {
                 )
         }
         // A snapshot written before the whole app's pin existed has no row: the pin is then read off the units.
-        return histories.copy(wholePin = pointerByCategory[WHOLE_PIN_ROW])
+        // Healed (2026-11-21): the keystrokes stored in Main before they had their own list move there.
+        return histories.copy(wholePin = pointerByCategory[WHOLE_PIN_ROW]).withSearchTextApart()
     }
 
     /**
@@ -874,6 +875,7 @@ object SchedulerStateCodec {
             calendar = forCategory(HistoryCategory.Calendar).toPersisted(),
             main = forCategory(HistoryCategory.Main).toPersisted(),
             windowNav = forCategory(HistoryCategory.WindowNav).toPersisted(),
+            searchText = forCategory(HistoryCategory.SearchText).toPersisted(),
         )
 
     private fun SchedulerHistory.toPersisted(): PersistedHistory =
@@ -1498,7 +1500,8 @@ object SchedulerStateCodec {
             calendar = calendar.toHistory(),
             main = main.toHistory(),
             windowNav = windowNav.toHistory(),
-        )
+            searchText = searchText.toHistory(),
+        ).withSearchTextApart()
 
     private fun PersistedHistory.toHistory(): SchedulerHistory =
         SchedulerHistory(
@@ -2562,6 +2565,8 @@ private data class PersistedHistories(
     val calendar: PersistedHistory = PersistedHistory(),
     val main: PersistedHistory = PersistedHistory(),
     val windowNav: PersistedHistory = PersistedHistory(),
+    /** New 2026-11-21: the Search bars' keystrokes, a list of their own (`HistoryCategory.SearchText`); absent = none. */
+    val searchText: PersistedHistory = PersistedHistory(),
 )
 
 @Serializable

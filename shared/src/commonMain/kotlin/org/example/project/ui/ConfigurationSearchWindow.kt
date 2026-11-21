@@ -896,6 +896,7 @@ private fun historyCategoryLabel(category: HistoryCategory): String =
         HistoryCategory.Calendar -> "calendar"
         HistoryCategory.Main -> "main"
         HistoryCategory.WindowNav -> "window navigation"
+        HistoryCategory.SearchText -> "search text"
     }
 
 /** "any", or one of [options] — a drop-down, for the choices too many to lay out as chips. */

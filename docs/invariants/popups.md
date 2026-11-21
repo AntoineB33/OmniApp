@@ -720,8 +720,12 @@ means.
 - **↑ / ↓ in a Search window's bar walk the bar's own pin** (user rule 2026-11-20, *"only those where the user did
   something else than changing the search bar content right after, like scrolling or clicking elsewhere"*;
   `SearchBarPin`, `SchedulerReducer.searchTextStep` / `SchedulerIntent.WalkSearchText`, `SearchBarPinTest`). Each
-  keystroke is a History Unit of the bar's text alone (`ExternalKeys.SEARCH_TEXT`; Ctrl+Z takes back one character).
-  The pin walks those units only — the window's other changes are its Ctrl+Z's — and stops only at a text the user left
+  keystroke is a History Unit of the bar's text alone (`ExternalKeys.SEARCH_TEXT`), in **a list of its own**
+  (`HistoryCategory.SearchText`; user rule 2026-11-21, *"make them isolated lists. Two pins can't share history
+  units"*): no chord walks it, Ctrl+Z and Ctrl+Shift+Z included — they walk the window's other changes — and typing in
+  one bar drops only that bar's texts walked back over, never another bar's (each bar its own pin). Keystrokes written
+  into the changes' list before move to their own on load (`SchedulerHistories.withSearchTextApart`).
+  The pin walks those units only and stops only at a text the user left
   the bar at: the newest, or one followed by a keystroke marked `runStart`. A run ends at **a press or a wheel turn
   anywhere in the app** (`TransientMenuHost.onActivity`, told by the one root observer and by each pop-up's own:
   `SearchBarRunEndTest`), the bar losing the keyboard, any key that does not change the text (`typesInBar`: the caret
@@ -731,15 +735,22 @@ means.
   **Every Search window's bar, one code** (user rule 2026-11-20, *"the left-side menu is supposed to use the same code
   as any other search window"*): the window finds its pin itself (`LocalSearchBarPins`), by its own id
   (`LocalArrowOwner`) and the id of the window storing its configuration (`LocalArrowRoot`) — the bar key
-  `ExternalKeys.searchText(root, owner)`. Recorded the same way by both funnels of a configuration: `App.setSearchConfig`
-  (the Search window, its copies, the left-side menu) and `App.setSearchInside` (a ▾ window, a list drawn inside a
-  window; put back through `ArrowSearches.setText`, which knows what it opens with). A pin moves only while its bar holds
-  the text it stands at, so a bar whose text no unit holds (a drop-down's list, empty at each opening) keeps ↓ into its
-  list. A window drawn inside another under that window's id is not given that window's pin.
+  `ExternalKeys.searchText(root, owner, caller)`. Recorded the same way by both funnels of a configuration:
+  `App.setSearchConfig` (the Search window, its copies, the left-side menu, and its actions section's bar, whose text is
+  the window's `actionSearch`: anomaly 2026-11-21, `SearchDomain.actionsBarOf`) and `App.setSearchInside` (a ▾ window, a
+  list drawn inside a window, an actions section's own actions section; put back through `ArrowSearches.setText`, which
+  knows what it opens with). **The pin persists with the bar** (user rule 2026-11-21, *"the same pin persists just like
+  the 'added elements' list section"*): kept with the history, it comes back when the window opens again, and a bar then
+  showing another text than its pin's (emptied at the opening) is given the pin's text back by ↑, nothing walked; ↓ there
+  is the list's. **In a field's window, a pin is its caller's** (user rule 2026-11-21, *"don't drop the pin if the caller
+  changes but it is still the same caller"*): the caller ([`LocalFieldCaller`], `SearchDomain.fieldCallerOf`) is part
+  of the bar's key, so the same caller finds its pin again — its group taken apart and made again included — and another
+  caller has one of its own, empty; nothing is deleted. `App` learns each bar's caller as the bar finds its pin
+  (`barCallers`). A window drawn inside another under that window's id is not given that window's pin.
   **What it costs** (user rule 2026-11-20, *"history units that are old get merged when they can"*): a keystroke is
-  local-only and never pushed (`Delta.synced`): no `history_unit` row, no push. At the 1000-unit cap the oldest
-  keystrokes of a run are merged into the one before (`SchedulerReducer.mergedOldKeystrokes`) before any change is
-  evicted — never across a run's start, so the stops stay; the store rewrites a merged unit in its own row
+  local-only and never pushed (`Delta.synced`): no `history_unit` row, no push. Their list has its own 1000-unit cap, so
+  they never push a change out; at it the oldest keystrokes of a run are merged into the one before
+  (`SchedulerReducer.mergedOldKeystrokes`) before any is evicted — never across a run's start, so the stops stay; the store rewrites a merged unit in its own row
   (`SqlDelightSchedulerStore.saveHistoryCategory` aligns by time, `SchedulerHistoryWriteTest`).
 - **Every search bar has a ✕ at its right end, which empties it** (user rule 2026-10-11; `SearchBarCross`, the
   field's `trailingIcon`): the Search window's bar, "Search a configuration" in both configuration windows, the

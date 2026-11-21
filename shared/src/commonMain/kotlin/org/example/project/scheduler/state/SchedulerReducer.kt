@@ -784,8 +784,13 @@ object SchedulerReducer {
                 }
             is SchedulerIntent.RecordExternal ->
                 if (intent.before == intent.after) state
-                else commitDelta(state, ExternalDelta(intent.key, intent.before, intent.after, intent.label, intent.coalesceKey, intent.runStart))
-            is SchedulerIntent.WalkSearchText -> walkSearchText(state, intent.key, intent.back)
+                else commitDelta(
+                    state,
+                    ExternalDelta(intent.key, intent.before, intent.after, intent.label, intent.coalesceKey, intent.runStart),
+                    // User rule 2026-11-21: a Search bar's keystroke is in a list of its own, walked by its bar alone.
+                    if (intent.key.startsWith(ExternalKeys.SEARCH_TEXT)) HistoryCategory.SearchText else HistoryCategory.Main,
+                )
+            is SchedulerIntent.WalkSearchText -> walkSearchText(state, intent.key, intent.back, intent.shown)
             is SchedulerIntent.InDefaultSubtree -> reduceInDefaultSubtree(state, intent.inner)
             is SchedulerIntent.InSearchSubtree -> reduceInSearchSubtree(state, intent.inner, intent.listId, intent.readOnly, intent.window)
             is SchedulerIntent.SetSearchExpanded ->
@@ -1115,8 +1120,9 @@ object SchedulerReducer {
 
     /**
      * User rule 2026-11-20: **the pin of a Search window's bar** — this device's keystroke units of [key]
-     * ([ExternalKeys.SEARCH_TEXT] + frame id), oldest first, each with its index in [HistoryCategory.Main], and how many
-     * of them are applied: the pin stands after that many. Every other change of the window is another pin's.
+     * ([ExternalKeys.SEARCH_TEXT] + frame id), oldest first, each with its index in [HistoryCategory.SearchText], and how
+     * many of them are applied: the pin stands after that many. Every other bar's keystrokes are another pin's, and no
+     * other walk reaches these (user rule 2026-11-21: *"two pins can't share history units"*).
      */
     private class SearchTextPin(val units: List<Pair<Int, HistoryUnit>>, val at: Int) {
         val deltas: List<ExternalDelta> get() = units.map { it.second.delta as ExternalDelta }
@@ -1131,22 +1137,24 @@ object SchedulerReducer {
     private fun searchTextPin(state: SchedulerState, key: String): SearchTextPin {
         val me = deviceId()
         val units =
-            state.histories.forCategory(HistoryCategory.Main).units.withIndex()
+            state.histories.forCategory(HistoryCategory.SearchText).units.withIndex()
                 .filter { (_, u) -> u.ownedBy(me) && (u.delta as? ExternalDelta)?.key == key }
                 .map { (i, u) -> i to u }
-        // Walked by this pin and by the window's Ctrl+Z, newest first both ways, the applied ones are a prefix.
+        // Walked by this pin alone, newest first both ways: the applied ones are a prefix.
         return SearchTextPin(units, units.indexOfLast { !it.second.undone } + 1)
     }
 
     /**
      * Where ↑ ([back]) or ↓ in the bar of [key] takes its pin: the previous text the user left the bar at (or the text
      * before the oldest keystroke kept), the next one — or null when the pin is already at that end of its walk, and the
-     * key is then the list's (↓ to the row below, ↑ to the row above). [shown]: what the bar holds — a pin standing at
-     * another text is not this bar's (a window whose text no unit holds), and moves nothing.
+     * key is then the list's (↓ to the row below, ↑ to the row above). [shown]: what the bar holds. A bar showing another
+     * text than its pin's (a window opened again with its bar emptied) is given that text back by ↑ — the pin persists
+     * with the bar (user rule 2026-11-21) — and moves nothing by ↓.
      */
     fun searchTextStep(state: SchedulerState, key: String, back: Boolean, shown: String? = null): Int? {
         val pin = searchTextPin(state, key)
-        if (pin.units.isEmpty() || (shown != null && pin.text(pin.at) != shown)) return null
+        if (pin.units.isEmpty()) return null
+        if (shown != null && pin.text(pin.at) != shown) return if (back) pin.at else null
         return if (back) (pin.at - 1 downTo 0).firstOrNull { it == 0 || pin.stop(it) }
         else (pin.at + 1..pin.units.size).firstOrNull { pin.stop(it) }
     }
@@ -1156,21 +1164,21 @@ object SchedulerReducer {
      * and ONE restore of the bar's text queued for `App` — not one a keystroke, which a long run would push past
      * [MAX_EXTERNAL_RESTORES].
      */
-    private fun walkSearchText(state: SchedulerState, key: String, back: Boolean): SchedulerState {
-        val target = searchTextStep(state, key, back) ?: return state
+    private fun walkSearchText(state: SchedulerState, key: String, back: Boolean, shown: String? = null): SchedulerState {
+        val target = searchTextStep(state, key, back, shown) ?: return state
         val pin = searchTextPin(state, key)
+        // The bar shows another text: the pin's own is given back, nothing walked.
+        if (shown != null && pin.text(pin.at) != shown) return state.withExternalRestore(key, from = shown, to = pin.text(pin.at))
         val me = deviceId()
         val now = clock.nowMillis()
-        val history = state.histories.forCategory(HistoryCategory.Main)
+        val history = state.histories.forCategory(HistoryCategory.SearchText)
         val units = history.units.toMutableList()
         pin.units.forEachIndexed { k, (index, unit) ->
             val undone = k >= target
             if (unit.undone != undone) units[index] = unit.copy(undone = undone, changedAtMillis = now)
         }
-        val walked =
-            state.copy(histories = state.histories.withCategory(HistoryCategory.Main, historyOf(units, me)))
-                .withExternalRestore(key, from = pin.text(pin.at), to = pin.text(target))
-        return snapWholePin(walked)
+        return state.copy(histories = state.histories.withCategory(HistoryCategory.SearchText, historyOf(units, me)))
+            .withExternalRestore(key, from = pin.text(pin.at), to = pin.text(target))
     }
 
     /**
@@ -4600,6 +4608,9 @@ object SchedulerReducer {
                             ((windowOf(category, it) == where && it.instance == stampInstance) || it.window == HistoryWindow.Menu)
                     }
                 }
+                // Each bar is its own pin: typing in one drops that bar's texts walked back over, never another's.
+                category == HistoryCategory.SearchText ->
+                    history.units.filterNot { it.ownedBy(me) && it.undone && (it.delta as? ExternalDelta)?.key == (forward as? ExternalDelta)?.key }
                 else -> history.units.filterNot { it.ownedBy(me) && it.undone }
             }
 

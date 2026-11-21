@@ -362,8 +362,9 @@ sealed interface SchedulerIntent {
      * ([ExternalKeys.SEARCH_TEXT] + the window's frame id), back when [back], to the previous (next) text the user left
      * the bar at: a keystroke after which they did something else ([ExternalDelta.runStart] on the next one). Nothing
      * else of the window moves. Not a unit itself, as no walk is. `SchedulerReducer.searchTextStep` says whether it moves.
+     * [shown]: what the bar holds; another text than the pin's is given the pin's back by ↑ (user rule 2026-11-21).
      */
-    data class WalkSearchText(val key: String, val back: Boolean) : SchedulerIntent
+    data class WalkSearchText(val key: String, val back: Boolean, val shown: String? = null) : SchedulerIntent
 
     /**
      * The added elements' Duplicate on a category: a new category titled `"<title> copy"` (`"… copy 2"`, … where taken —

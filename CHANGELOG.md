@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Search bars' keystrokes are a history list of their own; a pin persists, by caller — 2026-11-21
+
+- User rule: *"make them isolated lists. Two pins can't share history units"* (asked: the Search bars only). A bar's
+  keystrokes were units of the Main list, walked by its ↑ / ↓ AND by Ctrl+Z / Ctrl+Shift+Z. They are now
+  `HistoryCategory.SearchText`, walked by their bar alone; Ctrl+Z no longer takes typing back. Typing in a bar drops only
+  that bar's texts walked back over. Their own 1000-unit cap: they never push a change out. Healed on load
+  (`SchedulerHistories.withSearchTextApart`): keystrokes stored in Main move over; the store's rows follow as a category
+  like any (no SQLite migration; never synced, so nothing on the server).
+- User rule: *"one pin for every search bar … The same pin persists just like the 'added elements' list section"*. A bar
+  opened again showing another text than its pin's is given that text back by ↑ (`searchTextStep`'s `shown`).
+- User rule: *"don't drop the pin if the caller changes but it is still the same caller"*. In a field's window the bar's
+  key carries its caller (`ExternalKeys.searchText(root, owner, caller)`, `LocalFieldCaller`): the same caller finds its
+  pin again, another has its own. `SearchBarPinTest`; `popups.md` § *Search bars*, `persistence.md`.
+
 ### The actions section's bar walks its own pin — 2026-11-21
 
 - Anomaly: *"I click 'Task trees', add a row in the added elements list, type something in the search bar of the action

@@ -33,13 +33,21 @@ object ExternalKeys {
      * itself (`owner == root`: the Search window, a copy, the left-side menu), or one drawn inside it (a ▾ window, a
      * field's list: `SearchDomain.Config.inside`, under `owner` less `root`).
      */
-    fun searchText(root: String, owner: String): String =
-        if (owner == root) SEARCH_TEXT + root else SEARCH_TEXT + root + INSIDE + owner.removePrefix(root)
+    fun searchText(root: String, owner: String, caller: String = ""): String =
+        (if (owner == root) SEARCH_TEXT + root else SEARCH_TEXT + root + INSIDE + owner.removePrefix(root)) +
+            (if (caller.isEmpty()) "" else CALLER + caller)
+
+    /**
+     * What separates a bar's key from the caller of the field's window it is drawn in (`SearchDomain.fieldCallerOf`):
+     * user rule 2026-11-21, *"don't drop the pin if the caller changes but it is still the same caller"* — the bar has a
+     * pin by caller, the same caller finding its own again, another caller one of its own.
+     */
+    private const val CALLER: Char = '\u001F'
 
     /** [searchText] read back: the storing window's id, and the inside id ("" for the window itself). Null: another key. */
     fun searchTextOf(key: String): Pair<String, String>? {
         if (!key.startsWith(SEARCH_TEXT)) return null
-        val rest = key.removePrefix(SEARCH_TEXT)
+        val rest = key.removePrefix(SEARCH_TEXT).substringBefore(CALLER)
         return rest.substringBefore(INSIDE) to rest.substringAfter(INSIDE, "")
     }
 
