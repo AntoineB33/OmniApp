@@ -924,6 +924,14 @@ class ArrowSearches(
      * back from [from] to [to], the rest of its configuration as it is now; nothing while its bar holds another text.
      */
     fun setText(root: String, relative: String, from: String, to: String) {
+        // The bar of the actions section of a window drawn inside: that window's `actionSearch` (anomaly 2026-11-21).
+        val actionsOf = SearchDomain.actionsBarOf(relative)
+        if (!actionsOf.isNullOrEmpty()) {
+            val opened = openedBy[root + actionsOf] ?: SearchDomain.CONFIGURATION_SEARCH
+            val current = of(root, actionsOf, opened)
+            if (current.actionSearch == from) set(root, actionsOf, current.copy(actionSearch = to), opened)
+            return
+        }
         val opened = openedBy[root + relative] ?: SearchDomain.CONFIGURATION_SEARCH
         val current = of(root, relative, opened)
         if (current.query == from) set(root, relative, current.copy(query = to), opened)

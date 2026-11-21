@@ -1693,6 +1693,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 recordKeystroke(ExternalKeys.searchText(id, id), before.query, config.query, searchChangeLabel(before, config))
                 return
             }
+            // Anomaly 2026-11-21: so is the bar of its actions section, whose text is the window's `actionSearch`
+            // ([SearchDomain.actionsBarOf]) — the bar the section's Search window walks the pin of.
+            if (config == before.copy(actionSearch = config.actionSearch)) {
+                recordKeystroke(
+                    ExternalKeys.searchText(id, id + "/" + SearchDomain.ACTIONS_SECTION_PART),
+                    before.actionSearch, config.actionSearch, "Search an action",
+                )
+                return
+            }
             // The other text fields are typed: one unit for the run of a field's keystrokes.
             val typed =
                 when (config) {
@@ -1742,6 +1751,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 recordKeystroke(
                     ExternalKeys.searchText(id, id + typedIn), textOf(before.inside[typedIn]), textOf(inside[typedIn]),
                     "Search text inside " + id,
+                )
+                return
+            }
+            // And in the bar of the actions section of a window drawn inside ([SearchDomain.actionsBarOf]).
+            val actionsTypedIn = SearchDomain.insideActionsTypedIn(before.inside, inside)
+            if (actionsTypedIn != null) {
+                fun textOf(entry: String?) = SearchDomain.Config.decode(entry)?.actionSearch.orEmpty()
+                recordKeystroke(
+                    ExternalKeys.searchText(id, id + actionsTypedIn + "/" + SearchDomain.ACTIONS_SECTION_PART),
+                    textOf(before.inside[actionsTypedIn]), textOf(inside[actionsTypedIn]), "Search an action inside " + id,
                 )
                 return
             }
@@ -2045,7 +2064,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         restore.key.startsWith(SEARCH_TEXT_KEY) -> {
                             val (id, relative) = ExternalKeys.searchTextOf(restore.key)!!
                             val to = restore.to.orEmpty()
-                            if (relative.isEmpty()) {
+                            val actionsOf = SearchDomain.actionsBarOf(relative)
+                            if (actionsOf == "") {
+                                // The bar of the window's own actions section: its `actionSearch`.
+                                val current = searchConfigOf(id)
+                                if (current.actionSearch == restore.from.orEmpty()) setSearchConfig(id, current.copy(actionSearch = to), follow = false)
+                            } else if (relative.isEmpty()) {
                                 val current = searchConfigOf(id)
                                 if (current.query == restore.from) setSearchConfig(id, current.copy(query = to), follow = false)
                             } else {

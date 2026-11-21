@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The actions section's bar walks its own pin — 2026-11-21
+
+- Anomaly: *"I click 'Task trees', add a row in the added elements list, type something in the search bar of the action
+  section, close the window, re-open it, click on the search bar of the action section, click the top arrow keyboard
+  key, but it doesn't give me the previous text."* That bar's text is its window's `actionSearch`, and its keystrokes
+  were recorded as whole-window units (`search/<id>`), under no bar's key, so the section's pin
+  (`search-text/<id>\t/actions`) had nothing to walk. A change of `actionSearch` alone is now a keystroke unit under the
+  section's key (`App.setSearchConfig`; `setSearchInside` for an actions section's own one,
+  `SearchDomain.insideActionsTypedIn`), and a walk or undo puts the text back into `actionSearch`
+  (`SearchDomain.actionsBarOf`, `ArrowSearches.setText`). `SearchBarPinTest`.
+
 ### A menu says what it lists; a field's window keeps its added elements per caller — 2026-11-21
 
 - Anomaly: *"I right-click in the calendar, then in the down arrow, then in 'Default for this', and I only find type:

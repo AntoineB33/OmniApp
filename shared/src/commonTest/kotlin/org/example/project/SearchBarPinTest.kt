@@ -8,6 +8,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.persistence.SchedulerStateCodec
 import org.example.project.scheduler.state.ExternalDelta
 import org.example.project.scheduler.state.ExternalKeys
@@ -179,6 +180,36 @@ class SearchBarPinTest {
         assertEquals("Search#2" to "/actions/▾x", ExternalKeys.searchTextOf(key))
         assertEquals("Search#2" to "", ExternalKeys.searchTextOf(ExternalKeys.searchText("Search#2", "Search#2")))
         assertEquals(ExternalKeys.SEARCH_TEXT + "Search", ExternalKeys.searchText("Search", "Search"))
+    }
+
+    /**
+     * Anomaly 2026-11-21 (*"I click "Task trees", add a row in the added elements list, type something in the search bar
+     * of the action section, close the window, re-open it, click on the search bar of the action section, click the top
+     * arrow keyboard key, but it doesn't give me the previous text"*): its keystrokes were whole-window units, under no
+     * bar's key. The section's bar is the window's `actionSearch`, its key the section's id — the one its pin reads.
+     */
+    @Test
+    fun the_actions_section_bar_is_a_bar_with_its_pin() {
+        val section = ExternalKeys.searchText("Search#2", "Search#2/" + SearchDomain.ACTIONS_SECTION_PART)
+        val (root, relative) = assertNotNull(ExternalKeys.searchTextOf(section))
+        assertEquals("Search#2", root)
+        assertEquals("", SearchDomain.actionsBarOf(relative), "the window's own actions section: its actionSearch")
+        assertEquals("/actions", SearchDomain.actionsBarOf("/actions/actions"), "an actions section's own one: that entry's")
+        assertNull(SearchDomain.actionsBarOf(""), "the window's own bar is its query")
+        assertNull(SearchDomain.actionsBarOf("/actions/▾x"), "a ▾ window's bar is its query")
+
+        // Typed in an actions section's OWN actions section: its entry's actionSearch alone changed.
+        val own = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Action), pageTypesOnly = false)
+        val typed = mapOf("/actions" to own.copy(actionSearch = "pi").encode())
+        assertEquals("/actions", SearchDomain.insideActionsTypedIn(emptyMap(), typed), "an entry gained by its text alone")
+        assertEquals("/actions", SearchDomain.insideActionsTypedIn(typed, mapOf("/actions" to own.copy(actionSearch = "pie").encode())))
+        assertNull(SearchDomain.insideActionsTypedIn(typed, mapOf("/actions" to own.copy(actionSearch = "pi", query = "x").encode())))
+
+        // Its keystrokes walk as any bar's.
+        var s = r(SchedulerState.empty(), SchedulerIntent.FocusWindow(HistoryWindow.Search, ""))
+        s = r(s, SchedulerIntent.RecordExternal(section, "", "p", "Search an action", runStart = true))
+        s = r(s, SchedulerIntent.RecordExternal(section, "p", "pi", "Search an action"))
+        assertEquals(0, SchedulerReducer.searchTextStep(s, section, back = true, shown = "pi"), "↑ gives back the text before")
     }
 
     @Test

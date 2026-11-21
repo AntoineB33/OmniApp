@@ -1945,6 +1945,32 @@ object SearchDomain {
         }
     }
 
+    /** The part of its window's id the actions section's own ends with (`embeddedSearchId`). */
+    const val ACTIONS_SECTION_PART: String = "actions"
+
+    /**
+     * Anomaly 2026-11-21 (*"I type something in the search bar of the action section, close the window, re-open it …
+     * the top arrow doesn't give me the previous text"*): **the actions section's bar is a Search bar like any other**,
+     * whose text is its window's [Config.actionSearch] — the window [relative] (`""`: the stored window itself) of the
+     * bar whose id below the stored window's is this one; null for any other bar.
+     */
+    fun actionsBarOf(relative: String): String? =
+        relative.takeIf { it.endsWith("/$ACTIONS_SECTION_PART") }?.removeSuffix("/$ACTIONS_SECTION_PART")
+
+    /**
+     * The window drawn inside another whose ACTIONS SECTION's bar was typed in between [before] and [after]
+     * ([Config.inside], [actionsBarOf]) — the one entry that changed, by its [Config.actionSearch] alone; null for any other
+     * change. An entry gained or lost held only that text (what it opens with has none).
+     */
+    fun insideActionsTypedIn(before: Map<String, String>, after: Map<String, String>): String? {
+        val key = (before.keys + after.keys).singleOrNull { before[it] != after[it] } ?: return null
+        val was = Config.decode(before[key])
+        val now = Config.decode(after[key])
+        val from = was ?: now?.copy(actionSearch = "") ?: return null
+        val to = now ?: was?.copy(actionSearch = "") ?: return null
+        return key.takeIf { from.actionSearch != to.actionSearch && from.copy(actionSearch = to.actionSearch) == to }
+    }
+
     /** Whether two Search windows' configurations, as stored, have the same [searchConfigurations]. */
     fun sameSearchConfigurations(a: String?, b: String?): Boolean =
         searchConfigurations(Config.decode(a) ?: Config()) == searchConfigurations(Config.decode(b) ?: Config())

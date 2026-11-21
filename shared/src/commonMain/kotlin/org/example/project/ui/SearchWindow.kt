@@ -2915,7 +2915,7 @@ internal fun rememberKeptParts(
 }
 
 /** The part of its window's id the actions section's own ends with ([embeddedSearchId]). */
-internal const val ACTIONS_SECTION_PART: String = "actions"
+internal const val ACTIONS_SECTION_PART: String = SearchDomain.ACTIONS_SECTION_PART
 
 /**
  * User rule 2026-11-13: **what the added elements list gives the Search window that is it** ([SearchWindow]'s
