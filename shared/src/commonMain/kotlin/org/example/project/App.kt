@@ -2362,8 +2362,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 val view = config.orEmpty()
                 val calendars = calendarWindowIds()
                 if (config == null && !atBack) {
-                    val focused = calendars.firstOrNull { historyWindowOfFrame(it) == (schedulerState.focusedWindow to schedulerState.focusedInstance) }
-                    (focused ?: calendars.firstOrNull())?.let { existing ->
+                    // Not the notifications window: it shows the calendar beside the notifications it gathers, and is
+                    // not "the calendar" (anomaly 2026-11-21: the Calendar button would have taken its sections off).
+                    val plain = calendars.filterNot { SearchDomain.isNotificationsWindow(searchConfigOf(it)) }
+                    val focused = plain.firstOrNull { historyWindowOfFrame(it) == (schedulerState.focusedWindow to schedulerState.focusedInstance) }
+                    (focused ?: plain.firstOrNull())?.let { existing ->
                         presentWindow(FloatingWindow.Search, existing)
                         // User rule 2026-11-12: the calendar button's calendar is locked to now — brought back too.
                         calendarViews[existing]?.setLockNowLine(true) {}
@@ -2903,9 +2906,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // Its sub-trees' open cells: the button's, else none — never what a closed window under that id had.
                     seedSubtreeCells(id, button.expandedRows?.cells.orEmpty().toSet())
                 }
-                // User rule 2026-11-21: a Calendar button keeping no layout of its own (the default one) opens a calendar
-                // window showing its actions section alone, scrolled to its open "Calendar" row: the calendar.
-                if (id !in before && kind == FloatingWindow.Calendar && saved == null) {
+                // User rule 2026-11-21: a Calendar button keeping no layout of its own (the default one) shows a calendar
+                // window with its actions section alone, scrolled to its open "Calendar" row: the calendar. The window it
+                // brings back too (anomaly, same day: the one left open from before kept its search and added elements).
+                if (kind == FloatingWindow.Calendar && saved == null) {
                     searchSplits[id] = org.example.project.ui.SearchSplits.actionsOnly(searchSplits[id] ?: org.example.project.ui.SearchSplits())
                     saveWindowSections()
                     SearchDomain.calendarActionRowId()?.let { searchActionReveals[id] = it }

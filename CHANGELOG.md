@@ -26,6 +26,10 @@ Check here before assuming the code matches the docs.
   note) the grid stood in a `weight(1f)` box of a `fillMaxSize` column; in the actions list's unbounded height a weight
   gets no room, so EVERY calendar window drew its calendar 0 px tall. The wrapper is now `CalendarGridWithProblems`
   (no weight), which `CalendarButtonWindowTest` draws in the real Search window.
+- Anomaly, same day (*"the search result section and the added element list section are still not hidden"*): the button
+  BRINGS BACK an open calendar window, and the one left open from before (`Search#5` on the release account) kept its
+  three sections. The button now gives the window it brings back the same sections and scroll as a new one, and no
+  longer brings back the notifications window (`SearchDomain.isNotificationsWindow`), whose search it would take off.
 
 ### The scheduler's menu: History units and Life context buttons — 2026-11-20
 
