@@ -1091,14 +1091,18 @@ object SchedulerReducer {
             } == true
 
     /**
-     * User rule 2026-11-11: **where this device's position history stands** (the units [SchedulerIntent.UndoPosition]
-     * walks) — equal at two moments only if no position was recorded, undone or redone between them. What a hover
-     * pop-up closed by the pointer is stamped with: `Shift+Alt+←` brings it back only while nothing came after it.
+     * Anomaly 2026-11-22: **where this device's position history stands, as a place** — the newest of its positions
+     * not undone (its stack and number), or null before any. It comes back to the same value when a position recorded
+     * since is undone (user rule 2026-11-11 kept a stamp that did not): what the pop-up positions are kept by
+     * (`PopupPositions`), so walking the app's history back to where a pop-up was opened finds it there again.
      */
-    fun positionStamp(state: SchedulerState): Any {
+    fun positionPlace(state: SchedulerState): Any? {
         val me = deviceId()
-        val mine = POSITIONS.categories.flatMap { state.histories.forCategory(it).units }.filter { it.ownedBy(me) }
-        return Triple(mine.size, mine.count { it.undone }, mine.maxOfOrNull { it.deviceSeq } ?: 0L)
+        return POSITIONS.categories.flatMap { category ->
+            state.histories.forCategory(category).units.filter { it.ownedBy(me) && !it.undone }.map { category to it }
+        }.maxWithOrNull(compareBy({ it.second.timeMillis }, { it.second.deviceSeq }))?.let { (category, unit) ->
+            Triple(category, unit.deviceId, unit.deviceSeq)
+        }
     }
 
     /**

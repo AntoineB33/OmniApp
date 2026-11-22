@@ -514,8 +514,14 @@ means.
     to where it stood, then goes on through them. A window is given the keyboard through what held it last in it
     (`giveKeyboard`), never `requestFocus()` on the window itself: that made the bare frame the focus owner, and no key
     reached the app any more (measured 2026-11-11).
-    They are newer than the app's history only while no position of it was recorded or walked since
-    (`SchedulerReducer.positionStamp`). A pop-up holding the keyboard is a window of its own, so it forwards those
+    **Each run of them is kept WHERE it was recorded in the app's history** (anomaly 2026-11-22: *"switched to another
+    window … shift + alt + <-, but it doesn't get me to history unit → Made in window"*; `PopupPositions` keyed by
+    `SchedulerReducer.positionPlace`, the newest position not undone): they are walked while the app's history stands
+    there. A position of the app recorded after them (a press in another window) no longer throws them away: walking
+    the app's history back to that place arrives at the run's end and brings its last pop-up back (`arrivedBack`, which
+    passes over the app-window entries after it — the app's own step already stands there); forward arrives at its start
+    (`arrivedForward`). `App.walkPositions` calls both after its own step. One `[popup] arrived back …` line in
+    `diagnostics.log` per arrival. A pop-up holding the keyboard is a window of its own, so it forwards those
     chords to the app (`LocalMenuKeyForward`); `App.walkPositions` is the one answer to them. They are taken from AWT
     for the pop-up's window (`MenuSession.keyDispatcher`), never from its Compose content: a pop-up brought back holds
     the keyboard with nothing of it focused, and then no key reaches its content nor the window's own key handler

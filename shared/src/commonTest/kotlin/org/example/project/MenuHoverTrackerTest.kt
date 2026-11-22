@@ -351,4 +351,42 @@ class MenuHoverTrackerTest {
         assertTrue(positions.back())
         assertEquals(first + listOf(emptyList()), keeper.wanted)
     }
+
+    /**
+     * Anomaly 2026-11-22 (*"I went to history unit → Made in window, switched to another window, right-click the header,
+     * select copy id, do shift + alt + <-, but it doesn't get me to history unit → Made in window"*): a press in another
+     * window is a position of the app's own, recorded after the pop-up's. Walking it back arrives where the pop-up was
+     * opened, and brings the pop-up back — it used to be thrown away by that newer position.
+     */
+    @Test
+    fun walking_the_app_s_history_back_to_where_a_pop_up_was_open_brings_it_back() {
+        var place = "history window"
+        val positions = PopupPositions { place }
+        var open = false
+        var brought = 0
+        open = true
+        positions.focused("made in window", { open }, { open = false }) { open = true; brought++ }
+        // A press in another window: the pop-up closes, the app records the move of the focus.
+        open = false
+        positions.appFocused { }
+        place = "other window"
+        assertFalse(positions.back(), "nothing of the pop-ups here: the app's own history is walked")
+        // The app's step back: the focus move undone.
+        place = "history window"
+        positions.arrivedBack()
+        assertTrue(open, "the pop-up is back")
+        assertEquals(1, brought)
+        // Back again: the window it was opened from, then the app's own history.
+        assertTrue(positions.back())
+        assertFalse(open)
+        assertFalse(positions.back())
+        // Forward: the app's history redone to the other window finds no pop-up there; back at the place, from its start.
+        place = "other window"
+        positions.arrivedForward()
+        assertFalse(positions.forward())
+        place = "history window"
+        positions.arrivedForward()
+        assertTrue(positions.forward())
+        assertTrue(open, "forward walks into the pop-up again")
+    }
 }

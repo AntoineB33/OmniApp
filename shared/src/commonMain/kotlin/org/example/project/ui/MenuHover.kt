@@ -243,21 +243,37 @@ fun rememberMenuHoverTracker(parent: MenuHoverTracker? = null, onLeft: () -> Uni
  * and the window between them none).
  *
  * They come before the app's own positions (`SchedulerIntent.UndoPosition`): while the app's history stands where it
- * stood after the newest of them ([stampNow], `SchedulerReducer.positionStamp`); past the oldest, the walk goes on in
+ * stood after the newest of them ([stampNow], `SchedulerReducer.positionPlace`); past the oldest, the walk goes on in
  * the app's history, and forward comes back through it to them. In this run only; a pop-up that left the screen with what holds it is no position any more ([forget]).
  */
 class PopupPositions(private val stampNow: () -> Any?) {
     /** A position: a pop-up ([owner]), or the app's window (no owner). */
     private class Entry(val owner: Any?, val isOpen: () -> Boolean, val bringBack: () -> Unit)
 
+    /**
+     * The pop-up positions recorded while the app's history stood at one place ([stampNow]), and where the walk is
+     * among them.
+     */
+    private class Run {
+        val entries = ArrayList<Entry>()
+        var index = -1
+    }
+
     private object AppWindow
 
-    private val entries = ArrayList<Entry>()
-    private var index = -1
-    private var stamp: Any? = null
+    /**
+     * Anomaly 2026-11-22 (*"I went to history unit → Made in window, switched to another window, right-click the header,
+     * select copy id, do shift + alt + <-, but it doesn't get me to history unit → Made in window"*): **every run is kept
+     * where it was recorded in the app's history**, not only the newest. Before, a position of the app recorded after a
+     * run (the press in the other window) threw the run away, so walking the app's history back to where it stood found
+     * no pop-up there. Keyed by [stampNow]; the oldest go past [MAX_RUNS].
+     */
+    private val runs = LinkedHashMap<Any?, Run>()
 
     /** Where a walk is bringing the keyboard: its coming there is no new position. */
     private var expected: Any? = null
+
+    private fun here(): Run? = runs[stampNow()]?.takeIf { it.entries.isNotEmpty() }
 
     /**
      * The keyboard came to [owner]'s pop-up; [bringBack] brings it back to it (reopened and pinned if it closed), [leave]
@@ -265,61 +281,93 @@ class PopupPositions(private val stampNow: () -> Any?) {
      */
     fun focused(owner: Any, isOpen: () -> Boolean, leave: () -> Unit = {}, bringBack: () -> Unit) {
         if (arrived(owner)) return
-        // The first pop-up of a walk: the app's window the keyboard came from stands before it.
-        if (entries.isEmpty() || stampNow() != stamp) {
-            clear()
-            add(Entry(null, { true }, leave))
+        // The first pop-up at this place of the app's history: the app's window the keyboard came from stands before it.
+        val run = here() ?: Run().also { fresh ->
+            val key = stampNow()
+            runs.remove(key)
+            runs[key] = fresh
+            while (runs.size > MAX_RUNS) runs.remove(runs.keys.first())
+            add(fresh, Entry(null, { true }, leave))
         }
-        add(Entry(owner, isOpen, bringBack))
+        add(run, Entry(owner, isOpen, bringBack))
     }
 
     /** The keyboard went back to the app's window as the pop-ups closed; [leave] gives it the keyboard again. */
     fun appFocused(leave: () -> Unit) {
         if (arrived(AppWindow)) return
-        if (entries.isEmpty() || stampNow() != stamp) return
-        add(Entry(null, { true }, leave))
+        val run = here() ?: return
+        add(run, Entry(null, { true }, leave))
     }
 
     /** [owner] left the screen with what holds it: nothing of it to bring back. */
     fun forget(owner: Any) {
-        var i = entries.size - 1
-        while (i >= 0) {
-            if (entries[i].owner === owner) {
-                entries.removeAt(i)
-                if (i <= index) index--
+        for (run in runs.values) {
+            var i = run.entries.size - 1
+            while (i >= 0) {
+                if (run.entries[i].owner === owner) {
+                    run.entries.removeAt(i)
+                    if (i <= run.index) run.index--
+                }
+                i--
             }
-            i--
+            run.index = run.index.coerceIn(-1, run.entries.lastIndex)
         }
-        index = index.coerceIn(-1, entries.lastIndex)
     }
 
     /** Back one position: whether there was one (else the app's own positions are walked). */
     fun back(): Boolean {
         expected = null
-        if (!current() || index < 0) return false
-        val here = entries[index]
+        val run = here() ?: return false
+        if (run.index < 0) return false
+        val at = run.entries[run.index]
         // The pop-up the keyboard is in closed meanwhile: back brings it back first.
-        if (here.owner != null && !here.isOpen()) return bring(here)
-        if (index == 0) return false
-        index--
-        return bring(entries[index])
+        if (at.owner != null && !at.isOpen()) return bring(at)
+        if (run.index == 0) return false
+        run.index--
+        return bring(run.entries[run.index])
     }
 
     /** Forward one position: whether there was one. */
     fun forward(): Boolean {
         expected = null
-        if (!current() || index >= entries.lastIndex) return false
-        index++
-        return bring(entries[index])
+        val run = here() ?: return false
+        if (run.index >= run.entries.lastIndex) return false
+        run.index++
+        return bring(run.entries[run.index])
     }
 
-    private fun add(entry: Entry) {
-        while (entries.size > index + 1) entries.removeAt(entries.lastIndex)
+    /**
+     * The app's own history was just walked back ([back] had nothing): if it now stands where a run was recorded, the walk
+     * arrives at that run's end — the pop-up the keyboard was last in, brought back. The app's window entries after it
+     * are the place the walk already stands on (the app's own step put the focus there), so they are passed over.
+     */
+    fun arrivedBack() {
+        val run = here() ?: return
+        var i = run.entries.lastIndex
+        while (i > 0 && run.entries[i].owner == null) i--
+        run.index = i
+        val at = run.entries[i]
+        val reopens = at.owner != null && !at.isOpen()
+        // One line per arrival, in diagnostics.log: what the walk found here (the desktop's focus can't be tested headless).
+        org.example.project.scheduler.platform.Diagnostics.log(
+            "[popup] arrived back at a run of ${run.entries.size}: entry $i, " +
+                (if (at.owner == null) "the app's window" else if (reopens) "pop-up brought back" else "pop-up still open"),
+        )
+        if (reopens) bring(at)
+    }
+
+    /** The app's own history was just walked forward: a run recorded here is walked from its start. */
+    fun arrivedForward() {
+        val run = here() ?: return
+        run.index = 0
+    }
+
+    private fun add(run: Run, entry: Entry) {
+        while (run.entries.size > run.index + 1) run.entries.removeAt(run.entries.lastIndex)
         // The same position twice in a row is one.
-        if (entries.isNotEmpty() && entries.last().owner === entry.owner) entries.removeAt(entries.lastIndex)
-        entries += entry
-        index = entries.lastIndex
-        stamp = stampNow()
+        if (run.entries.isNotEmpty() && run.entries.last().owner === entry.owner) run.entries.removeAt(run.entries.lastIndex)
+        run.entries += entry
+        run.index = run.entries.lastIndex
     }
 
     /** Whether [where] is where a walk is bringing the keyboard — then its coming there is no new position. */
@@ -329,24 +377,15 @@ class PopupPositions(private val stampNow: () -> Any?) {
         return true
     }
 
-    /**
-     * Whether these positions are the newest of the app's — its history stands where it stood after the newest of them.
-     * Walked elsewhere (back past the oldest, into the app's own positions), they wait, kept: forward redoes the app's
-     * history back to where it stood, then goes on through them (anomaly 2026-11-11: thrown away there, Ctrl+Alt+→
-     * never showed the pop-up again). A new position recorded meanwhile starts them anew ([focused]).
-     */
-    private fun current(): Boolean = entries.isNotEmpty() && stampNow() == stamp
-
     private fun bring(entry: Entry): Boolean {
         expected = entry.owner ?: AppWindow
         entry.bringBack()
         return true
     }
 
-    private fun clear() {
-        entries.clear()
-        index = -1
-        expected = null
+    private companion object {
+        /** The runs kept: one per place of the app's history a pop-up was opened at, the oldest dropped first. */
+        const val MAX_RUNS: Int = 64
     }
 }
 

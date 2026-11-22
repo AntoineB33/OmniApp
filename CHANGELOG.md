@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Shift+Alt+← walks back into a pop-up a later window move left behind — 2026-11-22
+
+- Anomaly: *"I went to history unit → Made in window, switched to another window, right-click the header, select copy id,
+  do shift + alt + <-, but it doesn't get me to history unit → Made in window..."* The pop-up positions were walked only
+  while they were the newest of the app's; the press in the other window recorded a newer position, which threw them
+  away, so walking it back found nothing there.
+- Now each run of pop-up positions is kept where it was recorded (`SchedulerReducer.positionPlace`, replacing
+  `positionStamp`), and walking the app's history back there brings the last pop-up back. `docs/invariants/popups.md`
+  § *The pop-ups the keyboard went to are positions of the app*. Client rebuild only.
+
 ### Windows: ids never reused, every window an element, "Made in window" — 2026-11-22
 
 - User rule: *"An id must never be reused, as any element (including windows) that existed are never really lost, since

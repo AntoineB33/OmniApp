@@ -1369,14 +1369,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val transientMenus = remember { TransientMenuHost() }
         // User rule 2026-11-11: the pop-ups the keyboard went to, positions walked before the app's own.
         val popupPositions = remember {
-            org.example.project.ui.PopupPositions { SchedulerReducer.positionStamp(vm.state.value) }
+            org.example.project.ui.PopupPositions { SchedulerReducer.positionPlace(vm.state.value) }
         }
         // The one answer to the chords that walk every window's positions: the pop-ups' first, then the app's history.
         // Whether [intent] was one of them (then taken).
         fun walkPositions(intent: SchedulerIntent?): Boolean {
             return when (intent) {
-                SchedulerIntent.UndoPosition -> { if (!popupPositions.back()) vm.dispatch(intent); true }
-                SchedulerIntent.RedoPosition -> { if (!popupPositions.forward()) vm.dispatch(intent); true }
+                // The app's history walked: arriving where pop-ups were opened walks into them (anomaly 2026-11-22).
+                SchedulerIntent.UndoPosition -> {
+                    if (!popupPositions.back()) { vm.dispatch(intent); popupPositions.arrivedBack() }
+                    true
+                }
+                SchedulerIntent.RedoPosition -> {
+                    if (!popupPositions.forward()) { vm.dispatch(intent); popupPositions.arrivedForward() }
+                    true
+                }
                 else -> false
             }
         }
