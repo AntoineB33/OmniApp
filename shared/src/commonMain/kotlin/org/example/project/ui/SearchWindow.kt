@@ -1409,7 +1409,9 @@ fun SearchWindow(
           open = backgroundMenu,
           onDismiss = { backgroundMenu = false },
           removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved, barRemoved = barRemoved),
-          more = menuList?.backgroundActions.orEmpty(),
+          // User rule 2026-11-22: the window's id on the clipboard — what its Search row and "Made in window" name.
+          more = menuList?.backgroundActions.orEmpty() +
+              listOfNotNull(frame?.id?.let { id -> MenuAction("Copy id") { org.example.project.scheduler.platform.writeSystemClipboardText(id) } }),
           // User rule 2026-11-14: the left-side menu is the one Search window whose header cannot be shown. User rule
           // 2026-11-15: *"when the search bar is the element (the caller), then the search configuration of the
           // right-click menu must remove the 'hide the search bar'"* — a field's pop-up, a cell's picker: the bar is

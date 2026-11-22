@@ -1029,9 +1029,28 @@ suggestions before it was ever entered.
     spelling.
 - **A window is a kind too** (`Kind.Window`), and the one kind whose rows are not the account's: `App` hands
   them in (`SearchDomain.WindowEntry`, built by `searchWindowEntries` off `WindowFrameHost.registrations` — the
-  same list the window bar draws — plus every lateral-menu window that is not open). Every open instance is its
-  own row, keyed by its frame id; the detail says "open", "minimized" (reduced to the window bar) or
-  "not open". Opening one opens the window or brings it back, never closes it. Never stored, never synced.
+  same list the window bar draws — plus **every window the device ever had**: each lateral-menu window and copy by
+  its placement row, each per-object window by its row, and each window only this device's history still names,
+  `SearchDomain.madeInWindow`; user rule 2026-11-22). Every instance is its own row, keyed by its frame id; the
+  detail says "open", "minimized" (reduced to the window bar) or "not open", then — for a Search window — its
+  configuration in one line (`windowConfigurationSummary`: types, search text, filters on), which "Where to search ›
+  Description" reads. `windowStatusOf` reads the part before the first " · ": never compare the whole detail.
+  Filters: State, Duplicates, **Lists types** (`windowListedKinds`, read off `WindowEntry.listedKinds`); sorts:
+  state, **id** (`windowIdOrder`: type, then the number as a number). Opening one opens the window or brings it
+  back, never closes it — a closed one opens again as it was (a copy by its row, a per-object window on its object
+  under its own number). Never stored, never synced.
+- **A window's id is never reused** (user rule 2026-11-22, `ui/WindowIds.kt`, `WindowIdsTest`): every new number
+  goes through `App.allocateWindowNumber` — above the floor on the local `WindowIds` placement row, every placement
+  row and every frame id the device's history names. A lateral-menu window's original id is given again only to the
+  window it was (closed, asked for with the configuration it had); otherwise a new copy. The per-object windows
+  share ONE count (`WindowIds.OBJECTS`, `ObjectWindowMemory.newNumber`). Never hand out a number another way.
+- **What was done in ONE window** (user rule 2026-11-22): a history unit's window is its stamp (`window` +
+  `instance`), read as a frame id by `WindowIds.frameIdOf` — the one table both ways with `objectWindowOfFrame`,
+  which `App`'s stamp reads. "Made in window" (`Filters.historyMadeInWindow`, picked among the window rows) keeps
+  this device's units made in that frame id; "Made in" stays the TYPE. A history row's detail names the window by
+  its id (`Search#3`). "Changed element = a window" is something else: the changes TO the window (its
+  configuration, its layout), not what was done in it. Every window's head menu, and a Search window's background
+  menu, has **Copy id**.
 - **EACH Search window has its own Configuration Search window** (anomaly 2026-10-06; the Added elements
   configurations window alike): the button brings back the one whose `ConfigurationSearch.target` is that Search
   window, else opens one — the original where it is not open, else a copy (`App.openConfigurationsOf`, through

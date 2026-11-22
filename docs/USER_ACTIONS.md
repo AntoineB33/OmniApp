@@ -167,6 +167,8 @@ Open **Calendar**. The planner has already filled the week; nothing is pressed.
 | When is task X planned next / where did it go? | Task → **Go to calendar**, **Blocks on the calendar** |
 | What did I do last week? | Calendar, past days |
 | What changed, and when? | **History units** button (filter by window, text, chord) |
+| What did I do in ONE window (two Search windows, say)? | Its id: right-click its head (or a Search window's background) → **Copy id**; or Search kind *window*, which lists every window ever, closed ones too, each with its configuration — filter by **Lists types**, the bar on **Description** (its search text) or **Id**, sort by **id**. Then **History units** → configurations → **Made in window** |
+| No History units button any more? | **Search** → type *history unit*; any Search window will do (the calendar is one). Its head's ☆ puts a button back |
 | What did the app tell me? | Search kind *notification* (also the window opened by an unfocused notification) |
 | Why is my share of X that number? | Click its percentage (pie), right-click → relative priority, Search → task relations, category rules |
 | Which tasks are allowed in a kind of period? | The period kind's window, or **Search its tasks** |

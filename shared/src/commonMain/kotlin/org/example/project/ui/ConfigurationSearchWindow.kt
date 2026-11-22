@@ -629,6 +629,12 @@ internal fun SettingEditor(
         SearchDomain.Setting.HistoryWindowSetting ->
             // The windows — and the scheduler engine, where the sets of rules were made ([SearchDomain.MadeIn]).
             EnumPicker(setting.name, SearchDomain.MADE_IN_CHOICES, f.madeIn, { it.label }) { filters(f.withMadeIn(it)) }
+        // User rule 2026-11-22: one window, open or closed, by its id — picked among the Search window's own window rows.
+        SearchDomain.Setting.HistoryMadeInWindowSetting ->
+            ChangedElementField(
+                state, setOf(SearchDomain.Kind.Window), f.historyMadeInWindow?.let { SearchDomain.Kind.Window.name + "/" + it }, windows,
+                cellId = MADE_IN_WINDOW_CELL,
+            ) { key -> filters(f.copy(historyMadeInWindow = key?.removePrefix(SearchDomain.Kind.Window.name + "/"))) }
         SearchDomain.Setting.HistoryUndoneSetting ->
             Choices(SearchDomain.Tri.entries, f.historyUndone, { it.label }) { filters(f.copy(historyUndone = it)) }
         // The kinds of element the unit changed: the app's one check-box drop-down, so several can be ticked.
@@ -665,6 +671,15 @@ internal fun SettingEditor(
             Choices(SearchDomain.WindowDuplicates.entries, f.windowDuplicates, { it.label }) {
                 filters(f.copy(windowDuplicates = it))
             }
+        SearchDomain.Setting.WindowListedKindsSetting ->
+            CheckBoxDropDown(setting.name,
+                options = SearchDomain.Kind.entries.filter { it != SearchDomain.Kind.Creation },
+                checked = f.windowListedKinds,
+                face = if (f.windowListedKinds.isEmpty()) "any type"
+                else SearchDomain.Kind.entries.filter { it in f.windowListedKinds }.joinToString(", ") { it.label },
+                label = { it.label },
+                onChange = { filters(f.copy(windowListedKinds = it)) },
+            )
         SearchDomain.Setting.WindowStatusSetting ->
             EnumPicker(setting.name, SearchDomain.WindowStatus.entries, f.windowStatus, { it.label }) { filters(f.copy(windowStatus = it)) }
         // User rule 2026-10-30: the whole list's Sort by has the configuration's default sorting a click away —
@@ -1103,6 +1118,7 @@ private fun ChangedElementField(
     kinds: Set<SearchDomain.Kind>,
     elementKey: String?,
     windows: List<SearchDomain.WindowEntry>,
+    cellId: org.example.project.scheduler.model.CellId = CHANGED_ELEMENT_CELL,
     onChange: (String?) -> Unit,
 ) {
     val taskColors = TaskPalette.sheetColors(rememberTaskHues(state))
@@ -1110,7 +1126,7 @@ private fun ChangedElementField(
         elementKey?.takeIf { it.startsWith(SearchDomain.Kind.Task.name + "/") }
             ?.let { org.example.project.scheduler.model.TaskId(it.substringAfter('/')) }
     NamingCell(
-        cellId = CHANGED_ELEMENT_CELL,
+        cellId = cellId,
         shown = elementKey?.let { SearchDomain.changedElementTitle(state, it, windows) }.orEmpty(),
         identityLabel = "Elements",
         identity = { draft ->
@@ -1133,6 +1149,9 @@ private fun ChangedElementField(
 
 /** The "Changed element" field's cell id: a cell of no tree, so it can never be confused with one. */
 private val CHANGED_ELEMENT_CELL = org.example.project.scheduler.model.CellId("search/history-changed-element")
+
+/** The "Made in window" field's cell id (user rule 2026-11-22), the same kind of field as "Changed element". */
+private val MADE_IN_WINDOW_CELL = org.example.project.scheduler.model.CellId("search/history-made-in-window")
 
 /**
  * User rule 2026-10-11: **one bound of the boxes' window** — a date and a time, `YYYY-MM-DD HH:MM` on this device's

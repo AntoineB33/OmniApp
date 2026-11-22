@@ -21,12 +21,14 @@ object CalendarWindowMigration {
             placements.filter { (id, row) -> (id == CALENDAR || id.startsWith("$CALENDAR#")) && row.visible }
                 .toList().sortedBy { (id, _) -> id.substringAfter('#', "1").toIntOrNull() ?: 0 }
         if (calendars.isEmpty()) return emptyMap()
-        val used = placements.filter { (id, row) -> id.startsWith("$SEARCH#") && row.visible }.keys
-            .mapNotNull { it.substringAfter('#').toIntOrNull() }.toMutableSet()
+        // A number no Search window of the device has had, closed ones included (user rule 2026-11-22, [WindowIds]).
+        val floors = WindowIds.decode(placements[WindowIds.PLACEMENT_ID]?.config)
+        var next = WindowIds.next(SEARCH, floors, placements.keys, first = 2)
+        val used = mutableSetOf<Int>()
         val out = LinkedHashMap<String, WindowPlacement>()
         val renamed = HashMap<String, String>()
         for ((id, row) in calendars) {
-            val number = generateSequence(2) { it + 1 }.first { it !in used }
+            val number = next++
             used += number
             val searchId = "$SEARCH#$number"
             val config =
@@ -37,6 +39,9 @@ object CalendarWindowMigration {
             out[id] = row.copy(visible = false, minimized = false)
             renamed[id] = searchId
         }
+        out[WindowIds.PLACEMENT_ID] =
+            (placements[WindowIds.PLACEMENT_ID] ?: WindowPlacement(x = 0f, y = 0f, visible = false))
+                .copy(config = WindowIds.encode(floors + (SEARCH to used.max())))
         // A calendar set global stays global, as its Search window.
         placements[CustomMenuButtons.GLOBAL_WINDOWS_PLACEMENT_ID]?.let { row ->
             val global = CustomMenuButtons.decodeGlobalWindows(row.config)

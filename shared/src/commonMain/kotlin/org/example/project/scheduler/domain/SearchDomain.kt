@@ -829,6 +829,13 @@ object SearchDomain {
          * A [Kind.Shortcut] row, never a [Kind.Window] one.
          */
         val mapping: WindowChord? = null,
+        /**
+         * User rule 2026-11-22: a Search window's configuration in one line ([windowConfigurationSummary]), drawn after its
+         * state in the row's detail; null for a window that has none (or that only the history still names).
+         */
+        val configuration: String? = null,
+        /** The types that configuration lists — what "Lists types" reads ([Filters.windowListedKinds]). */
+        val listedKinds: Set<Kind> = emptySet(),
     ) {
         /** What a mapping says: the window it brings back (null: none chosen yet) and its chord (null: none yet). */
         data class WindowChord(val windowTitle: String?, val chord: String?)
@@ -1108,6 +1115,8 @@ object SearchDomain {
                     shortcutRebound = filters.shortcutRebound.name,
                     windowStatus = filters.windowStatus?.name,
                     windowDuplicates = filters.windowDuplicates.name,
+                    windowListedKinds = Kind.entries.filter { it in filters.windowListedKinds }.map { it.name },
+                    historyMadeInWindow = filters.historyMadeInWindow,
                     sortMethods = sorts.map { StoredSortMethod(it.kind?.name, it.key.name, it.descending) },
                     sortFollowsDefault = sortFollowsDefault,
                     taskOnCalendar = filters.taskOnCalendar.name,
@@ -1225,6 +1234,8 @@ object SearchDomain {
                         shortcutRebound = enumNamed(stored.shortcutRebound, Tri.Any),
                         windowStatus = WindowStatus.entries.firstOrNull { it.name == stored.windowStatus },
                         windowDuplicates = enumNamed(stored.windowDuplicates, WindowDuplicates.Shown),
+                        windowListedKinds = kindsNamed(stored.windowListedKinds),
+                        historyMadeInWindow = stored.historyMadeInWindow?.takeIf { it.isNotBlank() },
                         taskOnCalendar = enumNamed(stored.taskOnCalendar, Tri.Any),
                         // A day an older build stored is that day's first instant ("from") or its last ("until").
                         taskBoxesFrom = stored.taskBoxesFromMillis ?: dayStart(stored.taskBoxesFrom),
@@ -1528,6 +1539,17 @@ object SearchDomain {
         val windowStatus: WindowStatus? = null,
         /** Hidden = one row per window TYPE ([WindowEntry.type]). */
         val windowDuplicates: WindowDuplicates = WindowDuplicates.Shown,
+        /**
+         * User rule 2026-11-22: empty = any; else only the windows whose search configuration lists one of these types
+         * ([WindowEntry.listedKinds]) — several can be checked.
+         */
+        val windowListedKinds: Set<Kind> = emptySet(),
+        /**
+         * User rule 2026-11-22: null = any; else only the history units made in this one window, by its frame id
+         * (`Search#3`, the id of its [Kind.Window] row) — on this device, since a window is the device's. A window's id is
+         * never given to another ([org.example.project.ui.WindowIds]), so this is one window, closed or not.
+         */
+        val historyMadeInWindow: String? = null,
         /** Yes = the task has at least one box on the calendar ([SchedulerDomain.calendarBoxesOfTask]). */
         val taskOnCalendar: Tri = Tri.Any,
         /**
@@ -1784,6 +1806,8 @@ object SearchDomain {
                 Setting.ShortcutReboundSetting -> shortcutRebound != Tri.Any
                 Setting.WindowStatusSetting -> windowStatus != null
                 Setting.WindowDuplicatesSetting -> windowDuplicates != WindowDuplicates.Shown
+                Setting.WindowListedKindsSetting -> windowListedKinds.isNotEmpty()
+                Setting.HistoryMadeInWindowSetting -> historyMadeInWindow != null
                 Setting.TaskOnCalendar -> taskOnCalendar != Tri.Any
                 Setting.TaskBoxesFrom -> taskBoxesFrom != null
                 Setting.TaskBoxesUntil -> taskBoxesUntil != null
@@ -1849,6 +1873,8 @@ object SearchDomain {
         MinimumInvolvement(Kind.MinimumEvolution, "involvement of the tasks of \"Involvement of\""),
         /** [WindowStatus]'s order: open, minimized, not open. */
         WindowState(Kind.Window, "state"),
+        /** User rule 2026-11-22: by id — the window's type, then its number ([windowIdOrder]). */
+        WindowId(Kind.Window, "id"),
         /**
          * When a Claude Code log entry was written ([ClaudeLogCatalog.timeOf], read off its id) — common to a prompt, an
          * answer and a reasoning chain, so one key about every row (user rule 2026-10-30). The rows of the other kinds have
@@ -2230,6 +2256,8 @@ object SearchDomain {
         BlockElements(Kind.CalendarBlock, "Blocks of"),
         HistoryCategorySetting(Kind.HistoryUnit, "Category"),
         HistoryWindowSetting(Kind.HistoryUnit, "Made in"),
+        /** User rule 2026-11-22: one window, by its id ([Filters.historyMadeInWindow]). */
+        HistoryMadeInWindowSetting(Kind.HistoryUnit, "Made in window"),
         HistoryUndoneSetting(Kind.HistoryUnit, "Undone"),
         HistoryChangedKindsSetting(Kind.HistoryUnit, "Changed element types"),
         HistoryChangedElementSetting(Kind.HistoryUnit, "Changed element"),
@@ -2239,6 +2267,8 @@ object SearchDomain {
         ShortcutReboundSetting(Kind.Shortcut, "Rebound"),
         WindowStatusSetting(Kind.Window, "State"),
         WindowDuplicatesSetting(Kind.Window, "Duplicates"),
+        /** User rule 2026-11-22: the types a window's search configuration lists ([Filters.windowListedKinds]). */
+        WindowListedKindsSetting(Kind.Window, "Lists types"),
         /** The Claude Code logs' filters ([Filters.claudeProject], [Filters.claudeFrom], [Filters.claudeUntil]). */
         PromptProject(Kind.ClaudePrompt, "Project"),
         PromptFrom(Kind.ClaudePrompt, "Written from"),
@@ -2922,6 +2952,9 @@ object SearchDomain {
             Setting.ShortcutReboundSetting -> "Yes: only the keyboard shortcuts bound to another chord than the one they come with. No: the others."
             Setting.WindowStatusSetting -> "Only the windows that are open, minimized to the window bar, or not open."
             Setting.WindowDuplicatesSetting -> "Hidden: one row per type of window rather than one per window."
+            Setting.WindowListedKindsSetting -> "Only the windows whose search configuration lists one of the types checked."
+            Setting.HistoryMadeInWindowSetting ->
+                "Only the history units made in this one window — by its id, an open window or a closed one."
             Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject ->
                 "Only the Claude Code log entries of the project chosen."
             Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom -> "Only the Claude Code log entries written from this instant on."
@@ -3269,6 +3302,10 @@ object SearchDomain {
         val windowStatus: String? = null,
         /** New 2026-09-26: absent = shown. */
         val windowDuplicates: String? = null,
+        /** New 2026-11-22: absent from an older build's = any type. */
+        val windowListedKinds: List<String> = emptyList(),
+        /** New 2026-11-22: absent = made in any window. */
+        val historyMadeInWindow: String? = null,
         /** Null = never stored (a configuration written before sorting): the default list. */
         val sortMethods: List<StoredSortMethod>? = null,
         /** New 2026-10-30: absent from an older build's = following the default, as a window just opened does. */
@@ -3940,7 +3977,8 @@ object SearchDomain {
                 // ([historyUnitId]), which is what [historyUnitOf] reads back for the filters.
                 Kind.HistoryUnit -> HistoryCategory.entries.flatMap { category ->
                     state.histories.forCategory(category).units.map { unit ->
-                        val where = unit.window?.label ?: category.name
+                        // User rule 2026-11-22: the window by its id (`Search#3`), what "Made in window" and "Copy id" name.
+                        val where = unit.window?.let { w -> w.label + unit.instance } ?: category.name
                         val undone = if (unit.undone) " · undone" else ""
                         ItemResult(kind, historyUnitId(category, unit), unit.delta.label, where + " · " + dateTime(unit.timeMillis, timeZone) + undone)
                     }
@@ -3996,7 +4034,9 @@ object SearchDomain {
                         if (windowTypesOnly) {
                             windowTypeRows(real)
                         } else {
-                            real.filterNot { it.placeholder }.map { window -> ItemResult(kind, window.id, window.title, window.status.label) }
+                            real.filterNot { it.placeholder }.map { window ->
+                                ItemResult(kind, window.id, window.title, window.status.label + (window.configuration?.let { " · $it" } ?: ""))
+                            }
                         }
                     }
                 Kind.Creation -> CREATABLE.map { made ->
@@ -4204,7 +4244,10 @@ object SearchDomain {
                     val only = filters.onlyKinds ?: return@let rows
                     rows.filter { it.kind in only || it.kind == Kind.Creation }
                 }
-                .filter { passes(state, it, filters, calendar) }
+                .let { rows ->
+                    val windowsById = if (filters.windowListedKinds.isEmpty()) emptyMap() else windows.associateBy { it.id }
+                    rows.filter { passes(state, it, filters, calendar, windowsById) }
+                }
                 .let { rows ->
                     // User rule 2026-11-12: no parent of the checked kinds — every element's parents read once.
                     // ...and only the parents of the given elements.
@@ -4407,6 +4450,7 @@ object SearchDomain {
                 SortKey.RelationSection -> sectionRank[row.detail.substringBefore(" · ")]
                 SortKey.ShortcutChord -> row.detail.substringBefore(" · ").lowercase()
                 SortKey.WindowState -> windowStatusOf(row)?.ordinal
+                SortKey.WindowId -> row.takeIf { it.kind == Kind.Window }?.let { windowIdOrder(it.id) }
                 SortKey.EvolutionInvolvement -> row.takeIf { it.kind == Kind.PresenceEvolution }?.let { involvement[it.id] ?: 2 }
                 SortKey.MinimumInvolvement -> row.takeIf { it.kind == Kind.MinimumEvolution }?.let { minimumInvolvement[it.id] ?: 2 }
                 SortKey.Date -> (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.id?.let(ClaudeLogCatalog::timeOf)
@@ -4418,7 +4462,13 @@ object SearchDomain {
      * Whether [result] passes its own kind's [filters]. Another kind's filters do not read it — they keep it out
      * altogether, before this ([Filters.onlyKinds]).
      */
-    private fun passes(state: SchedulerState, result: Result, filters: Filters, calendar: CalendarBoxes?): Boolean {
+    private fun passes(
+        state: SchedulerState,
+        result: Result,
+        filters: Filters,
+        calendar: CalendarBoxes?,
+        windowsById: Map<String, WindowEntry> = emptyMap(),
+    ): Boolean {
         fun tri(value: Tri, actual: Boolean) = value == Tri.Any || (value == Tri.Yes) == actual
         return when (result) {
             is TaskResult -> {
@@ -4497,13 +4547,14 @@ object SearchDomain {
                     // was made in no window, belongs to no stack, changed no element and is never undone.
                     if (isSchedulerRunId(result.id)) {
                         return tri(filters.historyEngine, true) && filters.historyCategory == null &&
-                            filters.historyWindow == null && filters.historyUndone != Tri.Yes &&
+                            filters.historyWindow == null && filters.historyMadeInWindow == null && filters.historyUndone != Tri.Yes &&
                             filters.historyChangedKinds.isEmpty() && filters.historyChangedElement == null
                     }
                     if (!tri(filters.historyEngine, false)) return false
                     val unit = historyUnitOf(state, result.id) ?: return true
                     (filters.historyCategory == null || result.id.substringBefore('#') == filters.historyCategory.name) &&
                         (filters.historyWindow == null || unit.window == filters.historyWindow) &&
+                        (filters.historyMadeInWindow == null || madeInWindow(unit) == filters.historyMadeInWindow) &&
                         tri(filters.historyUndone, unit.undone) &&
                         historyChangeMatches(unit.delta.changedElements, filters)
                 }
@@ -4515,7 +4566,10 @@ object SearchDomain {
                     val binding = state.shortcutBindings[shortcut] ?: shortcut.defaultBinding
                     tri(filters.shortcutRebound, binding != shortcut.defaultBinding)
                 }
-                Kind.Window -> filters.windowStatus == null || windowStatusOf(result) == filters.windowStatus
+                Kind.Window ->
+                    (filters.windowStatus == null || windowStatusOf(result) == filters.windowStatus) &&
+                        (filters.windowListedKinds.isEmpty() ||
+                            windowsById[result.id]?.listedKinds.orEmpty().any { it in filters.windowListedKinds })
                 // [Filters.blocksOf] is asked of the whole list at once ([results]).
                 // The logs' filters are asked as their rows are made ([claudeResults]).
                 Kind.Creation, Kind.AppSetting, Kind.Calendar, Kind.CalendarBlock, Kind.ClaudePrompt, Kind.ClaudeAnswer,
@@ -4684,7 +4738,31 @@ object SearchDomain {
         }
 
     /** A [Kind.Window] row's status, read back off its detail — the one thing the detail says. */
-    private fun windowStatusOf(row: ItemResult): WindowStatus? = WindowStatus.entries.firstOrNull { it.label == row.detail }
+    private fun windowStatusOf(row: ItemResult): WindowStatus? =
+        row.detail.substringBefore(" · ").let { status -> WindowStatus.entries.firstOrNull { it.label == status } }
+
+    /**
+     * A window id in the order "sort by id" gives: its type, then its number (`Search` is 1, `Search#10` after
+     * `Search#9`), then whatever follows. Zero-padded so the text compares as the numbers do.
+     */
+    fun windowIdOrder(id: String): String {
+        val base = id.substringBefore('#')
+        val number = id.substringAfter('#', "1").substringBefore('#').toIntOrNull() ?: 0
+        return base + "\u0000" + number.toString().padStart(10, '0') + "\u0000" + id
+    }
+
+    /**
+     * User rule 2026-11-22: **what a Search window's configuration says, in one line** — the types it lists, its search
+     * text, the filters that are on — the detail of its [Kind.Window] row ("Where to search › Description" reads it), and
+     * what tells two closed Search windows apart.
+     */
+    fun windowConfigurationSummary(config: Config): String =
+        buildList {
+            add(Kind.entries.filter { it in config.kinds }.joinToString(", ") { it.label }.ifEmpty { "no type" })
+            if (config.query.isNotBlank()) add("\"" + config.query + "\"")
+            val on = Setting.entries.filter { config.filters.isOn(it) && it !in CLAUDE_SETTING_ECHOES }.map { it.label }.distinct()
+            if (on.isNotEmpty()) add("filters: " + on.joinToString(", "))
+        }.joinToString(" · ")
 
     /** A quota's amount (or a factor) with no trailing zeros — `40`, `2.5`. */
     fun formatQuotaNumber(value: Double): String {
@@ -4704,6 +4782,16 @@ object SearchDomain {
      */
     fun historyUnitId(category: HistoryCategory, unit: HistoryUnit): String =
         category.name + "#" + unit.deviceId + "#" + unit.deviceSeq
+
+    /**
+     * User rule 2026-11-22: **the one window [unit] was made in**, by the frame id its [Kind.Window] row has (`Search#3`) —
+     * null for a unit of another device (a window is the device's), one made in no window, or one written before units
+     * named their window.
+     */
+    fun madeInWindow(unit: HistoryUnit): String? {
+        if (!unit.ownedBy(org.example.project.scheduler.state.SchedulerReducer.deviceId())) return null
+        return unit.window?.let { org.example.project.ui.WindowIds.frameIdOf(it, unit.instance) }
+    }
 
     /** The history unit a [Kind.HistoryUnit] row's id names, or null — an index-shaped id of an older build names none. */
     fun historyUnitOf(state: SchedulerState, id: String): HistoryUnit? =
@@ -4898,8 +4986,15 @@ object SearchDomain {
      * The description of [row], as its info bubble says it; null where it has none. A search configuration's is its
      * [configurationDescription].
      */
-    fun descriptionOf(row: Result): String? =
-        (row as? ItemResult)?.takeIf { it.kind == Kind.SearchConfiguration }?.let { configurationDescription(it.id) }
+    fun descriptionOf(row: Result): String? {
+        val item = row as? ItemResult ?: return null
+        return when (item.kind) {
+            Kind.SearchConfiguration -> configurationDescription(item.id)
+            // User rule 2026-11-22: a window's description is its search configuration ([windowConfigurationSummary]).
+            Kind.Window -> item.detail.substringAfter(" · ", "").ifEmpty { null }
+            else -> null
+        }
+    }
 
     /**
      * User rule 2026-11-16 ("Where to search › Buttons"): **the labels of what can be pressed on [row]** — a search

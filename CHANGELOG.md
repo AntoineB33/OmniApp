@@ -11,6 +11,24 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Windows: ids never reused, every window an element, "Made in window" — 2026-11-22
+
+- User rule: *"An id must never be reused, as any element (including windows) that existed are never really lost, since
+  they are referenced by history units (except if the history units get removed by the storage limits). The user must be
+  able to apply any filters or sorting they could think of, for example by id, search configurations for the window
+  elements etc... Add the option to copy the id in the right-click menu of the background of a window."* Asked after
+  finding that "what did I do in that Search window" could only be answered by type: a history unit kept its window
+  copy (`Search#3`) but no filter read it, and `Search#2` was handed out again as soon as the first one closed.
+- Was: a copy took the first number no OPEN copy held; the original's id went to whatever window the menu opened next;
+  per-object windows counted from 1 at each start. Now `ui/WindowIds.kt` is the one allocator (a local `WindowIds`
+  placement row of floors, plus every row and every frame id the history names).
+- The window kind lists every window the device had, closed ones and those only the history names, with a Search
+  window's configuration in its detail; new filter **Lists types**, new sort **id**; a closed one opens again from its row.
+- History units: new filter **Made in window** (one window by id, this device's units); the row's detail names the
+  window by its id. **Copy id** in every window head's menu and a Search window's background menu.
+- `docs/invariants/task-tree.md` § *A window is a kind too*. Local-only (placement rows, Search configurations): no
+  SQLite or Supabase change. Client rebuild only.
+
 ### Search window: the "Row layout" of task rows — 2026-11-22
 
 - User rule: *"There can be search configuration elements that can change how a row displays elements in its row. For

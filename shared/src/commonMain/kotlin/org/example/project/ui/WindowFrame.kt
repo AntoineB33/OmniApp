@@ -1361,8 +1361,14 @@ class ObjectWindows<T : Any>(
     /** Open a window on [subject], or bring back the one already open on it. */
     fun open(subject: T) {
         val existing = windows.firstOrNull { it.subject == subject }
-        if (existing != null) existing.presentRequests++ else add(Window(next++, subject, duplicated = false))
+        if (existing != null) existing.presentRequests++ else add(Window(newNumber(), subject, duplicated = false))
     }
+
+    /**
+     * A number no window has had (user rule 2026-11-22, [WindowIds]): the memory's, which knows every number the device
+     * gave, else this session's own count.
+     */
+    private fun newNumber(): Int = memory?.newNumber(next)?.also { next = maxOf(next, it + 1) } ?: next++
 
     /**
      * Reopen, at startup, the window numbered [number] on [subject] that was open when the app last stopped — under
@@ -1380,7 +1386,7 @@ class ObjectWindows<T : Any>(
     }
 
     internal fun duplicate(of: Window) {
-        add(Window(next++, of.subject, duplicated = true))
+        add(Window(newNumber(), of.subject, duplicated = true))
     }
 
     private fun add(window: Window) {
@@ -1410,6 +1416,12 @@ interface ObjectWindowMemory {
 
     /** Closed by the user (not by the app stopping): it does not come back. */
     fun closed(frameId: String)
+
+    /**
+     * User rule 2026-11-22: a number for a new window that no window of the device has ever had ([WindowIds]), at least
+     * [atLeast]; null leaves the count to the window list.
+     */
+    fun newNumber(atLeast: Int): Int? = null
 }
 
 /**
@@ -1706,6 +1718,7 @@ fun AppWindowFrame(
                     onClose = onClose,
                     onDuplicate = instance?.onDuplicate,
                     onAddToMenu = menuKey?.let { key -> menuButtons?.let { { title: String -> it.add(key, title, state.id) } } },
+                    windowId = state.id,
                     canMinimize = canMinimize,
                     onHeadHeight = { headHeight[0] = it },
                     headTrailing = headTrailing,
@@ -1822,6 +1835,11 @@ private fun WindowHead(
     headTrailing: @Composable RowScope.() -> Unit,
     /** False: a pop-up with no window form — the same head, its title and its ✕ alone, no drag. */
     windowButtons: Boolean = true,
+    /**
+     * User rule 2026-11-22: the window's id (its frame id, `Search#3`) — what its menu's "Copy id" puts on the clipboard,
+     * the id its Search row, "Made in window" and its history units name. Null: no window of its own.
+     */
+    windowId: String? = null,
 ) {
     // Where the title must START so none of it is hidden: the head's first point that is both visible (a window
     // dragged past the content area's edge is cut there) and not under the obstacle, plus a small gap. The title
@@ -1907,6 +1925,7 @@ private fun WindowHead(
             onDismiss = { menuOpen = false },
             entries = buildList {
                 add(HeadMenuEntry("Rename") { renaming = true })
+                windowId?.let { id -> add(HeadMenuEntry("Copy id") { org.example.project.scheduler.platform.writeSystemClipboardText(id) }) }
                 add(HeadMenuEntry("Remove from menu", enabled = inMenu, onClick = onRemoveFromMenu))
                 // One per button on the right of the head, in their order.
                 addAll(headMenu)

@@ -329,6 +329,7 @@ private val VIEW_ROWS: Set<String> =
         CustomMenuButtons.BUTTON_OPENED_LAYOUTS_PLACEMENT_ID,
         org.example.project.ui.AppViewState.PLACEMENT_ID,
         org.example.project.ui.PopupMemory.PLACEMENT_ID,
+        org.example.project.ui.WindowIds.PLACEMENT_ID,
     )
 
 private const val MENU_KEY: String = org.example.project.scheduler.state.ExternalKeys.MENU
@@ -984,6 +985,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
             }
 
+        // User rule 2026-11-22 ([org.example.project.ui.WindowIds]): a window's id is never reused. The first number above
+        // every one [bases] has had on this device — the floor on its row, every placement row, every frame id this
+        // device's history names — written back as the new floor, so it stays taken once the window is closed.
+        fun allocateWindowNumber(floorKey: String, first: Int, bases: Collection<String>): Int {
+            val ids = org.example.project.ui.WindowIds
+            val floors = ids.decode(placements[ids.PLACEMENT_ID]?.config)
+            val me = SchedulerReducer.deviceId()
+            val state = vm.state.value
+            val named = org.example.project.scheduler.state.HistoryCategory.entries.asSequence()
+                .flatMap { state.histories.forCategory(it).units.asSequence() }
+                .filter { it.ownedBy(me) }
+                .mapNotNull { unit -> unit.window?.let { ids.frameIdOf(it, unit.instance) } }
+            val n = ids.next(floorKey, floors, (placements.keys.asSequence() + named).asIterable(), first, bases)
+            updatePlacementById(ids.PLACEMENT_ID) { it.copy(config = ids.encode(floors + (floorKey to n))) }
+            return n
+        }
+
         // The per-object windows about an object with a stable id are kept across restarts on a placement row of
         // their own, by frame id (`TaskEdit#3`), naming their object in `config` ([ObjectWindowKey]); the ones
         // open when the app stopped are reopened at startup, further down. Local-only, never synced.
@@ -1009,6 +1027,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // As a lateral-menu window's close: a closed window is not reduced.
                     override fun closed(frameId: String) =
                         updatePlacementById(frameId) { it.copy(visible = false, minimized = false) }
+
+                    // One count over every per-object window, whatever its base (`WindowIds.OBJECTS`).
+                    override fun newNumber(atLeast: Int): Int =
+                        allocateWindowNumber(
+                            org.example.project.ui.WindowIds.OBJECTS, atLeast,
+                            ObjectWindowKey.Kind.entries.map { it.frameBase }.distinct(),
+                        )
                 }
             }
 
@@ -1857,26 +1882,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             lateralWindowOf(frameId)?.let { lateral ->
                 return historyWindowOf(lateral)?.let { it to frameId.removePrefix(lateral.name) }
             }
-            if (frameId.startsWith("TaskTreeDetail/")) return HistoryWindow.TaskTreeDetail to frameId.removePrefix("TaskTreeDetail")
-            val base = frameId.substringBefore('#')
-            val window = when (base) {
-                TASK_EDIT_FRAME_ID -> HistoryWindow.TaskEdit
-                CATEGORY_EDIT_FRAME_ID -> HistoryWindow.CategoryEdit
-                PRIORITY_WEIGHTS_FRAME_ID -> HistoryWindow.PriorityWeights
-                RELATIVE_PRIORITY_FRAME_ID -> HistoryWindow.RelativePriority
-                DEEP_COPY_FRAME_ID -> HistoryWindow.DeepCopy
-                ALARM_DEFAULTS_FRAME_ID -> HistoryWindow.AlarmDefaults
-                REMINDER_DEFAULTS_FRAME_ID -> HistoryWindow.ReminderDefaults
-                "CalendarElements" -> HistoryWindow.CalendarElements
-                "CalendarEntryEdit" -> HistoryWindow.CalendarEntry
-                "CalendarPeriodEdit" -> HistoryWindow.CalendarPeriod
-                "CalendarReminderEdit" -> HistoryWindow.CalendarReminder
-                "ReminderConstraintEdit" -> HistoryWindow.ReminderConstraint
-                "HistoryEntryInfo" -> HistoryWindow.HistoryEntryInfo
-                "Notice", "AppNotice", "CategoryRuleNotice" -> HistoryWindow.Notice
-                else -> return null
-            }
-            return window to frameId.removePrefix(base)
+            return org.example.project.ui.WindowIds.objectWindowOfFrame(frameId)
         }
         // PRD §6 (user rule 2026-10-01): the units of what `App` keeps — recorded once the start-up has settled (the
         // writes that restore the windows are not the user's), never while an undo or redo is being put back.
@@ -1956,9 +1962,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // number, the source's row with its own configuration, set off so it does not sit exactly over it, and
         // not reduced. It opens on top and takes the focus, like any window that opens.
         fun duplicateWindow(kind: FloatingWindow, fromId: String) {
-            val used = windowCopies.filter { lateralWindowOf(it) == kind }.mapNotNull { it.substringAfter('#').toIntOrNull() }.toSet()
-            val n = generateSequence(2) { it + 1 }.first { it !in used }
-            val id = kind.name + "#" + n
+            val id = kind.name + "#" + allocateWindowNumber(kind.name, 2, listOf(kind.name))
             val from = placements[fromId] ?: WindowPlacement(x = 0f, y = 0f, visible = true)
             updatePlacementById(id) {
                 from.copy(x = from.x + COPY_CASCADE_PX, y = from.y + COPY_CASCADE_PX, visible = true, minimized = false)
@@ -2432,13 +2436,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 presentWindow(kind, existing)
                 return existing
             }
+            // User rule 2026-11-22: the original's id is given again only to the window it was — closed, and asked for
+            // with the configuration it had — never to another window ([org.example.project.ui.WindowIds]).
+            val reopensOriginal =
+                !isWindowOpen(kind) && !asCopy &&
+                    (placements[kind.name]?.config == null || sameWindowConfigurations(kind, windowConfigOf(kind.name), wanted))
             val id =
-                if (!isWindowOpen(kind) && !asCopy) {
-                    kind.name
-                } else {
-                    val used = windowCopies.filter { lateralWindowOf(it) == kind }.mapNotNull { it.substringAfter('#').toIntOrNull() }.toSet()
-                    kind.name + "#" + generateSequence(2) { it + 1 }.first { it !in used }
-                }
+                if (reopensOriginal) kind.name
+                else kind.name + "#" + allocateWindowNumber(kind.name, 2, listOf(kind.name))
             // The configuration held in memory is re-read from the row written here.
             searchConfigs.remove(id)
             searchOpenedConfigs.remove(id)
@@ -3003,18 +3008,67 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             lateralWindowOf(window.id)?.let { return it.name to it.title }
             return window.id.substringBefore('#') to window.title
         }
+        // User rule 2026-11-22: a Search window's configuration on its row — in one line, and the types it lists.
+        fun withConfiguration(entry: SearchDomain.WindowEntry): SearchDomain.WindowEntry {
+            if (lateralWindowOf(entry.id) != FloatingWindow.Search) return entry
+            val config = searchConfigOf(entry.id)
+            return entry.copy(configuration = SearchDomain.windowConfigurationSummary(config), listedKinds = config.kinds)
+        }
+        // User rule 2026-11-22: a window that existed is never lost — the history still names it. The frame ids this
+        // device's units were made in, read once per history (a list of windows is asked for at every recomposition).
+        val namedWindowsCache = remember { arrayOf<Any?>(null, emptySet<String>()) }
+        fun windowsNamedByHistory(): Set<String> {
+            val histories = vm.state.value.histories
+            @Suppress("UNCHECKED_CAST")
+            if (namedWindowsCache[0] === histories) return namedWindowsCache[1] as Set<String>
+            val named = org.example.project.scheduler.state.HistoryCategory.entries
+                .flatMap { histories.forCategory(it).units }
+                .mapNotNullTo(LinkedHashSet()) { SearchDomain.madeInWindow(it) }
+            namedWindowsCache[0] = histories
+            namedWindowsCache[1] = named
+            return named
+        }
         fun searchWindowEntries(): List<SearchDomain.WindowEntry> {
             val open = windowFrames.registrations.map { window ->
                 val status = if (window.state.minimized) SearchDomain.WindowStatus.Minimized else SearchDomain.WindowStatus.Open
                 val (type, typeTitle) = windowTypeOf(window)
-                SearchDomain.WindowEntry(window.id, window.title, status, type, typeTitle)
+                withConfiguration(SearchDomain.WindowEntry(window.id, window.title, status, type, typeTitle))
             }
             val openIds = open.mapTo(HashSet()) { it.id }
-            val closed = FloatingWindow.entries
-                // No calendar window any more (user rule 2026-11-12): the calendar is an element of the Search window.
-                .filter { it != FloatingWindow.Calendar }
-                .filter { lateralWindowOf(it.name) != null && !isWindowOpen(it) && it.name !in openIds }
-                .map { SearchDomain.WindowEntry(it.name, it.title, SearchDomain.WindowStatus.NotOpen, it.name, it.title) }
+            // User rule 2026-11-22: EVERY window the device has had is an element — the lateral-menu windows and their
+            // copies by their rows (open on another page, or closed), the per-object windows by theirs, and the windows
+            // only the history still names. A closed one is "not open"; opening its row opens it again, as it was.
+            val listed = HashSet(openIds)
+            val lateral = (placements.keys + windowCopies + windowsNamedByHistory())
+                .filter { id -> lateralWindowOf(id).let { it != null && it != FloatingWindow.Calendar } }
+                .sortedBy(SearchDomain::windowIdOrder)
+                .filter { listed.add(it) }
+                .map { id ->
+                    val kind = lateralWindowOf(id)!!
+                    val isOpen = if ('#' in id) id in windowCopies else isWindowOpen(kind)
+                    val number = id.substringAfter('#', "")
+                    withConfiguration(
+                        SearchDomain.WindowEntry(
+                            id, if (number.isEmpty()) kind.title else "${kind.title} ($number)",
+                            if (isOpen) SearchDomain.WindowStatus.Open else SearchDomain.WindowStatus.NotOpen, kind.name, kind.title,
+                        ),
+                    )
+                }
+            val objects = (placements.keys + windowsNamedByHistory())
+                .filter { id -> id !in VIEW_ROWS && org.example.project.ui.WindowIds.objectWindowOfFrame(id) != null }
+                .sortedBy(SearchDomain::windowIdOrder)
+                .filter { listed.add(it) }
+                .map { id ->
+                    val objectKind = placements[id]?.config?.let(ObjectWindowKey::decode)?.kind
+                    val (type, typeTitle) =
+                        objectKind?.let { objectWindowType(it) to objectWindowTypeTitle(it) }
+                            ?: (id.substringBefore('#') to org.example.project.ui.WindowIds.objectWindowOfFrame(id)!!.first.label)
+                    val number = id.substringAfter('#', "")
+                    SearchDomain.WindowEntry(
+                        id, if (number.isEmpty()) typeTitle else "$typeTitle ($number)", SearchDomain.WindowStatus.NotOpen, type, typeTitle,
+                    )
+                }
+            val closed = lateral + objects
             // Every per-object TYPE, for the one-per-type listing — "Timer" and "Default timer" are two types.
             val listedTypes = (open + closed).mapTo(HashSet()) { it.type }
             val types = ObjectWindowKey.Kind.entries
@@ -3179,6 +3233,20 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 if (!isWindowOpen(kind)) setWindowOpen(kind, true)
                 focusWindow(kind)
             } else {
+                // User rule 2026-11-22: a closed window is still an element; its row opens it again, as it was left — a
+                // copy by its row, a per-object window on its object under its own number (its id is never another's).
+                if (kind != null && frameId !in windowCopies) {
+                    updatePlacementById(frameId) { it.copy(visible = true, minimized = false) }
+                    windowCopies.add(frameId)
+                }
+                if (kind == null && windowFrames.registrations.none { it.id == frameId }) {
+                    val key = placements[frameId]?.config?.let(ObjectWindowKey::decode)
+                    val number = key?.let { frameId.removePrefix(it.kind.frameBase + "#").toIntOrNull() }
+                    if (key != null && number != null) {
+                        updatePlacementById(frameId) { it.copy(visible = true, minimized = false) }
+                        openObjectWindow(key, number)
+                    }
+                }
                 kind?.let(::historyWindowOf)?.let { vm.dispatch(SchedulerIntent.FocusWindow(it, frameId.removePrefix(kind.name))) }
             }
             windowFrames.present(frameId)
