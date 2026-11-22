@@ -318,6 +318,98 @@ internal fun ConfigurationTreeArrow(
 }
 
 /**
+ * Anomaly 2026-11-22 (*"I go to down arrow, right-click, show header, then drag the header and the window dragged becomes
+ * something else: the header becomes blue, the content becomes a layout that was supposed to be obsolete"*): **the window
+ * a ▾ pop-up became, drawn as the pop-up is** — the same Search window over the configurations tree of the Search window
+ * it is of ([LocalArrowOwner], given by `App`'s `InsideSearchWindow`), its own search the ▾'s ([rememberArrowSearch]:
+ * what was typed in the pop-up is there), its columns, its categories' pop-ups — in a frame of the window bar instead of
+ * a menu window. It had opened the configurations window ([ConfigurationSearchWindow]), by group and type: another thing.
+ */
+@Composable
+internal fun ConfigurationTreeWindow(
+    state: SchedulerState,
+    config: SearchDomain.Config,
+    openedConfig: SearchDomain.Config?,
+    onConfigChange: (SearchDomain.Config) -> Unit,
+    nowMillis: () -> Long,
+    windows: List<SearchDomain.WindowEntry>,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+    onPickOnCalendar: (SearchDomain.BoxBound) -> Unit,
+    /** The frame id of this window ("ConfigSearch", "ConfigSearch#2"): where what it shows of itself is kept. */
+    windowId: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    initialOffset: androidx.compose.ui.geometry.Offset = androidx.compose.ui.geometry.Offset.Zero,
+    initialSize: androidx.compose.ui.geometry.Size = androidx.compose.ui.geometry.Size.Zero,
+    onGeometryChange: (androidx.compose.ui.geometry.Offset, androidx.compose.ui.geometry.Size) -> Unit = { _, _ -> },
+    onRaise: () -> Unit = {},
+) {
+    // The ▾ of the Search window this tree is of: its search is the pop-up's.
+    val arrowId = LocalArrowOwner.current?.let { it + ArrowSearches.ARROW }
+    var own by rememberArrowSearch(arrowId, true)
+    var path by remember { mutableStateOf(listOf<String>()) }
+    // What it shows of itself: as the pop-up showed it, its head the frame's.
+    val popupParts = arrowId?.let { LocalSearchPartsStore.current?.read(it) } ?: CellEditPopupHost.PICKER_SPLITS
+    var parts by rememberKeptParts(windowId, popupParts, fixed = { it.copy(headerRemoved = true) })
+    val owner = LocalArrowOwner.current
+    val registry = LocalArrowSearches.current
+    val memory = LocalPopupMemory.current
+    val elsewhere = remember {
+        SearchDomain.Elsewhere(
+            changed = SearchDomain.Elsewhere.changedIn(registry?.searchWindows?.invoke().orEmpty().filter { it.id != owner }.map { it.config }),
+            looked = memory?.lookedIntoElsewhere(arrowId).orEmpty(),
+        )
+    }
+    val latestConfig by rememberUpdatedState(config)
+    val latestOpened by rememberUpdatedState(openedConfig)
+    val latestChange by rememberUpdatedState(onConfigChange)
+    val latestPick by rememberUpdatedState(onPickOnCalendar)
+    val latestState by rememberUpdatedState(state)
+    val latestWindows by rememberUpdatedState(windows)
+    val latestLogs by rememberUpdatedState(claudeLogs)
+    val treeList = remember {
+        SearchTreeList(1) { add ->
+            androidx.compose.runtime.CompositionLocalProvider(LocalTreeAdd provides { key -> add(listOf(key)) }) {
+                ConfigurationTreeColumns(
+                    latestState, latestConfig, latestOpened, latestChange, own, path, { path = it }, nowMillis, latestWindows, latestLogs, 0,
+                    elsewhere = elsewhere,
+                ) { which -> latestPick(which) }
+            }
+        }
+    }
+    val frame = rememberWindowFrameState(CONFIGURATION_SEARCH_FRAME_ID, initialOffset, initialSize)
+    val drawn = LocalEmbeddedSearch.current
+    AppWindowFrame(
+        title = SearchDomain.windowTitle(own),
+        state = frame,
+        onClose = onDismiss,
+        defaultWidth = TREE_ROOT_POPUP_WIDTH,
+        defaultHeight = 600.dp,
+        modifier = modifier,
+        onRaise = onRaise,
+        onGeometryChange = onGeometryChange,
+        claimsKeyboard = true,
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            // The arrows in it are of the window it is, as in the pop-up; it is a window, so no head of a pop-up is given.
+            LocalArrowOwner provides arrowId,
+            LocalBarPath provides emptyList(),
+            LocalSearchPopupWindow provides null,
+            LocalPopupChrome provides null,
+        ) {
+            drawn?.invoke(
+                EmbeddedSearchRequest(
+                    config = own, onConfigChange = { own = it }, onDrop = null,
+                    treeList = treeList, splits = parts, onSplitsChange = { parts = it },
+                    openedConfig = SearchDomain.CONFIGURATION_SEARCH, onDismiss = onDismiss,
+                ),
+                Modifier.fillMaxWidth().weight(1f),
+            )
+        }
+    }
+}
+
+/**
  * How long the tree stays on a category before it counts as looked into ("Recent › Elsewhere › Looked into the
  * children"): a hover crossing it on the way elsewhere is no look.
  */

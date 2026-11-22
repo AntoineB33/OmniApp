@@ -2536,14 +2536,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The button brings back the window of [kind] that is on [searchId]; when none is, it opens one — the
         // original where it is not open (keeping what its bar and types were left on), else a copy.
         // Returns the frame id of the window opened or brought back.
-        fun openConfigurationsOf(kind: FloatingWindow, searchId: String): String {
+        // [tree]: the ▾ tree's window ([SearchDomain.ConfigurationSearch.tree], what its pop-up becomes), else the
+        // configurations window its button opens — never one for the other.
+        fun openConfigurationsOf(kind: FloatingWindow, searchId: String, tree: Boolean = false): String {
             val open = listOfNotNull(kind.name.takeIf { isWindowOpen(kind) }) + windowCopies.filter { lateralWindowOf(it) == kind }
-            open.firstOrNull { configTargetOf(it) == searchId }?.let { existing ->
+            open.firstOrNull { configTargetOf(it) == searchId && configSearchOf(it).tree == tree }?.let { existing ->
                 presentWindow(kind, existing)
                 return existing
             }
             val own = if (isWindowOpen(kind)) SearchDomain.ConfigurationSearch() else configSearchOf(kind.name)
-            return openNewWindow(kind, own.copy(target = searchId).encode())
+            return openNewWindow(kind, own.copy(target = searchId, tree = tree).encode())
         }
         // User rule 2026-11-15: **a ▾ configurations pop-up dragged by its head, or asked by one of its head's window
         // buttons, becomes its Search window's configurations window** ([org.example.project.ui.PopupDetacher]): opened
@@ -2593,7 +2595,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             )
         }
         val detachPopup = rememberUpdatedState { searchId: String, bounds: Rect, how: org.example.project.ui.DetachedAs, name: String? ->
-            val id = openConfigurationsOf(FloatingWindow.ConfigSearch, searchId)
+            val id = openConfigurationsOf(FloatingWindow.ConfigSearch, searchId, tree = true)
             placeDetached(FloatingWindow.ConfigSearch, id, bounds, how, FloatingWindow.ConfigSearch.title, name)
         }
         // A Search pop-up (a field's: the "List of parents") becomes a Search window of its own, beside the user's.
@@ -6150,6 +6152,33 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         val configId = windowInstanceId(FloatingWindow.ConfigSearch.name)
                         val own = configSearchOf(configId)
                         val target = configTargetOf(configId)
+                        // Anomaly 2026-11-22: the window a ▾ pop-up dragged by its head became is drawn as that pop-up.
+                        if (own.tree) {
+                            InsideSearchWindow(target) {
+                                org.example.project.ui.ConfigurationTreeWindow(
+                                    state = schedulerState,
+                                    config = searchConfigOf(target),
+                                    openedConfig = searchOpenedConfigs[target],
+                                    onConfigChange = { setSearchConfig(target, it) },
+                                    nowMillis = clock::nowMillis,
+                                    windows = searchWindowEntries(),
+                                    claudeLogs = claudeLogs,
+                                    onPickOnCalendar = pickBoxBoundOnCalendar(target) { presentWindow(FloatingWindow.ConfigSearch, configId) },
+                                    windowId = configId,
+                                    onDismiss = { configSearchWindowOpen = false },
+                                    initialOffset = configSearchOffset,
+                                    initialSize = configSearchSize,
+                                    onGeometryChange = { windowOffset, windowSize ->
+                                        configSearchOffset = windowOffset
+                                        configSearchSize = windowSize
+                                        persistPlacement(FloatingWindow.ConfigSearch, windowOffset, windowSize, true)
+                                    },
+                                    onRaise = { focusWindow(FloatingWindow.ConfigSearch) },
+                                    modifier = Modifier.align(Alignment.Center),
+                                )
+                            }
+                            return@LateralWindow
+                        }
                         ConfigurationSearchWindow(
                             state = schedulerState,
                             config = searchConfigOf(target),

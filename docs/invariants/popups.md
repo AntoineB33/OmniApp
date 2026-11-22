@@ -586,8 +586,13 @@ means.
     disappear."*; `PopupDetach.kt`, `SearchPopupHead`). Its head, shown, wears the window buttons — duplicate, fill the
     width, fill the height, reduce, maximize, close. A drag of the head closes its child pop-ups, carries its own
     window (`PopupWindowControl`, the desktop's `MenuSession.control`: read off the screen, never re-placed by its
-    anchor again) and, let go, closes it for the Search configurations window of the Search window its tree is of —
-    opened or brought back there, at its size (`WindowFrameHost.placeAt`), so in the window bar. Each other window
+    anchor again) and, let go, closes it for **the tree's window** of the Search window its tree is of — opened or
+    brought back there, at its size (`WindowFrameHost.placeAt`), so in the window bar. **That window IS the pop-up**
+    (anomaly 2026-11-22: *"the window dragged becomes something else … a layout that was supposed to be obsolete"*):
+    a configurations window marked `ConfigurationSearch.tree`, drawn by `ConfigurationTreeWindow` as the pop-up is
+    drawn — the same Search window over the tree, its search the ▾'s own (`rememberArrowSearch`), its columns and
+    category pop-ups — in a frame. It had opened the configurations window by group and type
+    (`ConfigurationSearchWindow`), which the Search window's button still opens; neither is brought back for the other. Each other window
     button does the same, then fills, reduces, maximizes or duplicates that window. Only the outermost tree of a Search
     window of the app and its category pop-ups (`PopupDetacher.canDetach`): a tree in a pop-up's bar is a configuration
     of another search, and a menu drawn in the app's window (no `PopupWindowControl`) keeps the title-and-✕ head.

@@ -1400,6 +1400,13 @@ object SearchDomain {
          * of a page left unchecked: checked again, it comes back as it was.
          */
         val pages: Set<String> = FEATURE_PAGES.mapTo(HashSet()) { it.id },
+        /**
+         * Anomaly 2026-11-22 (*"I go to down arrow, right-click, show header, then drag the header and the window dragged
+         * becomes something else"*): **the window a ▾ pop-up dragged by its head became** — the configurations tree of
+         * [target], drawn as the pop-up draws it (its own search over the tree, its columns), in a frame. False: the
+         * configurations window its Search window's button opens, its configurations by group and type.
+         */
+        val tree: Boolean = false,
     ) {
         /** The kinds the window offers, and of them those it shows. */
         val offeredKinds: List<Kind> get() = kindsOfPages(pages)
@@ -1415,6 +1422,7 @@ object SearchDomain {
                     logKindsKnown = true,
                     // Every page is nothing to say: a page added later is then offered like the others.
                     pages = pages.sorted().takeIf { it.size < FEATURE_PAGES.size },
+                    tree = tree,
                 ),
             )
 
@@ -1435,6 +1443,7 @@ object SearchDomain {
                     stored.frozenKinds?.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } },
                     stored.collapsedGroups.toSet(),
                     stored.pages?.filterTo(HashSet()) { id -> FEATURE_PAGES.any { it.id == id } } ?: FEATURE_PAGES.mapTo(HashSet()) { it.id },
+                    stored.tree,
                 )
             }
         }
@@ -3461,6 +3470,8 @@ object SearchDomain {
         val logKindsKnown: Boolean = false,
         /** New 2026-11-01: absent = every feature page. */
         val pages: List<String>? = null,
+        /** New 2026-11-22: absent = the configurations window, not a ▾ tree's ([ConfigurationSearch.tree]). */
+        val tree: Boolean = false,
     )
 
     private val configJson = Json { ignoreUnknownKeys = true }

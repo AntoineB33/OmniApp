@@ -215,6 +215,22 @@ class FeaturePagesTest {
         assertEquals(everyPage, SearchDomain.ConfigurationSearch.decode(older)!!.pages)
     }
 
+    /**
+     * Anomaly 2026-11-22: the window a ▾ pop-up became is the tree's ([SearchDomain.ConfigurationSearch.tree]), kept as
+     * such; one stored before it existed — written by the previous shape, with no such field — is the configurations window.
+     */
+    @Test
+    fun a_tree_window_is_kept_and_one_stored_before_it_is_the_configurations_window() {
+        val tree = SearchDomain.ConfigurationSearch(target = "Search#2", tree = true)
+        assertEquals(tree, SearchDomain.ConfigurationSearch.decode(tree.encode()))
+        val previous = """{"query":"due","kinds":["Task"],"onlyResultKinds":false,"target":"Search#2","logKindsKnown":true}"""
+        val decoded = SearchDomain.ConfigurationSearch.decode(previous)!!
+        assertFalse(decoded.tree)
+        assertEquals("due", decoded.query)
+        assertEquals("Search#2", decoded.target)
+        assertFalse("tree" in SearchDomain.ConfigurationSearch().encode())
+    }
+
     @Test
     fun the_settings_page_opens_on_the_settings_with_its_own_menu() {
         val config = SearchDomain.pageDefaultConfig(SearchDomain.SETTINGS_PAGE)

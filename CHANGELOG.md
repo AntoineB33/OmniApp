@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A ▾ pop-up dragged by its head becomes a window of the same tree — 2026-11-22
+
+- Anomaly: *"I go to down arrow, right-click, show header, then drag the header and the window dragged becomes something
+  else: the header becomes blue, the content becomes a layout that was supposed to be obsolete a long time ago."*
+  Cause: `PopupDetacher.detach` opened the Search configurations window (`ConfigurationSearchWindow`, by group and
+  type) — the window the pop-up was said to be "the pop-up form of" — which draws nothing like the tree.
+- Now it opens a configurations window marked `ConfigurationSearch.tree` (stored field, default false: a window stored
+  before it is the configurations window, `FeaturePagesTest`), drawn by `ConfigurationTreeWindow` as the pop-up:
+  the same Search window over the configurations tree, its search the ▾'s own, in a frame of the window bar. A
+  category's pop-up dragged does the same. The Search window's configurations button still opens the window by group
+  and type; `openConfigurationsOf` never brings one back for the other. `ConfigurationTreeWindowTest`.
+- Still so: the window gets a colour of its own as it opens, as every window does; the pop-up's head had none.
+- Local view state only (the window's placement row): no SQLite or Supabase change. Client rebuild only.
+
 ### An info bubble is dropped when its element moves under the pointer — 2026-11-22
 
 - Anomaly: *"There are bugs with the info bubble that sometimes get stuck when I vertically scroll on the list of
