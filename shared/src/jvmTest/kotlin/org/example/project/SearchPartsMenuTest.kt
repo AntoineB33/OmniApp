@@ -109,7 +109,6 @@ class SearchPartsMenuTest {
                         onDismiss = {},
                         config = SearchDomain.Config(),
                         onConfigChange = {},
-                        onOpenConfigurations = {},
                         splits = splits,
                         onSplitsChange = { told += it },
                         initialSize = Size(1000f, 600f),

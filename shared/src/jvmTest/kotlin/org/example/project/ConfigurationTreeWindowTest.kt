@@ -61,7 +61,7 @@ class ConfigurationTreeWindowTest {
             SearchWindow(
                 state = state, openers = openers, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
                 actionHandlers = handlers, onIntent = {}, onDismiss = request.onDismiss, config = request.config,
-                onConfigChange = request.onConfigChange, openedConfig = request.openedConfig, onOpenConfigurations = {},
+                onConfigChange = request.onConfigChange, openedConfig = request.openedConfig,
                 splits = request.splits, onSplitsChange = request.onSplitsChange, treeList = request.treeList,
                 embedded = true, modifier = modifier,
             )

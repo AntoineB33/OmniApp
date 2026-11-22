@@ -1855,7 +1855,6 @@ fun LateralMenu(
                 onConfigChange = setConfig,
                 openedConfig = LATERAL_MENU_SEARCH,
                 relevantSettings = LATERAL_MENU_RELEVANT,
-                onOpenConfigurations = {},
                 splits = splits,
                 onSplitsChange = { splits = it },
                 embedded = true,

@@ -485,7 +485,6 @@ private fun AddedActionList(
             onDismiss = {},
             config = inner,
             onConfigChange = onInner,
-            onOpenConfigurations = {},
             splits = splits,
             onSplitsChange = { splits = it },
             embedded = true,

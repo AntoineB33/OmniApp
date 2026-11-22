@@ -61,7 +61,7 @@ class LateralMenuIsASearchWindowTest {
                                 ),
                                 onIntent = {}, onDismiss = {},
                                 config = request.config, onConfigChange = request.onConfigChange, openedConfig = request.openedConfig,
-                                onOpenConfigurations = {}, splits = request.splits, onSplitsChange = request.onSplitsChange,
+                                splits = request.splits, onSplitsChange = request.onSplitsChange,
                                 embedded = true, menuList = request.menuList, relevantSettings = request.relevantSettings,
                                 modifier = modifier,
                             )

@@ -58,7 +58,6 @@ class SearchDoubleClickTest {
                 onDismiss = {},
                 config = config,
                 onConfigChange = { config = it; told += "added ${it.added}" },
-                onOpenConfigurations = {},
                 initialSize = Size(1200f, 620f),
             )
         } }

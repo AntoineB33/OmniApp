@@ -74,7 +74,6 @@ class SearchSubtreeWalkTest {
                     onDismiss = {},
                     config = config,
                     onConfigChange = { config = it },
-                    onOpenConfigurations = {},
                     // "AI"'s row opened, its sub-tree under it.
                     splits = SearchSplits(expandedResults = setOf(ai.value)),
                     initialSize = Size(1200f, 620f),

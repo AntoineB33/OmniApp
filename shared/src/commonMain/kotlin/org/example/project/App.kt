@@ -164,7 +164,6 @@ import org.example.project.ui.AddedElementsConfigurationWindow
 import org.example.project.ui.AddedActionHandlers
 import org.example.project.ui.ReminderConstraintEditWindow
 import org.example.project.ui.SearchRowOpeners
-import org.example.project.ui.ConfigurationSearchWindow
 import org.example.project.ui.TransientPopupLayer
 import org.example.project.ui.ReminderEditSeed
 import org.example.project.ui.EDIT_LABEL_ALARM
@@ -1843,11 +1842,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val before = configSearchOf(id)
             configSearches[id] = own
             updatePlacementById(id) { it.copy(config = own.encode()) }
-            // A text field typed into is one unit per run of keystrokes.
-            val typed = before.copy(query = own.query) == own
             viewHistory.record(
                 org.example.project.scheduler.state.ExternalKeys.CONFIG_SEARCH + id, before.encode(), own.encode(), "Search configurations",
-                coalesceKey = if (typed) org.example.project.scheduler.state.ExternalKeys.CONFIG_SEARCH + id + "/query" else null,
             )
         }
         // PRD §4 Default sub-tree: whether the floating template window is open (local UI state; the template
@@ -2536,16 +2532,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The button brings back the window of [kind] that is on [searchId]; when none is, it opens one — the
         // original where it is not open (keeping what its bar and types were left on), else a copy.
         // Returns the frame id of the window opened or brought back.
-        // [tree]: the ▾ tree's window ([SearchDomain.ConfigurationSearch.tree], what its pop-up becomes), else the
-        // configurations window its button opens — never one for the other.
-        fun openConfigurationsOf(kind: FloatingWindow, searchId: String, tree: Boolean = false): String {
+        fun openConfigurationsOf(kind: FloatingWindow, searchId: String): String {
             val open = listOfNotNull(kind.name.takeIf { isWindowOpen(kind) }) + windowCopies.filter { lateralWindowOf(it) == kind }
-            open.firstOrNull { configTargetOf(it) == searchId && configSearchOf(it).tree == tree }?.let { existing ->
+            open.firstOrNull { configTargetOf(it) == searchId }?.let { existing ->
                 presentWindow(kind, existing)
                 return existing
             }
             val own = if (isWindowOpen(kind)) SearchDomain.ConfigurationSearch() else configSearchOf(kind.name)
-            return openNewWindow(kind, own.copy(target = searchId, tree = tree).encode())
+            return openNewWindow(kind, own.copy(target = searchId).encode())
         }
         // User rule 2026-11-15: **a ▾ configurations pop-up dragged by its head, or asked by one of its head's window
         // buttons, becomes its Search window's configurations window** ([org.example.project.ui.PopupDetacher]): opened
@@ -2595,7 +2589,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             )
         }
         val detachPopup = rememberUpdatedState { searchId: String, bounds: Rect, how: org.example.project.ui.DetachedAs, name: String? ->
-            val id = openConfigurationsOf(FloatingWindow.ConfigSearch, searchId, tree = true)
+            val id = openConfigurationsOf(FloatingWindow.ConfigSearch, searchId)
             placeDetached(FloatingWindow.ConfigSearch, id, bounds, how, FloatingWindow.ConfigSearch.title, name)
         }
         // A Search pop-up (a field's: the "List of parents") becomes a Search window of its own, beside the user's.
@@ -5966,7 +5960,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 config = request.config,
                                 onConfigChange = request.onConfigChange,
                                 openedConfig = request.openedConfig,
-                                onOpenConfigurations = {},
                                 splits = request.splits ?: org.example.project.ui.EMBEDDED_SEARCH_SPLITS,
                                 onSplitsChange = request.onSplitsChange,
                                 treeList = request.treeList,
@@ -6054,7 +6047,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             deployKinds = searchId in searchKindsToDeploy,
                             onKindsDeployed = { searchKindsToDeploy.remove(searchId) },
                             // THIS Search window's own configurations window: brought back, else opened.
-                            onOpenConfigurations = { openConfigurationsOf(FloatingWindow.ConfigSearch, searchId) },
                             // The same, for the actions on the added elements.
                             onOpenAddedConfigurations = { openConfigurationsOf(FloatingWindow.AddedConfig, searchId) },
                             splits = searchSplits[searchId],
@@ -6101,7 +6093,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onDismiss = {},
                             config = config,
                             onConfigChange = onConfigChange,
-                            onOpenConfigurations = {},
                             // User rule 2026-11-11: what its background menu shows of it, kept from one Edit Mode to the next.
                             splits = cellEditPopups.splits,
                             onSplitsChange = { cellEditPopups.splits = it },
@@ -6150,63 +6141,32 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     // the same `searchConfig` the Search window reads, so its filters narrow that list at once.
                     LateralWindow(FloatingWindow.ConfigSearch, configSearchWindowOpen) {
                         val configId = windowInstanceId(FloatingWindow.ConfigSearch.name)
-                        val own = configSearchOf(configId)
                         val target = configTargetOf(configId)
-                        // Anomaly 2026-11-22: the window a ▾ pop-up dragged by its head became is drawn as that pop-up.
-                        if (own.tree) {
-                            InsideSearchWindow(target) {
-                                org.example.project.ui.ConfigurationTreeWindow(
-                                    state = schedulerState,
-                                    config = searchConfigOf(target),
-                                    openedConfig = searchOpenedConfigs[target],
-                                    onConfigChange = { setSearchConfig(target, it) },
-                                    nowMillis = clock::nowMillis,
-                                    windows = searchWindowEntries(),
-                                    claudeLogs = claudeLogs,
-                                    onPickOnCalendar = pickBoxBoundOnCalendar(target) { presentWindow(FloatingWindow.ConfigSearch, configId) },
-                                    windowId = configId,
-                                    onDismiss = { configSearchWindowOpen = false },
-                                    initialOffset = configSearchOffset,
-                                    initialSize = configSearchSize,
-                                    onGeometryChange = { windowOffset, windowSize ->
-                                        configSearchOffset = windowOffset
-                                        configSearchSize = windowSize
-                                        persistPlacement(FloatingWindow.ConfigSearch, windowOffset, windowSize, true)
-                                    },
-                                    onRaise = { focusWindow(FloatingWindow.ConfigSearch) },
-                                    modifier = Modifier.align(Alignment.Center),
-                                )
-                            }
-                            return@LateralWindow
+                        // Anomaly 2026-11-22: the Search configurations window IS the ▾ tree's — what its pop-up becomes, drawn
+                        // as that pop-up. The window by group and type it was is gone.
+                        InsideSearchWindow(target) {
+                            org.example.project.ui.ConfigurationTreeWindow(
+                                state = schedulerState,
+                                config = searchConfigOf(target),
+                                openedConfig = searchOpenedConfigs[target],
+                                onConfigChange = { setSearchConfig(target, it) },
+                                nowMillis = clock::nowMillis,
+                                windows = searchWindowEntries(),
+                                claudeLogs = claudeLogs,
+                                onPickOnCalendar = pickBoxBoundOnCalendar(target) { presentWindow(FloatingWindow.ConfigSearch, configId) },
+                                windowId = configId,
+                                onDismiss = { configSearchWindowOpen = false },
+                                initialOffset = configSearchOffset,
+                                initialSize = configSearchSize,
+                                onGeometryChange = { windowOffset, windowSize ->
+                                    configSearchOffset = windowOffset
+                                    configSearchSize = windowSize
+                                    persistPlacement(FloatingWindow.ConfigSearch, windowOffset, windowSize, true)
+                                },
+                                onRaise = { focusWindow(FloatingWindow.ConfigSearch) },
+                                modifier = Modifier.align(Alignment.Center),
+                            )
                         }
-                        ConfigurationSearchWindow(
-                            state = schedulerState,
-                            config = searchConfigOf(target),
-                            onConfigChange = { setSearchConfig(target, it) },
-                            openedConfig = searchOpenedConfigs[target],
-                            own = own,
-                            onOwnChange = { setConfigSearch(configId, it) },
-                            onDismiss = { configSearchWindowOpen = false },
-                            // User rule 2026-10-11: a bound of the boxes' window picked by a click on the calendar —
-                            // the calendar takes the focus, the click is the instant, and the focus comes back here.
-                            onPickOnCalendar = pickBoxBoundOnCalendar(target) { presentWindow(FloatingWindow.ConfigSearch, configId) },
-                            // Always: the groups are ordered by the rows of the result list, the windows' included —
-                            // read with what the Search window reads its own list with.
-                            windows = searchWindowEntries(),
-                            nowMillis = clock::nowMillis,
-                            calendarLayerKindsAt = calendarLayers::kindsAt,
-                            schedulerRuns = schedulerRuns,
-                            claudeLogs = claudeLogs,
-                            initialOffset = configSearchOffset,
-                            initialSize = configSearchSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                configSearchOffset = windowOffset
-                                configSearchSize = windowSize
-                                persistPlacement(FloatingWindow.ConfigSearch, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.ConfigSearch) },
-                            modifier = Modifier.align(Alignment.Center),
-                        )
                     }
 
                     // PRD §7 Search: every action on a Search window's added elements, in sections per kind — the

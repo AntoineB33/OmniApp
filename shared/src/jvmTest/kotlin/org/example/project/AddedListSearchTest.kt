@@ -55,7 +55,6 @@ class AddedListSearchTest {
                     onDismiss = {},
                     config = config,
                     onConfigChange = { config = it },
-                    onOpenConfigurations = {},
                     splits = shown,
                     onSplitsChange = { shown = it; told += it },
                     initialSize = Size(width.toFloat(), height.toFloat()),
@@ -200,7 +199,7 @@ class AddedListSearchTest {
                                 onDuplicate = { _, _ -> emptyList() }, onPlaceOnCalendar = {},
                             ),
                             onIntent = {}, onDismiss = {}, config = shown,
-                            onConfigChange = { shown = it; config = it }, onOpenConfigurations = {},
+                            onConfigChange = { shown = it; config = it },
                             initialSize = Size(1200f, 700f),
                         )
                     }

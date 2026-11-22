@@ -58,10 +58,9 @@ class ElementFiltersTest {
 
     @Test
     fun both_stand_in_the_every_element_group_and_count_as_filters_on() {
-        val general = SearchDomain.configurationGroups("", Kind.entries.toSet(), emptyMap()).first { it.kinds.isEmpty() }
-        assertEquals("all", general.id)
-        assertTrue(Setting.ExcludedElements in general.settings)
-        assertTrue(Setting.IncludedElements in general.settings)
+        // About every row: no kind's own.
+        assertEquals(null, Setting.ExcludedElements.section)
+        assertEquals(null, Setting.IncludedElements.section)
         assertFalse(Filters().isOn(Setting.ExcludedElements))
         assertTrue(Filters(excludedElements = setOf("Chrono/a")).isOn(Setting.ExcludedElements))
         assertEquals(1, Filters(includedElements = setOf("Chrono/a")).activeCount)

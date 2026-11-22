@@ -64,7 +64,6 @@ class SearchRowEditPopupTest {
                     onDismiss = {},
                     config = config,
                     onConfigChange = { config = it },
-                    onOpenConfigurations = {},
                     initialSize = Size(1200f, 620f),
                 )
             }

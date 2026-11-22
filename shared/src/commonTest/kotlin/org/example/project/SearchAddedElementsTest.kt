@@ -235,7 +235,7 @@ class SearchAddedElementsTest {
         assertTrue(SearchDomain.Filters(periodResilience = SearchDomain.ResilienceLevel.None, periodResilienceTask = apple).isOn(SearchDomain.Setting.PeriodResilienceSetting))
         // They are the period's own configurations — in its group, never a task's — and survive the local encoding;
         // a configuration stored before them reads as neither asked.
-        val periodGroup = SearchDomain.configurations("", SearchDomain.Kind.entries.toSet()).single { it.first == SearchDomain.Kind.RestrictivePeriod }.second
+        val periodGroup = SearchDomain.Setting.entries.filter { it.section == SearchDomain.Kind.RestrictivePeriod }
         assertTrue(periodGroup.containsAll(listOf(SearchDomain.Setting.PeriodDrawingSetting, SearchDomain.Setting.PeriodResilienceSetting)))
         val stored = SearchDomain.Config(
             filters = SearchDomain.Filters(
@@ -492,115 +492,6 @@ class SearchAddedElementsTest {
         // Nothing added (the window of every configuration): one group per kind, as before.
         val sections = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet())
         assertEquals(sections, SearchDomain.actionGroups(sections, emptyList()).map { it.kind to it.actions })
-    }
-
-    /**
-     * User rule 2026-10-11, the Search configurations window: *"the first group gather all the configurations that can
-     * be applied to every element in a set of n element, where n is as big as possible, followed by other groups with
-     * n decreasing"*; one button *"shows only the search configurations that can be applied to at least one element
-     * in the result list"*, and a switch *"to stop hiding or showing new search configurations as the result list
-     * changes"*.
-     */
-    @Test
-    fun the_search_configurations_are_grouped_by_how_many_rows_of_the_results_they_apply_to() {
-        val s = account().copy(
-            alarms = listOf(AlarmEntry(id = "a", label = "Wake"), AlarmEntry(id = "b", label = "Nap"), AlarmEntry(id = "c", label = "Tea")),
-        )
-        val every = SearchDomain.Kind.entries.toSet()
-        val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task, SearchDomain.Kind.Alarm))
-        val counts = SearchDomain.kindCountsInResults(s, config)
-        val tasks = counts.getValue(SearchDomain.Kind.Task)
-        // The three alarms and "New alarm", a creation row listed — and counted — as an alarm (user rule 2026-10-30).
-        assertEquals(4, counts[SearchDomain.Kind.Alarm])
-        assertTrue(tasks > 0 && SearchDomain.Kind.Timer !in counts && SearchDomain.Kind.Creation !in counts)
-
-        // Every element first (the configurations about the whole search), then the kinds by their rows.
-        val all = SearchDomain.configurationGroups("", every, counts)
-        assertEquals(null, all.first().kind)
-        assertEquals(tasks + 4, all.first().reach)
-        assertEquals("Every element  ·  ${tasks + 4}", all.first().title)
-        val byReach = all.drop(1).map { it.reach }
-        assertEquals(byReach.sortedDescending(), byReach, "n decreasing")
-        assertTrue(all.indexOfFirst { it.kind == SearchDomain.Kind.Task } < all.indexOfFirst { it.kind == SearchDomain.Kind.Timer })
-        assertTrue(all.indexOfFirst { it.kind == SearchDomain.Kind.Alarm } < all.indexOfFirst { it.kind == SearchDomain.Kind.Timer })
-        // Nothing is lost by the ordering: the same configurations as the plain listing.
-        assertEquals(SearchDomain.configurations("", every).flatMap { it.second }.toSet(), all.flatMap { it.settings }.toSet())
-
-        // The button: only what applies to at least one row.
-        val only = SearchDomain.configurationGroups("", every, counts, onlyApplicable = true)
-        assertEquals(setOf(null, SearchDomain.Kind.Task, SearchDomain.Kind.Alarm), only.map { it.kind }.toSet())
-        assertTrue(only.all { it.kind == null || it.reach > 0 })
-
-        // A filter that empties the alarms out of the results: following the results, their group goes — and the
-        // filter that did it with it. With the switch set before, the list stays as it was, the reach said live.
-        val filtered = config.copy(filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
-        val after = SearchDomain.kindCountsInResults(s, filtered)
-        assertTrue(SearchDomain.Kind.Alarm !in after)
-        assertTrue(SearchDomain.configurationGroups("", every, after, onlyApplicable = true).none { it.kind == SearchDomain.Kind.Alarm })
-        val frozen = SearchDomain.applicableKinds(every, counts, onlyApplicable = true)
-        val kept = SearchDomain.configurationGroups("", every, after, onlyApplicable = true, frozen = frozen)
-        assertEquals(only.map { it.kind }, kept.map { it.kind }, "the same groups, in the same order")
-        assertEquals(0, kept.single { it.kind == SearchDomain.Kind.Alarm }.reach)
-        // Anomaly 2026-10-11: "I don't see 'Every box from' in the 'Every element' group" — a task and a restrictive
-        // period have it under one name, so where every row is one or the other it applies to every element.
-        val boxes = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task, SearchDomain.Kind.RestrictivePeriod))
-        val boxCounts = SearchDomain.kindCountsInResults(s, boxes)
-        assertEquals(setOf(SearchDomain.Kind.Task, SearchDomain.Kind.RestrictivePeriod), boxCounts.keys)
-        val everyElement = SearchDomain.configurationGroups("", every, boxCounts, onlyApplicable = true).first()
-        assertEquals("all", everyElement.id)
-        assertEquals(
-            listOf("On the calendar", "Every box from", "Every box until"),
-            everyElement.shared.map { family -> family.map { it.label }.distinct().single() },
-        )
-        assertEquals(
-            listOf(SearchDomain.Setting.TaskBoxesFrom, SearchDomain.Setting.PeriodBoxesFrom),
-            everyElement.shared.single { it.first() == SearchDomain.Setting.TaskBoxesFrom },
-        )
-        // Each kind still lists its own, to set one kind's alone.
-        val ownTask = SearchDomain.configurationGroups("", every, boxCounts, onlyApplicable = true).single { it.kind == SearchDomain.Kind.Task }
-        assertTrue(SearchDomain.Setting.TaskBoxesFrom in ownTask.settings && ownTask.shared.isEmpty())
-        // With an alarm among the rows it no longer applies to every element: a group of the two kinds it does
-        // apply to, wider than either of them, between "Every element" and the kinds.
-        val mixedCounts = SearchDomain.kindCountsInResults(s, boxes.copy(kinds = boxes.kinds + SearchDomain.Kind.Alarm))
-        val mixedGroups = SearchDomain.configurationGroups("", every, mixedCounts, onlyApplicable = true)
-        assertTrue(mixedGroups.first().shared.isEmpty())
-        val both = mixedGroups.single { it.kinds.size == 2 }
-        assertEquals("Task + Restrictive period  ·  ${boxCounts.values.sum()}", both.title)
-        assertEquals("kinds/Task+RestrictivePeriod", both.id)
-        assertEquals(3, both.shared.size)
-        assertTrue(both.settings.isEmpty() && mixedGroups.indexOf(both) < mixedGroups.indexOfFirst { it.kind == SearchDomain.Kind.Task })
-        // One field writes both, and so does a pick on the calendar.
-        assertEquals(
-            SearchDomain.Filters(taskBoxesFrom = 7, periodBoxesFrom = 7),
-            SearchDomain.withBoxBound(SearchDomain.Filters(), SearchDomain.BoxBound.BothFrom, 7),
-        )
-        // Each group has its expansion arrow; what is retracted is the window's own, and survives its encoding.
-        val own = SearchDomain.withSettingGroupToggled(SearchDomain.ConfigurationSearch(), both.id, mixedGroups.mapTo(HashSet()) { it.id })
-        assertEquals(setOf(both.id), own.collapsedGroups)
-        assertEquals(own, SearchDomain.ConfigurationSearch.decode(own.encode()))
-        assertEquals(emptySet(), SearchDomain.withSettingGroupToggled(own, "all", setOf("all")).collapsedGroups - "all")
-        assertEquals(emptySet(), SearchDomain.ConfigurationSearch.decode("""{"query":"x"}""")!!.collapsedGroups)
-        // Anomaly 2026-10-11 (after a rebuild: "still no 'Every box from' … even though the result list only has a
-        // task and a period. Also, there is no period group"): the period under the right-click was a LAYER band —
-        // on the timeline off the lock history, with no panel in the state — and the count did not read the bands
-        // the result list reads. Counted with them, the period has its row, its group, and the shared ones are
-        // every element's.
-        val apple = taskWithTitle(s, "Apple")
-        val at = s.copy(panels = listOf(panel("a1", apple, "2026-09-10")))
-        val click = at.panels.single().let { it.startEpochMillis + (it.endEpochMillis - it.startEpochMillis) / 2 }
-        val edit = SearchDomain.calendarAtConfig(click)
-        val band: (Long) -> Set<String> = { setOf(PeriodKinds.NO_COMPUTER_UNLOCKED) }
-        val onScreen = SearchDomain.results(at, edit.kinds, edit.query, filters = edit.filters, nowMillis = click, layerKindsAt = band)
-        assertEquals(setOf(SearchDomain.Kind.Task, SearchDomain.Kind.RestrictivePeriod), onScreen.mapTo(HashSet()) { it.kind })
-        val counted = SearchDomain.kindCountsInResults(at, edit, nowMillis = click, layerKindsAt = band)
-        assertEquals(onScreen.groupingBy { it.kind }.eachCount(), counted, "the count is the list on screen")
-        assertTrue(SearchDomain.Kind.RestrictivePeriod !in SearchDomain.kindCountsInResults(at, edit, nowMillis = click), "without the bands the period is not seen")
-        val editGroups = SearchDomain.configurationGroups("", every, counted, onlyApplicable = true)
-        assertEquals(listOf("all", "kinds/Task", "kinds/RestrictivePeriod").toSet(), editGroups.mapTo(HashSet()) { it.id })
-        assertTrue(editGroups.first().shared.any { it.first() == SearchDomain.Setting.TaskBoxesFrom }, "'Every box from' is every element's")
-        assertTrue(editGroups.single { it.kind == SearchDomain.Kind.RestrictivePeriod }.settings.isNotEmpty(), "the period's own configurations have their group")
-        // The switch says nothing while the button is off: every kind is listed.
-        assertEquals(all.map { it.kinds }.toSet(), SearchDomain.configurationGroups("", every, counts, frozen = frozen).map { it.kinds }.toSet())
     }
 
     /**

@@ -659,11 +659,6 @@ class SearchWindowTest {
         val sorted = ids(sorts = byState)
         assertEquals("History", sorted.last())
         assertEquals("Search#2", sorted[sorted.size - 2])
-        // The kinds in the results see the windows too.
-        assertEquals(
-            setOf(SearchDomain.Kind.Window),
-            SearchDomain.kindsInResults(SchedulerState.empty(), SearchDomain.Config(kinds = kinds), windows),
-        )
     }
 
     @Test
@@ -753,119 +748,13 @@ class SearchWindowTest {
     }
 
     @Test
-    fun the_configuration_search_lists_sections_by_kind_and_finds_by_name() {
-        val every = SearchDomain.Kind.entries.toSet()
-        val sections = SearchDomain.configurations("", every)
-        // The general section first, then one per kind, in the drop-down's order.
-        assertEquals(listOf<SearchDomain.Kind?>(null) + SearchDomain.Kind.entries, sections.map { it.first })
-        assertEquals(
-            listOf(
-                SearchDomain.Setting.SearchText,
-                // User rule 2026-11-04: the search bar's two filters, under it.
-                SearchDomain.Setting.MatchCase,
-                SearchDomain.Setting.WholeWord,
-                SearchDomain.Setting.Regex,
-                // User rule 2026-11-16: what of a row the bars read ("Where to search").
-            ) + SearchDomain.WHERE_SETTINGS + listOf(
-                SearchDomain.Setting.SearchBars,
-                SearchDomain.Setting.Types,
-                // User rule 2026-11-04: the page's types alone, beside the type selector.
-                SearchDomain.Setting.PageTypes,
-                SearchDomain.Setting.ResetSearch,
-                SearchDomain.Setting.CompletionList,
-                // The calendar filter (2026-10-01): about every row, so a general setting.
-                SearchDomain.Setting.CalendarAdd,
-                SearchDomain.Setting.CalendarAt,
-                SearchDomain.Setting.ExcludedElements,
-                // User rule 2026-11-21: where the rows a caller gives come from (`ListedFromTest`).
-                SearchDomain.Setting.ListedFrom,
-                SearchDomain.Setting.IncludedElements,
-                SearchDomain.Setting.NoParentOfKinds,
-                SearchDomain.Setting.ParentsOf,
-                SearchDomain.Setting.ParentDistance,
-                // User rule 2026-11-20: the tasks the evolutions' involvement order reads (both evolution kinds').
-                SearchDomain.Setting.InvolvementOf,
-                // User rule 2026-11-12: how the results are laid out (today the actions section's).
-                SearchDomain.Setting.GroupByAddedElements,
-                SearchDomain.Setting.ExpandResults,
-                SearchDomain.Setting.SearchSortsOnly,
-                SearchDomain.Setting.MenuCustomizing,
-                SearchDomain.Setting.DropButtons,
-                // User rule 2026-11-19: the menu button that opened the window keeps its open rows.
-                SearchDomain.Setting.ButtonFollowsExpansion,
-                SearchDomain.Setting.SortResults,
-            ),
-            sections.first().second,
-        )
-        // Every configuration of the Search window is there, its Reset included — found by name, and never a
-        // filter that counts as "on".
-        assertEquals(
-            listOf<SearchDomain.Kind?>(null) to listOf(SearchDomain.Setting.ResetSearch),
-            SearchDomain.configurations("reset", every).let { found -> found.map { it.first } to found.flatMap { it.second } },
-        )
-        assertFalse(SearchDomain.Filters().isOn(SearchDomain.Setting.ResetSearch))
-        // Every kind's section ends with how its rows are ordered, and "sort" finds every ordering.
-        assertTrue(sections.drop(1).all { (_, settings) -> settings.last().sorts })
-        val sortFound = SearchDomain.configurations("sort", every).flatMap { it.second }
-        assertEquals(1 + SearchDomain.Kind.entries.size, sortFound.count { it.sorts })
-        // …and the switch of the bar that sorts and hides nothing (user rule 2026-11-12), which is no ordering.
-        assertEquals(listOf(SearchDomain.Setting.SearchSortsOnly), sortFound.filterNot { it.sorts })
-        // The bar finds configurations by name; a section with nothing left is dropped.
-        val state = SearchDomain.configurations("state", every)
-        assertEquals(
-            listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Chrono, SearchDomain.Kind.Window),
-            state.map { it.first },
-        )
-        // The kind selector, and the "only the Search results' kinds" button, cut the per-kind sections only.
-        assertEquals(
-            listOf<SearchDomain.Kind?>(null, SearchDomain.Kind.Timer),
-            SearchDomain.configurations("", setOf(SearchDomain.Kind.Timer, SearchDomain.Kind.Alarm), setOf(SearchDomain.Kind.Timer))
-                .map { it.first },
-        )
-    }
-
-    @Test
-    fun a_filter_that_empties_its_own_type_stays_listed_while_the_filters_that_are_on_are_shown() {
-        // The case the button is for: "only the types in the Search results" is on, and the user sets the alarms'
-        // State to "off" — no alarm is off, so the alarms leave the results, and their section with them.
-        val s = SchedulerState.empty().copy(alarms = listOf(AlarmEntry(id = "a1", label = "Wake", timeOfDayMinutes = 60)))
+    fun a_filter_is_on_as_the_search_window_s_count_reads_it() {
         val config =
             SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Alarm), filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
-        val resultKinds = SearchDomain.kindsInResults(s, config)
-        assertEquals(emptySet(), resultKinds)
-        val every = SearchDomain.Kind.entries.toSet()
-        assertEquals(listOf<SearchDomain.Kind?>(null), SearchDomain.configurations("", every, resultKinds).map { it.first })
-        // With the button: the filter that is on is back, alone in its section — the ones left at "any" are not.
-        assertEquals(
-            listOf(SearchDomain.Kind.Alarm to listOf(SearchDomain.Setting.AlarmStateSetting)),
-            SearchDomain.configurations("", every, resultKinds, config.filters).drop(1),
-        )
-        // A type the results do hold keeps its whole section either way, and the name search still applies.
-        assertEquals(
-            SearchDomain.configurations("", every, every),
-            SearchDomain.configurations("", every, every, config.filters),
-        )
-        // "Rings on" is an alarm filter left at "any": the button does not bring it back.
-        assertEquals(emptyList(), SearchDomain.configurations("rings", every, resultKinds, config.filters))
-        assertEquals(
-            listOf(SearchDomain.Kind.Alarm to listOf(SearchDomain.Setting.AlarmStateSetting)),
-            SearchDomain.configurations("state", every, resultKinds, config.filters),
-        )
-        // "On" is the same statement the Search window's count reads.
         assertEquals(1, config.filters.activeCount)
         assertTrue(config.filters.isOn(SearchDomain.Setting.AlarmStateSetting))
         assertFalse(config.filters.isOn(SearchDomain.Setting.SortResults))
-    }
-
-    @Test
-    fun the_kinds_in_the_results_are_the_kinds_with_a_row() {
-        val s = SchedulerState.empty().copy(alarms = listOf(AlarmEntry(id = "a1", label = "Wake", timeOfDayMinutes = 60)))
-        val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer))
-        // "New timer" is a row of the timers (user rule 2026-10-30: a creation row is of the kind it makes too).
-        assertEquals(setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer), SearchDomain.kindsInResults(s, config))
-        // An alarm filter that is on takes "New alarm" out with the alarms; "New timer" stays.
-        val filtered = config.copy(filters = SearchDomain.Filters(alarmState = SearchDomain.AlarmState.Off))
-        assertEquals(setOf(SearchDomain.Kind.Timer), SearchDomain.kindsInResults(s, filtered))
+        assertFalse(SearchDomain.Filters().isOn(SearchDomain.Setting.ResetSearch))
     }
 
     @Test
@@ -894,13 +783,10 @@ class SearchWindowTest {
         )
         assertNull(SearchDomain.Config.decode("{not json"))
 
-        val own = SearchDomain.ConfigurationSearch(
-            "rings", setOf(SearchDomain.Kind.Alarm), onlyResultKinds = true, target = "Search#2",
-            frozenKinds = listOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Task),
-        )
+        val own = SearchDomain.ConfigurationSearch(setOf(SearchDomain.Kind.Alarm), onlyResultKinds = true, target = "Search#2")
         assertEquals(own, SearchDomain.ConfigurationSearch.decode(own.encode()))
-        // Stored before the switch (and with the "filters that are on" button it replaced): the list follows the results.
-        assertNull(SearchDomain.ConfigurationSearch.decode("""{"query":"x","onlyResultKinds":true,"showFiltersOn":true}""")!!.frozenKinds)
+        // Stored with the "filters that are on" button of 2026-09-25: read past.
+        assertTrue(SearchDomain.ConfigurationSearch.decode("""{"query":"x","onlyResultKinds":true,"showFiltersOn":true}""")!!.onlyResultKinds)
         // Stored before copies existed: it edits the original Search window.
         assertEquals("Search", SearchDomain.ConfigurationSearch.decode("""{"query":"x"}""")!!.target)
     }

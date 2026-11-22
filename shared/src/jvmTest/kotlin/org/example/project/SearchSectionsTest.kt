@@ -59,7 +59,6 @@ class SearchSectionsTest {
                 onDismiss = {},
                 config = SearchDomain.Config(),
                 onConfigChange = {},
-                onOpenConfigurations = {},
                 splits = splits,
                 onSplitsChange = { splits = it; if (dragging) told += it },
                 initialSize = Size(width.toFloat(), height.toFloat()),

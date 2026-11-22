@@ -274,10 +274,6 @@ class ClaudeLogsTest {
 
         val config = SearchDomain.claudeLogsConfig()
         val state = SchedulerState.empty()
-        val counts = SearchDomain.kindCountsInResults(state, config, claudeLogs = logs)
-        val everyElement = SearchDomain.configurationGroups("", SearchDomain.Kind.entries.toSet(), counts).first()
-        assertTrue(SearchDomain.Setting.PromptProject in everyElement.shared.flatten(), "listed for every element")
-
         val filtered = config.filters.copy(claudeProject = "C:/code/Other")
         val rows = SearchDomain.results(state, config.kinds, "", filters = filtered, claudeLogs = logs)
         assertEquals(setOf("in b", "from b"), rows.map { it.name }.toSet())
@@ -291,13 +287,6 @@ class ClaudeLogsTest {
                 """"HistoryUnit","Notification","TaskTree","TaskRelation","Shortcut","AppSetting","Window","Creation"],"target":"Search#3"}""",
         )!!
         assertTrue(SearchDomain.CLAUDE_KINDS.all { it in own.kinds })
-        val search = SearchDomain.Config.decode(
-            """{"kinds":["ClaudePrompt","ClaudeAnswer","ClaudeReasoning"],"sortMethods":[{"key":"Date","descending":true}],"page":"ClaudeLogs"}""",
-        )!!
-        val counts = SearchDomain.kindCountsInResults(SchedulerState.empty(), search, claudeLogs = catalog)
-        val groups = SearchDomain.configurationGroups(own.query, own.kinds, counts, own.onlyResultKinds, own.frozenKinds)
-        assertTrue(SearchDomain.Setting.PromptProject in groups.first().shared.flatten(), "in \"Every element\"")
-
         // Unchecked by hand since, they stay unchecked.
         val unchecked = own.copy(kinds = own.kinds - SearchDomain.CLAUDE_KINDS.toSet())
         assertEquals(unchecked, SearchDomain.ConfigurationSearch.decode(unchecked.encode()))

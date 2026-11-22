@@ -81,7 +81,7 @@ class ChildrenActionWalkTest {
                     SearchWindow(
                         state = state, openers = openers, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
                         actionHandlers = handlers, onIntent = onIntent, onDismiss = {}, config = request.config,
-                        onConfigChange = request.onConfigChange, onOpenConfigurations = {}, splits = EMBEDDED_SEARCH_SPLITS,
+                        onConfigChange = request.onConfigChange, splits = EMBEDDED_SEARCH_SPLITS,
                         embedded = true, onDrop = request.onDrop, canDrop = request.canDrop, picker = request.picker,
                         barOutside = request.barOutside, modifier = modifier,
                     )
@@ -90,7 +90,7 @@ class ChildrenActionWalkTest {
                     SearchWindow(
                         state = state, openers = openers, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
                         actionHandlers = handlers, onIntent = onIntent, onDismiss = {}, config = config,
-                        onConfigChange = { config = it }, onOpenConfigurations = {}, initialSize = Size(1400f, 900f),
+                        onConfigChange = { config = it }, initialSize = Size(1400f, 900f),
                     )
                 }
             }

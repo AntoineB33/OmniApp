@@ -108,7 +108,6 @@ class CellEditPopupTest {
                                     onDismiss = {},
                                     config = config,
                                     onConfigChange = onConfigChange,
-                                    onOpenConfigurations = {},
                                     picker = picker,
                                     modifier = modifier,
                                 )

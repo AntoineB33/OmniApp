@@ -1371,12 +1371,13 @@ object SearchDomain {
     }
 
     /**
-     * The Configuration Search window's OWN configuration: what its bar finds among the configurations' names,
-     * which kinds' sections it shows, and whether it keeps only the kinds the Search window's results hold.
-     * Local-only view state, kept like [Config].
+     * What a configurations window keeps of its own: the Search window it is of ([target]), and the Added elements
+     * configurations window's types and switch. Local-only view state, kept like [Config]. (2026-11-22: the Search
+     * configurations window by group and type is gone — that window is the ▾ tree's, `ConfigurationTreeWindow` — and
+     * with it what only it read: its bar, its frozen kinds, its retracted groups, its pages. An older payload's are
+     * read past.)
      */
     data class ConfigurationSearch(
-        val query: String = "",
         val kinds: Set<Kind> = Kind.entries.toSet(),
         val onlyResultKinds: Boolean = false,
         /**
@@ -1384,45 +1385,13 @@ object SearchDomain {
          * (`Search`) or a copy's (`Search#2`): the one whose button opened it. Each Search window has its own.
          */
         val target: String = "Search",
-        /**
-         * User rule 2026-10-11, the Search configurations window's switch: **the list no longer follows the result
-         * list** — the kinds whose configurations are shown while [onlyResultKinds] is on, in the order they stood in
-         * when the switch was set; null = the list follows the results (a kind is hidden as its last row leaves, shown
-         * as its first arrives). What keeps a filter that empties its own type out of the results in view, so it can
-         * be set off again — the job the "Show the filters that are on" button had until then.
-         */
-        val frozenKinds: List<Kind>? = null,
-        /** The groups retracted to their heading, by [SettingGroup.id] — each has its expansion arrow (2026-10-11). */
-        val collapsedGroups: Set<String> = emptySet(),
-        /**
-         * User rule 2026-11-01: the feature pages whose kinds the window offers ([FeaturePage.id]). Only the logs page's
-         * checked, the type selector holds its three kinds and the other kinds' sections go. [kinds] keeps what it holds
-         * of a page left unchecked: checked again, it comes back as it was.
-         */
-        val pages: Set<String> = FEATURE_PAGES.mapTo(HashSet()) { it.id },
-        /**
-         * Anomaly 2026-11-22 (*"I go to down arrow, right-click, show header, then drag the header and the window dragged
-         * becomes something else"*): **the window a ▾ pop-up dragged by its head became** — the configurations tree of
-         * [target], drawn as the pop-up draws it (its own search over the tree, its columns), in a frame. False: the
-         * configurations window its Search window's button opens, its configurations by group and type.
-         */
-        val tree: Boolean = false,
     ) {
-        /** The kinds the window offers, and of them those it shows. */
-        val offeredKinds: List<Kind> get() = kindsOfPages(pages)
-        val shownKinds: Set<Kind> get() = offeredKinds.filterTo(HashSet()) { it in kinds }
-
         fun encode(): String =
             configJson.encodeToString(
                 StoredConfigurationSearch.serializer(),
                 StoredConfigurationSearch(
-                    query, Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds, target,
-                    frozenKinds = frozenKinds?.map { it.name },
-                    collapsedGroups = collapsedGroups.sorted(),
+                    Kind.entries.filter { it in kinds }.map { it.name }, onlyResultKinds, target,
                     logKindsKnown = true,
-                    // Every page is nothing to say: a page added later is then offered like the others.
-                    pages = pages.sorted().takeIf { it.size < FEATURE_PAGES.size },
-                    tree = tree,
                 ),
             )
 
@@ -1434,16 +1403,11 @@ object SearchDomain {
                         ?: return null
                 val kinds = stored.kinds.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } }.toSet()
                 return ConfigurationSearch(
-                    stored.query,
                     // Anomaly 2026-10-31 (*"I don't see the project selector"*): "every kind" written before the logs' kinds
                     // existed lacks them, which hid their section for good. A kind cannot have been unchecked before it was.
                     if (stored.logKindsKnown || kinds.isEmpty()) kinds else kinds + CLAUDE_KINDS,
                     stored.onlyResultKinds,
                     stored.target,
-                    stored.frozenKinds?.mapNotNull { name -> Kind.entries.firstOrNull { it.name == name } },
-                    stored.collapsedGroups.toSet(),
-                    stored.pages?.filterTo(HashSet()) { id -> FEATURE_PAGES.any { it.id == id } } ?: FEATURE_PAGES.mapTo(HashSet()) { it.id },
-                    stored.tree,
                 )
             }
         }
@@ -3090,181 +3054,6 @@ object SearchDomain {
     fun withChanged(previous: Config, next: Config, settings: Collection<Setting>, nowMillis: Long): Config =
         if (next == previous) next else next.copy(settingsChangedAt = previous.settingsChangedAt + settings.associateWith { nowMillis })
 
-    fun configurations(
-        query: String,
-        kinds: Set<Kind>,
-        onlyKinds: Set<Kind>? = null,
-        filtersOn: Filters? = null,
-    ): List<Pair<Kind?, List<Setting>>> =
-        (listOf<Kind?>(null) + Kind.entries.filter { it in kinds }).mapNotNull { section ->
-            val cut = section != null && onlyKinds != null && section !in onlyKinds
-            // The kind's settings first, its order last: what is kept, then how it is laid out.
-            val settings = Setting.entries
-                .filter { it.section == section && matchRank(it.label, query) != null }
-                .filter { !cut || filtersOn?.isOn(it) == true }
-                .sortedBy { it.sorts }
-            if (settings.isEmpty()) null else section to settings
-        }
-
-    /**
-     * One group of the Search configurations window (user rule 2026-10-11): the configurations that apply to the rows
-     * of [kinds] — empty for every row of the result list — and how many rows that is ([reach]). [settings] are one
-     * kind's own; [shared] are the configurations SEVERAL kinds have under one name ([SHARED_SETTINGS]), each listed
-     * once and written to all of its members at a time.
-     */
-    data class SettingGroup(
-        val kinds: List<Kind>,
-        val reach: Int,
-        val settings: List<Setting>,
-        val shared: List<List<Setting>> = emptyList(),
-    ) {
-        /** The one kind the group is about, or null (every element, or several kinds). */
-        val kind: Kind? get() = kinds.singleOrNull()
-
-        val title: String
-            get() =
-                (if (kinds.isEmpty()) "Every element" else kinds.joinToString(" + ") { it.label.replaceFirstChar { c -> c.uppercase() } }) +
-                    "  ·  " + reach
-
-        /** What the group's expansion arrow is remembered under ([ConfigurationSearch.collapsedGroups]). */
-        val id: String get() = if (kinds.isEmpty()) "all" else "kinds/" + kinds.joinToString("+") { it.name }
-    }
-
-    /**
-     * The configurations several kinds have under ONE name and with one meaning: a task's and a restrictive period's
-     * place on the calendar. Where every row of the result list is of those kinds, the configuration applies to every
-     * element and is listed with them (anomaly 2026-10-11: *"I don't see 'Every box from' in the 'Every element'
-     * group"* — it was listed once per kind and never there). The others that share a label ("State", "Category",
-     * "Repeats") are different questions per kind, with different answers, and stay each kind's own.
-     */
-    val SHARED_SETTINGS: List<List<Setting>> =
-        listOf(
-            listOf(Setting.TaskOnCalendar, Setting.PeriodOnCalendar),
-            listOf(Setting.TaskBoxesFrom, Setting.PeriodBoxesFrom),
-            listOf(Setting.TaskBoxesUntil, Setting.PeriodBoxesUntil),
-            // The Claude Code logs' filters are one filter each, about the three kinds alike.
-            listOf(Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject),
-            listOf(Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom),
-            listOf(Setting.PromptUntil, Setting.AnswerUntil, Setting.ReasoningUntil),
-        )
-
-    /**
-     * User rule 2026-10-11: **the Search configurations window's groups, by how many elements of the result list
-     * their configurations apply to** — *"with the same logic as in the action section of the Search window, the
-     * first group gather all the configurations that can be applied to every element in a set of n element, where n is
-     * as big as possible, followed by other groups with n decreasing"*.
-     *  - **Every element**: the configurations about the search as a whole, and those every kind with a row shares
-     *    ([SHARED_SETTINGS]) — one field for all of them;
-     *  - **several kinds** that share configurations without holding every row ("Task + Restrictive period"): those;
-     *  - **each kind**: its own, the shared ones among them (to set one kind's alone).
-     * The widest first ([counts], [kindCountsInResults]; groups of as many rows keep the drop-down's order).
-     *
-     * [onlyApplicable] is the window's button — *"shows only the search configurations that can be applied to at least
-     * one element in the result list"*: a kind with no row has no group. [frozen] is its switch — *"to stop hiding or
-     * showing new search configurations as the result list changes"*: while given, the kinds shown, and their order,
-     * are those and no longer the results' ([ConfigurationSearch.frozenKinds]); the reach written is still the live
-     * one. Within [kinds] (the window's own types) and the names [query] finds, as [configurations].
-     */
-    fun configurationGroups(
-        query: String,
-        kinds: Set<Kind>,
-        counts: Map<Kind, Int>,
-        onlyApplicable: Boolean = false,
-        frozen: List<Kind>? = null,
-    ): List<SettingGroup> {
-        val listed = applicableKinds(kinds, counts, onlyApplicable, frozen)
-        val sections = configurations(query, listed.toSet()).toMap()
-        val total = counts.values.sum()
-        fun rows(of: List<Kind>) = of.sumOf { counts[it] ?: 0 }
-        // A family is shared where at least two of its kinds are listed (and its name is among what [query] finds).
-        val families =
-            SHARED_SETTINGS.mapNotNull { family ->
-                family.filter { it.section in listed && sections[it.section]?.contains(it) == true }.takeIf { it.size >= 2 }
-            }
-        val (whole, partial) = families.partition { family -> total > 0 && rows(family.mapNotNull { it.section }) == total }
-        val out = ArrayList<SettingGroup>()
-        val general = sections[null].orEmpty()
-        if (general.isNotEmpty() || whole.isNotEmpty()) out += SettingGroup(emptyList(), total, general, whole)
-        val several =
-            // Named in the drop-down's order whatever their rows, so the group is one group as the results change.
-            partial.groupBy { family -> Kind.entries.filter { kind -> kind in listed && family.any { it.section == kind } } }
-                .map { (of, shared) -> SettingGroup(of, rows(of), emptyList(), shared) }
-        val single = listed.mapNotNull { kind -> sections[kind]?.let { SettingGroup(listOf(kind), counts[kind] ?: 0, it) } }
-        // Frozen, the order is the one the switch kept; else the widest first (stable: several kinds before their own).
-        out += if (onlyApplicable && frozen != null) several + single else (several + single).sortedByDescending { it.reach }
-        return out
-    }
-
-    /** [own] once the arrow of the group [id] is pressed; the ids of groups no longer [listed] are dropped on the way. */
-    fun withSettingGroupToggled(own: ConfigurationSearch, id: String, listed: Set<String>): ConfigurationSearch {
-        val kept = own.collapsedGroups.filterTo(HashSet()) { it in listed }
-        return own.copy(collapsedGroups = if (id in kept) kept - id else kept + id)
-    }
-
-    /**
-     * The kinds whose configurations the window shows, in its order ([configurationGroups]) — also what the switch
-     * keeps when it is set ([ConfigurationSearch.frozenKinds]).
-     */
-    fun applicableKinds(kinds: Set<Kind>, counts: Map<Kind, Int>, onlyApplicable: Boolean, frozen: List<Kind>? = null): List<Kind> =
-        when {
-            onlyApplicable && frozen != null -> frozen.filter { it in kinds }
-            else ->
-                Kind.entries.filter { it in kinds && (!onlyApplicable || (counts[it] ?: 0) > 0) }
-                    .sortedByDescending { counts[it] ?: 0 }
-        }
-
-    /** How many rows of each kind the Search window's results hold for [config] — a kind with none is absent. */
-    /**
-     * **Read with everything the Search window's own list is read with** ([results]' [nowMillis], [layerKindsAt],
-     * [schedulerRuns], the configuration's placement) — anomaly 2026-10-11: counted without the calendar's layer
-     * bands, a period that is on the timeline only as one ("no computer unlocked" off the lock history, the usual
-     * period under a right-click) had no row here though the window listed it, so its group was hidden and nothing
-     * was "every element"'s. A caller that leaves one out counts another list than the one on screen.
-     */
-    fun kindCountsInResults(
-        state: SchedulerState,
-        config: Config,
-        windows: List<WindowEntry> = emptyList(),
-        nowMillis: Long = 0L,
-        layerKindsAt: (Long) -> Set<String> = { emptySet() },
-        schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
-        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
-    ): Map<Kind, Int> =
-        // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
-        results(
-            state, config.searchedKinds, config.query, { emptyMap() }, config.filters, windows = windows, nowMillis = nowMillis,
-            layerKindsAt = layerKindsAt, schedulerRuns = schedulerRuns, placement = config.placement,
-            // Read only where the end is: the calendar filter's "without removing anything".
-            placementOwnLength = if (config.filters.calendarAddKeeping) {
-                placementDefaultLength(state, resolve(state, config.added, { emptyMap() }, windows, schedulerRuns, claudeLogs))
-            } else {
-                null
-            },
-            claudeLogs = claudeLogs,
-        ).groupingBy { checkedKindOf(it, config.searchedKinds) }.eachCount()
-
-    /**
-     * The checked kind [row] is listed for: its own — but a creation row listed for the kind it makes, the creation kind
-     * unchecked ([withCreatedKindRows]), is one of that kind's rows (user rule 2026-10-30: it has both types).
-     */
-    private fun checkedKindOf(row: Result, kinds: Set<Kind>): Kind =
-        if (row.kind == Kind.Creation && Kind.Creation !in kinds && row is ItemResult) {
-            CREATABLE.firstOrNull { it.name == row.id } ?: row.kind
-        } else {
-            row.kind
-        }
-
-    /** The kinds that have at least one row in the Search window's results for [config]. */
-    fun kindsInResults(
-        state: SchedulerState,
-        config: Config,
-        windows: List<WindowEntry> = emptyList(),
-        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
-    ): Set<Kind> =
-        // Paths are not needed to know that a row exists, so the walk that lists them is skipped.
-        results(state, config.searchedKinds, config.query, { emptyMap() }, config.filters, windows = windows, claudeLogs = claudeLogs)
-            .mapTo(HashSet()) { checkedKindOf(it, config.searchedKinds) }
-
     /** [Filters.parentDistance] for the highest distance there is: the list's first row, "highest parent distance (n)". */
     const val PARENT_DISTANCE_HIGHEST: Int = 0
 
@@ -3454,24 +3243,17 @@ object SearchDomain {
     @Serializable
     private data class StoredSortMethod(val kind: String? = null, val key: String = "", val descending: Boolean = false)
 
+    /**
+     * Stored [ConfigurationSearch]. What only the configurations window by group and type wrote (`query`, `frozenKinds`,
+     * `collapsedGroups`, `pages`; `tree`, 2026-11-22 alone; `showFiltersOn`, 2026-09-25 → 2026-10-11) is read past.
+     */
     @Serializable
     private data class StoredConfigurationSearch(
-        val query: String = "",
         val kinds: List<String> = Kind.entries.map { it.name },
         val onlyResultKinds: Boolean = false,
         val target: String = "Search",
-        /** 2026-09-25 → 2026-10-11, the "Show the filters that are on" button: still read past, never used. */
-        val showFiltersOn: Boolean = false,
-        /** New 2026-10-11: absent from what an older build stored = the list follows the results. */
-        val frozenKinds: List<String>? = null,
-        /** New 2026-10-11: absent = every group open. */
-        val collapsedGroups: List<String> = emptyList(),
         /** New 2026-10-31: absent = written before the logs' kinds could be checked here, so [kinds] says nothing of them. */
         val logKindsKnown: Boolean = false,
-        /** New 2026-11-01: absent = every feature page. */
-        val pages: List<String>? = null,
-        /** New 2026-11-22: absent = the configurations window, not a ▾ tree's ([ConfigurationSearch.tree]). */
-        val tree: Boolean = false,
     )
 
     private val configJson = Json { ignoreUnknownKeys = true }
@@ -6903,7 +6685,7 @@ object SearchDomain {
         filters.copy(taskBoxesFrom = atMillis, taskBoxesUntil = atMillis, periodBoxesFrom = atMillis, periodBoxesUntil = atMillis)
 
     /** The four "Every box from / until" fields, as what a pick on the calendar writes ([withBoxBound]). */
-    enum class BoxBound { TaskFrom, TaskUntil, PeriodFrom, PeriodUntil, BothFrom, BothUntil }
+    enum class BoxBound { TaskFrom, TaskUntil, PeriodFrom, PeriodUntil }
 
     /** [filters] with the bound [which] at [atMillis] (null: no bound on that side). */
     fun withBoxBound(filters: Filters, which: BoxBound, atMillis: Long?): Filters =
@@ -6912,9 +6694,6 @@ object SearchDomain {
             BoxBound.TaskUntil -> filters.copy(taskBoxesUntil = atMillis)
             BoxBound.PeriodFrom -> filters.copy(periodBoxesFrom = atMillis)
             BoxBound.PeriodUntil -> filters.copy(periodBoxesUntil = atMillis)
-            // The shared field of the group every element (or both kinds) is in: a task's and a period's at once.
-            BoxBound.BothFrom -> filters.copy(taskBoxesFrom = atMillis, periodBoxesFrom = atMillis)
-            BoxBound.BothUntil -> filters.copy(taskBoxesUntil = atMillis, periodBoxesUntil = atMillis)
         }
 
     /**

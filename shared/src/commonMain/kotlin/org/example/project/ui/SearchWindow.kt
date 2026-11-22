@@ -550,8 +550,6 @@ fun SearchWindow(
      */
     deployKinds: Boolean = false,
     onKindsDeployed: () -> Unit = {},
-    /** Opens the Configuration Search window, which lists every configuration of this window. */
-    onOpenConfigurations: () -> Unit,
     /** Opens the Added elements configurations window, which lists every action on the added elements. */
     onOpenAddedConfigurations: () -> Unit = {},
     /**
@@ -2318,7 +2316,6 @@ fun SearchWindow(
                             config = addedConfig,
                             onConfigChange = { addedConfig = it },
                             openedConfig = ADDED_LIST_SEARCH,
-                            onOpenConfigurations = {},
                             splits = addedSplits,
                             onSplitsChange = { next ->
                                 addedSplits = next
@@ -2672,7 +2669,6 @@ internal fun OptionSearchMenu(
             onDismiss = close,
             config = config,
             onConfigChange = setConfig,
-            onOpenConfigurations = {},
             splits = splits,
             onSplitsChange = { splits = it },
             embedded = true,

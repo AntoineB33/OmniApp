@@ -152,7 +152,6 @@ class ActionContextsTest {
                         onDismiss = {},
                         config = config,
                         onConfigChange = { config = it },
-                        onOpenConfigurations = {},
                         splits = splits,
                         onSplitsChange = { splits = it },
                         initialSize = Size(width.toFloat(), height.toFloat()),

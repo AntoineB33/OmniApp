@@ -969,13 +969,14 @@ suggestions before it was ever entered.
   and they never sync. A window opened from the lateral menu starts from the default configuration, or from
   the one a ☆ button saved (`CustomMenuButton.config`) — which is how a search is kept. The selection is Compose-only.
 - **ONE configuration, held by `App`, edited by two windows.** The Search window shows its text and types;
-  the **Configuration Search** window (`ui/ConfigurationSearchWindow.kt`, opened from the Search window) lists
-  every configuration of it — those two and the per-kind **filters** (`SearchDomain.Filters`) — in a General
-  section and one section per kind (`SearchDomain.configurations`). Neither window keeps a copy, so a filter set
-  in one narrows the other's list at once. A filter applies to its own kind's rows only, and every one has an
+  its **▾ tree** sets every configuration of it — those two and the per-kind **filters** (`SearchDomain.Filters`) —
+  as a pop-up, or as the **Search configurations window** its pop-up becomes when dragged by its head
+  (`ConfigurationTreeWindow`, `popups.md`; one leaf's control is `ui/SettingEditor.kt`'s `SettingEditor`). Neither
+  keeps a copy, so a filter set in one narrows the other's list at once. (The configurations window by group and
+  type, `ConfigurationSearchWindow`, is gone since 2026-11-22: user, *"It is obsolete."*) A filter applies to its own kind's rows only, and every one has an
   "any" that filters nothing; the Search window's button counts the ones that are on.
 - **The sorting is ONE ordered list of methods** (`SearchDomain.Config.sorts`, `SortMethod` = kind-or-all +
-  key + direction), dominant first, shown at the top of the Configuration Search window's result section (its second section); every section's Sort by
+  key + direction), dominant first; every Sort by
   is only a check-box view onto it (checking appends, `withSortMethod`; dragging is `movedSortMethod`). It is
   applied as **stable sorts from the least dominant up** over the default (relevance) order, which therefore
   settles every tie. A method of one kind **permutes that kind's rows within the places they hold** — never a
@@ -983,8 +984,7 @@ suggestions before it was ever entered.
   with no value for a key goes last in either direction. The keys that read more than one row (priorities,
   counts) are computed once per `results` and **only when a method asks for them** — never under the default.
 - **A creation row has two types** (user rule 2026-10-30): the creation kind and the kind it makes. It is listed when
-  either is checked, once (`withCreatedKindRows`), but not by a kind one of whose filters is on; listed by its made
-  kind, it counts as that kind in the configuration groups (`checkedKindOf`).
+  either is checked, once (`withCreatedKindRows`), but not by a kind one of whose filters is on.
 - **A configuration's default sorting is read off the configuration, never off its sorting** (`defaultSortsOf`): one
   makeable kind and nothing else — no text, no filter on — is creation row first (`CREATION_FIRST_SORTS`); every other
   configuration has none, and the "Default" button — at the head of the sorting list, and on the General Sort by — is grey. `Config.sortFollowsDefault` is true from
@@ -1051,20 +1051,15 @@ suggestions before it was ever entered.
   its id (`Search#3`). "Changed element = a window" is something else: the changes TO the window (its
   configuration, its layout), not what was done in it. Every window's head menu, and a Search window's background
   menu, has **Copy id**.
-- **EACH Search window has its own Configuration Search window** (anomaly 2026-10-06; the Added elements
-  configurations window alike): the button brings back the one whose `ConfigurationSearch.target` is that Search
+- **EACH Search window has its own Search configurations window** (anomaly 2026-10-06; the Added elements
+  configurations window alike): its ▾ pop-up dragged by its head (`PopupDetacher.detach`) brings back the one whose `ConfigurationSearch.target` is that Search
   window, else opens one — the original where it is not open, else a copy (`App.openConfigurationsOf`, through
   `openNewWindow`). Never re-point an open one at another Search window: that took the first window's own away. A
   window whose Search copy was closed falls back on the original (`configTargetOf`).
-- **Its feature-page drop-down** (user rule 2026-11-01; `ConfigurationSearch.pages`, `SearchDomain.FEATURE_PAGES`,
-  `FeaturePagesTest`) says which pages' kinds its type selector offers and whose sections show: the logs page alone, its
-  three kinds. A page's kinds are `FeaturePage.kinds`; the Task Scheduler's are all but the logs', so a setting is found
-  there too. The checks of a page left unchecked are kept. The "Types" row below stays the Search window's own, every kind.
-- **The Configuration Search window has its own configuration** (`SearchDomain.ConfigurationSearch`: a bar
-  over the configurations' NAMES, a kind selector over the sections, and "only the types in the Search
-  results", `SearchDomain.kindsInResults`, and "show the filters that are on", which keeps a filter that is on listed
-  where that cut would drop its type), local-only like the rest. The General section is never cut by kind. "On" is
-  `Filters.isOn`, the one statement the Search window's filter count reads too.
+- **A configurations window keeps of its own only what is still read** (`SearchDomain.ConfigurationSearch`: its
+  `target`, and the Added elements configurations window's kinds and switch), local-only. What only the window by group
+  and type stored — its bar, its feature pages, its frozen kinds, its retracted groups — is read past in an older
+  payload (`FeaturePagesTest`). "On" is `Filters.isOn`, the one statement the Search window's filter count reads too.
 
 #### A row is a tree cell: selection, menu, opening
 
@@ -1273,22 +1268,9 @@ suggestions before it was ever entered.
   sized as if the list stopped at the highest, shrinking as the user scrolls past it (`ListScrollbar`'s `openEnd`,
   `openEndRows`). Like an option, an integer is a row the field gives (`isPickedRow`); the account holds none.
 
-- **THE SEARCH CONFIGURATIONS ARE GROUPED BY HOW MANY ROWS OF THE RESULTS THEY APPLY TO** (user rule 2026-10-11:
-  *"with the same logic as in the action section of the Search window, the first group gather all the configurations
-  that can be applied to every element in a set of n element, where n is as big as possible, followed by other groups
-  with n decreasing"*; `SearchDomain.configurationGroups`, `SettingGroup`, `kindCountsInResults`,
-  `SearchAddedElementsTest`). The configurations about the whole search apply to every row ("Every element · n"),
-  then one group per kind, the kind with the most rows first; each heading says its n. A configuration is a filter or
-  a sort of a KIND, so — unlike the actions — there is no group narrower than a kind.
-  - **A configuration several kinds have under one name is listed where it applies to all of them**
-    (`SearchDomain.SHARED_SETTINGS`: a task's and a restrictive period's "On the calendar", "Every box from",
-    "Every box until"; anomaly 2026-10-11: *"I don't see 'Every box from' in the 'Every element' group"*). Where
-    every row of the results is of those kinds it is in "Every element"; where other kinds have rows too, in a group
-    of its kinds ("Task + Restrictive period · n"), wider than either. There it is ONE control
-    (`SharedSettingEditor`): it shows the value the kinds have in common, nothing where they differ, and what is set
-    — typed, or picked on the calendar (`BoxBound.BothFrom` / `BothUntil`) — is set for all of them. Each kind's own
-    group keeps its own, to set one kind's alone. The other labels kinds share ("State", "Category", "Repeats") are
-    different questions per kind and are not merged.
+- **A configuration is a filter or a sort of a KIND, or about the whole search** (`Setting.section`). (The
+  configurations window that grouped them by how many rows of the results they apply to — `configurationGroups`,
+  its shared fields, its counts, its switch — is gone since 2026-11-22: the ▾ tree is where they are set.)
   - **A period has filters of its own** (user rule 2026-10-11: *"filter to only periods that have … resilience to …,
     filter to only periods that have the drawing …"*; `Setting.PeriodDrawingSetting`, `PeriodResilienceSetting`,
     `SearchAddedElementsTest`): **"Drawing"** keeps the periods drawn one way (`PeriodKindConfig.drawing`, the
@@ -1296,19 +1278,6 @@ suggestions before it was ever entered.
     resilience to (`ResilienceLevel`, `Task.resilienceFor`) — it says nothing until both the level and the task are
     given, nor about a task that is gone. Local view state like every filter (`periodDrawing`, `periodResilience`,
     `periodResilienceTask` in the stored configuration, absent = not asked).
-  - **The rows are counted off the list the Search window SHOWS** (`kindCountsInResults`, given the clock, the
-    calendar's layer bands and the engine's runs exactly as `SearchWindow` gives them to `results`; anomaly
-    2026-10-11: counted without the layer bands, a period on the timeline only as a band — the usual period under a
-    right-click — had no row, so with "Only what applies" its group was hidden and no shared configuration was
-    "every element"'s). A new input of `results` the Search window passes must be passed here too.
-  - **Each group has its expansion arrow**, as in the actions section (`SettingGroup.id`,
-    `ConfigurationSearch.collapsedGroups`, `withSettingGroupToggled`; local view state, absent = all open).
-  - **One button and its switch replace "Only the types in the Search results" and "Show the filters that are on"**:
-    **"Only what applies to the results"** keeps the groups with at least one row (`ConfigurationSearch.
-    onlyResultKinds`), and **"Keep this list as the results change"** stops the list from following them
-    (`frozenKinds`: the kinds shown and their order as the switch was set; the reach in the headings stays live).
-    That is what keeps a filter that empties its own kind out of the results in view, to be set off again — the old
-    second button's job. The switch says nothing while the button is off, and setting the button resets it.
   - The Added elements configurations window keeps its own "Only the types in the added elements" (the same stored
     field); `showFiltersOn` is still read past in a stored configuration and no longer used.
 

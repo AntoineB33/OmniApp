@@ -55,7 +55,6 @@ class SearchListSidewaysTest {
                     onDismiss = {},
                     config = SearchDomain.Config(kinds = setOf(Kind.Chrono)),
                     onConfigChange = {},
-                    onOpenConfigurations = {},
                     initialSize = Size(width.toFloat(), 620f),
                 )
             }

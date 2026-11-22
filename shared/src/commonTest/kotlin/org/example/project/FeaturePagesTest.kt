@@ -171,64 +171,27 @@ class FeaturePagesTest {
     }
 
     @Test
-    fun only_the_logs_page_offers_only_its_three_kinds() {
-        val own = SearchDomain.ConfigurationSearch(pages = setOf(SearchDomain.CLAUDE_LOGS_PAGE))
-        assertEquals(listOf(Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning), own.offeredKinds)
-        // …and the sections of the others go with them.
-        val listed = SearchDomain.configurationGroups("", own.shownKinds, emptyMap()).flatMap { it.kinds }.toSet()
-        assertTrue(listed.isNotEmpty() && listed.all { it in SearchDomain.CLAUDE_KINDS }, "listed: $listed")
-    }
-
-    @Test
     fun the_type_selector_names_what_a_narrowed_list_holds() {
-        val logs = SearchDomain.ConfigurationSearch(pages = setOf(SearchDomain.CLAUDE_LOGS_PAGE))
+        val logs = SearchDomain.kindsOfPages(setOf(SearchDomain.CLAUDE_LOGS_PAGE))
         // Anomaly 2026-11-01: picking the page left its face on "every kind", as it read before.
-        assertEquals("prompt, answer, reasoning chain", org.example.project.ui.kindsLabel(logs.kinds, logs.offeredKinds))
-        assertEquals("answer", org.example.project.ui.kindsLabel(setOf(Kind.ClaudeAnswer), logs.offeredKinds))
-        assertEquals("no kind", org.example.project.ui.kindsLabel(setOf(Kind.Task), logs.offeredKinds))
-        val all = SearchDomain.ConfigurationSearch()
-        assertEquals("every kind", org.example.project.ui.kindsLabel(all.kinds, all.offeredKinds))
-    }
-
-    @Test
-    fun a_page_unchecked_keeps_what_its_kinds_held() {
-        val own = SearchDomain.ConfigurationSearch(kinds = setOf(Kind.Task, Kind.ClaudePrompt), pages = setOf(SearchDomain.CLAUDE_LOGS_PAGE))
-        assertEquals(setOf(Kind.ClaudePrompt), own.shownKinds)
-        assertEquals(setOf(Kind.Task, Kind.ClaudePrompt), own.copy(pages = everyPage).shownKinds)
-    }
-
-    @Test
-    fun no_page_checked_offers_nothing_and_every_page_every_kind() {
-        assertEquals(emptyList(), SearchDomain.ConfigurationSearch(pages = emptySet()).offeredKinds)
-        assertEquals(Kind.entries, SearchDomain.ConfigurationSearch().offeredKinds)
-    }
-
-    @Test
-    fun the_pages_are_kept_and_a_configuration_stored_before_them_has_every_page() {
-        val own = SearchDomain.ConfigurationSearch(pages = setOf(SearchDomain.SETTINGS_PAGE))
-        assertEquals(own, SearchDomain.ConfigurationSearch.decode(own.encode()))
-        val none = SearchDomain.ConfigurationSearch(pages = emptySet())
-        assertEquals(none, SearchDomain.ConfigurationSearch.decode(none.encode()))
-        // The older shape, and every page checked writes the same: a page added later is offered like the others.
-        val older = SearchDomain.ConfigurationSearch().encode()
-        assertFalse("pages" in older)
-        assertEquals(everyPage, SearchDomain.ConfigurationSearch.decode(older)!!.pages)
+        assertEquals("prompt, answer, reasoning chain", org.example.project.ui.kindsLabel(Kind.entries.toSet(), logs))
+        assertEquals("answer", org.example.project.ui.kindsLabel(setOf(Kind.ClaudeAnswer), logs))
+        assertEquals("no kind", org.example.project.ui.kindsLabel(setOf(Kind.Task), logs))
+        assertEquals("every kind", org.example.project.ui.kindsLabel(Kind.entries.toSet(), SearchDomain.kindsOfPages(everyPage)))
     }
 
     /**
-     * Anomaly 2026-11-22: the window a ▾ pop-up became is the tree's ([SearchDomain.ConfigurationSearch.tree]), kept as
-     * such; one stored before it existed — written by the previous shape, with no such field — is the configurations window.
+     * 2026-11-22: the configurations window by group and type is gone (the Search configurations window is the ▾ tree's),
+     * and what only it stored with it. A configurations window an older build stored — its bar, frozen kinds, retracted
+     * groups, pages, and the `tree` mark of the day between — still loads, keeping what is still read.
      */
     @Test
-    fun a_tree_window_is_kept_and_one_stored_before_it_is_the_configurations_window() {
-        val tree = SearchDomain.ConfigurationSearch(target = "Search#2", tree = true)
-        assertEquals(tree, SearchDomain.ConfigurationSearch.decode(tree.encode()))
-        val previous = """{"query":"due","kinds":["Task"],"onlyResultKinds":false,"target":"Search#2","logKindsKnown":true}"""
+    fun a_configurations_window_stored_by_an_older_build_still_loads() {
+        val previous = """{"query":"due","kinds":["Task","Alarm"],"onlyResultKinds":true,"target":"Search#2",""" +
+            """"frozenKinds":["Task"],"collapsedGroups":["all"],"logKindsKnown":true,"pages":["Settings"],"tree":true}"""
         val decoded = SearchDomain.ConfigurationSearch.decode(previous)!!
-        assertFalse(decoded.tree)
-        assertEquals("due", decoded.query)
-        assertEquals("Search#2", decoded.target)
-        assertFalse("tree" in SearchDomain.ConfigurationSearch().encode())
+        assertEquals(SearchDomain.ConfigurationSearch(kinds = setOf(Kind.Task, Kind.Alarm), onlyResultKinds = true, target = "Search#2"), decoded)
+        assertEquals(decoded, SearchDomain.ConfigurationSearch.decode(decoded.encode()))
     }
 
     @Test

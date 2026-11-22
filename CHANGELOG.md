@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The configurations window by group and type is deleted — 2026-11-22
+
+- User: *"It is obsolete."* `ConfigurationSearchWindow` (its groups by how many rows they apply to, its shared fields,
+  its bar, pages, "Only what applies" and its switch) is gone; every Search configurations window is the ▾ tree's
+  (`ConfigurationTreeWindow`), and the `ConfigurationSearch.tree` mark of the entry below with it. Still reachable
+  until now only by a window-type row, a window chord, a window saved open or a history walk: the Search window's
+  `onOpenConfigurations` hook was never called, and is removed.
+- Removed with it, used by nothing else: `SharedSettingEditor`, `SortMethodList`, `SectionTitle`,
+  `SearchDomain.configurations`, `configurationGroups`, `SettingGroup`, `SHARED_SETTINGS`, `withSettingGroupToggled`,
+  `applicableKinds`, `kindCountsInResults`, `kindsInResults`, `BoxBound.BothFrom` / `BothUntil`, and
+  `ConfigurationSearch.query` / `frozenKinds` / `collapsedGroups` / `pages` (read past in an older payload,
+  `FeaturePagesTest`). The file keeping the per-setting editors the tree draws is now `ui/SettingEditor.kt`.
+- Local view state only: no SQLite or Supabase change. Client rebuild only.
+
 ### A ▾ pop-up dragged by its head becomes a window of the same tree — 2026-11-22
 
 - Anomaly: *"I go to down arrow, right-click, show header, then drag the header and the window dragged becomes something
@@ -20,8 +34,8 @@ Check here before assuming the code matches the docs.
 - Now it opens a configurations window marked `ConfigurationSearch.tree` (stored field, default false: a window stored
   before it is the configurations window, `FeaturePagesTest`), drawn by `ConfigurationTreeWindow` as the pop-up:
   the same Search window over the configurations tree, its search the ▾'s own, in a frame of the window bar. A
-  category's pop-up dragged does the same. The Search window's configurations button still opens the window by group
-  and type; `openConfigurationsOf` never brings one back for the other. `ConfigurationTreeWindowTest`.
+  category's pop-up dragged does the same. `ConfigurationTreeWindowTest`. (Said here at first: "the Search window's
+  configurations button still opens the window by group and type" — wrong: no button called it. See the next entry.)
 - Still so: the window gets a colour of its own as it opens, as every window does; the pop-up's head had none.
 - Local view state only (the window's placement row): no SQLite or Supabase change. Client rebuild only.
 

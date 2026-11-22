@@ -75,7 +75,6 @@ class RootWindowSubtreeTest {
                     onDismiss = {},
                     config = config,
                     onConfigChange = { config = it },
-                    onOpenConfigurations = {},
                     splits = SearchSplits(expandedResults = setOf(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK.value)),
                     initialSize = Size(1200f, 620f),
                 )
@@ -152,7 +151,6 @@ class RootWindowSubtreeTest {
                     onDismiss = {},
                     config = config,
                     onConfigChange = { config = it },
-                    onOpenConfigurations = {},
                     splits = SearchSplits(expandedResults = setOf(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK.value)),
                     initialSize = Size(1200f, 620f),
                 )

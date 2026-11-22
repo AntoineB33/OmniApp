@@ -65,7 +65,6 @@ class SearchSelectAllTest {
                         config = it
                         added += it.added
                     },
-                    onOpenConfigurations = {},
                     initialSize = Size(1200f, 620f),
                 )
             }

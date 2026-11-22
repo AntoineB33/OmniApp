@@ -73,7 +73,7 @@ class TreePopupSearchWindowTest {
                             SearchWindow(
                                 state = start, openers = openers, onStartTaskNow = {}, onGoToTaskTree = { _, _ -> }, onDeepCopyCell = {},
                                 actionHandlers = handlers, onIntent = {}, onDismiss = {}, config = config,
-                                onConfigChange = { config = it }, onOpenConfigurations = {}, initialSize = Size(1600f, 1000f),
+                                onConfigChange = { config = it }, initialSize = Size(1600f, 1000f),
                             )
                         }
                     }

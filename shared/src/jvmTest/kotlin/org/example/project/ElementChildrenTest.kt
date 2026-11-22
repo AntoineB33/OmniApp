@@ -65,7 +65,6 @@ class ElementChildrenTest {
                 onDismiss = {},
                 config = config,
                 onConfigChange = { config = it },
-                onOpenConfigurations = {},
                 splits = splits,
                 onSplitsChange = onSplits,
                 initialSize = Size(1200f, 620f),

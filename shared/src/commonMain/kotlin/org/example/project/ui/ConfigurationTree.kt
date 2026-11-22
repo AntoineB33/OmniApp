@@ -323,7 +323,8 @@ internal fun ConfigurationTreeArrow(
  * a ▾ pop-up became, drawn as the pop-up is** — the same Search window over the configurations tree of the Search window
  * it is of ([LocalArrowOwner], given by `App`'s `InsideSearchWindow`), its own search the ▾'s ([rememberArrowSearch]:
  * what was typed in the pop-up is there), its columns, its categories' pop-ups — in a frame of the window bar instead of
- * a menu window. It had opened the configurations window ([ConfigurationSearchWindow]), by group and type: another thing.
+ * a menu window. It had opened the configurations window by group and type (`ConfigurationSearchWindow`, deleted
+ * since): another thing. Every Search configurations window is this one.
  */
 @Composable
 internal fun ConfigurationTreeWindow(
@@ -853,7 +854,7 @@ private fun TreeSearchWindow(
                 actionHandlers = OPTION_HANDLERS, onIntent = {}, windows = windows, nowMillis = nowMillis,
                 onPickOnCalendar = onPickOnCalendar, claudeLogs = claudeLogs, onDismiss = onClose,
                 config = own, onConfigChange = onOwnChange, openedConfig = SearchDomain.CONFIGURATION_SEARCH,
-                onOpenConfigurations = {}, splits = parts, onSplitsChange = onPartsChange, embedded = true,
+                splits = parts, onSplitsChange = onPartsChange, embedded = true,
                 treeList = treeList, modifier = modifier,
             )
         }
