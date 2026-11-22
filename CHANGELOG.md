@@ -41,8 +41,10 @@ Check here before assuming the code matches the docs.
 - Seen live: every reconcile re-sent all ~120 of the device's activity-session rows, because the cache compared the whole
   list and the session in progress grows every minute. Now per row (`SchedulerSyncEngine.pushedSessions`): a launch's
   first reconcile sends every row once, then only a new or grown one (`ActiveSessionSyncTest`).
-- Not done: the PULL still reads every peer row since the horizon at each reconcile. An incremental pull needs a server
-  revision on `device_active_session` (`updated_at` is each device's own clock, so a cursor on it could skip rows).
+- And the PULL: every reconcile read the peers' whole week. **Supabase migration 20261122000000** gives
+  `device_active_session` the server revision every synced row takes (bumped on each write); a launch's first reconcile
+  reads the horizon, the next ones `revision > newest read` (`fetchActiveSessionRows`). Not `updated_at`: each device's
+  own clock. `ServerQuotaTest` egress 481 → 473 MB a month. `REQUIRED_SERVER_MIGRATION` moved to it.
 
 ### A set of tasks serves its tasks where they are themselves refused — 2026-11-22
 

@@ -71,6 +71,8 @@ class ActiveSessionSyncTest {
     ) {
         val pushedDeviceIds = mutableListOf<String>()
         var sessionRequests = 0
+        /** The filters of each session read, in order. */
+        val sessionReads = mutableListOf<Map<String, String>>()
     }
 
     private fun harness(server: FakeServer): RemoteSnapshotClient {
@@ -118,6 +120,7 @@ class ActiveSessionSyncTest {
 
                     path.endsWith("/device_active_session") && request.method == HttpMethod.Get -> {
                         server.sessionRequests++
+                        server.sessionReads += request.url.parameters.names().associateWith { request.url.parameters[it].orEmpty() }
                         respond(server.sessionRowsJson, HttpStatusCode.OK, jsonHeader)
                     }
 
@@ -182,6 +185,33 @@ class ActiveSessionSyncTest {
         store.saveActiveSessions(listOf(ActiveSessionRecord("self", 49_000L, 49_900L, 49_900L, "desktop"), ActiveSessionRecord("self", 60_000L, 60_100L, 60_100L, "desktop")))
         sync.reconcile()
         assertEquals(2, server.pushedDeviceIds.size, "only the grown and the new row are sent")
+    }
+
+    @Test
+    fun a_reconcile_reads_only_the_peer_sessions_written_since_the_last_read() = runTest {
+        // Live 2026-11-22: every reconcile downloaded the peers' whole week. The first read of a launch reads the
+        // horizon; the next ones ask the server for rows past the highest REVISION read (migration 20261122000000) —
+        // never a device's clock.
+        val server = FakeServer(
+            sessionRowsJson =
+                """[{"device_id":"peer","start_ms":100,"end_ms":200,"updated_at":250,"kind":"phone","revision":41},""" +
+                    """{"device_id":"peer","start_ms":300,"end_ms":400,"updated_at":450,"kind":"phone","revision":57}]""",
+        )
+        val store = FakeSessionStore()
+        val meta = FakeMetaStore(SyncMeta(deviceId = "self"))
+        val sync = SchedulerSyncEngine(harness(server), meta, json, activeSessionStore = store).apply { bind({ snap() }, {}) }
+        sync.signIn("a@b.c", "pw")
+        sync.reconcile()
+        assertTrue("end_ms" in server.sessionReads.first() && "revision" !in server.sessionReads.first(), "the first read is the horizon: ${server.sessionReads.first()}")
+        assertEquals(2, store.rows.keys.count { it.first == "peer" })
+
+        server.sessionRowsJson = "[]"
+        sync.reconcile()
+        assertEquals("gt.57", server.sessionReads.last()["revision"], "then only what was written after the newest row read")
+        assertTrue("end_ms" !in server.sessionReads.last())
+        sync.reconcile()
+        assertEquals("gt.57", server.sessionReads.last()["revision"], "an empty read keeps the cursor")
+        assertEquals(2, store.rows.keys.count { it.first == "peer" }, "nothing pulled is lost")
     }
 
     @Test

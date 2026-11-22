@@ -706,26 +706,42 @@ class RemoteSnapshotClient(
      * Every active-session row of this account ending at/after [sinceMillis], oldest first: every device's, or every
      * device's but [excludeDeviceId]'s.
      */
-    suspend fun fetchActiveSessions(session: SupabaseSession, sinceMillis: Long, excludeDeviceId: String? = null): List<ActiveSessionRecord> {
+    suspend fun fetchActiveSessions(session: SupabaseSession, sinceMillis: Long, excludeDeviceId: String? = null): List<ActiveSessionRecord> =
+        fetchActiveSessionRows(session, sinceMillis, null, excludeDeviceId).first
+
+    /**
+     * The account's session rows ending at/after [sinceMillis] — or, given [sinceRevision], only those written after it
+     * (migration 20261122000000: the server's revision, never a device's clock) — with the highest revision read.
+     */
+    suspend fun fetchActiveSessionRows(
+        session: SupabaseSession,
+        sinceMillis: Long,
+        sinceRevision: Long?,
+        excludeDeviceId: String? = null,
+    ): Pair<List<ActiveSessionRecord>, Long> {
         val response =
             http.get("${config.restUrl}/device_active_session") {
                 authHeaders(session)
                 url.parameters.append("user_id", "eq.${session.userId}")
-                url.parameters.append("end_ms", "gte.$sinceMillis")
+                if (sinceRevision != null) url.parameters.append("revision", "gt.$sinceRevision")
+                else url.parameters.append("end_ms", "gte.$sinceMillis")
                 if (excludeDeviceId != null) url.parameters.append("device_id", "neq.$excludeDeviceId")
-                url.parameters.append("select", "device_id,start_ms,end_ms,updated_at,kind")
+                url.parameters.append("select", "device_id,start_ms,end_ms,updated_at,kind,revision")
                 url.parameters.append("order", "start_ms.asc")
             }
         if (!response.status.isSuccess()) throw response.toException()
-        return json.decodeFromString<List<ActiveSessionRow>>(response.bodyAsText()).map {
-            ActiveSessionRecord(
-                deviceId = it.deviceId,
-                startMillis = it.startMs,
-                endMillis = it.endMs,
-                updatedAtMillis = it.updatedAt,
-                kind = it.kind,
-            )
-        }
+        val rows = json.decodeFromString<List<ActiveSessionRow>>(response.bodyAsText())
+        val records =
+            rows.map {
+                ActiveSessionRecord(
+                    deviceId = it.deviceId,
+                    startMillis = it.startMs,
+                    endMillis = it.endMs,
+                    updatedAtMillis = it.updatedAt,
+                    kind = it.kind,
+                )
+            }
+        return records to (rows.maxOfOrNull { it.revision } ?: sinceRevision ?: 0L)
     }
 
     // ---- README 3 modes: the away flag and the rule set (migration 20260904000000) ----
@@ -1017,6 +1033,8 @@ private data class ActiveSessionRow(
     @SerialName("end_ms") val endMs: Long,
     @SerialName("updated_at") val updatedAt: Long,
     val kind: String = "",
+    /** The server's write order (migration 20261122000000). */
+    val revision: Long = 0,
 )
 
 /** One entity row as pulled. */

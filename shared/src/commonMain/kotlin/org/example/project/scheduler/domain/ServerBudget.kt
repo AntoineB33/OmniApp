@@ -72,7 +72,7 @@ sealed interface ServerVersion {
          * The latest migration this build needs, by its file's timestamp (`supabase/migrations/<it>_….sql`).
          * `ServerVersionTest` keeps it the newest migration's.
          */
-        const val REQUIRED_SERVER_MIGRATION: String = "20261121000000"
+        const val REQUIRED_SERVER_MIGRATION: String = "20261122000000"
 
         /** What the server's [latest] migration says of it. Timestamps of one length compare as text. */
         fun of(latest: String): ServerVersion =

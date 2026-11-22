@@ -745,6 +745,6 @@ class FakeSupabase(
         /** `trim_history_units`: the newest units kept per account and category. */
         const val HISTORY_UNITS_KEPT = 1000
 
-        private val REVISIONED_TABLES = setOf("scheduler_entity", "history_unit", "claude_log_entry")
+        private val REVISIONED_TABLES = setOf("scheduler_entity", "history_unit", "claude_log_entry", "device_active_session")
     }
 }

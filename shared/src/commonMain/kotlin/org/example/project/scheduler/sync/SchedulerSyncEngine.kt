@@ -550,6 +550,11 @@ open class SchedulerSyncEngine(
     // launch's first reconcile sends every row once and the server is never missing one.
     private var pushedSessions: Pair<String, Map<Long, org.example.project.scheduler.persistence.ActiveSessionRecord>>? = null
 
+    // The highest session revision this process has pulled, for the account it read it from: the next pull asks only for
+    // rows written after it (migration 20261122000000). Empty at launch, so a launch's first reconcile reads the whole
+    // horizon once — what the device may have missed while it was not running.
+    private var pulledSessionsRevision: Pair<String, Long>? = null
+
     private suspend fun syncActiveSessions(session: SupabaseSession) {
         val store = activeSessionStore ?: return
         runCatching {
@@ -567,8 +572,10 @@ open class SchedulerSyncEngine(
             }
             // The server leaves this device's own rows out (`server-quota.md`: egress): it holds them already, and
             // read back they were only thrown away here.
-            val peers = withAuth(session) { client.fetchActiveSessions(it, since, excludeDeviceId = ownId) }
-                .filter { it.deviceId != ownId }
+            val cursor = pulledSessionsRevision?.takeIf { it.first == session.userId }?.second
+            val (pulled, revision) = withAuth(session) { client.fetchActiveSessionRows(it, since, cursor, excludeDeviceId = ownId) }
+            val peers = pulled.filter { it.deviceId != ownId }
+            pulledSessionsRevision = session.userId to revision
             store.saveActiveSessions(peers)
             Diagnostics.log("reconcile: active sessions pushed=${changed.size}, pulled=${peers.size} (since=$since)")
         }.onFailure { Diagnostics.log("reconcile: active-session merge failed (${it.message}); rows ride the next sync") }
