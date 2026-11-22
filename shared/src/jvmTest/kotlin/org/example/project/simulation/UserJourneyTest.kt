@@ -233,10 +233,15 @@ class UserJourneyTest {
         val idle = (until - from) - overlap(busy, from, until)
         println("  idle ${"%.1f".format(100.0 * idle / waking)}% of waking time")
         assertTrue(idle <= 0.15 * waking, "${idle / MIN}min of ${waking / MIN} waking min left to nobody\n$report")
-        // The set of tasks is used where only it may run. NOTE (measured 2026-11-21): its credit to Exercise there counts
-        // for nothing in the score — Exercise is itself refused by the commute, so its target there is 0 and a credit
-        // only fills a deficit (`docs/scheduler_score.md` § *Sets of tasks*). Exercise then gets its whole share from its
-        // own runs and ends ~1.27x its nominal share once the podcast is counted: inside TOLERATED, outside GOAL.
+        // The set of tasks is used where only it may run, and its credit there COUNTS (user rule 2026-11-22: "Task A can
+        // have resilience 0 somewhere but a task that represents task A can have a not null resilience there";
+        // `docs/scheduler_score.md` § *Sets of tasks*): Exercise is refused by the commute, but the podcast run that
+        // serves it may run there, so Exercise is still wanted there and its own runs elsewhere shrink by what the
+        // podcast gave it. Measured: Exercise 1.27x its nominal share before the rule, 1.17x with it.
+        assertTrue(
+            overlap(record("Exercise"), from, until) < 0.2 * total - 0.4 * podcast,
+            "Exercise's own runs ignore what the podcast run gave it\n$report",
+        )
         assertTrue(podcast >= (days - 1) * 45 * MIN, "the podcast run must fill the commutes, got ${podcast / MIN}min\n$report")
         // Off-screen time is forced on Exercise and the podcast run (they alone may fill a pose): how much of each.
         val posesTaken = lived.away.filter { it.endEpochMillis - it.startEpochMillis < HOUR }
@@ -251,6 +256,8 @@ class UserJourneyTest {
             val goal = ScheduleSimulation.GOAL
             println("  $title: ${"%.2f".format(ratio)}x its share${if (ratio < goal.underService || ratio > goal.overService) "  (outside the GOAL band)" else ""}")
             assertTrue(ratio in tolerated.underService..tolerated.overService, "$title got ${"%.2f".format(ratio)}x its share\n$report")
+            // What the set-of-tasks rule reached (2026-11-22): no task past 1.20x its share. Tighten towards GOAL, never loosen.
+            assertTrue(ratio <= 1.20, "$title got ${"%.2f".format(ratio)}x its share (at most 1.20x since 2026-11-22)\n$report")
         }
 
         // --- 2. the eye rules, read off what was recorded on a screen.

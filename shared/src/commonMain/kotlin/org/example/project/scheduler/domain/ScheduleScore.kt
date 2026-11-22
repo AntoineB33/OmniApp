@@ -141,8 +141,17 @@ class ScoreModel(
     val pieceCount: Int
     val pieceUStart: DoubleArray
     val pieceULen: DoubleArray
-    /** `μ_i` per piece. */
+    /** `μ_i` per piece: may task `i` RUN there, and how fast. */
     val pieceMult: Array<DoubleArray>
+    /**
+     * `ν_i` per piece: how much task `i` is WANTED there — `docs/scheduler_score.md` § *Sets of tasks*, user rule
+     * 2026-11-22: *"Task A can have resilience 0 somewhere but a task that represents task A can have a not null
+     * resilience there."* `ν_i = max(μ_i, max_X p_{X,i}·μ_X)` over the tasks `X` whose set holds `i` at `p_{X,i}`: a
+     * period that refuses `i` still asks for `i` where something that serves `i` may run, so that thing's credit there
+     * fills a real need instead of being thrown away. Only the target share and its compensation read it; whether `i`
+     * itself may run there is still [pieceMult].
+     */
+    private val pieceNeed: Array<DoubleArray>
     /** The pre-placed task a piece belongs to, or -1 when the scheduler decides it. */
     val pieceFixed: IntArray
     /** `q_i` per piece. */
@@ -261,7 +270,8 @@ class ScoreModel(
         pieceULen = pLen.toDoubleArray()
         pieceMult = pMult.toTypedArray()
         pieceFixed = pFixed.toIntArray()
-        pieceShare = Array(pieceCount) { p -> localShares(pieceMult[p], pieceFixed[p]) }
+        pieceNeed = Array(pieceCount) { p -> needOf(pieceMult[p], pieceFixed[p]) }
+        pieceShare = Array(pieceCount) { p -> localShares(pieceNeed[p], pieceFixed[p]) }
 
         // --- compensation coefficients
         compA = Array(pieceCount) { DoubleArray(n) }
@@ -272,7 +282,7 @@ class ScoreModel(
             val t = compLength[i]
             val reach = COMP_REACH_LENGTHS * t
             // Only a piece where the multiplier is below 1 can deprive anyone.
-            val depr = (0 until pieceCount).filter { pieceMult[it][i] < 1.0 }
+            val depr = (0 until pieceCount).filter { pieceNeed[it][i] < 1.0 }
             if (depr.isEmpty()) continue
             // `depr` is ascending and the pieces TILE the schedulable clock, so the distance from `p` grows
             // monotonically as `q` moves away from it on either side: the first `q` out of [reach] puts the whole rest
@@ -282,7 +292,7 @@ class ScoreModel(
             var head = 0
             for (p in 0 until pieceCount) {
                 while (head < depr.size && depr[head] < p) head++
-                val mu = pieceMult[p][i]
+                val mu = pieceNeed[p][i]
                 if (mu <= 0.0) continue
                 var a = 0.0
                 var b = 0.0
@@ -291,7 +301,7 @@ class ScoreModel(
                     val q = depr[back--]
                     val d = pieceUStart[p] - (pieceUStart[q] + pieceULen[q])
                     if (d > reach) break
-                    val mq = pieceMult[q][i]
+                    val mq = pieceNeed[q][i]
                     if (mq >= mu) continue
                     a += (mu - mq) * t * (1.0 - expNeg(pieceLenForComp(q) / t)) * exp(-d / t)
                 }
@@ -301,7 +311,7 @@ class ScoreModel(
                     if (q == p) continue
                     val d = pieceUStart[q] - (pieceUStart[p] + pieceULen[p])
                     if (d > reach) break
-                    val mq = pieceMult[q][i]
+                    val mq = pieceNeed[q][i]
                     if (mq >= mu) continue
                     b += (mu - mq) * t * (1.0 - expNeg(pieceLenForComp(q) / t)) * exp(-d / t)
                 }
@@ -319,6 +329,23 @@ class ScoreModel(
     private fun pieceLenForComp(p: Int): Double =
         if (p == pieceCount - 1 && wallEnd.isNotEmpty() && wallEnd.last() >= toMillis && wallSchedulable.last()) Double.POSITIVE_INFINITY
         else pieceULen[p]
+
+    /** [pieceNeed] of one piece from its multipliers: a pre-placed block is its owner's alone, as before. */
+    private fun needOf(mult: DoubleArray, fixed: Int): DoubleArray {
+        if (fixed != -1 || !hasCredits) return mult
+        val need = mult.copyOf()
+        for (x in 0 until n) {
+            val mx = mult[x]
+            if (mx <= 0.0) continue
+            val targets = creditTargets[x]
+            for (k in targets.indices) {
+                val i = targets[k]
+                val via = creditRates[x][k] * mx
+                if (via > need[i]) need[i] = via
+            }
+        }
+        return need
+    }
 
     private fun localShares(mult: DoubleArray, fixed: Int): DoubleArray {
         val q = DoubleArray(n)

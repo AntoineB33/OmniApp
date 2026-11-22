@@ -36,6 +36,15 @@ Check here before assuming the code matches the docs.
   push is recorded BEFORE the history is tried, so a history failure never re-sends the account. `FakeSupabase` now
   refuses a mixed-key batch like PostgREST, and `RowSyncTest` reproduces the live failure (it fails on the old client).
 
+### A set of tasks serves its tasks where they are themselves refused — 2026-11-22
+
+- User rule: *"Task A can have resilience 0 somewhere but a task that represents task A can have a not null resilience
+  there."* The score's target share now reads a need multiplier ν_j = max(μ_j, max_X p_{X,j}·μ_X) (`ScoreModel.pieceNeed`);
+  whether a task may run is still its own μ. `docs/scheduler_score.md` § *Sets of tasks*.
+- `UserJourneyTest`: Exercise (refused on the commute, served there by a podcast run at 100 %) went from 1.27× to 1.17×
+  its share, Spanish from 0.93× to 0.98×; the test now holds every task at ≤ 1.20×. No migration, no deploy beyond the
+  client rebuild.
+
 ### History re-sent on every reconcile; own pushes poking reconciles — 2026-11-22
 
 - Live, right after the fix above: all 3 110 History Units went up sealed, then marking the discarded redo branch failed

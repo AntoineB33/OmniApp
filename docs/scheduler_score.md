@@ -204,6 +204,13 @@ fulfils "watch videos explaining chemistry" at 80% and "listen to Spanish" at 80
 * **$X$'s own lag.** $X$ is scored like any task when it has a priority of its own. A task with no priority and a
   set (the usual pathless one, made from the Search window) is **unscored**: its runs are worth exactly what they
   serve through its set.
+* **Where the task itself is refused, the set still serves it** (user rule 2026-11-22: *"Task A can have resilience 0
+  somewhere but a task that represents task A can have a not null resilience there."*). The target share reads a
+  **need** multiplier $\nu_j = \max(\mu_j, \max_X p_{X,j}\,\mu_X)$ over the tasks $X$ whose set holds $j$, in place of
+  $\mu_j$ (the local share and its compensation); whether $j$ itself may run is still $\mu_j$. So a period that refuses
+  $j$ still asks for $j$ where something serving $j$ may run, and that run's credit fills a real need there instead of
+  being lost (`ScoreModel.pieceNeed`). A pre-placed block is its owner's alone, as before. Measured on `UserJourneyTest`
+  (Exercise refused on the commute, a podcast run serving it at 100 % allowed there): Exercise 1.27× → 1.17× its share.
 * **Transitive.** A set holding a task that holds a set serves that one's set too, at the product of the
   percentages; where two paths reach the same task, the larger product counts, and a cycle is cut
   (`SchedulerDomain.fulfilmentCredits`).
