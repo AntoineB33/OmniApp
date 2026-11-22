@@ -86,7 +86,7 @@ internal fun ConfigurationTreeArrow(
     // User rule 2026-11-11: the pop-up IS a Search window, its header and its two right sections hidden as it opens;
     // its background menu shows them ([SearchPartsMenu]). Kept while the arrow stands, as its path is.
     var parts by rememberKeptParts(arrowId, CellEditPopupHost.PICKER_SPLITS)
-    val positions = LocalPopupPositions.current
+    val popupFocus = LocalPopupFocus.current
     // Anomaly 2026-11-11 (*"three headless search windows deep … ctrl+alt+<- opened the two first, not the third"*,
     // measured in diagnostics.log): a pop-up of the tree — a category's, or the tree an arrow in a pop-up's bar opens —
     // leaves the screen with the pop-up it hangs from, and so did its position. The outermost arrow's [TreeKeeper] keeps
@@ -96,13 +96,9 @@ internal fun ConfigurationTreeArrow(
     // Where this tree stands: the trees above it, each by the categories of the pop-up whose bar holds the next arrow.
     val prefix = if (outer == null) emptyList() else LocalTreePrefix.current + listOf(LocalBarPath.current)
     val address = prefix + listOf(emptyList<String>())
-    val token = keeper.tokenOf(address)
     DisposableEffect(keeper, prefix) {
         keeper.live[prefix] = { if (open) path else null }
-        onDispose {
-            keeper.live.remove(prefix)
-            if (outer == null) keeper.tokens.values.forEach { positions?.forget(it) }
-        }
+        onDispose { keeper.live.remove(prefix) }
     }
     // The tracker, made below from [close]: what gives the keyboard back to the app's window.
     val tracker = remember { arrayOfNulls<MenuHoverTracker>(1) }
@@ -111,8 +107,18 @@ internal fun ConfigurationTreeArrow(
         open = false
         if (outer == null) keeper.stopWalk()
         // The keyboard goes back to the app's window (a pop-up opened from a pop-up gives it back to that one, which
-        // says so itself): a position of its own (user rule 2026-11-11).
-        if (depth == 0) positions?.appFocused { tracker[0]?.focusAppWindow?.invoke() }
+        // says so itself): a position of its own (user rule 2026-11-11), a History Unit (2026-11-22).
+        if (depth == 0) popupFocus?.left()
+    }
+    // User rule 2026-11-22: the outermost arrow's keeper is what a pop-up unit is brought back through, by its id —
+    // after a restart too, once the arrow stands again.
+    if (outer == null && arrowId != null) {
+        DisposableEffect(popupFocus, arrowId, keeper) {
+            keeper.arrowId = arrowId
+            keeper.closeAll = { tracker[0]?.focusAppWindow?.invoke() ?: close() }
+            popupFocus?.keepers?.put(arrowId, keeper)
+            onDispose { if (popupFocus?.keepers?.get(arrowId) === keeper) popupFocus.keepers.remove(arrowId) }
+        }
     }
     // User rule 2026-11-04: it vanishes once the pointer has left the arrow, the pop-up and all of its descendants.
     // An arrow inside a pop-up of the tree is one of that pop-up's descendants, it and its own pop-up (anomaly
@@ -141,14 +147,8 @@ internal fun ConfigurationTreeArrow(
     }
     // User rule 2026-11-11: the keyboard coming to the pop-up is a position of the app; walked back to, the trees are
     // brought back down to it, pinned ([TreeKeeper.wanted]), and it gets the keyboard.
-    DisposableEffect(hover, positions, token) {
-        hover.onFocused = {
-            keeper.focused(address) {
-                positions?.focused(token, { keeper.isShowing(address) }, { hover.focusAppWindow?.invoke() }) {
-                    keeper.bringBack(address)
-                }
-            }
-        }
+    DisposableEffect(hover, popupFocus, address) {
+        hover.onFocused = { keeper.focused(address) { popupFocus?.focused(keeper.arrowId, address) } }
         onDispose { hover.onFocused = null }
     }
     // A walk back passing through this tree: open, showing the categories the address goes through, pinned; the tree
@@ -500,22 +500,13 @@ private fun TreeColumn(
                     // User rule 2026-11-11: the keyboard coming to it is a position of the app. Kept by the outermost
                     // tree's keeper, by the address that shows it: it outlives this pop-up, which leaves the screen with
                     // the tree (anomaly 2026-11-11, [TreeKeeper]); walked back to, the trees come back down to it.
-                    val positions = LocalPopupPositions.current
+                    val popupFocus = LocalPopupFocus.current
                     val keeper = LocalTreeKeeper.current
                     val prefix = LocalTreePrefix.current
                     val branchPath = path.take(depth) + node.id
                     val address = prefix + listOf(branchPath)
-                    val token = keeper?.tokenOf(address) ?: remember { Any() }
-                    DisposableEffect(Unit) { onDispose { if (keeper == null) positions?.forget(token) } }
-                    DisposableEffect(branch, positions, token) {
-                        branch.onFocused = {
-                            val record = {
-                                positions?.focused(token, { keeper?.isShowing(address) ?: (path.getOrNull(depth) == node.id) }, { branch.focusAppWindow?.invoke() }) {
-                                    keeper?.bringBack(address)
-                                }
-                            }
-                            if (keeper != null) keeper.focused(address) { record() } else record()
-                        }
+                    DisposableEffect(branch, popupFocus, address) {
+                        branch.onFocused = { keeper?.focused(address) { popupFocus?.focused(keeper.arrowId, address) } }
                         onDispose { branch.onFocused = null }
                     }
                     // A walk back passing through here: pinned as it shows; the place walked to takes the keyboard.
@@ -822,17 +813,22 @@ private val TREE_POPUP_RIGHT_WIDTH = 380.dp
 private val TREE_POPUP_RIGHT_MIN_HEIGHT = 420.dp
 
 /**
- * Anomaly 2026-11-11: **the positions ([PopupPositions]) of every pop-up of a configurations tree**, kept by the
- * outermost arrow — the one standing in a window, which stays while the pop-ups come and go with what they hang from.
+ * Anomaly 2026-11-11: **every pop-up of a configurations tree, by an address**, kept by the outermost arrow — the one
+ * standing in a window, which stays while the pop-ups come and go with what they hang from. Since 2026-11-22 the keyboard
+ * going to one is a History Unit naming that address ([PopupFocus], [PopupAddress]).
  *
  * A pop-up is named by its **address**: for each tree from the outermost down, the categories its pop-up shows — the
  * pop-up whose bar holds the arrow of the next tree, or, last, the pop-up itself (a tree's own pop-up: no category).
- * [tokenOf] is its one owner while the outermost arrow stands; [isShowing] whether it is on screen now; [bringBack]
+ * [isShowing] whether it is on screen now; [bringBack]
  * asks every tree along the address to open, showing those categories, pinned ([wanted]), the last one taking the
  * keyboard — which takes the request back.
  */
 internal class TreeKeeper {
-    val tokens = HashMap<List<List<String>>, Any>()
+    /** The outermost arrow's id (`Search#3▾`): what a pop-up unit names its tree by ([PopupAddress]); null: none to name. */
+    var arrowId: String? = null
+
+    /** Gives the keyboard back to the window, which closes the trees: a pop-up unit walked back to the window. */
+    var closeAll: (() -> Unit)? = null
 
     /** Each tree on screen, by where it stands (the address above it): the categories it shows, null while closed. */
     val live = HashMap<List<List<String>>, () -> List<String>?>()
@@ -859,8 +855,6 @@ internal class TreeKeeper {
         wanted = null
         walkTarget = null
     }
-
-    fun tokenOf(address: List<List<String>>): Any = tokens.getOrPut(address) { Any() }
 
     fun isShowing(address: List<List<String>>): Boolean =
         address.indices.all { level ->

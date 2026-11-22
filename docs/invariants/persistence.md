@@ -195,7 +195,8 @@ by ctrl+z, ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history unit
   `SchedulerIntent.MadeIn(window, instance, …)` with that copy's instance, never `""`.
 - **Every list several pins walk behaves the same** (user rule 2026-11-22, `SchedulerReducer.Pin`, `HistoryPinsTest`,
   `HistoryReachTest`). A pin is one walk: a window's `Ctrl+Z` (`Pin.WindowChanges`), `Ctrl+Shift+Z` (`AllChanges`),
-  a window's `Alt+←` (`WindowSelections`), `Shift+Alt+←` (`AllPositions`), `Ctrl+Page Up` (`FocusMoves`), a Search
+  a window's `Alt+←` (`WindowSelections`), `Shift+Alt+←` (`AllPositions`, the keyboard going to a pop-up included,
+  `ExternalKeys.POPUP`), `Ctrl+Page Up` (`FocusMoves`, window moves alone), a Search
   bar's ↑ (`Bar`), an Edit Mode session (`Edit`). Two rules, nothing else:
   1. **A unit undone by a pin is passed over by every other pin, both ways.** Undo takes the pin's newest applied unit
      (any undone one is skipped); redo takes the oldest unit THIS pin undid (`HistoryUnit.undoneBy` = `Pin.id`). So

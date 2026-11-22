@@ -25,6 +25,14 @@ object ExternalKeys {
      */
     const val SEARCH_TEXT: String = "search-text/"
 
+    /**
+     * User rule 2026-11-22 (*"fold them in"*): **the keyboard moving to or from a pop-up of a ▾ configurations tree** —
+     * a position like a move of the focus between windows, in [HistoryCategory.WindowNav]. Before and after are where the
+     * keyboard was and went: a pop-up's address (`org.example.project.ui.PopupAddress`), or null for its window. Local
+     * to the device, like a bar's keystroke ([Delta.localOnly]).
+     */
+    const val POPUP: String = "popup"
+
     /** What separates a stored Search window's id from the id, under it, of a window drawn inside it. */
     private const val INSIDE: Char = '\t'
 

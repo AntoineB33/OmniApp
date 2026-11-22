@@ -1367,27 +1367,24 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // Every right-click MENU registers here: the host keeps at most one open and closes it on the first
         // press outside it. Windows do not — nothing takes a window away any more (see `PopupWindows.kt`).
         val transientMenus = remember { TransientMenuHost() }
-        // User rule 2026-11-11: the pop-ups the keyboard went to, positions walked before the app's own.
-        val popupPositions = remember {
-            org.example.project.ui.PopupPositions { SchedulerReducer.positionPlace(vm.state.value) }
+        // User rule 2026-11-22 (*"fold them in"*): the keyboard going to a pop-up of a ▾ tree is a History Unit, a position
+        // like a move of the focus — where it is, read off the history.
+        val popupFocus = remember {
+            org.example.project.ui.PopupFocus(
+                holder = { SchedulerReducer.popupHolder(vm.state.value) },
+                record = { before, after, label ->
+                    vm.dispatch(SchedulerIntent.RecordExternal(org.example.project.scheduler.state.ExternalKeys.POPUP, before, after, label))
+                },
+            )
         }
-        // The one answer to the chords that walk every window's positions: the pop-ups' first, then the app's history.
-        // Whether [intent] was one of them (then taken).
+        // The one answer to the chords that walk every window's positions, from a pop-up too. Whether [intent] was one
+        // of them (then taken).
         fun walkPositions(intent: SchedulerIntent?): Boolean {
+            if (intent != SchedulerIntent.UndoPosition && intent != SchedulerIntent.RedoPosition) return false
             // A right-click menu is a question about where the user was: a walk elsewhere closes it (user rule 2026-11-22).
-            if (intent == SchedulerIntent.UndoPosition || intent == SchedulerIntent.RedoPosition) transientMenus.closeMenus()
-            return when (intent) {
-                // The app's history walked: arriving where pop-ups were opened walks into them (anomaly 2026-11-22).
-                SchedulerIntent.UndoPosition -> {
-                    if (!popupPositions.back()) { vm.dispatch(intent); popupPositions.arrivedBack() }
-                    true
-                }
-                SchedulerIntent.RedoPosition -> {
-                    if (!popupPositions.forward()) { vm.dispatch(intent); popupPositions.arrivedForward() }
-                    true
-                }
-                else -> false
-            }
+            transientMenus.closeMenus()
+            vm.dispatch(intent)
+            return true
         }
         val menuKeyForward: (androidx.compose.ui.input.key.Key, Boolean, Boolean, Boolean) -> Boolean = { key, ctrl, shift, alt ->
             walkPositions(undoRedoIntentFor(key, keyDown = true, ctrlOrMeta = ctrl, shift = shift, alt = alt))
@@ -2074,6 +2071,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     it.copy(config = CustomMenuButtons.encodeGlobalWindows(globalWindows.toList()))
                                 }
                             }
+                        // User rule 2026-11-22: the keyboard brought back to a pop-up, or from it to its window. Not
+                        // three-way: where the keyboard is is read off the history itself (`popupHolder`).
+                        restore.key == org.example.project.scheduler.state.ExternalKeys.POPUP -> popupFocus.restore(restore.from, restore.to)
                         restore.key == org.example.project.scheduler.state.ExternalKeys.TAB_ORDER -> {
                             windowFrames.tabOrder = CustomMenuButtons.decodeGlobalWindows(restore.to)
                             saveTabOrder()
@@ -4536,7 +4536,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             LocalTransientMenuHost provides transientMenus,
             // User rule 2026-11-20: every Search window's bar finds its pin here, by its own id and the stored window's.
             org.example.project.ui.LocalSearchBarPins provides searchBarPins,
-            org.example.project.ui.LocalPopupPositions provides popupPositions,
+            org.example.project.ui.LocalPopupFocus provides popupFocus,
             org.example.project.ui.LocalSearchPartsStore provides searchPartsStore,
             org.example.project.ui.LocalPopupMemory provides popupMemory,
             org.example.project.ui.LocalMenuKeyForward provides menuKeyForward,

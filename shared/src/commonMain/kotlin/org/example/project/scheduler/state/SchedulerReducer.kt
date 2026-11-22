@@ -788,7 +788,12 @@ object SchedulerReducer {
                     state,
                     ExternalDelta(intent.key, intent.before, intent.after, intent.label, intent.coalesceKey, intent.runStart),
                     // User rule 2026-11-21: a Search bar's keystroke is in a list of its own, walked by its bar alone.
-                    if (intent.key.startsWith(ExternalKeys.SEARCH_TEXT)) HistoryCategory.SearchText else HistoryCategory.Main,
+                    // User rule 2026-11-22: the keyboard moving to a pop-up is a position, with the moves of the focus.
+                    when {
+                        intent.key.startsWith(ExternalKeys.SEARCH_TEXT) -> HistoryCategory.SearchText
+                        intent.key == ExternalKeys.POPUP -> HistoryCategory.WindowNav
+                        else -> HistoryCategory.Main
+                    },
                 )
             is SchedulerIntent.WalkSearchText -> walkSearchText(state, intent.key, intent.back, intent.shown)
             is SchedulerIntent.InDefaultSubtree -> reduceInDefaultSubtree(state, intent.inner)
@@ -1027,9 +1032,13 @@ object SchedulerReducer {
                 category == HistoryCategory.Selection || category == HistoryCategory.WindowNav
         }
 
-        /** `Ctrl+Page Up/Down`: the moves of the focus between windows alone (user rule 2026-10-15). */
+        /**
+         * `Ctrl+Page Up/Down`: the moves of the focus between windows alone (user rule 2026-10-15) — not the keyboard
+         * going to a pop-up, which `Shift+Alt` walks ([ExternalKeys.POPUP]).
+         */
         data object FocusMoves : Pin("focus", listOf(HistoryCategory.WindowNav)) {
-            override fun holds(category: HistoryCategory, unit: HistoryUnit) = category == HistoryCategory.WindowNav
+            override fun holds(category: HistoryCategory, unit: HistoryUnit) =
+                category == HistoryCategory.WindowNav && unit.delta is FocusDelta
         }
 
         /**
@@ -1090,7 +1099,7 @@ object SchedulerReducer {
         when (category) {
             HistoryCategory.Selection ->
                 listOfNotNull(positionOf(unit.delta).first?.let { Pin.WindowSelections(it, positionOf(unit.delta).second ?: "") }, Pin.AllPositions)
-            HistoryCategory.WindowNav -> listOf(Pin.AllPositions, Pin.FocusMoves)
+            HistoryCategory.WindowNav -> listOf(Pin.AllPositions, Pin.FocusMoves).filter { it.holds(category, unit) }
             else -> listOfNotNull(legacyPinOf(category, unit))
         }
 
@@ -1142,19 +1151,22 @@ object SchedulerReducer {
             } == true
 
     /**
-     * Anomaly 2026-11-22: **where this device's position history stands, as a place** — the newest of its positions
-     * not undone (its stack and number), or null before any. It comes back to the same value when a position recorded
-     * since is undone (user rule 2026-11-11 kept a stamp that did not): what the pop-up positions are kept by
-     * (`PopupPositions`), so walking the app's history back to where a pop-up was opened finds it there again.
+     * User rule 2026-11-22: **the pop-up holding the keyboard, as the position history says** — the address the newest
+     * of this device's applied focus moves took the keyboard to, when that move is a pop-up's ([ExternalKeys.POPUP]);
+     * null when it is a window's. What a new pop-up unit starts from, and what a move of the focus first takes back.
      */
-    fun positionPlace(state: SchedulerState): Any? {
+    fun popupHolder(state: SchedulerState): String? {
         val me = deviceId()
-        return Pin.AllPositions.categories.flatMap { category ->
-            state.histories.forCategory(category).units.filter { it.ownedBy(me) && !it.undone }.map { category to it }
-        }.maxWithOrNull(compareBy({ it.second.timeMillis }, { it.second.deviceSeq }))?.let { (category, unit) ->
-            Triple(category, unit.deviceId, unit.deviceSeq)
-        }
+        val newest = state.histories.forCategory(HistoryCategory.WindowNav).units.lastOrNull { it.ownedBy(me) && !it.undone }
+        val delta = newest?.delta as? ExternalDelta ?: return null
+        return if (delta.key == ExternalKeys.POPUP) delta.after else null
     }
+
+    /** The label of the unit that gives the keyboard back from a pop-up to its window. */
+    const val POPUP_LEFT_LABEL: String = "Back to the window"
+
+    /** The label of the unit that takes the keyboard to a pop-up. */
+    const val POPUP_LABEL: String = "Pop-up"
 
     /**
      * User rule 2026-11-20: **the pin of a Search window's bar** — this device's keystroke units of [key]
@@ -2612,8 +2624,14 @@ object SchedulerReducer {
      */
     private fun reduceFocusWindow(state: SchedulerState, window: HistoryWindow, instance: String): SchedulerState {
         if (state.focusedWindow == window && state.focusedInstance == instance) return state
+        // User rule 2026-11-22: a pop-up holding the keyboard gives it back to its window first — a position of its own,
+        // so walking back from the window moved to lands on the window the pop-up hung from, and the next step on the
+        // pop-up. Recorded here, not when the platform says the pop-up lost the keyboard, which can come after.
+        val left = popupHolder(state)?.let { held ->
+            commitDelta(state, ExternalDelta(ExternalKeys.POPUP, held, null, POPUP_LEFT_LABEL), HistoryCategory.WindowNav)
+        } ?: state
         return commitDelta(
-            state,
+            left,
             FocusDelta(before = state.focusedWindow, after = window, beforeInstance = state.focusedInstance, afterInstance = instance),
             HistoryCategory.WindowNav,
         )
@@ -8152,8 +8170,11 @@ internal data class ExternalDelta(
     override val details: List<String>
         get() = listOf(key)
 
-    /** A keystroke of a Search bar is this device's view alone: never pushed, no reason for a push ([Delta.synced]). */
-    private val keystroke: Boolean get() = key.startsWith(ExternalKeys.SEARCH_TEXT)
+    /**
+     * A keystroke of a Search bar, or the keyboard moving to a pop-up, is this device's view alone: never pushed, no
+     * reason for a push ([Delta.synced]).
+     */
+    private val keystroke: Boolean get() = key.startsWith(ExternalKeys.SEARCH_TEXT) || key == ExternalKeys.POPUP
 
     override val localOnly: Boolean get() = keystroke
 

@@ -34,7 +34,7 @@ import org.example.project.scheduler.state.SchedulerIntent
  *    selections of the focused window;
  *  - **Shift+Alt+←** / **Shift+Alt+→** →
  *    [SchedulerIntent.UndoPosition] / [SchedulerIntent.RedoPosition]: every position — every window's selections and
- *    every move of the focus between windows, the pop-ups the keyboard went to first ([PopupPositions], read by `App`).
+ *    every move of the focus between windows and to the pop-ups of a ▾ tree ([PopupFocus], 2026-11-22).
  *  - **Ctrl+Page Up** / **Ctrl+Page Down** → [SchedulerIntent.UndoFocus] / [SchedulerIntent.RedoFocus]: the moves
  *    of the focus between windows alone — read by `TabWalk.moveFor` with the window bar's chords, on the app root's
  *    preview pass, so a text field cannot take them.

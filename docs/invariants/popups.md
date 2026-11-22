@@ -502,42 +502,40 @@ means.
       active window changing. Back in the app by a press on another of its windows, it closes as a press elsewhere in
       the app closes it (`activeListener` calls `windowLeft`, which no loss of the keyboard had told it). From 2026-11-11
       to this day, going to another application closed it.
-  - **The pop-ups the keyboard went to are positions of the app** (user rule 2026-11-11, `PopupPositions`): each one
-    the keyboard comes to (`MenuHoverTracker.windowFocused`, told by the desktop menu window) is a new position, and
-    `Shift+Alt+←/→` walk them before the app's own history — the keyboard brought back to one still
-    open, or one that closed (the pointer leaving it, most often) brought back pinned with the categories it showed.
-    The app's window is a position too: before the first pop-up, and each time the keyboard goes back to it as the
-    top pop-up closes (`PopupPositions.appFocused`) — back to it gives it the keyboard
-    (`MenuHoverTracker.focusAppWindow`), which closes the pop-ups, pinned or not. Hovering in and out N times leaves N
-    pop-up / window pairs, which the walk shows and hides N times (anomaly 2026-11-11: it showed the pop-up once).
-    Back past the oldest walks the app's history; the pop-up positions wait, kept, and forward redoes that history
-    to where it stood, then goes on through them. A window is given the keyboard through what held it last in it
-    (`giveKeyboard`), never `requestFocus()` on the window itself: that made the bare frame the focus owner, and no key
-    reached the app any more (measured 2026-11-11).
-    **Each run of them is kept WHERE it was recorded in the app's history** (anomaly 2026-11-22: *"switched to another
-    window … shift + alt + <-, but it doesn't get me to history unit → Made in window"*; `PopupPositions` keyed by
-    `SchedulerReducer.positionPlace`, the newest position not undone): they are walked while the app's history stands
-    there. A position of the app recorded after them (a press in another window) no longer throws them away: walking
-    the app's history back to that place stands at the run's end (`arrivedBack`) — on the window the app's step brought
-    back, nothing reopened — and the NEXT `Shift+Alt+←` brings the last pop-up back with the ones it hangs from (user
-    rule 2026-11-22: *"it should bring focus to window A … If I do shift + alt + <- again, it should bring focus to window
-    Ab (with window Aa and A open of course)"*); forward arrives at its start (`arrivedForward`). `App.walkPositions`
-    calls both after its own step, and closes every right-click menu first (`TransientMenuHost.closeMenus`). One
-    `[popup] arrived back …` line in `diagnostics.log` per arrival. A pop-up holding the keyboard is a window of its own, so it forwards those
-    chords to the app (`LocalMenuKeyForward`); `App.walkPositions` is the one answer to them. They are taken from AWT
-    for the pop-up's window (`MenuSession.keyDispatcher`), never from its Compose content: a pop-up brought back holds
-    the keyboard with nothing of it focused, and then no key reaches its content nor the window's own key handler
-    (measured 2026-11-11). In this run only; a
-    pop-up that left the screen with the one holding it is no position any more. **The pop-ups of a configurations tree
-    are the exception: their positions are the outermost arrow's** (anomaly 2026-11-11, *"three headless search windows
-    deep … ctrl+alt+<- opened the two first, not the third"*, measured in `diagnostics.log`; `TreeKeeper`,
-    `MenuHoverTrackerTest`). A category's pop-up and the tree an arrow in a pop-up's bar opens leave the screen with what
-    they hang from, so each is named by its **address** — for each tree from the outermost down, the categories of the
-    pop-up whose bar holds the next arrow, then those of the pop-up itself — kept by the outermost arrow (the one in a
-    window) while it stands and forgotten with it. Walked back to, every tree along the address opens showing those
-    categories, pinned (`TreeKeeper.wanted`), and the pop-up at its end takes the keyboard; the pop-ups opening on the way
-    take it too, and are no positions of their own (`TreeKeeper.focused`) — recorded, they cut off the rest of the walk.
-    A tree's own pop-up comes back showing no category: each category it showed is a position of its own.
+  - **The keyboard going to a pop-up of a ▾ tree is a History Unit, a position like a move of the focus** (user rule
+    2026-11-11, folded into the history 2026-11-22: *"fold them in"*; `ui/PopupFocus.kt`, `PopupFocusTest`). Each pop-up
+    the keyboard comes to (`MenuHoverTracker.windowFocused`, told by the desktop menu window) commits an
+    `ExternalDelta` of key `ExternalKeys.POPUP` in the `WindowNav` list — before: where the keyboard was, after: the
+    pop-up's **address** (`PopupAddress`: the outermost arrow's id, `Search#3▾`, and for each tree from the outermost
+    down the categories it shows), or null for its window. So `Shift+Alt+←/→` walk them with the selections and the
+    focus moves, under the same two rules as every position (`SchedulerReducer.Pin`), they come back after a restart,
+    and a new position drops their redo like any other's. `Ctrl+Page Up/Down` walk the windows alone (`Pin.FocusMoves`
+    holds `FocusDelta` only). Local to the device, never synced (`Delta.localOnly`, like a bar's keystroke).
+    - **Where the keyboard is, is read off the history** (`SchedulerReducer.popupHolder`: the newest applied focus
+      move, when it is a pop-up's). A pop-up already holding it records nothing — so a walk bringing one back, whose
+      coming there the tree reports like any other, adds no unit; the pop-ups opening on the way to it are filtered by
+      `TreeKeeper.focused` (recorded, they would cut the walk off: anomaly 2026-11-11).
+    - **A move of the focus to a window first gives the keyboard back from the pop-up** (`reduceFocusWindow` commits
+      the pop-up's "Back to the window" unit before its `FocusDelta`): the platform tells the pop-up lost the keyboard
+      only after the press in the other window, and recorded then, the order was wrong. So the user's walk (user rule
+      2026-11-22: *"History unit (window A) -> down arrow (window Aa) -> history unit (window Ab), then I click on another
+      tab (window B) … shift + alt + <-, and it should bring focus to window A … again, it should bring focus to window
+      Ab (with window Aa and A open of course)"*): back lands on A, then Ab, then Aa, then A without pop-up.
+    - **Walked, a unit is applied by `App`** (`PopupFocus.restore`, from the external restore): to an address, the
+      outermost arrow's `TreeKeeper` (registered by its id in `PopupFocus.keepers`) opens every tree along it, showing
+      those categories, pinned (`TreeKeeper.wanted`), and the pop-up at its end takes the keyboard; to null, the
+      keyboard goes back to the window (`TreeKeeper.closeAll`), which closes the trees. An arrow not on screen (its
+      window closed) brings nothing back. A position walk closes every right-click menu first
+      (`TransientMenuHost.closeMenus`).
+    - A pop-up holding the keyboard is a window of its own, so it forwards those chords to the app
+      (`LocalMenuKeyForward`); `App.walkPositions` is the one answer to them. They are taken from AWT for the pop-up's
+      window (`MenuSession.keyDispatcher`), never from its Compose content: a pop-up brought back holds the keyboard with
+      nothing of it focused, and then no key reaches its content nor the window's own key handler (measured
+      2026-11-11). A window is given the keyboard through what held it last in it (`giveKeyboard`), never
+      `requestFocus()` on the window itself: that made the bare frame the focus owner (measured 2026-11-11).
+    - It replaced `PopupPositions` (2026-11-11 → 2026-11-22), a second timeline kept in memory beside the history,
+      walked before it and joined to it by stamps: lost at a restart, outside the pins' rules, and thrown away by any
+      newer position until it was keyed by place.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
     (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree. **A
     pop-up (not a right-click's menu) stays only while it still touches its caller** (user rule 2026-11-19: *"Make sure

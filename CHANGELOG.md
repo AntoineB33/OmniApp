@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Pop-up positions are History Units — 2026-11-22
+
+- User: *"fold them in"* — the pop-up positions, which were a second timeline kept in memory beside the history
+  (`PopupPositions`), walked before it and joined to it by stamps.
+- Now the keyboard going to a pop-up of a ▾ tree, or back from it to its window, is an `ExternalDelta` of key
+  `ExternalKeys.POPUP` in the `WindowNav` list, naming the pop-up by its address (`PopupAddress`). `Shift+Alt+←/→` walk
+  them under the pins' rules; they come back after a restart; `Ctrl+Page Up/Down` walk the windows alone. Where the
+  keyboard is is read off the history (`popupHolder`), and a move of the focus first commits the pop-up's "Back to the
+  window" unit, so the user's walk lands on the window, then the pop-up. `App` applies a walked unit through the
+  outermost arrow's `TreeKeeper` (`PopupFocus.restore`). `PopupPositions` and `positionPlace` removed.
+  `docs/invariants/popups.md`. Local to the device: no SQLite or Supabase change. Client rebuild only.
+
 ### One behaviour for every list several pins walk; Shift+Alt+← lands on the window first — 2026-11-22
 
 - User rule: *"Unify the behavior of history unit navigations. When the same list can be navigated by several pins
