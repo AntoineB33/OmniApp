@@ -544,9 +544,11 @@ open class SchedulerSyncEngine(
         const val FULL_PULL_AFTER_MILLIS: Long = 6L * 24 * 60 * 60 * 1_000
     }
 
-    // The own rows the last successful push wrote, for the account it wrote them to: pushing the same rows again is a
-    // request for nothing (`docs/invariants/server-quota.md`).
-    private var pushedSessions: Pair<String, List<org.example.project.scheduler.persistence.ActiveSessionRecord>>? = null
+    // The own rows this process has pushed, per start, for the account it wrote them to: a row pushed as it is now is not
+    // sent again (`docs/invariants/server-quota.md`). Per ROW, not the whole list: the session in progress grows every
+    // minute, so comparing lists re-sent all ~120 rows at every reconcile (seen live 2026-11-22). Empty at launch, so a
+    // launch's first reconcile sends every row once and the server is never missing one.
+    private var pushedSessions: Pair<String, Map<Long, org.example.project.scheduler.persistence.ActiveSessionRecord>>? = null
 
     private suspend fun syncActiveSessions(session: SupabaseSession) {
         val store = activeSessionStore ?: return
@@ -557,16 +559,18 @@ open class SchedulerSyncEngine(
             // Only rows recorded under this install's real device id are ours to push: rows written while
             // signed out ("local") or by the retired remote-activity adoption never leave the device.
             val own = all.filter { it.deviceId == ownId && it.endMillis >= since }
-            if (pushedSessions != (session.userId to own)) {
-                withAuth(session) { client.upsertActiveSessions(it, own) }
-                pushedSessions = session.userId to own
+            val pushed = pushedSessions?.takeIf { it.first == session.userId }?.second.orEmpty()
+            val changed = own.filter { pushed[it.startMillis] != it }
+            if (changed.isNotEmpty()) {
+                withAuth(session) { client.upsertActiveSessions(it, changed) }
+                pushedSessions = session.userId to (pushed + changed.associateBy { it.startMillis })
             }
             // The server leaves this device's own rows out (`server-quota.md`: egress): it holds them already, and
             // read back they were only thrown away here.
             val peers = withAuth(session) { client.fetchActiveSessions(it, since, excludeDeviceId = ownId) }
                 .filter { it.deviceId != ownId }
             store.saveActiveSessions(peers)
-            Diagnostics.log("reconcile: active sessions pushed=${own.size}, pulled=${peers.size} (since=$since)")
+            Diagnostics.log("reconcile: active sessions pushed=${changed.size}, pulled=${peers.size} (since=$since)")
         }.onFailure { Diagnostics.log("reconcile: active-session merge failed (${it.message}); rows ride the next sync") }
     }
 

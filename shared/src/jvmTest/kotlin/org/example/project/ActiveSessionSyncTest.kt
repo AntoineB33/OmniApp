@@ -162,6 +162,29 @@ class ActiveSessionSyncTest {
     }
 
     @Test
+    fun a_reconcile_sends_only_the_session_rows_that_changed_since_the_last_push() = runTest {
+        // Live 2026-11-22: the session in progress grows every minute, and comparing the whole list re-sent all ~120
+        // rows at every reconcile. A launch sends every row once; after that only a new or grown row goes.
+        val server = FakeServer()
+        val store = FakeSessionStore()
+        store.saveActiveSessions((0 until 50).map { ActiveSessionRecord("self", it * 1_000L, it * 1_000L + 500, it * 1_000L + 500, "desktop") })
+        val meta = FakeMetaStore(SyncMeta(deviceId = "self"))
+        val sync = SchedulerSyncEngine(harness(server), meta, json, activeSessionStore = store).apply { bind({ snap() }, {}) }
+        sync.signIn("a@b.c", "pw")
+        sync.reconcile()
+        assertEquals(50, server.pushedDeviceIds.size, "the first reconcile sends every row")
+
+        server.pushedDeviceIds.clear()
+        sync.reconcile()
+        assertEquals(0, server.pushedDeviceIds.size, "nothing changed, nothing sent")
+
+        // The live session grows, and a new one starts.
+        store.saveActiveSessions(listOf(ActiveSessionRecord("self", 49_000L, 49_900L, 49_900L, "desktop"), ActiveSessionRecord("self", 60_000L, 60_100L, 60_100L, "desktop")))
+        sync.reconcile()
+        assertEquals(2, server.pushedDeviceIds.size, "only the grown and the new row are sent")
+    }
+
+    @Test
     fun remote_force_logout_skips_the_session_channel_entirely() = runTest {
         val server = FakeServer()
         val store = FakeSessionStore()

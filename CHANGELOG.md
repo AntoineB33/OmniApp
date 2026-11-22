@@ -36,6 +36,14 @@ Check here before assuming the code matches the docs.
   push is recorded BEFORE the history is tried, so a history failure never re-sends the account. `FakeSupabase` now
   refuses a mixed-key batch like PostgREST, and `RowSyncTest` reproduces the live failure (it fails on the old client).
 
+### Activity sessions: only the changed rows are sent — 2026-11-22
+
+- Seen live: every reconcile re-sent all ~120 of the device's activity-session rows, because the cache compared the whole
+  list and the session in progress grows every minute. Now per row (`SchedulerSyncEngine.pushedSessions`): a launch's
+  first reconcile sends every row once, then only a new or grown one (`ActiveSessionSyncTest`).
+- Not done: the PULL still reads every peer row since the horizon at each reconcile. An incremental pull needs a server
+  revision on `device_active_session` (`updated_at` is each device's own clock, so a cursor on it could skip rows).
+
 ### A set of tasks serves its tasks where they are themselves refused — 2026-11-22
 
 - User rule: *"Task A can have resilience 0 somewhere but a task that represents task A can have a not null resilience
