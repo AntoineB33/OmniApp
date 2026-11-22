@@ -3,6 +3,7 @@ package org.example.project.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -456,6 +457,9 @@ internal fun SettingEditor(
             CompactSwitch(checked = config.actionSearchSortsOnly, onCheckedChange = { onChange(config.copy(actionSearchSortsOnly = it)) })
         SearchDomain.Setting.MenuCustomizing ->
             CompactSwitch(checked = config.menuCustomizing, onCheckedChange = { onChange(config.copy(menuCustomizing = it)) })
+        // User rule 2026-11-22: what a task row shows, and in which order.
+        SearchDomain.Setting.TaskRowLayout ->
+            TaskRowLayoutEditor(config.taskRowLayout) { onChange(config.copy(taskRowLayout = it)) }
         // The Search window's Reset, the same button with the same rule; this window's own Reset (top section)
         // clears this window's search instead.
         SearchDomain.Setting.ResetSearch -> {
@@ -868,6 +872,76 @@ private fun SortMethodList(
             }
         }
     }
+}
+
+/**
+ * User rule 2026-11-22, "Row layout" ([SearchDomain.Config.taskRowLayout]): rows of ONE height, as every configuration's
+ * (`SettingRowHeightTest`) — the buttons' row, then a row per part in the layout, in its order, each moved up or down
+ * and taken out by its ✕. The buttons: a part to add at the end, and one layout at a click (the arrow, the share of the
+ * parent and the whole title; or, once set, back to the default row).
+ */
+@Composable
+private fun TaskRowLayoutEditor(
+    layout: List<SearchDomain.TaskRowPart>,
+    onChange: (List<SearchDomain.TaskRowPart>) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP), modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val left = SearchDomain.TaskRowPart.entries.filter { it !in layout }
+            var open by remember { mutableStateOf(false) }
+            val popupOpener = rememberPopupOpener()
+            Box { OpenedBy(popupOpener) {
+                FrameButton("Add a part", enabled = left.isNotEmpty()) { open = !open }
+                OptionSearchMenu("task row parts",
+                    open = open,
+                    onDismiss = { open = false },
+                    options = choiceOptions(left, { it.label }) { part ->
+                        open = false
+                        onChange(SearchDomain.withTaskRowPart(layout, part, on = true))
+                    },
+                )
+            }}
+            val example = SearchDomain.TaskRowPart.ARROW_RELATIVE_TITLE
+            if (layout.isEmpty()) FrameButton("Arrow, relative priority, title") { onChange(example) }
+            else FrameButton("Default row") { onChange(emptyList()) }
+            InfoMark(
+                "Empty: the row as the tree draws it. Set: the row shows these parts in this order, a title whole; " +
+                    "the list scrolls sideways where a row is wider than it.",
+            )
+        }
+        layout.forEachIndexed { index, part ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                // A task cell's height, as every configuration row (`SettingRowHeightTest`).
+                modifier = Modifier.defaultMinSize(minHeight = org.example.project.scheduler.ui.TASK_ROW_MIN_HEIGHT),
+            ) {
+                Text(
+                    text = "${index + 1}. ${part.label}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    // User rule 2026-11-04: wrapped, never cut by "…".
+                    modifier = Modifier.weight(1f),
+                )
+                MoveMark("↑", enabled = index > 0) { onChange(SearchDomain.movedTaskRowPart(layout, index, index - 1)) }
+                MoveMark("↓", enabled = index < layout.lastIndex) { onChange(SearchDomain.movedTaskRowPart(layout, index, index + 1)) }
+                CrossButton { onChange(SearchDomain.withTaskRowPart(layout, part, on = false)) }
+            }
+        }
+    }
+}
+
+/** A one-character button of a list row ("↑" / "↓"), greyed where it can do nothing. */
+@Composable
+private fun MoveMark(text: String, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 6.dp),
+    )
 }
 
 /** One choice among a few, as a row of chips — the first is always "any", which filters nothing. */

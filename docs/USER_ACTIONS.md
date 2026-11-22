@@ -173,6 +173,7 @@ Open **Calendar**. The planner has already filled the week; nothing is pressed.
 | Which shortcuts exist? | Search kind *keyboard shortcut* |
 | Is sync healthy? | **Online** label and window; Settings → *Supabase free tier* |
 | Which windows are open? | Window bar; Search kind *window* |
+| A title too long to read in a Search row? | The window's configurations → task → **Row layout**: e.g. *expansion arrow, priority relative to the parent, title*, then scroll the list sideways |
 
 ---
 
@@ -193,7 +194,7 @@ Open, for the user to decide:
    user rule 2026-11-04 says no text is cut, a long text wraps. `NoTextCutByAnEllipsisTest` only catches
    `TextOverflow.Ellipsis`, so `Clip` + arrow passes it. **Decided 2026-11-22: keep the red arrow** — the accepted exception, now
    written beside the rule in `CLAUDE.md`.
-5. **`docs/PRD_TaskScheduler.md` lags the code**: §7 still has a calendar toggle button, a "Task tree" button, a
+5. **Fixed 2026-11-22 — `docs/PRD_TaskScheduler.md` lagged the code**: §7 still has a calendar toggle button, a "Task tree" button, a
    Categories button and a lateral-menu button rule naming reminders/history; §7's Search kinds list misses chrono,
    quota, calendar, calendar block, notification, app setting, workplace setup, md element, the two evolutions and
    window, and still lists "task tree" (gone since 2026-11-16); §13's "text" section was replaced by md elements;

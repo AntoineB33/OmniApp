@@ -90,5 +90,8 @@ class SettingRowHeightTest {
         assertEquals(4 * row + 3 * gap, all.getValue(Setting.SearchBars))
         // Nothing added: the button's row alone.
         assertEquals(row, heights(SearchDomain.Config()).getValue(Setting.SearchBars))
+        // User rule 2026-11-22, "Row layout": the buttons' row, then a row per part.
+        val layout = heights(SearchDomain.Config(taskRowLayout = SearchDomain.TaskRowPart.ARROW_RELATIVE_TITLE))
+        assertEquals(4 * row + 3 * gap, layout.getValue(Setting.TaskRowLayout))
     }
 }

@@ -1049,6 +1049,14 @@ suggestions before it was ever entered.
 
 #### A row is a tree cell: selection, menu, opening
 
+- **"Row layout" changes the order and the choice of a task row's parts, never their drawing** (user rule
+  2026-11-22, `Config.taskRowLayout`, `TaskRowPart`, `TaskRowLayoutTest`). The parts are passed to `TaskRow` (`parts`),
+  which emits the very lambdas its default row draws — the kind is `rowLeading`, the path `afterTitle`, the logo
+  `rowTrailing`, the share of the parent `RelativePriorityDomain.cellShare` — so a part is never drawn by a second code.
+  With a layout the title is uncut (no column width, no red arrow) and every task row of the list scrolls sideways
+  through ONE `ScrollState`, each at least as wide as the widest row's parts (`TaskRowLayout.minWidth`, reported by
+  `onPartsWidth`), so the bands line up and `HorizontalScrollThumb` under the list scrolls them all. Empty = the default
+  row below, unchanged.
 - **A task row IS the tree's cell code** (`SearchTaskRow` → `TaskRow`, with two slots the tree leaves empty:
   `rowLeading` for the kind, `afterTitle` for the path box). **The title prevails over the path box**
   (`TitleThenSection`): the title takes what it needs, the path box the rest down to `afterTitleMinWidth` — a

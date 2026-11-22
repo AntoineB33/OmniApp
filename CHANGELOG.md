@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Search window: the "Row layout" of task rows — 2026-11-22
+
+- User rule: *"There can be search configuration elements that can change how a row displays elements in its row. For
+  example, add a search configuration to show the expansion arrow then the priority relative to the parent then the
+  title uncut, so for wide titles the user can just horizontally scroll the search result list section."*
+- New task configuration **Row layout** (`SearchDomain.Config.taskRowLayout`, stored as part names; absent = the default
+  row). PRD §7 *Search*; `docs/invariants/task-tree.md` § *A row is a tree cell*. No migration; client rebuild only.
+- `docs/PRD_TaskScheduler.md` brought up to date with the code: the default lateral menu, no task tree / calendar /
+  categories windows, the Search kinds, tasks as task trees, md elements instead of the task text.
+
 ### End-to-end encryption of everything the account stores on the server — 2026-11-21
 
 - User rule: *"Make sure any data sent to the internet is crypted (even Supabase can read user's data)."* The user chose

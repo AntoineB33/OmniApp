@@ -31,6 +31,8 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.draw.clipToBounds
@@ -1553,6 +1555,8 @@ fun SearchWindow(
             // The left-side menu's list is the menu's own items, at the menu's width ([MenuSearchRows]).
             // User rule 2026-11-16: a pop-up opened from one of its rows stands off it ([LocalCallerList]), as shown.
             val resultListBounds = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
+            // The task rows' one sideways scroll ("Row layout", user rule 2026-11-22), its bar drawn under the list.
+            val sharedRowScroll = rememberScrollState()
             androidx.compose.runtime.CompositionLocalProvider(LocalCallerList provides { resultListBounds[0] }) {
             Box(
                 Modifier.fillMaxWidth().weight(1f)
@@ -1624,6 +1628,17 @@ fun SearchWindow(
                     }
                     val pinScope = rememberCoroutineScope()
                     val resultKindWidth = rememberKindSectionWidth(results)
+                    // User rule 2026-11-22, "Row layout": the task rows show the parts it lists, a title whole, and scroll
+                    // sideways TOGETHER (one scroll state) where one is wider than the list — every row as wide as the
+                    // widest, so the bands line up and the bar under the list is the scroll of them all.
+                    val rowLayout = config.taskRowLayout.takeIf { it.isNotEmpty() }
+                    val rowScroll = sharedRowScroll
+                    val partWidths = remember(rowLayout) { androidx.compose.runtime.mutableStateMapOf<TaskId, Int>() }
+                    var listWidthPx by remember { mutableStateOf(0) }
+                    val widestRowPx by remember(partWidths) {
+                        derivedStateOf { maxOf(listWidthPx, partWidths.values.maxOrNull() ?: 0) }
+                    }
+                    val widestRow = with(LocalDensity.current) { widestRowPx.toDp() }
                     // A task row, for the list and for its pinned copy ([headOnly]): one drawing, so the two cannot
                     // look different. The copy is never in Edit Mode or in the min-time input — one field a session.
                     val taskRow: @Composable (Int, SearchDomain.TaskResult, Boolean) -> Unit = { index, result, headOnly ->
@@ -1691,6 +1706,11 @@ fun SearchWindow(
                             subtreeEnter = subtreeEnter?.takeIf { it.first == result.taskId }?.second,
                             // Up on its first cell is this row; down on its last, the row drawn under it (anomaly 2026-11-19).
                             onSubtreeWalkOut = { step -> walkOutOf(index, step) },
+                            layout = rowLayout?.let { parts ->
+                                TaskRowLayout(parts, rowScroll, widestRow) { width ->
+                                    if (partWidths[result.taskId] != width) partWidths[result.taskId] = width
+                                }
+                            },
                         )
                         }
                     }
@@ -1722,11 +1742,13 @@ fun SearchWindow(
                         state = listState,
                         verticalArrangement = Arrangement.spacedBy(menuList?.rowGap ?: 0.dp),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                            bottom = (menuList?.bottomPadding ?: 0.dp) + with(LocalDensity.current) { revealRoomPx.toDp() },
+                            bottom = (menuList?.bottomPadding ?: 0.dp) + with(LocalDensity.current) { revealRoomPx.toDp() } +
+                                (if (rowLayout != null) ROW_SCROLLBAR_ROOM else 0.dp),
                         ),
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(end = SCROLLBAR_ROOM)
+                            .onSizeChanged { listWidthPx = it.width }
                             .then(with(arrange) { Modifier.dropIndicator(dropColor, menuList?.levelStep ?: 0.dp) })
                             .shiftWheelScrolls(listState, listCut)
                             .focusRequester(listFocus)
@@ -2113,6 +2135,12 @@ fun SearchWindow(
                 }
                 // A list of integers has no end: its thumb is sized by the highest one that means something.
                 if (count > 0) ListScrollbar(listState, Modifier.align(Alignment.CenterEnd), openEnd = options?.integers?.let { it.highest + 1 })
+                // User rule 2026-11-22, "Row layout": the rows' sideways scroll, under the list.
+                if (count > 0 && config.taskRowLayout.isNotEmpty() && treeList == null) {
+                    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(end = SCROLLBAR_ROOM)) {
+                        org.example.project.scheduler.ui.HorizontalScrollThumb(sharedRowScroll)
+                    }
+                }
             }
             }
         }
@@ -3382,6 +3410,24 @@ internal fun menuItemOf(listKey: String): String = listKey.removePrefix(SearchDo
  *  - **nothing is dragged**, and the multi-selection is the list's single row;
  *  - **expanding** shows the task's sub-tree under the row as the tree's own cells ([SearchSubtree]).
  */
+/**
+ * User rule 2026-11-22, a Search window's "Row layout" ([SearchDomain.Config.taskRowLayout]) as its task rows draw it: the
+ * [parts], the one sideways [scroll] every row shares, the [minWidth] every row takes (the widest's), and where a row says
+ * how wide its parts are ([onWidth], px).
+ */
+internal class TaskRowLayout(
+    val parts: List<SearchDomain.TaskRowPart>,
+    val scroll: androidx.compose.foundation.ScrollState,
+    val minWidth: Dp,
+    val onWidth: (Int) -> Unit,
+)
+
+/** Under the list, the room the rows' sideways bar takes ([TaskRowLayout]). */
+private val ROW_SCROLLBAR_ROOM = 10.dp
+
+/** A path box's own room around its text: its padding, and its arrow when it lists several paths ([TaskPathBox]). */
+private val PATH_BOX_CHROME = 28.dp
+
 @Composable
 private fun SearchTaskRow(
     state: SchedulerState,
@@ -3436,6 +3482,8 @@ private fun SearchTaskRow(
     subtreeEnter: SubtreeEnter? = null,
     /** The sub-tree's walk going out of it, up (-1) to this row or down (+1) to the row under it. */
     onSubtreeWalkOut: ((step: Int) -> Unit)? = null,
+    /** The window's "Row layout" ([SearchDomain.Config.taskRowLayout]), null for the default row. */
+    layout: TaskRowLayout? = null,
 ) {
     val taskId = result.taskId
     val live = state.tasks[taskId]
@@ -3460,8 +3508,28 @@ private fun SearchTaskRow(
     // The query's hits in the title, drawn the way the tree's Ctrl+F draws its own.
     val match = LocalSearchMatch.current
     val hits = remember(result.title, query, match) { SearchDomain.matchRanges(result.title, query, match) }
+    // "Row layout": the row's share of its parent, read off the cell the row's figures reach — the relative-priority
+    // window's own number ([RelativePriorityDomain.cellShare]).
+    val relativeLabel =
+        if (layout?.parts?.contains(SearchDomain.TaskRowPart.RelativePriority) == true) {
+            remember(occurrence, state.cells, state.lists, state.tasks) {
+                occurrence?.let { formatPriorityPercent(org.example.project.scheduler.domain.RelativePriorityDomain.cellShare(state, it.cellId)) }
+            }
+        } else {
+            null
+        }
+    // "Row layout": the path box as wide as its text, the rows scrolling sideways rather than squeezing it.
+    val pathWidth =
+        if (layout?.parts?.contains(SearchDomain.TaskRowPart.Path) == true) {
+            val label = if (result.shownPath.isEmpty()) "no path" else SearchDomain.pathLabel(result.shownPath)
+            val labelStyle = MaterialTheme.typography.labelMedium
+            with(density) { textMeasurer.measure(label, labelStyle).size.width.toDp() } + PATH_BOX_CHROME
+        } else {
+            0.dp
+        }
 
     Column(Modifier.fillMaxWidth()) {
+        Box(if (layout != null) Modifier.fillMaxWidth().horizontalScroll(layout.scroll) else Modifier) {
         // The cell IS the row: it takes the list's row height itself (no slot around it, whose bare band
         // above and below showed as a white gap between two task rows). Its minimum time and categories are only as
         // wide as what they show ([LocalTightRowColumns]): the path has what they leave. The sub-tree under it is
@@ -3489,7 +3557,7 @@ private fun SearchTaskRow(
             taskColor = taskColor,
             searchRanges = if (editing) emptyList() else hits,
             currentSearchRange = null,
-            textOverflow = titlePx > columnPx,
+            textOverflow = layout == null && titlePx > columnPx,
             minMinutes = live?.minimumMinutes ?: 0,
             minTimeEditing = minTimeEditing && live != null,
             cellMenu = menu,
@@ -3551,14 +3619,19 @@ private fun SearchTaskRow(
             rowLeading = { KindSection(result.kind, kindWidth) },
             // The title prevails; the path box is squeezed to a thin box behind a long one, never dropped.
             afterTitle = {
-                Box(Modifier.fillMaxWidth().height(24.dp).padding(start = 8.dp)) {
+                Box((if (layout != null) Modifier.width(pathWidth + 8.dp) else Modifier.fillMaxWidth()).height(24.dp).padding(start = 8.dp)) {
                     // A right-click on the path selects as one on the row does: the row alone unless it is selected.
                     TaskPathBox(result, onSelect = { onClickRow(false, false, true) }, actions = actions)
                 }
             },
             afterTitleMinWidth = MIN_PATH_BOX_WIDTH + 8.dp,
             rowTrailing = { if (!result.inTaskTree) Box(Modifier.padding(start = 6.dp)) { NotInTreeLogo() } },
+            parts = layout?.parts,
+            relativePriorityLabel = relativeLabel,
+            minRowWidth = layout?.minWidth ?: 0.dp,
+            onPartsWidth = layout?.onWidth,
         )
+        }
         }
         if (expanded && hasChildren && !headOnly) {
             SearchSubtree(

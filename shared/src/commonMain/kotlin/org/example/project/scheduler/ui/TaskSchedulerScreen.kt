@@ -145,6 +145,7 @@ import org.example.project.scheduler.domain.RelativePriorityDomain
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.perf.Perf
 import org.example.project.scheduler.domain.SchedulerDomain
+import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.domain.SchedulerDomain.VisibleOccurrence
 import org.example.project.scheduler.domain.TaskTreeSearch
 import org.example.project.scheduler.domain.TaskPathsDomain
@@ -2565,6 +2566,19 @@ internal fun TaskRow(
      * the middle of a taller slot with a bare band above and below.
      */
     minHeight: Dp = TASK_ROW_MIN_HEIGHT,
+    /**
+     * User rule 2026-11-22, the Search window's "Row layout" ([org.example.project.scheduler.domain.SearchDomain.Config.taskRowLayout]):
+     * **the parts the row shows, in this order**, each drawn by the code below that draws it in the default row — [rowLeading]
+     * the kind, [afterTitle] the path, [rowTrailing] the not-in-a-tree logo. Null, the default row. Given, a title among
+     * them is shown whole, never clipped: the list scrolls sideways instead.
+     */
+    parts: List<org.example.project.scheduler.domain.SearchDomain.TaskRowPart>? = null,
+    /** The cell's share of its parent ([org.example.project.scheduler.domain.RelativePriorityDomain.cellShare]), for [parts]. */
+    relativePriorityLabel: String? = null,
+    /** With [parts]: the least the row is wide — the widest row of its list, so every row's band reaches as far. */
+    minRowWidth: Dp = 0.dp,
+    /** With [parts]: the width the parts take, in px, padding included — what [minRowWidth] is the widest of. */
+    onPartsWidth: ((Int) -> Unit)? = null,
 ) {
     Perf.count("recompose.TaskRow")
     val editFocusRequester = remember { FocusRequester() }
@@ -2623,7 +2637,10 @@ internal fun TaskRow(
     var titleSqueezed by remember(cellId) { mutableStateOf(false) }
     val columnPx = with(LocalDensity.current) { priorityColumnWidth.toPx() }
     val titleWidth =
-        if (afterTitle == null) {
+        if (parts != null) {
+            // The title whole (user rule 2026-11-22): as wide as it is, the list scrolling sideways to show it.
+            Modifier
+        } else if (afterTitle == null) {
             Modifier.width(priorityColumnWidth)
         } else {
             Modifier.widthIn(max = priorityColumnWidth).onSizeChanged { titleSqueezed = it.width + 0.5f < columnPx }
@@ -2828,6 +2845,7 @@ internal fun TaskRow(
                 .taskSheetGuideLines(depth)
                 .padding(start = (depth * INDENT_STEP_DP).dp)
                 .defaultMinSize(minHeight = if (compact) COMPACT_ROW_MIN_HEIGHT else minHeight)
+                .then(if (parts != null) Modifier.widthIn(min = minRowWidth) else Modifier)
                 // EVERY row reports its band — the root strip, a placeholder and the cell being edited
                 // included — so the tree can tell where any row is: its pinned parent row may be any of
                 // them. Only the drag and the reveal read these, both through the occurrences they walk.
@@ -2865,20 +2883,68 @@ internal fun TaskRow(
                     atPointer = org.example.project.ui.LocalRowMenusAtPointer.current,
                 )
             }
-            rowLeading?.invoke(this)
-            if (showExpandArrow) {
-                TaskSheetExpandArrow(
-                    hasChildren = hasChildren,
-                    expanded = expanded,
-                    onToggle = onToggleExpand,
-                    color = onTaskColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                    background = taskColor,
-                )
-                Spacer(Modifier.width(4.dp))
-            } else if (taskColor != null) {
-                // No arrow to sit under (a relative-priority chain link): the task's colour as a bare swatch.
-                Box(Modifier.size(width = 8.dp, height = 20.dp).taskSwatch(taskColor))
-                Spacer(Modifier.width(4.dp))
+            val arrowPart: @Composable () -> Unit = {
+                if (showExpandArrow) {
+                    TaskSheetExpandArrow(
+                        hasChildren = hasChildren,
+                        expanded = expanded,
+                        onToggle = onToggleExpand,
+                        color = onTaskColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                        background = taskColor,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                } else if (taskColor != null) {
+                    // No arrow to sit under (a relative-priority chain link): the task's colour as a bare swatch.
+                    Box(Modifier.size(width = 8.dp, height = 20.dp).taskSwatch(taskColor))
+                    Spacer(Modifier.width(4.dp))
+                }
+            }
+            val rowPadPx = with(LocalDensity.current) { 8.dp.roundToPx() }
+            // User rule 2026-11-22: the parts the Search window's "Row layout" lists, in its order. Only the order and
+            // the choice are the layout's: each part is the very drawing the default row makes of it.
+            val partsRow: @Composable (
+                @Composable () -> Unit,
+                (@Composable () -> Unit)?,
+                (@Composable () -> Unit)?,
+                (@Composable () -> Unit)?,
+            ) -> Unit = { title, percent, minTime, categories ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.onSizeChanged { onPartsWidth?.invoke(it.width + rowPadPx) },
+                ) {
+                    parts.orEmpty().forEach { part ->
+                        when (part) {
+                            SearchDomain.TaskRowPart.Kind -> rowLeading?.invoke(this)
+                            SearchDomain.TaskRowPart.Arrow -> arrowPart()
+                            SearchDomain.TaskRowPart.RelativePriority ->
+                                if (relativePriorityLabel != null) {
+                                    Text(
+                                        text = relativePriorityLabel,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = onTaskColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                                        softWrap = false,
+                                        modifier = Modifier
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                                onClick = onOpenRelativePriority,
+                                            )
+                                            .padding(horizontal = 6.dp),
+                                    )
+                                }
+                            SearchDomain.TaskRowPart.Title -> title()
+                            SearchDomain.TaskRowPart.Path -> afterTitle?.invoke()
+                            SearchDomain.TaskRowPart.Priority -> percent?.invoke()
+                            SearchDomain.TaskRowPart.MinimumTime -> minTime?.invoke()
+                            SearchDomain.TaskRowPart.Categories -> categories?.invoke()
+                            SearchDomain.TaskRowPart.NotInTree -> rowTrailing?.invoke(cellId)
+                        }
+                    }
+                }
+            }
+            if (parts == null) {
+                rowLeading?.invoke(this)
+                arrowPart()
             }
             if (compact) {
                 // Nothing after the arrow: the root strip is the arrow and the space around it.
@@ -3071,7 +3137,10 @@ internal fun TaskRow(
                             }
                         }
                     }
-                if (afterTitle != null) {
+                if (parts != null) {
+                    // In Edit Mode the row's figures step aside, as in the default row.
+                    partsRow(editTitleAndCross, null, null, null)
+                } else if (afterTitle != null) {
                     TitleThenSection(editTitleAndCross, afterTitle, afterTitleMinWidth)
                 } else {
                     editTitleAndCross()
@@ -3109,11 +3178,11 @@ internal fun TaskRow(
                         }
                     }
                 }
-                if (afterTitle != null) TitleThenSection(viewTitle, afterTitle, afterTitleMinWidth) else viewTitle()
                 // PRD §5: the percentage occupies a fixed-width column; clicking it opens the sub-list's
                 // priority-weight window (the editable table plus a chart of the sub-list's priorities),
                 // and RIGHT-clicking it opens the percentage's own two-option menu instead of the cell's
                 // "edit / copy / deep copy" one — the press is consumed here so the row never sees it.
+                val percentPart: @Composable () -> Unit = {
                 Box(
                     modifier = Modifier
                         .width(if (org.example.project.ui.LocalTightRowColumns.current) org.example.project.ui.TIGHT_PERCENT_WIDTH else PERCENT_COLUMN_WIDTH)
@@ -3159,24 +3228,35 @@ internal fun TaskRow(
                         )
                     }
                 }
+                }
                 // PRD §10: the task's minimum-time field sits just to the right of the percentage. It
                 // shows as a plain label until clicked, then expands into an input field with
                 // increment/decrement arrows.
-                if (showMinTime && priorityLabel != null) {
-                    if (minTimeEditing) {
-                        MinTimeInputCell(minutes = minMinutes, onSet = onSetMinTime)
-                    } else {
-                        MinTimeDisplayCell(minutes = minMinutes, onClick = onActivateMinTime)
+                val minTimePart: @Composable () -> Unit = {
+                    if (showMinTime && priorityLabel != null) {
+                        if (minTimeEditing) {
+                            MinTimeInputCell(minutes = minMinutes, onSet = onSetMinTime)
+                        } else {
+                            MinTimeDisplayCell(minutes = minMinutes, onClick = onActivateMinTime)
+                        }
                     }
                 }
                 // PRD §5: the categories field, in its own column after the minimum time. Only a
                 // populated cell has one — an empty placeholder holds no task to label, exactly as it
                 // shows no percentage and no minimum time.
-                if (priorityLabel != null) categoryCell?.invoke()
-                // PRD §4: the default sub-tree's switch, in its own column after the minimum time so both
-                // trees line up down every column they share. Nothing in the account's own tree.
-                rowTrailing?.invoke(cellId)
-                if (afterTitle == null) Spacer(Modifier.weight(1f))
+                val categoriesPart: @Composable () -> Unit = { if (priorityLabel != null) categoryCell?.invoke() }
+                if (parts != null) {
+                    partsRow(viewTitle, percentPart, minTimePart, categoriesPart)
+                } else {
+                    if (afterTitle != null) TitleThenSection(viewTitle, afterTitle, afterTitleMinWidth) else viewTitle()
+                    percentPart()
+                    minTimePart()
+                    categoriesPart()
+                    // PRD §4: the default sub-tree's switch, in its own column after the minimum time so both
+                    // trees line up down every column they share. Nothing in the account's own tree.
+                    rowTrailing?.invoke(cellId)
+                    if (afterTitle == null) Spacer(Modifier.weight(1f))
+                }
             }
             rowContent?.invoke()
           }
@@ -3966,40 +4046,53 @@ private fun DeepCopyPathRow(path: List<String>) {
                 softWrap = false,
             )
         }
-        if (maxScroll > 0) {
-            val scope = rememberCoroutineScope()
-            BoxWithConstraints(Modifier.fillMaxWidth().height(8.dp)) {
-                val trackWidth = maxWidth
-                val trackPx = with(LocalDensity.current) { trackWidth.toPx() }
-                // The thumb covers the visible share of the whole line.
-                val thumbWidth = trackWidth * (trackPx / (trackPx + maxScroll))
-                val travel = trackWidth - thumbWidth
-                // The drag maps thumb travel to an ABSOLUTE scroll position rather than a raw delta, so
-                // there is no direction convention to get backwards.
-                val perPixel = rememberUpdatedState(
-                    with(LocalDensity.current) { travel.toPx() }.let { if (it > 0f) maxScroll / it else 0f },
-                )
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .background(SheetColors.grid, RoundedCornerShape(3.dp)),
-                )
-                Box(
-                    Modifier
-                        .offset(x = travel * (scroll.value.toFloat() / maxScroll))
-                        .width(thumbWidth)
-                        .height(6.dp)
-                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(3.dp))
-                        .draggable(
-                            orientation = Orientation.Horizontal,
-                            state = rememberDraggableState { delta ->
-                                val target = scroll.value + delta * perPixel.value
-                                scope.launch { scroll.scrollTo(target.roundToInt()) }
-                            },
-                        ),
-                )
-            }
+        HorizontalScrollThumb(scroll)
+    }
+}
+
+
+/**
+ * The draggable bar under a line that scrolls sideways ([scroll]): a track, and a thumb covering the visible share
+ * of the line. Nothing while the line fits. The deep copy's path and the Search window's rows (user rule 2026-11-22,
+ * "Row layout") both draw it.
+ */
+@Composable
+internal fun HorizontalScrollThumb(scroll: androidx.compose.foundation.ScrollState) {
+    // Before the line is measured `maxValue` is Int.MAX_VALUE, which is not a length to divide by.
+    val maxScroll = scroll.maxValue.takeIf { it != Int.MAX_VALUE } ?: 0
+    if (maxScroll > 0) {
+        val scope = rememberCoroutineScope()
+        BoxWithConstraints(Modifier.fillMaxWidth().height(8.dp)) {
+            val trackWidth = maxWidth
+            val trackPx = with(LocalDensity.current) { trackWidth.toPx() }
+            // The thumb covers the visible share of the whole line.
+            val thumbWidth = trackWidth * (trackPx / (trackPx + maxScroll))
+            val travel = trackWidth - thumbWidth
+            // The drag maps thumb travel to an ABSOLUTE scroll position rather than a raw delta, so
+            // there is no direction convention to get backwards.
+            val perPixel = rememberUpdatedState(
+                with(LocalDensity.current) { travel.toPx() }.let { if (it > 0f) maxScroll / it else 0f },
+            )
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .background(SheetColors.grid, RoundedCornerShape(3.dp)),
+            )
+            Box(
+                Modifier
+                    .offset(x = travel * (scroll.value.toFloat() / maxScroll))
+                    .width(thumbWidth)
+                    .height(6.dp)
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(3.dp))
+                    .draggable(
+                        orientation = Orientation.Horizontal,
+                        state = rememberDraggableState { delta ->
+                            val target = scroll.value + delta * perPixel.value
+                            scope.launch { scroll.scrollTo(target.roundToInt()) }
+                        },
+                    ),
+            )
         }
     }
 }

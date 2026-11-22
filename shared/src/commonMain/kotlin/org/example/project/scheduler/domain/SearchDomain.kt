@@ -962,6 +962,13 @@ object SearchDomain {
          */
         val buttonFollowsExpansion: Boolean = false,
         /**
+         * User rule 2026-11-22, a search configuration ([Setting.TaskRowLayout]): **what a task row shows, in this order**
+         * ([TaskRowPart]). Empty — the default — is the row as the tree draws it: the kind, the arrow, the title clipped
+         * to its column, the path, the percentage, the minimum time, the categories. Given, the row is exactly these parts,
+         * a title among them shown whole, and the rows scroll sideways together where they are wider than the list.
+         */
+        val taskRowLayout: List<TaskRowPart> = emptyList(),
+        /**
          * User rule 2026-10-11: **the actions section's own search bar**. It SORTS — inside each group of elements
          * (a macro group), the actions (the micro groups, each under its title) that answer it come first, the best
          * answer first ([actionSearchRank], [sortedByActionSearch]) — and takes nothing away, nor moves a group of
@@ -1120,6 +1127,7 @@ object SearchDomain {
                     arranged = arranged,
                     dropButtons = dropButtons,
                     buttonFollowsExpansion = buttonFollowsExpansion,
+                    taskRowLayout = taskRowLayout.map { it.name },
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
                     pickedTimers = pickedTimers.sorted(),
@@ -1267,6 +1275,7 @@ object SearchDomain {
                     arranged = stored.arranged,
                     dropButtons = stored.dropButtons,
                     buttonFollowsExpansion = stored.buttonFollowsExpansion,
+                    taskRowLayout = TaskRowPart.decode(stored.taskRowLayout),
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
                     pickedTimers = stored.pickedTimers.toSet(),
@@ -2037,6 +2046,45 @@ object SearchDomain {
         return if (on) rest + method else rest
     }
 
+    /**
+     * User rule 2026-11-22: **one part of a task row** ([Config.taskRowLayout]) — what the row can show, each drawn by the
+     * tree cell's own code ([org.example.project.scheduler.ui.TaskRow]), only the order and the choice being the window's.
+     */
+    enum class TaskRowPart(val label: String) {
+        Kind("type"),
+        Arrow("expansion arrow"),
+        RelativePriority("priority relative to the parent"),
+        Title("title, uncut"),
+        Path("path"),
+        Priority("priority percentage"),
+        MinimumTime("minimum time"),
+        Categories("categories"),
+        NotInTree("not-in-a-tree logo"),
+        ;
+
+        companion object {
+            /** A stored layout: the parts this build knows, each once, in their order. */
+            fun decode(names: List<String>): List<TaskRowPart> =
+                names.mapNotNull { name -> entries.firstOrNull { it.name == name } }.distinct()
+
+            /** The user's example (2026-11-22): the arrow, then the share of the parent, then the whole title. */
+            val ARROW_RELATIVE_TITLE: List<TaskRowPart> = listOf(Arrow, RelativePriority, Title)
+        }
+    }
+
+    /** [layout] with [part] added at its end ([on]) or taken out of it. */
+    fun withTaskRowPart(layout: List<TaskRowPart>, part: TaskRowPart, on: Boolean): List<TaskRowPart> =
+        if (on) (if (part in layout) layout else layout + part) else layout - part
+
+    /** [layout] with the part at [from] moved to [to] — the others keep their order around it. */
+    fun movedTaskRowPart(layout: List<TaskRowPart>, from: Int, to: Int): List<TaskRowPart> {
+        if (from !in layout.indices) return layout
+        val list = layout.toMutableList()
+        val part = list.removeAt(from)
+        list.add(to.coerceIn(0, list.size), part)
+        return list
+    }
+
     /** [sorts] with the method at [from] dragged to [to] — the others keep their order around it. */
     fun movedSortMethod(sorts: List<SortMethod>, from: Int, to: Int): List<SortMethod> {
         if (from !in sorts.indices) return sorts
@@ -2153,6 +2201,8 @@ object SearchDomain {
         IntegerSort(Kind.Integer, "Sort by", sorts = true),
         /** User rule 2026-11-12: the actions section's rows, sorted as any kind's rows are. */
         ActionSort(Kind.Action, "Sort by", sorts = true),
+        /** User rule 2026-11-22: what a task row shows, in which order ([Config.taskRowLayout]). */
+        TaskRowLayout(Kind.Task, "Row layout"),
         TaskInTree(Kind.Task, "In a task tree"),
         /** User rule 2026-11-14: only the roots of the trees ([Filters.taskTreeRoot]). */
         TaskTreeRoot(Kind.Task, "Root of a tree"),
@@ -2229,7 +2279,7 @@ object SearchDomain {
             setting.sorts || setting == Setting.SearchSortsOnly -> SettingRole.Sort
             setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults -> SettingRole.Children
             setting == Setting.DropButtons || setting == Setting.CompletionList || setting == Setting.MenuCustomizing ||
-                setting == Setting.ButtonFollowsExpansion -> SettingRole.Display
+                setting == Setting.ButtonFollowsExpansion || setting == Setting.TaskRowLayout -> SettingRole.Display
             setting == Setting.ResetSearch -> null
             else -> SettingRole.Filter
         }
@@ -2286,6 +2336,7 @@ object SearchDomain {
             Setting.MenuCustomizing.takeIf { config.menuCustomizing },
             Setting.DropButtons.takeIf { config.dropButtons },
             Setting.ButtonFollowsExpansion.takeIf { config.buttonFollowsExpansion },
+            Setting.TaskRowLayout.takeIf { config.taskRowLayout.isNotEmpty() },
         )
 
     /**
@@ -2831,6 +2882,9 @@ object SearchDomain {
             Setting.SearchSortsOnly -> "The actions section's bar sorts the actions and hides none."
             Setting.MenuCustomizing -> "A press selects a row and activates nothing; a held press drags the selected rows into the order kept."
             Setting.DropButtons -> "A button on every element to drop it from the list."
+            Setting.TaskRowLayout ->
+                "What a task row shows, in this order. Default: the row as the tree draws it. Set, a title in it is shown " +
+                    "whole and the list scrolls sideways (Shift + wheel, or the bar under it) where a row is wider than it."
             Setting.ButtonFollowsExpansion ->
                 "On: the left-side menu button that opened this window saves which rows are open (sub-tree rows included) each " +
                     "time one is opened or closed, and opens this window with them next time. Off: the button keeps the open " +
@@ -3256,6 +3310,8 @@ object SearchDomain {
         val dropButtons: Boolean = false,
         /** New 2026-11-19: absent = the menu button keeps what it kept ([Config.buttonFollowsExpansion]). */
         val buttonFollowsExpansion: Boolean = false,
+        /** New 2026-11-22: absent = the default task row ([Config.taskRowLayout]); a part this build does not know is skipped. */
+        val taskRowLayout: List<String> = emptyList(),
         /** New 2026-10-11: absent from an older build's = the actions in their own order. */
         val actionSearch: String = "",
         /** New 2026-10-11: absent = no block picked in "Blocks on the calendar". */
