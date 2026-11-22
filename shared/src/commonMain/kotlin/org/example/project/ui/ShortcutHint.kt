@@ -17,6 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -78,6 +80,8 @@ fun InfoHint(
 ) {
     // The pointer, in this element's own coordinates, while it is over it; null while it is not.
     var pointer by remember { mutableStateOf<Offset?>(null) }
+    // Where the element stands in its window, last seen: a move of it under a resting pointer drops the bubble.
+    val placedAt = remember { arrayOfNulls<Offset>(1) }
     Box(
         modifier = modifier
             .then(
@@ -85,11 +89,24 @@ fun InfoHint(
                     Modifier
                 } else {
                     Modifier
+                        // Anomaly 2026-11-22 (*"the info bubble sometimes gets stuck when I vertically scroll on the
+                        // list of rows"*): a list scrolled under a resting pointer carries the element, and its bubble
+                        // with it, up under the pointer; the bubble then takes the pointer, the element never hears its
+                        // Exit, and the bubble stays. **The element moved, the bubble goes** — the next Enter or Move
+                        // shows the bubble of whatever is under the pointer then, at the pointer.
+                        .onGloballyPositioned { coordinates ->
+                            val now = coordinates.positionInWindow()
+                            val was = placedAt[0]
+                            placedAt[0] = now
+                            if (was != null && was != now) pointer = null
+                        }
                         // Observed at the Main pass without consuming: the button's own click, and any drag
                         // gesture an ancestor runs, are untouched.
                         .onPointerEventCompat(PointerEventType.Enter) { pointer = it.changes.first().position }
                         .onPointerEventCompat(PointerEventType.Move) { pointer = it.changes.first().position }
                         .onPointerEventCompat(PointerEventType.Exit) { pointer = null }
+                        // The wheel turning under the pointer moves what it rests on: the bubble goes at once.
+                        .onPointerEventCompat(PointerEventType.Scroll) { pointer = null }
                 },
             ),
     ) {

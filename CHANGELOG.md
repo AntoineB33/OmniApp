@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An info bubble is dropped when its element moves under the pointer — 2026-11-22
+
+- Anomaly: *"There are bugs with the info bubble that sometimes get stuck when I vertically scroll on the list of
+  rows."* Cause: a wheel notch larger than `BUBBLE_BELOW_POINTER` carried the hovered row, and its bubble with it, up
+  under the resting pointer; the bubble's `Popup` then took the pointer, the row never heard its Exit, and its bubble
+  stayed beside the next row's.
+- Now `InfoHint` drops its bubble when its element moves in its window (`onGloballyPositioned`) or the wheel turns over
+  it; the next Enter/Move shows the bubble of the row then under the pointer. `PopupRapidClickTest`
+  (`scrolling_under_a_resting_pointer_never_leaves_a_bubble_behind`). Client rebuild only.
+
 ### Pop-up positions are History Units — 2026-11-22
 
 - User: *"fold them in"* — the pop-up positions, which were a second timeline kept in memory beside the history

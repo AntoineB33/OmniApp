@@ -685,7 +685,9 @@ means.
     only at the position of the mouse, even if it is moving."*): `BUBBLE_BELOW_POINTER` (16 dp) under it, at its x — the
     calendar's bubble and `InfoHint` / `ShortcutHint` alike, the one constant (`ShortcutHint.kt`). `InfoHint` hung its
     bubble under the control's left corner, far from a pointer at the other end of a wide row; it now reads the pointer
-    on Enter and every Move (`PopupRapidClickTest`). Never anchor a bubble to its control.
+    on Enter and every Move (`PopupRapidClickTest`). Never anchor a bubble to its control. **A bubble whose element moves goes** (anomaly 2026-11-22: a list scrolled under a resting
+    pointer carried a bubble up under it, the bubble took the pointer and stayed): `InfoHint` drops it when its element
+    moves in its window or the wheel turns over it.
 - **A right-click on a window's HEAD opens its menu, at the pointer** (user rule 2026-10-15: *"The user can modify
   the title of a window by right-clicking on the header of the window. It opens a menu with 'rename', 'remove from
   menu' and one option for each button in the right side of the header of the window."*; `WindowHead`'s `HeadMenu`, a

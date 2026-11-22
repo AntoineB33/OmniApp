@@ -3,6 +3,8 @@ package org.example.project
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
@@ -95,6 +97,11 @@ class PopupRapidClickTest {
         fun release(at: Offset) = onEdt {
             time += 16L
             scene.sendPointerEvent(PointerEventType.Release, at, timeMillis = time, button = PointerButton.Primary)
+        }
+
+        fun scroll(at: Offset, dy: Float) = onEdt {
+            time += 16L
+            scene.sendPointerEvent(PointerEventType.Scroll, at, scrollDelta = Offset(0f, dy), timeMillis = time)
         }
 
         /** A press and its release, a frame apart: one quick click. */
@@ -248,6 +255,41 @@ class PopupRapidClickTest {
         h.move(Offset(850f, 850f))
         lossReported()
         assertEquals(1, lost, "a press elsewhere: the loss is applied at once")
+    }
+
+
+    /**
+     * Anomaly 2026-11-22: *"the info bubble sometimes gets stuck when I vertically scroll on the list of rows."* The pointer
+     * rests on a row of a scrolling list and the wheel turns: whatever bubble is shown is the one of the row now under the
+     * pointer, at the pointer — or none — never the bubble of a row the list carried away.
+     */
+    @Test
+    fun scrolling_under_a_resting_pointer_never_leaves_a_bubble_behind() {
+        val h = Harness {
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.padding(40.dp).width(600.dp).height(400.dp)) {
+                items(60) { i ->
+                    InfoHint(text = "Bubble $i", modifier = Modifier.width(600.dp)) { Text("Row $i", Modifier.padding(4.dp)) }
+                }
+            }
+        }.also { harness = it }
+        h.frames()
+        val at = h.boundsOf("Row 3").center
+        h.move(at)
+        assertTrue("Bubble 3" in h.texts(), "hovered, row 3 shows its bubble")
+        repeat(20) { step ->
+            h.scroll(at, if (step < 10) 4f else -4f)
+            h.frames(12)
+            val bubbles = h.texts().filter { it.startsWith("Bubble ") }
+            val under = h.nodes().firstOrNull { n ->
+                n.config.getOrNull(SemanticsProperties.Text)?.any { it.text.startsWith("Row ") } == true && n.boundsInWindow.let { b -> at.y >= b.top - 4f && at.y < b.bottom + 4f }
+            }?.config?.getOrNull(SemanticsProperties.Text)?.first()?.text?.removePrefix("Row ")
+            assertTrue(bubbles.size <= 1, "step $step: one bubble at most, none left behind: $bubbles")
+            bubbles.forEach { b ->
+                assertEquals("Bubble $under", b, "step $step: the bubble is the row's under the pointer")
+                val box = h.boundsOf(b)
+                assertTrue(box.left in at.x..at.x + 12f && box.top in at.y..at.y + 40f, "step $step: the bubble at the pointer: $box")
+            }
+        }
     }
 
     private val pending = ArrayList<Any>()
