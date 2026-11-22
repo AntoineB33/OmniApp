@@ -101,7 +101,8 @@ The short form; the file named after each carries the whole rule and the reasons
   beside its configuration. `ListedFromTest`; `task-tree.md` § *Listed from*.
 - **No text of the app is cut by "…"** (user rule 2026-11-04): a text too long for its room wraps — never
   `TextOverflow.Ellipsis`, never a string shortened behind one (`NoTextCutByAnEllipsisTest`). A label saying more is to
-  come ("add…", "Syncing…") is not cut text.
+  come ("add…", "Syncing…") is not cut text. The tree's title clipped with its red ▸ is the one accepted
+  cut (user 2026-11-22, PRD §2).
 
 ## State: authoritative vs. derived
 

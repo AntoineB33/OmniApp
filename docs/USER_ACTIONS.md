@@ -191,7 +191,8 @@ Open, for the user to decide:
 
 4. **Long task titles are clipped with a red ▸ in the tree** (`TaskSchedulerScreen.kt`, PRD §2), while the
    user rule 2026-11-04 says no text is cut, a long text wraps. `NoTextCutByAnEllipsisTest` only catches
-   `TextOverflow.Ellipsis`, so `Clip` + arrow passes it.
+   `TextOverflow.Ellipsis`, so `Clip` + arrow passes it. **Decided 2026-11-22: keep the red arrow** — the accepted exception, now
+   written beside the rule in `CLAUDE.md`.
 5. **`docs/PRD_TaskScheduler.md` lags the code**: §7 still has a calendar toggle button, a "Task tree" button, a
    Categories button and a lateral-menu button rule naming reminders/history; §7's Search kinds list misses chrono,
    quota, calendar, calendar block, notification, app setting, workplace setup, md element, the two evolutions and
