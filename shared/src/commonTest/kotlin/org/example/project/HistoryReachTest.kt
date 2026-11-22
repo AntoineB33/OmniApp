@@ -120,8 +120,8 @@ class HistoryReachTest {
     }
 
     /**
-     * User rule 2026-11-12: the whole walk going back skips a unit its window's Ctrl+Z already undid; going forward it
-     * moves the whole pin to the next undone change over it.
+     * User rule 2026-11-12: the whole walk going back skips a unit its window's Ctrl+Z already undid. User rule
+     * 2026-11-22: and going forward too — what a window's Ctrl+Z undid is that window's to redo.
      */
     @Test
     fun the_whole_walk_skips_what_a_window_undid() {
@@ -137,13 +137,17 @@ class HistoryReachTest {
         s = r(s, SchedulerIntent.UndoAll)
         assertEquals("b-", s.externalRestores.last().to)
         assertEquals(s, r(s, SchedulerIntent.UndoAll), "nothing applied is left")
-        // Ctrl+Shift+Y: a, b, c, in the order made.
+        // Ctrl+Shift+Y: b alone, which it undid.
+        s = r(s, SchedulerIntent.RedoAll)
+        assertEquals("b", s.externalRestores.last().to)
+        assertEquals(s, r(s, SchedulerIntent.RedoAll), "a and c are the tree's to redo")
+        // The tree's Ctrl+Y: a, then c, in the order made.
         val redone = mutableListOf<String?>()
-        repeat(3) {
-            s = r(s, SchedulerIntent.RedoAll)
+        repeat(2) {
+            s = r(s, SchedulerIntent.Redo)
             redone += s.externalRestores.last().to
         }
-        assertEquals<List<String?>>(listOf("a", "b", "c"), redone)
+        assertEquals<List<String?>>(listOf("a", "c"), redone)
     }
 
     @Test
@@ -294,8 +298,8 @@ class HistoryReachTest {
     }
 
     /**
-     * User example 2026-11-12: two changes in A (A's pin and the whole pin on the second), Ctrl+Z in A (both on the
-     * first), a change in B (A's pin unchanged, the whole pin and B's on the new change) — and A's Ctrl+Y still there.
+     * User example 2026-11-12: two changes in A, Ctrl+Z in A, a change in B — and A's Ctrl+Y still there. User rule
+     * 2026-11-22: what A's Ctrl+Z undid is A's to redo; Ctrl+Shift+Y passes over it.
      */
     @Test
     fun a_change_in_another_window_keeps_this_windows_redo() {
@@ -303,14 +307,10 @@ class HistoryReachTest {
         s = edit(s, HistoryWindow.Tree, "a1")
         s = edit(s, HistoryWindow.Tree, "a2")
         val a2 = main(s).last().deviceSeq
-        assertEquals(a2, SchedulerReducer.wholePinOf(s))
         s = r(s, SchedulerIntent.Undo)
-        val a1 = main(s).first { it.delta.label == "Title" }.deviceSeq
-        assertEquals(a1, SchedulerReducer.wholePinOf(s), "the whole pin went down with A's")
         s = edit(s, HistoryWindow.Calendar, "b")
-        assertEquals(main(s).last().deviceSeq, SchedulerReducer.wholePinOf(s), "the whole pin is on B's change")
         assertTrue(main(s).any { it.deviceSeq == a2 && it.undone }, "A's undone change was kept")
-        assertEquals(s, r(s, SchedulerIntent.RedoAll), "the whole pin has nothing over it")
+        assertEquals(s, r(s, SchedulerIntent.RedoAll), "Ctrl+Shift+Y passes over what A's Ctrl+Z undid")
         s = r(focus(s, HistoryWindow.Tree), SchedulerIntent.Redo)
         assertEquals("a2", s.externalRestores.last().to, "A's Ctrl+Y")
         // A new change in A is A's new branch: its redo goes.
@@ -319,39 +319,73 @@ class HistoryReachTest {
         assertTrue(main(s).none { it.deviceSeq == a2 }, "A's own change drops A's redo")
     }
 
-    /** User rule 2026-11-12: Ctrl+Shift+Y passes over a change a window's Ctrl+Y already redid. */
+    /**
+     * User rule 2026-11-22, rule 1: **a unit undone by a pin is passed over by every other pin**, both ways — only the pin
+     * that undid it redoes it.
+     */
     @Test
-    fun ctrl_shift_y_passes_over_what_a_window_redid() {
+    fun a_pin_passes_over_what_another_pin_undid() {
         var s = SchedulerState.empty()
         s = edit(s, HistoryWindow.Calendar, "x")
         s = edit(s, HistoryWindow.Tree, "y")
+        // The whole pin undoes both: the tree's Ctrl+Y has nothing of its own to redo.
         s = r(s, SchedulerIntent.UndoAll)
         s = r(s, SchedulerIntent.UndoAll)
-        assertEquals(0L, SchedulerReducer.wholePinOf(s))
         s = r(focus(s, HistoryWindow.Tree), SchedulerIntent.Redo)
-        assertEquals("y", s.externalRestores.last().to)
+        assertTrue(main(s).single { it.delta.label == "Title" && it.window == HistoryWindow.Tree }.undone, "y stays undone")
         s = r(s, SchedulerIntent.RedoAll)
         assertEquals("x", s.externalRestores.last().to)
-        assertEquals(s, r(s, SchedulerIntent.RedoAll), "y is applied already: nothing over the pin")
+        s = r(s, SchedulerIntent.RedoAll)
+        assertEquals("y", s.externalRestores.last().to)
+        // The other way: the tree's Ctrl+Z undoes y; the whole pin passes over it, undoes x, and redoes x alone.
+        s = r(focus(s, HistoryWindow.Tree), SchedulerIntent.Undo)
+        assertEquals("y-", s.externalRestores.last().to)
+        s = r(s, SchedulerIntent.UndoAll)
+        assertEquals("x-", s.externalRestores.last().to)
+        s = r(s, SchedulerIntent.RedoAll)
+        assertEquals("x", s.externalRestores.last().to)
+        assertEquals(s, r(s, SchedulerIntent.RedoAll), "y is the tree's to redo")
+        s = r(s, SchedulerIntent.Redo)
+        assertEquals("y", s.externalRestores.last().to)
     }
 
-    /** The whole pin is this device's: stored with the history, never in what goes over the wire. */
+    /**
+     * User rule 2026-11-22, rule 2: **a new unit drops the units undone by every pin whose list it joins** — after
+     * Ctrl+Shift+Z, a change in any window drops what the whole pin undid; after A's Ctrl+Z, only a change in A drops it.
+     */
     @Test
-    fun the_whole_pin_is_stored_and_kept_off_the_wire() {
+    fun a_new_change_drops_the_redo_of_the_pins_it_joins_only() {
+        var s = SchedulerState.empty()
+        s = edit(s, HistoryWindow.Calendar, "x")
+        val x = main(s).last().deviceSeq
+        s = r(s, SchedulerIntent.UndoAll)
+        s = edit(s, HistoryWindow.Tree, "y")
+        assertTrue(main(s).none { it.deviceSeq == x }, "the whole pin walks the tree's change: its redo is gone")
+    }
+
+    /** The pin that undid a unit is stored with it; a unit undone before pins were recorded is its window's. */
+    @Test
+    fun the_pin_that_undid_a_unit_survives_the_store_and_an_older_unit_is_its_windows() {
         var s = SchedulerState.empty()
         s = edit(s, HistoryWindow.Tree, "a")
         s = edit(s, HistoryWindow.Calendar, "b")
         s = r(s, SchedulerIntent.UndoAll)
-        val pin = SchedulerReducer.wholePinOf(s)
-        assertEquals(pin, s.histories.wholePin)
+        val undone = main(s).single { it.undone }
+        assertEquals("changes", undone.undoneBy)
         val back = assertNotNull(SchedulerStateCodec.decodeSnapshot(SchedulerStateCodec.encodeSnapshot(s)))
-        assertEquals(pin, back.histories.wholePin)
-        assertTrue(SchedulerStateCodec.syncFingerprint(s).pointers.none { it.category == WHOLE_PIN_ROW })
-        // A snapshot written before the pin existed: no row, the pin is read off the units.
-        val older = SchedulerStateCodec.encodeSnapshot(s).let { it.copy(pointers = it.pointers.filterNot { p -> p.category == WHOLE_PIN_ROW }) }
-        val loaded = assertNotNull(SchedulerStateCodec.decodeSnapshot(older))
-        assertEquals(null, loaded.histories.wholePin)
-        assertEquals(main(loaded).filter { !it.undone }.maxOf { it.deviceSeq }, SchedulerReducer.wholePinOf(loaded))
+        assertEquals("changes", main(back).single { it.undone }.undoneBy)
+        // A unit written before pins were recorded: no pin, read as its window's Ctrl+Z.
+        val older = s.copy(histories = s.histories.withCategory(
+            HistoryCategory.Main,
+            s.histories.forCategory(HistoryCategory.Main).let { h -> h.copy(units = h.units.map { it.copy(undoneBy = null) }) },
+        ))
+        val loaded = assertNotNull(SchedulerStateCodec.decodeSnapshot(SchedulerStateCodec.encodeSnapshot(older)))
+        assertEquals(null, main(loaded).single { it.undone }.undoneBy)
+        assertEquals(loaded, r(loaded, SchedulerIntent.RedoAll), "not the whole pin's")
+        val redone = r(focus(loaded, HistoryWindow.Calendar), SchedulerIntent.Redo)
+        assertEquals("b", redone.externalRestores.last().to, "its window's Ctrl+Y redoes it")
+        // The whole pin a build before stored is read no more, and nothing is written for it.
+        assertTrue(SchedulerStateCodec.encodeSnapshot(s).pointers.none { it.category == WHOLE_PIN_ROW })
     }
 
     /** A change [value] made in the copy [instance] of [window]. */

@@ -316,7 +316,6 @@ object SchedulerStateCodec {
                 )
             }
         }
-        state.histories.wholePin?.let { pointers.add(HistoryPointerRow(WHOLE_PIN_ROW, it)) }
         return PersistedSnapshot(statePayload, rows, pointers)
     }
 
@@ -374,6 +373,7 @@ object SchedulerStateCodec {
             if (unit.deviceId.isNotEmpty()) extra[UNIT_DEVICE_KEY] = JsonPrimitive(unit.deviceId)
             if (unit.deviceSeq != 0L) extra[UNIT_SEQ_KEY] = JsonPrimitive(unit.deviceSeq)
             if (unit.undone) extra[UNIT_UNDONE_KEY] = JsonPrimitive(true)
+            if (unit.undone) unit.undoneBy?.let { extra[UNIT_UNDONE_BY_KEY] = JsonPrimitive(it) }
             if (unit.changedAtMillis != 0L) extra[UNIT_CHANGED_KEY] = JsonPrimitive(unit.changedAtMillis)
             if (extra.isEmpty()) delta.toString() else JsonObject(delta + extra).toString()
         }.let { EncodedDelta(json = it, hash = HistoryDigest.hash(it)) }
@@ -404,12 +404,22 @@ object SchedulerStateCodec {
                 deviceId = deviceId,
                 deviceSeq = deviceSeq,
                 undone = undone,
+                undoneBy = undoneByOf(text).takeIf { undone },
             )
         }.getOrNull()
 
     private const val UNIT_DEVICE_KEY = "deviceId"
     private const val UNIT_SEQ_KEY = "deviceSeq"
     private const val UNIT_UNDONE_KEY = "undone"
+    /** User rule 2026-11-22: the pin that undid the unit (`HistoryUnit.undoneBy`); absent on one written before. */
+    private const val UNIT_UNDONE_BY_KEY = "undoneBy"
+
+    /** The pin a unit's row text says undid it, or null (applied, or undone before pins were recorded). */
+    private fun undoneByOf(text: String): String? {
+        if (!text.contains("\"$UNIT_UNDONE_BY_KEY\"")) return null
+        val obj = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return null
+        return (obj[UNIT_UNDONE_BY_KEY] as? JsonPrimitive)?.content
+    }
     private const val UNIT_CHANGED_KEY = "changedAt"
 
     /** The owner, number and undone flag a unit's row text carries; the flag is null when the row predates it. */
@@ -455,6 +465,7 @@ object SchedulerStateCodec {
                             // A unit written before units carried the flag was undone exactly when it sat past its
                             // category's pointer.
                             undone = owner.third ?: (index > (pointerByCategory[category.name] ?: -1)),
+                            undoneBy = undoneByOf(row.deltaJson),
                             changedAtMillis = changedAtOf(row.deltaJson),
                             // An unknown name (a window this build no longer has) heals to "no window":
                             // the unit is still listed, under the drop-down's "All windows".
@@ -490,7 +501,9 @@ object SchedulerStateCodec {
         }
         // A snapshot written before the whole app's pin existed has no row: the pin is then read off the units.
         // Healed (2026-11-21): the keystrokes stored in Main before they had their own list move there.
-        return histories.copy(wholePin = pointerByCategory[WHOLE_PIN_ROW]).withSearchTextApart()
+        // The whole app's pin a build before 2026-11-22 stored ([WHOLE_PIN_ROW]) is read no more: each unit says which
+        // pin undid it (`HistoryUnit.undoneBy`).
+        return histories.withSearchTextApart()
     }
 
     /**

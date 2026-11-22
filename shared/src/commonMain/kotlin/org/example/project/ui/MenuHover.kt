@@ -338,22 +338,15 @@ class PopupPositions(private val stampNow: () -> Any?) {
 
     /**
      * The app's own history was just walked back ([back] had nothing): if it now stands where a run was recorded, the walk
-     * arrives at that run's end — the pop-up the keyboard was last in, brought back. The app's window entries after it
-     * are the place the walk already stands on (the app's own step put the focus there), so they are passed over.
+     * stands at that run's end — on the window the app's own step brought back, nothing reopened yet (user rule
+     * 2026-11-22: *"it should bring focus to window A … If I do shift + alt + <- again, it should bring focus to window Ab
+     * (with window Aa and A open of course)"*). The next [back] brings the pop-up the keyboard was last in.
      */
     fun arrivedBack() {
         val run = here() ?: return
-        var i = run.entries.lastIndex
-        while (i > 0 && run.entries[i].owner == null) i--
-        run.index = i
-        val at = run.entries[i]
-        val reopens = at.owner != null && !at.isOpen()
-        // One line per arrival, in diagnostics.log: what the walk found here (the desktop's focus can't be tested headless).
-        org.example.project.scheduler.platform.Diagnostics.log(
-            "[popup] arrived back at a run of ${run.entries.size}: entry $i, " +
-                (if (at.owner == null) "the app's window" else if (reopens) "pop-up brought back" else "pop-up still open"),
-        )
-        if (reopens) bring(at)
+        run.index = run.entries.lastIndex
+        // One line per arrival, in diagnostics.log (the desktop's focus can't be tested headless).
+        org.example.project.scheduler.platform.Diagnostics.log("[popup] arrived back at a run of ${run.entries.size}")
     }
 
     /** The app's own history was just walked forward: a run recorded here is walked from its start. */

@@ -931,22 +931,19 @@ object SchedulerReducer {
             is SchedulerIntent.RecordNotification -> reduceRecordNotification(state, intent)
             is SchedulerIntent.RecordSupabaseUsage -> reduceRecordSupabaseUsage(state, intent)
             is SchedulerIntent.MergePeerHistory -> reduceMergePeerHistory(state, intent)
+            // An Edit Mode session's keystrokes are the one history open while it is: every change walk is its walk then.
             SchedulerIntent.Undo ->
-                if (state.editSession != null) undo(state, HistoryCategory.Edit)
-                else snapWholePin(undoIn(state, changesOf(state)))
+                if (state.editSession != null) undoIn(state, Pin.Edit) else undoIn(state, Pin.changesOf(state))
             SchedulerIntent.Redo ->
-                if (state.editSession != null) redo(state, HistoryCategory.Edit) else redoIn(state, changesOf(state))
-            // An Edit Mode session's keystrokes are the one history open while it is: the whole walk is its walk then.
-            SchedulerIntent.UndoAll ->
-                if (state.editSession != null) undo(state, HistoryCategory.Edit) else undoAll(state)
-            SchedulerIntent.RedoAll ->
-                if (state.editSession != null) redo(state, HistoryCategory.Edit) else redoAll(state)
-            SchedulerIntent.UndoSelection -> undoIn(state, selectionsOf(state))
-            SchedulerIntent.RedoSelection -> redoIn(state, selectionsOf(state))
-            SchedulerIntent.UndoPosition -> undoIn(state, POSITIONS)
-            SchedulerIntent.RedoPosition -> redoIn(state, POSITIONS)
-            SchedulerIntent.UndoFocus -> undoIn(state, FOCUS_MOVES)
-            SchedulerIntent.RedoFocus -> redoIn(state, FOCUS_MOVES)
+                if (state.editSession != null) redoIn(state, Pin.Edit) else redoIn(state, Pin.changesOf(state))
+            SchedulerIntent.UndoAll -> undoIn(state, if (state.editSession != null) Pin.Edit else Pin.AllChanges)
+            SchedulerIntent.RedoAll -> redoIn(state, if (state.editSession != null) Pin.Edit else Pin.AllChanges)
+            SchedulerIntent.UndoSelection -> undoIn(state, Pin.selectionsOf(state))
+            SchedulerIntent.RedoSelection -> redoIn(state, Pin.selectionsOf(state))
+            SchedulerIntent.UndoPosition -> undoIn(state, Pin.AllPositions)
+            SchedulerIntent.RedoPosition -> redoIn(state, Pin.AllPositions)
+            SchedulerIntent.UndoFocus -> undoIn(state, Pin.FocusMoves)
+            SchedulerIntent.RedoFocus -> redoIn(state, Pin.FocusMoves)
         }
     }
 
@@ -970,33 +967,154 @@ object SchedulerReducer {
         }
 
     /**
-     * PRD §5: what one history chord walks — the categories it may take a unit from, and which of their units
-     * are its own. `HistoryCategory.chords` is the statement of the same mapping the History window filters on.
+     * User rule 2026-11-22: **a pin — one walk over a history list.** Several pins walk the same units (a window's
+     * `Ctrl+Z` and `Ctrl+Shift+Z` the same changes; a window's `Alt+←`, `Shift+Alt+←` and `Ctrl+Page Up` the same
+     * positions), and they are unified by two rules:
+     *  - **a unit undone by a pin is passed over by every other pin** — in both directions: only the pin that undid it
+     *    redoes it ([HistoryUnit.undoneBy], [redoIn]);
+     *  - **a new unit drops the units undone by every pin whose list it joins** — the redo branch of those pins, never
+     *    another pin's ([dropsRedoOf], [commitDelta]), across every category the pin walks.
+     * [id] is what a unit stores of the pin that undid it; [of] reads it back. `HistoryCategory.chords` is the
+     * statement of the same mapping the History window filters on.
      */
-    private class HistoryWalk(
-        val categories: List<HistoryCategory>,
-        val accepts: (HistoryCategory, HistoryUnit) -> Boolean = { _, _ -> true },
-    )
+    internal sealed class Pin(val id: String, val categories: List<HistoryCategory>) {
+        /** Whether [unit] of [category] is on this pin's list. */
+        abstract fun holds(category: HistoryCategory, unit: HistoryUnit): Boolean
 
-    /**
-     * `Ctrl+Z` outside an Edit Mode session: the **changes made in the focused window** — the units of
-     * [HistoryCategory.Main] and [HistoryCategory.Calendar] stamped with it, and nothing else (user rule 2026-11-12).
-     * A unit stamped with no window was written before units knew theirs (or by a headless host): a calendar unit is
-     * the calendar's, any other the tree's, which is where each was undone from then.
-     *
-     * A change made in **the left-side menu** or the window bar, which are no window ([isAppWide]), is walked by no
-     * window's Ctrl+Z: [ALL_CHANGES] alone reaches it (user rule 2026-11-12, replacing the 2026-11-01 rule that walked
-     * it from every window). What **the app** authored is walked by no chord at all ([Delta.authoredByApp]): the work
-     * banked as the line advanced used to sit on top of the stack, so a Ctrl+Z after a few minutes took a banked record
-     * back instead of what the user did last (anomaly 2026-11-01).
-     */
-    private fun changesOf(state: SchedulerState): HistoryWalk =
-        HistoryWalk(CHANGE_CATEGORIES) { category, unit ->
-            !unit.delta.authoredByApp && !isAppWide(unit) &&
-                windowOf(category, unit) == state.focusedWindow && unit.instance == state.focusedInstance
+        /** An Edit Mode session's keystrokes: the one walk while it is open. */
+        data object Edit : Pin("edit", listOf(HistoryCategory.Edit)) {
+            override fun holds(category: HistoryCategory, unit: HistoryUnit) = category == HistoryCategory.Edit
         }
 
-    /** The categories of the changes ([changesOf], [ALL_CHANGES]): what Ctrl+Z and Ctrl+Shift+Z walk. */
+        /**
+         * `Ctrl+Z` outside an Edit Mode session: the **changes made in one window** (its copy [instance]) — the units of
+         * [HistoryCategory.Main] and [HistoryCategory.Calendar] stamped with it, and nothing else (user rule 2026-11-12).
+         * A unit stamped with no window was written before units knew theirs (or by a headless host): a calendar unit is
+         * the calendar's, any other the tree's. A change made in **the left-side menu** or the window bar, which are no
+         * window ([isAppWide]), is on no window's list: [AllChanges] alone walks it. What **the app** authored is on no
+         * list at all ([Delta.authoredByApp], anomaly 2026-11-01).
+         */
+        data class WindowChanges(val window: HistoryWindow, val instance: String) :
+            Pin("changes/" + window.name + "/" + instance, CHANGE_CATEGORIES) {
+            override fun holds(category: HistoryCategory, unit: HistoryUnit) =
+                category in CHANGE_CATEGORIES && !unit.delta.authoredByApp && !isAppWide(unit) &&
+                    windowOf(category, unit) == window && unit.instance == instance
+        }
+
+        /** `Ctrl+Shift+Z` / `Ctrl+Shift+Y`: **every change**, whichever window it was made in (user rule 2026-11-12). */
+        data object AllChanges : Pin("changes", CHANGE_CATEGORIES) {
+            override fun holds(category: HistoryCategory, unit: HistoryUnit) =
+                category in CHANGE_CATEGORIES && !unit.delta.authoredByApp
+        }
+
+        /**
+         * `Alt+arrows`: the **selections of one window** (its copy [instance]). Which window a selection belongs to is read
+         * off the delta ([positionOf]), never off the stamp: "go to task tree" pressed in the Search window selects a
+         * cell of the TREE, and `Alt+←` in Search must not move the tree.
+         */
+        data class WindowSelections(val window: HistoryWindow, val instance: String) :
+            Pin("selections/" + window.name + "/" + instance, listOf(HistoryCategory.Selection)) {
+            override fun holds(category: HistoryCategory, unit: HistoryUnit): Boolean {
+                if (category != HistoryCategory.Selection) return false
+                val (w, i) = positionOf(unit.delta)
+                return w == window && (i == null || i == instance)
+            }
+        }
+
+        /** `Shift+Alt+arrows`: every selection of every window and every move of the focus, in the order made. */
+        data object AllPositions : Pin("positions", listOf(HistoryCategory.Selection, HistoryCategory.WindowNav)) {
+            override fun holds(category: HistoryCategory, unit: HistoryUnit) =
+                category == HistoryCategory.Selection || category == HistoryCategory.WindowNav
+        }
+
+        /** `Ctrl+Page Up/Down`: the moves of the focus between windows alone (user rule 2026-10-15). */
+        data object FocusMoves : Pin("focus", listOf(HistoryCategory.WindowNav)) {
+            override fun holds(category: HistoryCategory, unit: HistoryUnit) = category == HistoryCategory.WindowNav
+        }
+
+        /**
+         * User rule 2026-11-20: **the pin of a Search window's bar** — its keystroke units ([ExternalKeys.SEARCH_TEXT] +
+         * frame id). No other pin walks them (user rule 2026-11-21: *"two pins can't share history units"*).
+         */
+        data class Bar(val key: String) : Pin("bar/" + key, listOf(HistoryCategory.SearchText)) {
+            override fun holds(category: HistoryCategory, unit: HistoryUnit) =
+                category == HistoryCategory.SearchText && (unit.delta as? ExternalDelta)?.key == key
+        }
+
+        companion object {
+            /** The focused window's `Ctrl+Z`. */
+            fun changesOf(state: SchedulerState): Pin = WindowChanges(state.focusedWindow, state.focusedInstance)
+
+            /** The focused window's `Alt+arrows`. */
+            fun selectionsOf(state: SchedulerState): Pin = WindowSelections(state.focusedWindow, state.focusedInstance)
+
+            /** Every pin, read back from its [id]; null for one this build does not know. */
+            fun of(id: String): Pin? {
+                fun windowed(rest: String, make: (HistoryWindow, String) -> Pin): Pin? {
+                    val name = rest.substringBefore('/')
+                    val window = HistoryWindow.entries.firstOrNull { it.name == name } ?: return null
+                    return make(window, rest.substringAfter('/', ""))
+                }
+                return when {
+                    id == Edit.id -> Edit
+                    id == AllChanges.id -> AllChanges
+                    id == AllPositions.id -> AllPositions
+                    id == FocusMoves.id -> FocusMoves
+                    id.startsWith("changes/") -> windowed(id.removePrefix("changes/"), ::WindowChanges)
+                    id.startsWith("selections/") -> windowed(id.removePrefix("selections/"), ::WindowSelections)
+                    id.startsWith("bar/") -> Bar(id.removePrefix("bar/"))
+                    else -> null
+                }
+            }
+        }
+    }
+
+    /**
+     * A unit undone before pins were recorded ([HistoryUnit.undoneBy] null): a change was undone by its window's
+     * `Ctrl+Z` as far as the branch rule of then knew (a change orphaned only its window's redo), a bar's keystroke by its
+     * bar, an Edit Mode keystroke by the session — and a position by any of the pins that walk it (null), which is how
+     * every position walk treated it then.
+     */
+    internal fun legacyPinOf(category: HistoryCategory, unit: HistoryUnit): Pin? =
+        when (category) {
+            HistoryCategory.Edit -> Pin.Edit
+            HistoryCategory.Main, HistoryCategory.Calendar ->
+                if (unit.delta.authoredByApp || isAppWide(unit)) Pin.AllChanges
+                else Pin.WindowChanges(windowOf(category, unit), unit.instance)
+            HistoryCategory.SearchText -> (unit.delta as? ExternalDelta)?.key?.let { Pin.Bar(it) }
+            HistoryCategory.Selection, HistoryCategory.WindowNav -> null
+        }
+
+    /** Every pin that walks [unit] of [category] — for a legacy position, any of them may redo it. */
+    private fun pinsHolding(category: HistoryCategory, unit: HistoryUnit): List<Pin> =
+        when (category) {
+            HistoryCategory.Selection ->
+                listOfNotNull(positionOf(unit.delta).first?.let { Pin.WindowSelections(it, positionOf(unit.delta).second ?: "") }, Pin.AllPositions)
+            HistoryCategory.WindowNav -> listOf(Pin.AllPositions, Pin.FocusMoves)
+            else -> listOfNotNull(legacyPinOf(category, unit))
+        }
+
+    /** Whether [pin] may redo [unit] of [category]: it undid it — or, undone before pins were recorded, it walks it. */
+    private fun undidIt(pin: Pin, category: HistoryCategory, unit: HistoryUnit): Boolean {
+        if (!unit.undone) return false
+        unit.undoneBy?.let { return it == pin.id }
+        val legacy = legacyPinOf(category, unit)
+        return if (legacy != null) legacy == pin else pin.holds(category, unit)
+    }
+
+    /**
+     * Rule 2 of [Pin]: whether committing [added] (of [addedCategory]) drops the undone [unit] of [category] — the pin
+     * that undid it walks the new unit too, so its redo branch is gone.
+     */
+    private fun dropsRedoOf(category: HistoryCategory, unit: HistoryUnit, addedCategory: HistoryCategory, added: HistoryUnit): Boolean {
+        if (!unit.undone) return false
+        val undoers = unit.undoneBy?.let { listOfNotNull(Pin.of(it)) }
+            ?: legacyPinOf(category, unit)?.let { listOf(it) }
+            ?: pinsHolding(category, unit)
+        return undoers.any { it.holds(addedCategory, added) }
+    }
+
+    /** The categories of the changes: what Ctrl+Z and Ctrl+Shift+Z walk. */
     private val CHANGE_CATEGORIES = listOf(HistoryCategory.Main, HistoryCategory.Calendar)
 
     /**
@@ -1008,73 +1126,6 @@ object SchedulerReducer {
 
     internal fun defaultWindowOf(category: HistoryCategory): HistoryWindow =
         if (category == HistoryCategory.Calendar) HistoryWindow.Calendar else HistoryWindow.Tree
-
-    /** This device's changes the whole walk ([ALL_CHANGES]) accepts: each with its category and index. */
-    private fun wholeChanges(state: SchedulerState): List<Triple<HistoryCategory, Int, HistoryUnit>> {
-        val me = deviceId()
-        return CHANGE_CATEGORIES.flatMap { category ->
-            state.histories.forCategory(category).units.mapIndexedNotNull { index, unit ->
-                if (unit.ownedBy(me) && ALL_CHANGES.accepts(category, unit)) Triple(category, index, unit) else null
-            }
-        }
-    }
-
-    /**
-     * User rule 2026-11-12: where the whole app's pin stands ([SchedulerHistories.wholePin]) - this device's newest
-     * applied change until it was first moved.
-     */
-    fun wholePinOf(state: SchedulerState): Long =
-        state.histories.wholePin
-            ?: wholeChanges(state).filter { !it.third.undone }.maxOfOrNull { it.third.deviceSeq } ?: 0L
-
-    private fun withWholePin(state: SchedulerState, pin: Long): SchedulerState =
-        state.copy(histories = state.histories.copy(wholePin = pin))
-
-    /**
-     * `Ctrl+Shift+Z`: undo the newest applied change at or under the whole pin - a change its window's Ctrl+Z already
-     * undid is skipped - and put the pin on the newest applied change under it.
-     */
-    private fun undoAll(state: SchedulerState): SchedulerState {
-        val pin = wholePinOf(state)
-        val (category, index, unit) =
-            wholeChanges(state).filter { !it.third.undone && it.third.deviceSeq <= pin }.maxByOrNull { it.third.deviceSeq }
-                ?: return state
-        val walked = walkUnit(state, category, index, undo = true)
-        val under =
-            wholeChanges(walked).filter { !it.third.undone && it.third.deviceSeq < unit.deviceSeq }
-                .maxOfOrNull { it.third.deviceSeq } ?: 0L
-        return withWholePin(walked, under)
-    }
-
-    /**
-     * `Ctrl+Shift+Y`: move the whole pin forward to the next undone change over it and redo it - a change a window's
-     * Ctrl+Y already redid is applied, so it is passed over.
-     */
-    private fun redoAll(state: SchedulerState): SchedulerState {
-        val pin = wholePinOf(state)
-        val (category, index, unit) =
-            wholeChanges(state).filter { it.third.undone && it.third.deviceSeq > pin }.minByOrNull { it.third.deviceSeq }
-                ?: return state
-        return withWholePin(walkUnit(state, category, index, undo = false), unit.deviceSeq)
-    }
-
-    /**
-     * After a window's Ctrl+Z: the whole pin never stands on an undone change - it goes down to the newest applied one
-     * at or under it (user example 2026-11-12: two changes in A, Ctrl+Z in A, and both pins are on the first).
-     */
-    private fun snapWholePin(state: SchedulerState): SchedulerState {
-        val pin = state.histories.wholePin ?: return state
-        val snapped =
-            wholeChanges(state).filter { !it.third.undone && it.third.deviceSeq <= pin }.maxOfOrNull { it.third.deviceSeq } ?: 0L
-        return if (snapped == pin) state else withWholePin(state, snapped)
-    }
-
-    /**
-     * `Ctrl+Shift+Z` / `Ctrl+Shift+Y`: **every change**, whichever window it was made in (user rule 2026-11-12),
-     * walked from the whole app's pin ([wholePinOf], [undoAll], [redoAll]).
-     */
-    private val ALL_CHANGES =
-        HistoryWalk(listOf(HistoryCategory.Main, HistoryCategory.Calendar)) { _, unit -> !unit.delta.authoredByApp }
 
     /**
      * Whether [unit] was made outside every window. A unit of the menu's buttons is, whatever it is stamped with: the
@@ -1098,29 +1149,12 @@ object SchedulerReducer {
      */
     fun positionPlace(state: SchedulerState): Any? {
         val me = deviceId()
-        return POSITIONS.categories.flatMap { category ->
+        return Pin.AllPositions.categories.flatMap { category ->
             state.histories.forCategory(category).units.filter { it.ownedBy(me) && !it.undone }.map { category to it }
         }.maxWithOrNull(compareBy({ it.second.timeMillis }, { it.second.deviceSeq }))?.let { (category, unit) ->
             Triple(category, unit.deviceId, unit.deviceSeq)
         }
     }
-
-    /**
-     * `Alt+arrows`: the **selections of the focused window**. Which window a selection belongs to is read off
-     * the delta ([positionOf]), never off the stamp: "go to task tree" pressed in the Search window selects a
-     * cell of the TREE, and `Alt+←` in Search must not move the tree.
-     */
-    private fun selectionsOf(state: SchedulerState): HistoryWalk =
-        HistoryWalk(listOf(HistoryCategory.Selection)) { _, unit ->
-            val (window, instance) = positionOf(unit.delta)
-            window == state.focusedWindow && (instance == null || instance == state.focusedInstance)
-        }
-
-    /** `Shift+Alt+arrows`: every selection of every window and every move of the focus, in the order made. */
-    private val POSITIONS = HistoryWalk(listOf(HistoryCategory.Selection, HistoryCategory.WindowNav))
-
-    /** `Ctrl+Page Up/Down`: the moves of the focus between windows alone (user rule 2026-10-15). */
-    private val FOCUS_MOVES = HistoryWalk(listOf(HistoryCategory.WindowNav))
 
     /**
      * User rule 2026-11-20: **the pin of a Search window's bar** — this device's keystroke units of [key]
@@ -1179,7 +1213,9 @@ object SchedulerReducer {
         val units = history.units.toMutableList()
         pin.units.forEachIndexed { k, (index, unit) ->
             val undone = k >= target
-            if (unit.undone != undone) units[index] = unit.copy(undone = undone, changedAtMillis = now)
+            if (unit.undone != undone) {
+                units[index] = unit.copy(undone = undone, undoneBy = Pin.Bar(key).id.takeIf { undone }, changedAtMillis = now)
+            }
         }
         return state.copy(histories = state.histories.withCategory(HistoryCategory.SearchText, historyOf(units, me)))
             .withExternalRestore(key, from = pin.text(pin.at), to = pin.text(target))
@@ -4400,67 +4436,43 @@ object SchedulerReducer {
         if (!stripped.automaticSchedule) stripped else stripped.copy(recordRewrites = stripped.recordRewrites + 1)
 
     /**
-     * `docs/invariants/persistence.md` § *One history, per-device undo*: undo THIS device's newest applied unit of
-     * [category] — a unit another device made is never walked, whatever it sits between.
+     * Undo THIS device's newest applied unit on [pin]'s list — across its categories, in the order the units were made
+     * ([HistoryUnit.deviceSeq], which orders one device's units whatever their category). A unit another pin undid is
+     * already undone: passed over. `docs/invariants/persistence.md` § *One history, per-device undo*: a unit another
+     * device made is never walked.
      */
-    private fun undo(state: SchedulerState, category: HistoryCategory): SchedulerState {
-        val history = state.histories.forCategory(category)
-        val me = deviceId()
-        val index = history.units.indexOfLast { it.ownedBy(me) && !it.undone }
-        if (index < 0) return state
-        val unit = history.units[index]
-        val undone = unit.delta.undo(state)
-        val units = history.units.toMutableList().also { it[index] = unit.copy(undone = true, changedAtMillis = clock.nowMillis()) }
-        val moved = undone.copy(histories = state.histories.withCategory(category, historyOf(units, me)))
-        return if (category == HistoryCategory.Edit) syncEditDraft(moved) else moved
-    }
-
-    /**
-     * Undo THIS device's newest applied unit among [walk]'s — across its categories, in the order the units were
-     * made ([HistoryUnit.deviceSeq], which orders one device's units whatever their category).
-     */
-    private fun undoIn(state: SchedulerState, walk: HistoryWalk): SchedulerState {
+    private fun undoIn(state: SchedulerState, pin: Pin): SchedulerState {
         val me = deviceId()
         val newest =
-            walk.categories.mapNotNull { category ->
+            pin.categories.mapNotNull { category ->
                 val units = state.histories.forCategory(category).units
-                val index = units.indexOfLast { it.ownedBy(me) && !it.undone && walk.accepts(category, it) }
+                val index = units.indexOfLast { it.ownedBy(me) && !it.undone && pin.holds(category, it) }
                 if (index < 0) null else Triple(category, index, units[index].deviceSeq)
             }.maxByOrNull { it.third } ?: return state
-        return walkUnit(state, newest.first, newest.second, undo = true)
+        return walkUnit(state, newest.first, newest.second, pin)
     }
 
-    /** Redo THIS device's oldest undone unit among [walk]'s. */
-    private fun redoIn(state: SchedulerState, walk: HistoryWalk): SchedulerState {
+    /** Redo THIS device's oldest unit [pin] undid — one another pin undid is passed over (user rule 2026-11-22). */
+    private fun redoIn(state: SchedulerState, pin: Pin): SchedulerState {
         val me = deviceId()
         val oldest =
-            walk.categories.mapNotNull { category ->
+            pin.categories.mapNotNull { category ->
                 val units = state.histories.forCategory(category).units
-                val index = units.indexOfFirst { it.ownedBy(me) && it.undone && walk.accepts(category, it) }
+                val index = units.indexOfFirst { it.ownedBy(me) && pin.holds(category, it) && undidIt(pin, category, it) }
                 if (index < 0) null else Triple(category, index, units[index].deviceSeq)
             }.minByOrNull { it.third } ?: return state
-        return walkUnit(state, oldest.first, oldest.second, undo = false)
+        return walkUnit(state, oldest.first, oldest.second, null)
     }
 
-    /** Undo or redo the unit at [index] of [category] — [undo] and [redo]'s one step. */
-    private fun walkUnit(state: SchedulerState, category: HistoryCategory, index: Int, undo: Boolean): SchedulerState {
+    /** Undo the unit at [index] of [category] by [undoneBy], or — null — redo it: [undoIn] and [redoIn]'s one step. */
+    private fun walkUnit(state: SchedulerState, category: HistoryCategory, index: Int, undoneBy: Pin?): SchedulerState {
         val history = state.histories.forCategory(category)
         val unit = history.units[index]
+        val undo = undoneBy != null
         val walked = if (undo) unit.delta.undo(state) else unit.delta.redo(state)
-        val units = history.units.toMutableList().also { it[index] = unit.copy(undone = undo, changedAtMillis = clock.nowMillis()) }
-        return walked.copy(histories = state.histories.withCategory(category, historyOf(units, deviceId())))
-    }
-
-    /** Redo THIS device's oldest undone unit of [category]. */
-    private fun redo(state: SchedulerState, category: HistoryCategory): SchedulerState {
-        val history = state.histories.forCategory(category)
-        val me = deviceId()
-        val index = history.units.indexOfFirst { it.ownedBy(me) && it.undone }
-        if (index < 0) return state
-        val unit = history.units[index]
-        val redone = unit.delta.redo(state)
-        val units = history.units.toMutableList().also { it[index] = unit.copy(undone = false, changedAtMillis = clock.nowMillis()) }
-        val moved = redone.copy(histories = state.histories.withCategory(category, historyOf(units, me)))
+        val units = history.units.toMutableList()
+            .also { it[index] = unit.copy(undone = undo, undoneBy = undoneBy?.id, changedAtMillis = clock.nowMillis()) }
+        val moved = walked.copy(histories = state.histories.withCategory(category, historyOf(units, deviceId())))
         return if (category == HistoryCategory.Edit) syncEditDraft(moved) else moved
     }
 
@@ -4596,27 +4608,20 @@ object SchedulerReducer {
         // ...and in which copy of it (user rule 2026-11-12): each copy of a window is a window of its own.
         val stampInstance = if (stampsWindow) newState.focusedInstance else ""
 
-        // PRD §5 Branching: a new mutation after an undo orphans the redo units — THIS device's undone units are
-        // dropped (`docs/invariants/persistence.md` § *One history, per-device undo*); another device's are its own.
-        // A change the app authored is no new branch: the work the line banks must not cost the user their Ctrl+Y.
-        // A change orphans only ITS WINDOW's redo (user rule 2026-11-12: two changes in A, Ctrl+Z, a change in B - A's
-        // Ctrl+Y is still there), and the undone changes of the menu, which only the whole pin could redo and which it
-        // just passed.
-        val retained =
-            when {
-                forward.authoredByApp -> history.units
-                category in CHANGE_CATEGORIES -> {
-                    val where = stamp ?: defaultWindowOf(category)
-                    history.units.filterNot {
-                        it.ownedBy(me) && it.undone &&
-                            ((windowOf(category, it) == where && it.instance == stampInstance) || it.window == HistoryWindow.Menu)
-                    }
-                }
-                // Each bar is its own pin: typing in one drops that bar's texts walked back over, never another's.
-                category == HistoryCategory.SearchText ->
-                    history.units.filterNot { it.ownedBy(me) && it.undone && (it.delta as? ExternalDelta)?.key == (forward as? ExternalDelta)?.key }
-                else -> history.units.filterNot { it.ownedBy(me) && it.undone }
-            }
+        // PRD §5 Branching, user rule 2026-11-22 ([Pin], rule 2): a new unit drops the units undone by every pin whose
+        // list it joins — that pin's redo branch — in every category the pin walks, and never another pin's (two changes
+        // in A, Ctrl+Z, a change in B: A's Ctrl+Y is still there, user rule 2026-11-12). Only THIS device's
+        // (`docs/invariants/persistence.md` § *One history, per-device undo*). A change the app authored joins no pin's
+        // list ([Delta.authoredByApp]): the work the line banks must not cost the user their Ctrl+Y. What is dropped
+        // leaves the local history; sync marks the server's rows of it from that ([SchedulerSyncEngine]).
+        val probe = HistoryUnit(timeMillis = 0, delta = forward, window = stamp, instance = stampInstance, deviceId = me)
+        fun branchKept(of: HistoryCategory, units: List<HistoryUnit>): List<HistoryUnit> =
+            units.filterNot { it.ownedBy(me) && dropsRedoOf(of, it, category, probe) }
+        val withoutBranches = state.histories.all().fold(state.histories) { out, (other, h) ->
+            if (other == category) out
+            else branchKept(other, h.units).let { kept -> if (kept.size == h.units.size) out else out.withCategory(other, historyOf(kept, me)) }
+        }
+        val retained = branchKept(category, history.units)
 
         // PRD §5/§6: a live-edited field commits on every keystroke, so a unit carrying a
         // [Delta.coalesceKey] is offered to the unit at the pointer first — the same field, in the same
@@ -4639,8 +4644,7 @@ object SchedulerReducer {
                                 changedAtMillis = clock.nowMillis(),
                             )
                     }
-                val merged = newState.copy(histories = state.histories.withCategory(category, historyOf(absorbed, me)))
-                return if (category in CHANGE_CATEGORIES && !forward.authoredByApp) withWholePin(merged, previous.deviceSeq) else merged
+                return newState.copy(histories = withoutBranches.withCategory(category, historyOf(absorbed, me)))
             }
         }
 
@@ -4671,9 +4675,7 @@ object SchedulerReducer {
         // leaving a half-reverted state, so only the oldest *untainted* units are evicted.
         val (cappedUnits, _) = capped(appendedUnits, me)
 
-        val committed = newState.copy(histories = state.histories.withCategory(category, historyOf(cappedUnits, me)))
-        // A new change is where the whole app stands.
-        return if (category in CHANGE_CATEGORIES && !forward.authoredByApp) withWholePin(committed, newUnit.deviceSeq) else committed
+        return newState.copy(histories = withoutBranches.withCategory(category, historyOf(cappedUnits, me)))
     }
 
     /**

@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### One behaviour for every list several pins walk; Shift+Alt+← lands on the window first — 2026-11-22
+
+- User rule: *"Unify the behavior of history unit navigations. When the same list can be navigated by several pins
+  (alt + <-/-> and shift + alt + <-/->), then if one history unit is undone by a pin, the current pin simply skip it; if
+  the user navigated back with a pin then added a new history unit, it removed the history units undone by this pin from
+  the list."*
+- Was: one `undone` flag for every pin. `Ctrl+Shift+Y` redid what a window's `Ctrl+Z` undid (behind a stored whole-app
+  pin, `wholePin`), `Shift+Alt+→` what `Alt+←` undid; a new position dropped every position pin's redo, a new change only
+  its window's and the menu's. Now each unit records the pin that undid it (`HistoryUnit.undoneBy`, a key of the unit's
+  row text — no SQLite or Supabase column); only that pin redoes it; a new unit drops what the pins whose list it joins
+  undid, across categories (`SchedulerReducer.Pin`). `wholePin` and its `history_pointer` row are gone. A unit undone
+  before reads as its window's `Ctrl+Z`'s (a change) or any position pin's (a position).
+- Sync: the server's redo branches are marked dropped from the local history (`undoneHistoryRows` minus what is held,
+  `dropHistoryUnits`), replacing `dropHistoryBranch`, a second copy of the branch rule.
+- User rule, same day: *"then shift + alt + <-, and it should bring focus to window A (so the right-click menu
+  disappears). If I do shift + alt + <- again, it should bring focus to window Ab (with window Aa and A open of course)."*
+  `PopupPositions.arrivedBack` now stands on the window; the next press brings the pop-up. A position walk closes every
+  right-click menu. `docs/invariants/persistence.md` § *One history, per-device undo*, `popups.md`. Client rebuild only.
+
 ### Shift+Alt+← walks back into a pop-up a later window move left behind — 2026-11-22
 
 - Anomaly: *"I went to history unit → Made in window, switched to another window, right-click the header, select copy id,

@@ -466,40 +466,52 @@ class RemoteSnapshotClient(
     }
 
     /**
-     * Marks the redo branch this device discarded as dropped: its undone units of [category] older than its newest
-     * applied unit ([newestAppliedMillis]) — a new edit only ever drops the units undone before it. The delta is
-     * emptied; the other devices forget the unit on their next pull.
-     *
-     * [windows]: only the units stamped with one of these windows ([withUnstamped]: or with none) — a change orphans
-     * only its window's redo (user rule 2026-11-12). Null: every unit of the category.
+     * User rule 2026-11-22: **this device's rows the server holds as undone and not dropped** — their stack and number
+     * alone. What the local history no longer holds of them is a redo branch a new unit dropped
+     * (`SchedulerReducer.commitDelta`), which [dropHistoryUnits] then marks.
      */
-    suspend fun dropHistoryBranch(
-        session: SupabaseSession,
-        deviceId: String,
-        category: String,
-        newestAppliedMillis: Long,
-        windows: List<String>? = null,
-        withUnstamped: Boolean = false,
-    ) {
-        val response =
-            http.patch("${config.restUrl}/history_unit") {
-                authHeaders(session)
-                header("Prefer", "return=minimal")
-                contentType(ContentType.Application.Json)
-                url.parameters.append("user_id", "eq.${session.userId}")
-                url.parameters.append("device_id", "eq.$deviceId")
-                url.parameters.append("category", "eq.$category")
-                url.parameters.append("undone", "is.true")
-                url.parameters.append("dropped", "is.false")
-                url.parameters.append("time_millis", "lt.$newestAppliedMillis")
-                if (windows != null) {
-                    // The column is `unit_window` (migration 20260917000000); `window` does not exist (42703, live 2026-11-22).
-                    val terms = windows.map { "unit_window.eq.$it" } + listOfNotNull("unit_window.is.null".takeIf { withUnstamped })
-                    url.parameters.append("or", terms.joinToString(",", "(", ")"))
+    suspend fun undoneHistoryRows(session: SupabaseSession, deviceId: String): List<UndoneHistoryRow> {
+        val out = ArrayList<UndoneHistoryRow>()
+        while (true) {
+            val response =
+                http.get("${config.restUrl}/history_unit") {
+                    authHeaders(session)
+                    url.parameters.append("select", "category,device_seq")
+                    url.parameters.append("user_id", "eq.${session.userId}")
+                    url.parameters.append("device_id", "eq.$deviceId")
+                    url.parameters.append("undone", "is.true")
+                    url.parameters.append("dropped", "is.false")
+                    url.parameters.append("order", "device_seq.asc")
+                    // Keyset paging: after the last number read.
+                    out.lastOrNull()?.let { url.parameters.append("device_seq", "gt.${it.deviceSeq}") }
+                    url.parameters.append("limit", PAGE.toString())
                 }
-                setBody("""{"dropped":true,"delta":""}""")
-            }
-        if (!response.status.isSuccess()) throw response.toException()
+            if (!response.status.isSuccess()) throw response.toException()
+            val page = json.decodeFromString<List<UndoneHistoryRow>>(response.bodyAsText())
+            out += page
+            if (page.size < PAGE) return out
+        }
+    }
+
+    /**
+     * Marks the units [deviceSeqs] of [category] — this device's — as dropped: a redo branch the local history dropped.
+     * The delta is emptied; the other devices forget the unit on their next pull.
+     */
+    suspend fun dropHistoryUnits(session: SupabaseSession, deviceId: String, category: String, deviceSeqs: List<Long>) {
+        for (batch in deviceSeqs.chunked(DROP_BATCH)) {
+            val response =
+                http.patch("${config.restUrl}/history_unit") {
+                    authHeaders(session)
+                    header("Prefer", "return=minimal")
+                    contentType(ContentType.Application.Json)
+                    url.parameters.append("user_id", "eq.${session.userId}")
+                    url.parameters.append("device_id", "eq.$deviceId")
+                    url.parameters.append("category", "eq.$category")
+                    url.parameters.append("device_seq", batch.joinToString(",", "in.(", ")"))
+                    setBody("""{"dropped":true,"delta":""}""")
+                }
+            if (!response.status.isSuccess()) throw response.toException()
+        }
     }
 
     /** Upserts this device's History Unit rows (a new unit, or one whose undone flag moved). */
@@ -856,6 +868,9 @@ class RemoteSnapshotClient(
         /** Rows per page of a pull. */
         const val PAGE: Int = 1000
 
+        /** How many units one drop names: a URL of numbers, kept well under the gateway's length limit. */
+        const val DROP_BATCH: Int = 200
+
         private fun defaultHttpClient(): HttpClient =
             HttpClient {
                 install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
@@ -1121,6 +1136,10 @@ private data class ClaudeLogWrite(
     val ordinal: Int,
     val body: String,
 )
+
+/** One of this device's undone rows, by its identity alone ([RemoteSnapshotClient.undoneHistoryRows]). */
+@Serializable
+data class UndoneHistoryRow(val category: String, @SerialName("device_seq") val deviceSeq: Long)
 
 /** One History Unit row, both ways. [delta] is the unit's own row text (`SchedulerStateCodec.encodeUnit`). */
 @Serializable

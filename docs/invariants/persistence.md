@@ -162,15 +162,16 @@ is what the append it replaces would have cost anyway, and the list does not gro
 by ctrl+z, ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history units associated to this device."*
 
 - **Every unit records its device** (`HistoryUnit.deviceId`), a per-device key (`deviceSeq` = time × 1000 + chrono),
-  whether it is `undone`, and when that last changed (`changedAtMillis`). They ride the unit's row JSON as extra
+  whether it is `undone` and by which pin (`undoneBy`, user rule 2026-11-22), and when that last changed
+  (`changedAtMillis`). They ride the unit's row JSON as extra
   top-level keys, so the local table needed no migration.
 - **Undo takes this device's newest applied unit; redo its oldest undone one.** Other devices' units are skipped,
   never undone, and never block. The category pointer is this device's newest applied unit.
 - **What the app authored is walked by no chord, and is no branch** (anomaly 2026-11-01; `Delta.authoredByApp`,
   `RecordDelta.byUser`). The work the line banks is a Main unit, to be seen and for the debug rollback, and it stamped the
   focused window: every few minutes one landed on top, so the next `Ctrl+Z` took a banked record back instead of what the
-  user did, and it dropped their redo. Neither any more, on the server either (`dropHistoryBranch` is asked from the
-  newest unit that is the user's). A record the USER takes out is theirs: "Remove" on a block, a period laid over it.
+  user did, and it dropped their redo. Neither any more, on the server either (the server drops what the local history
+  dropped). A record the USER takes out is theirs: "Remove" on a block, a period laid over it.
 - **A change made in the left-side menu or the window bar is walked by `Ctrl+Shift+Z` / `Ctrl+Shift+Y` alone** (user rule
   2026-11-12, replacing 2026-11-01's "from whichever window has the focus", whose anomaly was a "Reset"). The menu is no
   window and takes no focus, so its units are stamped `HistoryWindow.Menu` (`SchedulerIntent.MadeIn`, its controls
@@ -180,38 +181,44 @@ by ctrl+z, ctrl+y, ctrl+shift+z and alt+arrow keys act only for the history unit
   modifier sees a key at all, so the desktop window hands them to `AppKeyFallback`. Restoring the menu is the one restore that is not three-way: nothing can come between its units, and
   a difference the app made itself (a button's configuration frozen at a start) must not leave an undo doing nothing.
 - **Without Shift a chord is relative to the focused window, with Shift it walks every window** (user rules
-  2026-09-25 and 2026-11-12; `SchedulerReducer.undoIn` over a `HistoryWalk`): `Ctrl+Z`/`Ctrl+Y` walk the Main and
+  2026-09-25 and 2026-11-12; `SchedulerReducer.undoIn` over a `Pin`): `Ctrl+Z`/`Ctrl+Y` walk the Main and
   Calendar units stamped with the focused window (the Edit stack while a session is open), `Ctrl+Shift+Z`/`Ctrl+Shift+Y`
-  every Main and Calendar unit (`ALL_CHANGES`); `Alt+←/→` the Selection units whose delta is the focused window's (and,
+  every Main and Calendar unit (`Pin.AllChanges`); `Alt+←/→` the Selection units whose delta is the focused window's (and,
   for a per-copy selection, the focused copy's) — **selections of rows only**: the day a calendar is taken to is a
   change of that calendar (`ExternalKeys.CALENDAR_DAY`, walked by its `Ctrl+Z`); `Shift+Alt+←/→` every Selection and
   WindowNav unit (`Ctrl+Alt+←/→` did too, 2026-11-11 to 2026-11-12).
 - **Each copy of a window is a window of its own** (user rule 2026-11-12): a unit records the copy it was made in
   (`HistoryUnit.instance`, what `focusedInstance` held: `""` for the original, `"#2"`…), stored with its window as ONE
   text, the copy's frame id (`windowColumn`: `Search#2`), in the store's and the server's `window` column — so no
-  column was added and the server's branch drop filters on it exactly. A row written before reads as the original's.
+  column was added. A row written before reads as the original's.
   `Ctrl+Z`, the window's pin and its redo branch are the copy's; a change made in a copy from outside it is
   `SchedulerIntent.MadeIn(window, instance, …)` with that copy's instance, never `""`.
-- **One pin per window, and one for the whole app** (user rule 2026-11-12, `HistoryReachTest`). A window's pin is its
-  newest applied change. The whole app's is STORED (`SchedulerHistories.wholePin`, a `deviceSeq`; persisted as the
-  `history_pointer` row `WHOLE_PIN_ROW`, kept off the wire like the view state; absent, it reads as the newest applied
-  change): a new change puts it there; `Ctrl+Shift+Z` undoes the newest applied change at or under it — skipping what
-  a window's `Ctrl+Z` undid — and puts it on the newest applied change below; `Ctrl+Shift+Y` moves it to the next
-  undone change over it and redoes that one — passing over what a window's `Ctrl+Y` redid; a window's `Ctrl+Z` brings
-  it down to the newest applied change at or under it. It is stored because it can stand under changes a window redid,
-  which no reading of the units alone can tell. A walk over
-  two stacks orders them by `deviceSeq`, which is why `chronoId` is counted across **every** category: a press
-  moves the focus and selects in one millisecond, and the two must still be walked in the order made.
+- **Every list several pins walk behaves the same** (user rule 2026-11-22, `SchedulerReducer.Pin`, `HistoryPinsTest`,
+  `HistoryReachTest`). A pin is one walk: a window's `Ctrl+Z` (`Pin.WindowChanges`), `Ctrl+Shift+Z` (`AllChanges`),
+  a window's `Alt+←` (`WindowSelections`), `Shift+Alt+←` (`AllPositions`), `Ctrl+Page Up` (`FocusMoves`), a Search
+  bar's ↑ (`Bar`), an Edit Mode session (`Edit`). Two rules, nothing else:
+  1. **A unit undone by a pin is passed over by every other pin, both ways.** Undo takes the pin's newest applied unit
+     (any undone one is skipped); redo takes the oldest unit THIS pin undid (`HistoryUnit.undoneBy` = `Pin.id`). So
+     `Ctrl+Shift+Y` no longer redoes what a window's `Ctrl+Z` undid, nor `Shift+Alt+→` what `Alt+←` undid.
+  2. **A new unit drops the units undone by every pin whose list it joins** (`dropsRedoOf`, in `commitDelta`), in
+     every category that pin walks, and no other pin's: a change in B drops what B's `Ctrl+Z` and `Ctrl+Shift+Z`
+     undid, never A's `Ctrl+Z`'s (user example 2026-11-12 holds); a move of the focus drops what `Shift+Alt+←` and
+     `Ctrl+Page Up` undid, never a window's `Alt+←`'s. What the app authored joins no list.
+  A unit undone before pins were recorded (`undoneBy` null) is read by `legacyPinOf`: a change as its window's
+  `Ctrl+Z`'s, a position as any position pin's (as every walk treated it then). The whole app's stored pin
+  (`wholePin`, the `history_pointer` row `WHOLE_PIN_ROW`) is gone: a pin per unit says it all, and the row a build
+  before wrote is read no more. A walk over two stacks orders them by `deviceSeq`, which is why `chronoId` is counted
+  across **every** category: a press moves the focus and selects in one millisecond, and the two must still be walked
+  in the order made.
 - **Every window's selection is a unit** — the tree's (`SetSelectionDelta`), the projected windows'
   (`ViewSelectionDelta`, committed by `reduceInSearchSubtree` / `reduceInDefaultSubtree`),
   and `SchedulerState.windowSelections` (`WindowSelectionDelta`: the Search window's row, the Task trees window's
   open entry, per copy). A window's own reset (`SelectInWindow(record = false)`) is not one.
-- **A new edit discards only this device's undone units, and of a change only its WINDOW's** (user rule 2026-11-12:
-  two changes in A, `Ctrl+Z`, a change in B — A's `Ctrl+Y` is still there) — plus the menu's undone changes, which
-  only the whole pin could redo and which it just passed. The other devices' redo branches stay theirs. The server's
-  `dropHistoryBranch` follows the same rule: for a Main or Calendar commit it is asked per window, filtered on the
-  rows' `window` column (the menu's, and the unstamped rows where that window is the category's default). Selections and
-  focus moves still branch per category.
+- **The server learns what a new unit dropped from the local history, never from a second copy of the rule**
+  (2026-11-22): after a push that committed a unit, `SchedulerSyncEngine` lists this device's rows the server holds as
+  undone and not dropped (`undoneHistoryRows`, keyset-paged) and marks dropped those the local history no longer holds
+  (`dropHistoryUnits`, by number). It replaced `dropHistoryBranch`, which re-derived the branch rule per window and per
+  category and had already drifted from it. Other devices' redo branches stay theirs.
 - **A unit with no device (written before this rule) is claimed by the device that loads it**, its `undone` read
   off the old pointer.
 - Every unit syncs as a `history_unit` row (`sync-and-accounts.md` § *Sync by rows*); a peer's units are merged in

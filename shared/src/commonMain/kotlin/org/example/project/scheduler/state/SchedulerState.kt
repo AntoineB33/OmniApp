@@ -302,14 +302,6 @@ data class SchedulerHistories(
     val windowNav: SchedulerHistory = SchedulerHistory(),
     /** The Search bars' keystrokes ([HistoryCategory.SearchText]). */
     val searchText: SchedulerHistory = SchedulerHistory(),
-    /**
-     * User rule 2026-11-12: **the whole app's pin** — the `deviceSeq` of this device's unit the whole history
-     * (`Ctrl+Shift+Z` / `Ctrl+Shift+Y`) stands on, `0` before the first. Null: never moved since it was introduced, read
-     * as this device's newest applied change. Each window's own pin is its newest applied change; this one is stored
-     * because it can stand below changes a window redid, which `Ctrl+Shift+Y` then skips. Local to the device: kept off
-     * the wire like the view state ([SchedulerState.withLocalViewStateNeutralized]).
-     */
-    val wholePin: Long? = null,
 ) {
     fun forCategory(category: HistoryCategory): SchedulerHistory =
         when (category) {
@@ -405,6 +397,13 @@ data class HistoryUnit(
     val deviceSeq: Long = 0,
     /** True when its device has undone it (it is still redoable there). */
     val undone: Boolean = false,
+    /**
+     * User rule 2026-11-22: **the pin that undid it** (`SchedulerReducer.Pin.id`) — a window's `Ctrl+Z`, `Ctrl+Shift+Z`,
+     * a window's `Alt+←`, `Shift+Alt+←`, `Ctrl+Page Up`, a Search bar's ↑. Only that pin redoes it; every other pin
+     * walking the same list passes over it. Null while applied — and on a unit undone before pins were recorded, read as
+     * `SchedulerReducer.legacyPinOf`. Carried in the unit's row text, like [undone].
+     */
+    val undoneBy: String? = null,
     /**
      * The last instant this device changed the unit — committed it, merged a keystroke into it, undid or redid it.
      * A sync pushes the units changed since its last push; `0` is a unit nothing has touched since it was loaded.
@@ -1425,8 +1424,7 @@ data class SchedulerState(
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, other.histories.forCategory(HistoryCategory.WindowNav))
                 .withCategory(HistoryCategory.Selection, other.histories.forCategory(HistoryCategory.Selection))
-                .withCategory(HistoryCategory.SearchText, other.histories.forCategory(HistoryCategory.SearchText))
-                .copy(wholePin = other.histories.wholePin),
+                .withCategory(HistoryCategory.SearchText, other.histories.forCategory(HistoryCategory.SearchText)),
         )
 
     /** See [withLocalViewStateFrom]: the local-only view state reset to canonical constants for the fingerprint. */
@@ -1452,8 +1450,7 @@ data class SchedulerState(
             histories = histories
                 .withCategory(HistoryCategory.WindowNav, SchedulerHistory())
                 .withCategory(HistoryCategory.Selection, SchedulerHistory())
-                .withoutLocalOnlyUnits()
-                .copy(wholePin = null),
+                .withoutLocalOnlyUnits(),
         )
 
     // PRD §8: the task record is NOT part of the history state, so it is stripped from snapshots

@@ -785,41 +785,17 @@ open class SchedulerSyncEngine(
             // send every unit again at the next reconcile (live 2026-11-22, 3 110 units re-sent every six seconds).
             base = base.copy(historyPushedAt = changed.maxOf { it.second.changedAtMillis })
             setMeta(meta().copy(baseSnapshot = encodeBase(base)))
-            // A redo branch a new edit discarded: its rows are this device's undone units older than its newest
-            // applied one, which the local history no longer holds.
-            // Only a NEW unit can have discarded one, so only a category this push committed into is asked.
-            val committed = changed.filter { it.second.timeMillis > start.historyPushedAt && !it.second.delta.authoredByApp }
-            val committedInto = committed.map { it.first }.toSet()
-            for ((category, list) in units) {
-                if (category !in committedInto) continue
-                val historyCategory = runCatching { org.example.project.scheduler.state.HistoryCategory.valueOf(category) }.getOrNull()
-                if (historyCategory == org.example.project.scheduler.state.HistoryCategory.Main || historyCategory == org.example.project.scheduler.state.HistoryCategory.Calendar) {
-                    // User rule 2026-11-12: a change orphans only its window's redo (and the menu's), as `commitDelta`
-                    // drops them — so each window this push committed into is asked about its own units alone.
-                    // Each COPY of a window is a window (its frame id, as the rows' `window` column holds it).
-                    fun copyOf(unit: org.example.project.scheduler.state.HistoryUnit) =
-                        org.example.project.scheduler.state.SchedulerReducer.windowOf(historyCategory, unit) to unit.instance
-                    val copies = committed.filter { it.first == category }.map { copyOf(it.second) }.toSet()
-                    for ((window, instance) in copies) {
-                        // What the app banked is no new branch ([Delta.authoredByApp]): the user's Ctrl+Y stays alive past it.
-                        val newestApplied =
-                            list.filter {
-                                it.ownedBy(me) && !it.undone && !it.delta.authoredByApp && copyOf(it) == (window to instance)
-                            }.maxOfOrNull { it.timeMillis } ?: continue
-                        withAuth(session) {
-                            client.dropHistoryBranch(
-                                it, me, category, newestApplied,
-                                windows = listOf(window.name + instance, org.example.project.scheduler.state.HistoryWindow.Menu.name).distinct(),
-                                withUnstamped = instance.isEmpty() &&
-                                    window == org.example.project.scheduler.state.SchedulerReducer.defaultWindowOf(historyCategory),
-                            )
-                        }
-                    }
-                    continue
-                }
-                // What the app banked is no new branch ([Delta.authoredByApp]): the user's Ctrl+Y stays alive past it.
-                val newestApplied = list.filter { it.ownedBy(me) && !it.undone && !it.delta.authoredByApp }.maxOfOrNull { it.timeMillis } ?: continue
-                withAuth(session) { client.dropHistoryBranch(it, me, category, newestApplied) }
+            // A redo branch a new unit discarded (user rule 2026-11-22): the rows the server holds as this device's undone
+            // units that the local history no longer holds. The reducer's branch rule is read off its answer — the local
+            // history — never derived a second time here. Only a NEW unit discards one, so only a push that committed one
+            // asks.
+            val committedOne = changed.any { it.second.timeMillis > start.historyPushedAt && !it.second.delta.authoredByApp }
+            if (committedOne) {
+                val held = units.flatMap { (category, list) -> list.filter { it.ownedBy(me) }.map { category to it.deviceSeq } }.toSet()
+                val gone = withAuth(session) { client.undoneHistoryRows(it, me) }
+                    .filter { (it.category to it.deviceSeq) !in held }
+                    .groupBy({ it.category }, { it.deviceSeq })
+                for ((category, seqs) in gone) withAuth(session) { client.dropHistoryUnits(it, me, category, seqs) }
             }
             Diagnostics.log("reconcile: pushed ${rows.size} history unit(s)")
         }

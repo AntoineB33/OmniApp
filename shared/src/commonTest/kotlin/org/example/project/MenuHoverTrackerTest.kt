@@ -371,12 +371,15 @@ class MenuHoverTrackerTest {
         positions.appFocused { }
         place = "other window"
         assertFalse(positions.back(), "nothing of the pop-ups here: the app's own history is walked")
-        // The app's step back: the focus move undone.
+        // The app's step back: the focus move undone — the walk stands on the window, nothing reopened yet
+        // (user rule 2026-11-22).
         place = "history window"
         positions.arrivedBack()
+        assertFalse(open)
+        // Back again: the pop-up the keyboard was last in, then the window it was opened from, then the app's own history.
+        assertTrue(positions.back())
         assertTrue(open, "the pop-up is back")
         assertEquals(1, brought)
-        // Back again: the window it was opened from, then the app's own history.
         assertTrue(positions.back())
         assertFalse(open)
         assertFalse(positions.back())

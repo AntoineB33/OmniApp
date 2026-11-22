@@ -1374,6 +1374,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The one answer to the chords that walk every window's positions: the pop-ups' first, then the app's history.
         // Whether [intent] was one of them (then taken).
         fun walkPositions(intent: SchedulerIntent?): Boolean {
+            // A right-click menu is a question about where the user was: a walk elsewhere closes it (user rule 2026-11-22).
+            if (intent == SchedulerIntent.UndoPosition || intent == SchedulerIntent.RedoPosition) transientMenus.closeMenus()
             return when (intent) {
                 // The app's history walked: arriving where pop-ups were opened walks into them (anomaly 2026-11-22).
                 SchedulerIntent.UndoPosition -> {

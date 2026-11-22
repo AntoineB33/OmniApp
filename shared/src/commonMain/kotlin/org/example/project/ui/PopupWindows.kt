@@ -127,6 +127,12 @@ class TransientMenuHost {
         editors.remove(key)
     }
 
+    /**
+     * User rule 2026-11-22: every right-click menu closes — a walk of the positions (`Shift+Alt+←`) takes the user
+     * elsewhere, and a menu is a question about where they were.
+     */
+    fun closeMenus() = dismissMenus()
+
     /** Forgets a menu that left the composition. Never calls its `onDismiss` — it is already gone. */
     fun close(key: Any) {
         entries.remove(key)
