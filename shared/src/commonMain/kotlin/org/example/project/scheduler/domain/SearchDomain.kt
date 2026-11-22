@@ -1078,9 +1078,13 @@ object SearchDomain {
         val searchedKinds: Set<Kind>
             get() = if (pageTypesOnly) offeredKinds.filterTo(HashSet()) { it in kinds } else kinds
 
-        /** Whether the window's rows need `App`'s windows: the window kind is searched, or a window is added. */
+        /**
+         * Whether the window needs `App`'s windows: the window kind is searched, or a window is added — or the history
+         * units are, whose "Made in window" and "Changed element" fields pick a window among them (anomaly 2026-11-22:
+         * *"there is nothing appearing under it"* — handed no windows, the field had none to offer).
+         */
         val readsWindows: Boolean
-            get() = Kind.Window in kinds || Kind.Shortcut in kinds ||
+            get() = Kind.Window in kinds || Kind.Shortcut in kinds || Kind.HistoryUnit in kinds ||
                 (added + filters.includedElements).any { it.startsWith(Kind.Window.name + "/") || it.startsWith(Kind.Shortcut.name + "/") }
 
         /** JSON, every field optional, so a later build's extra filter is ignored rather than fatal. */

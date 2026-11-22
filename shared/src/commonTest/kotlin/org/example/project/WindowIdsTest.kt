@@ -188,4 +188,13 @@ class WindowIdsTest {
         assertTrue(older.filters.windowListedKinds.isEmpty())
         assertEquals(HistoryWindow.Search, older.filters.historyWindow)
     }
+
+    /** Anomaly 2026-11-22 (*"there is nothing appearing under it"*): the field is handed the windows, and offers the one pasted. */
+    @Test
+    fun the_made_in_window_field_offers_the_window_whose_id_is_pasted() {
+        assertTrue(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.HistoryUnit)).readsWindows, "a history window reads the windows")
+        val menus = SearchDomain.changedElementMenus(SchedulerState.empty(), setOf(SearchDomain.Kind.Window), "Search#3", windows)
+        assertEquals(listOf("Window/Search#3"), menus.identity.map { it.key })
+        assertEquals("Search (3)", SearchDomain.changedElementTitle(SchedulerState.empty(), "Window/Search#3", windows))
+    }
 }

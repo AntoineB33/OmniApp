@@ -28,6 +28,9 @@ Check here before assuming the code matches the docs.
   window by its id. **Copy id** in every window head's menu and a Search window's background menu.
 - `docs/invariants/task-tree.md` § *A window is a kind too*. Local-only (placement rows, Search configurations): no
   SQLite or Supabase change. Client rebuild only.
+- Anomaly, same day (*"There is nothing appearing under it"*, pasting an id into "Made in window"): a Search window is
+  handed `App`'s windows only when it `readsWindows`, which a history-unit search did not — so "Made in window" (and
+  "Changed element" for a window, since 2026-10-03) had no window to offer. A history-unit search now reads them.
 
 ### Search window: the "Row layout" of task rows — 2026-11-22
 
