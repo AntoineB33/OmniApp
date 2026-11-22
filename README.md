@@ -164,14 +164,14 @@ The `scripts/` folder holds the maintainer's Windows tools for testing several a
 
 ## Usage
 
-Launch the desktop app. It opens on the **Task Scheduler** page with an empty tree and a guest account already created — there is no sign-up step and no signed-out mode. The button in the **top-left corner** is the page selector; with one page shipped it currently has one destination.
+Launch the desktop app. It opens on the **Task Scheduler** page with an empty tree and a guest account already created — there is no sign-up step and no signed-out mode. The button in the **top-left corner** is the page selector (Task Scheduler, Claude Code logs, Settings). The lateral menu starts with **Search**, the sound switches (**Mute all sound**, **Voice**, **Notifications**), **Task trees** (the tree itself), **History units**, **Life context**, **Calendar**, then **Look away now**, **Switch task**, **Sleep / Work** and **I'm away**; right-click it to customize it. Every action, with real-life examples and the ways back from a mistake: [`docs/USER_ACTIONS.md`](docs/USER_ACTIONS.md).
 
 ### Build your task tree
 
-1. **Click a cell and type.** Typing starts editing immediately; a new empty cell appears below and a sub-list opens beneath, so the tree grows as you fill it.
+1. Open **Task trees** in the lateral menu. **Click a cell and type.** Typing starts editing immediately; a new empty cell appears below and a sub-list opens beneath, so the tree grows as you fill it.
 2. **`Tab`** moves into a cell's children, **`Enter`** moves down, **`Escape`** cancels the edit. Selection follows spreadsheet conventions: click and drag, `Shift+Click`, `Ctrl+A`.
 3. While editing, two menus appear under the cell: **Change Task** reuses an existing task (so the same task can live in several branches and mirror itself), and **Rename** retitles it everywhere.
-4. **Right-click a cell → "edit"** to set whether the task needs a screen, split it into timed sub-steps, and attach free-form notes.
+4. **Right-click a cell → "edit task"** to set the task's resilience to each kind of period (whether it may run with no screen, during "before bed", …) and split it into timed sub-steps. Notes are **md elements**, added from the task's actions in a Search window.
 
 ### Set priorities and minimums
 
@@ -181,19 +181,19 @@ Launch the desktop app. It opens on the **Task Scheduler** page with an empty tr
 ### Read and steer the calendar
 
 - Open the **calendar** from the lateral menu on the left. It fills automatically from your tree — you never press "schedule".
-- **Drag** a panel to move it, **grab an edge** to resize, **right-click** for a contextual menu (edit, remove, add a task, add a no-screen period, add an inactivity period, add a reminder).
+- **Drag** a panel to move it, **grab an edge** to resize, **right-click** for **add…** (a task panel, a restrictive period, a reminder) and **edit…** (whatever is drawn at that spot); deleting is done from the editor.
 - In a panel's edit window, the **pin switches** control what the scheduler may change when it re-plans: keep this occurrence, fix its position, fix its duration, fix its distance to another.
 - **Zoom** with `Ctrl` + `+`/`-`/scroll, reset with `Ctrl+0`. The default zoom fits your waking day.
-- Toggle **screen breaks** and **reminders** on or off in the calendar window — a purely cosmetic choice that never silences their notifications.
-- `Ctrl+Z` / `Ctrl+Y` undo and redo within whichever window has focus; `Alt+←` / `Alt+→` walk selection history in the tree.
+- Toggle **screen breaks** and **reminders** on or off among the calendar's actions — a purely cosmetic choice that never silences their notifications. The calendar is an element of a Search window, so two windows can show two different days.
+- `Ctrl+Z` / `Ctrl+Y` undo and redo within whichever window has focus; `Ctrl+Shift+Z` / `Ctrl+Shift+Y` walk every window; `Alt+←` / `Alt+→` walk selection history in the tree.
 
 ### Live in it
 
 Once the tree is set up the app runs itself: it notifies you when it is time to switch tasks, when a screen break comes due and when to stop work before bed, and it records what you actually did. The **"Look away now"** button in the lateral menu takes a 20-second break on demand, and **"Switch task"** refuses whatever you are on right now so the schedule starts something else — without costing that task any of its share, so it comes back around as usual.
 
-Four of the lateral menu's controls also answer to a **system-wide chord**, so they work while you are in another application — which is the only moment any of them is wanted: `Ctrl+Shift+Alt+E` takes the 20-second look-away, `Ctrl+Shift+Alt+Z` switches you off the current task, `Ctrl+Shift+Alt+A` toggles **"I'm away" / "I'm back"** as you leave the machine and come back, and `Ctrl+Shift+Alt+N` turns **notifications** off — silencing every one of them and clearing what is still on screen, while the History window keeps the record of what was said. (If you lock the machine on your way out, unlocking it on your return turns "I'm away" off for you — you are visibly back.) **"I'm away" does not silence anything**: it says only that nobody is at this screen, which is what the calendar's no-screen periods and the screen breaks are judged on, and you go on getting your notifications — the machine is still unlocked, and "task to do now" is exactly what you can still act on with a program left running. **Locking** it is what silences the device: there is nobody at a lock screen to tell, so the app says nothing there and your phone gets the end-of-break message from the server instead. Alarms still ring — that is what they are for. All are claimed exclusively where Windows allows it, so the application in front never sees the keystroke. The **Keyboard shortcuts** button at the bottom of the menu lists every shortcut in the app, and says which claim those chords actually got.
+Four of the lateral menu's controls, and a task picker, also answer to a **system-wide chord**, so they work while you are in another application — which is the only moment any of them is wanted: `Ctrl+Shift+Alt+E` takes the 20-second look-away, `Ctrl+Shift+Alt+Z` switches you off the current task, `Ctrl+Shift+Alt+T` opens a menu at the pointer to pick the task to do now, `Ctrl+Shift+Alt+A` toggles **"I'm away" / "I'm back"** as you leave the machine and come back, and `Ctrl+Shift+Alt+N` turns **notifications** off — silencing every one of them and clearing what is still on screen, while the app keeps the record of what was said (Search, kind *notification*). (If you lock the machine on your way out, unlocking it on your return turns "I'm away" off for you — you are visibly back.) **"I'm away" does not silence anything**: it says only that nobody is at this screen, which is what the calendar's no-screen periods and the screen breaks are judged on, and you go on getting your notifications — the machine is still unlocked, and "task to do now" is exactly what you can still act on with a program left running. **Locking** it is what silences the device: there is nobody at a lock screen to tell, so the app says nothing there and your phone gets the end-of-break message from the server instead. Alarms still ring — that is what they are for. All are claimed exclusively where Windows allows it, so the application in front never sees the keystroke. Search for the kind *keyboard shortcut* to list every shortcut in the app, see which claim those chords actually got, and rebind them.
 
-Other lateral-menu windows: **Reminders**, **Alarms**, **Sleep** (wake time, goal wake time, total sleep), **History** (every recorded change), and **All task trees** (named alternative arrangements of your tree; give them dates and the scheduler interpolates smoothly from one to the next). **All tasks** lists every task of the tree flat, sorted by how many occurrences it has or by its priority percentage, either way round.
+Everything else is an element of the **Search** window, made from its kind's "New" row and edited from its actions: **reminders**, **alarms**, **timers**, **chronos**, **quotas**, **categories**, **restrictive period** kinds, **md elements**, **workplace setups**, the app's settings. The **sleep schedule** (wake time, goal wake time, total sleep) is one of the calendar's actions. **History units** lists every recorded change. An alternative arrangement of your tree is another task under the global root, given a weight when it should count; a task's share and minimum can follow a formula of the date ("Presence ratio target", "Minimum length target") where the old dated trees used to interpolate.
 
 ### Cross-device sync (optional)
 
@@ -268,6 +268,7 @@ Helpers in `scripts/internal/` are **not run by hand**: `account_db_admin.py` (c
 | --- | --- |
 | [`PRD.md`](PRD.md) | **Core** product requirements — the application framework itself: page navigation, platform strategy, accounts, sync model, and the roadmap of future pages. |
 | [`docs/PRD_TaskScheduler.md`](docs/PRD_TaskScheduler.md) | The full behavioural specification of the **Task Scheduler page** — every interaction, in detail. The authority on what that page should do. |
+| [`docs/USER_ACTIONS.md`](docs/USER_ACTIONS.md) | Every action a user takes, with real-life examples, the ways back from a mistake and where to find things. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | How it is built: state model, persistence, history engine, sync. |
 | [`CLAUDE.md`](CLAUDE.md) | The active invariants — what you must not break. Read before changing the scheduler, the sync engine or anything persisted. |
 | [`docs/adr/`](docs/adr/README.md) | Architecture decision records: *why* each invariant exists, what was tried first, and the post-mortems behind it. |

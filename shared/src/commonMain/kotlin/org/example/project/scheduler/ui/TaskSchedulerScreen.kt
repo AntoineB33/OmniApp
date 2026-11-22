@@ -3758,16 +3758,17 @@ internal fun DrawingSwatch(drawing: PeriodDrawing) {
  * the newly-reached levels are what the user is choosing between — so the parents are hidden off to the
  * left and the scrollbar under it is how they are brought back.
  *
- * Under the depth sit three switches saying **what** each copied task carries — its **id**, its sub-list's
- * **priority table** (off: the cell's percentage of that sub-list instead), and its **text**.
+ * Under the depth sit five switches saying **what** each copied task carries — its **id**, its sub-list's
+ * **priority table** (off: the cell's percentage of that sub-list instead, itself a switch), its **minimum
+ * time** and its **text** — and a title whose tasks are left out ([SchedulerDomain.CopyOptions]).
  *
  * **Enter** and the **copy** button both copy and close; **reset** puts the depth back to
- * [SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH] and turns all three switches back on.
+ * [SchedulerDomain.DEEP_COPY_DEFAULT_DEPTH], turns every switch back on and empties the excluded title.
  *
  * The depth and the switches are **the account's settings** ([SchedulerState.deepCopyMaxDepth] and the
- * three `copy*` flags), not this copy's: the window opens on them and copying writes them back. §4's
+ * `copy*` flags), not this copy's: the window opens on them and copying writes them back. §4's
  * Ctrl+C / Ctrl+X take the whole sub-tree (the depth is this window's), but they carry what these switches
- * say. Cancelling leaves all four alone.
+ * say. Cancelling leaves them all alone.
  */
 @Composable
 internal fun DeepCopyWindow(

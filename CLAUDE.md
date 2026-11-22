@@ -140,7 +140,7 @@ cross-reference each other. Source directories carry a `CLAUDE.md` pointing at t
 | `pause-cue.md` | presence, the Edge Functions, the cron, the traffic budget |
 | `persistence.md` | what is persisted and synced (the state classification), history units, the store, the SQLite driver and its pragmas |
 | `alarms-and-timers.md` | alarms, timers, the arming loop and the ring sweep |
-| `shortcuts.md` | the four system-wide chords, rebinding, the hover hints, the platform hot-key actuals |
+| `shortcuts.md` | the five system-wide chords, rebinding, the hover hints, the platform hot-key actuals |
 | `line.md` | the line engine ported from `line_manager` (edits, reversal, rule adaptation, drags), its golden file |
 
 The Claude Code logs page keeps its invariants in `claudelogs/CLAUDE.md`.
