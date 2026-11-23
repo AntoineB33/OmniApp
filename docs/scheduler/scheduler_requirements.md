@@ -63,8 +63,15 @@ For different machines, if the same generated script get published at the same t
 
 The "allocated resources quantity" hyperparameter q in [0, 1] balances between resource usage economy (0) and optimization problem-solving (1). When q is lower, then a rules generator run will be faster and use less CPU resources to solve the optimization problems, and the current generated script will trigger less frequently a new rules generator run. At 1, the generator uses all the time the pace allows finding the best arrangement.
 
-A run of the rules generator is progressive: it publishes a series of generated scripts, each replacing the previous one, and ends after publishing the last one (or never ends if there is no last one). The generated script is "definitive" up to a position x when every next script of the same run gives the same resulting line for the chip's positions before x, whatever the modes. If a run has made the script definitive up to x, then 10 seconds later it must have made it definitive up to x + 10 units, using an approximation if resources are limited. An approximation may lower the optimization score but never breaks a constraint. At the start of a run, the generator must nearly instantly publish a new script that is definitive on the 10 units on the right of the chip. If the chip is beyond the definitiveness (because the program was put to sleep), then the generator must quickly catch up and publish a new script that is definitive on the 10 units on the right of the chip. The duration of a run of the rules generator depends on q.
+There are two scheduler.
+- Instantaneous scheduler. When it runs, it instantly gives a schedule for [now, now + 10s] and all the currently displayed parts of the timeline. The schedule must satisfy all the constraints, and must not appear obviously wrong regarding the optimization goals.
+- Big scheduler. When it runs, it has a minimum pace to schedule the future.
+
+A run of the big scheduler is progressive: it publishes a series of generated scripts, each replacing the previous one, and ends after publishing the last one (or never ends if there is no last one). It has a minimum progressive pace. $t_{def}$ is initialized to $t_{start}$ + 10s, where $t_{start}$ is the moment the big scheduler starts, and when $t_{def}$ gets a value $t_{val}$ at $t_{real}$, then at $t_{real}$ + 10s, $t_{def}$ is >= $t_{val}$ + 10min. The big scheduler doesn’t change the schedule in [now; $t_{def}$].
 To satisfy this pace, the generator can look at the current generated script.
+When now > $t_{def}$, then the two scheduler start running.
+
+When the user defines a set of rules that makes it difficult for the two scheduler to satisfy those paces, then those two paces are modified accordingly. The set of rules described in docs\scheduler\default_scheduler_rules.md must abide by those two paces.
 
 The "probability finder" program is used to find probability rules in the mode transitions pattern. This helps the rules generator being more performant with a low q.
 
