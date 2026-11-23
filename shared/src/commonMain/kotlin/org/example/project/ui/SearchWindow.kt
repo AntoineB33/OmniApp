@@ -4245,7 +4245,10 @@ private fun ElementChildren(
                         onSelect = { selection.click(siblings, rowKey) },
                         onSecondarySelect = { selection.secondaryClick(rowKey) },
                         onOpen = { openers.open(state, currentRow) },
-                        onOpenMenu = { menuOpen = true },
+                        onOpenMenu = {
+                            selection.captureForMenu(rowKey)
+                            menuOpen = true
+                        },
                     ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(RESULT_ROW_GAP),
@@ -4417,6 +4420,7 @@ internal class ElementChildSelection {
     var editor: OutsidePressEditor = OutsidePressEditor()
     var onTake: (rowKey: String) -> Unit = {}
     var onAdd: (keys: List<String>, replacing: Boolean) -> Unit = { _, _ -> }
+    private var heldForMenu: List<String> = emptyList()
 
     fun click(siblings: List<String>, rowKey: String) {
         val next = ClickSelection.click(siblings, selected, anchor, rowKey, shift = pressModifiers.shift, ctrl = pressModifiers.ctrl)
@@ -4444,8 +4448,15 @@ internal class ElementChildSelection {
         onTake(rowKey)
     }
 
+    /** The elements this menu acts on, held while its pop-up can yield the row selection. */
+    fun captureForMenu(rowKey: String) {
+        val picked = if (selected.isNotEmpty()) selected else setOf(rowKey)
+        heldForMenu = picked.mapNotNull { elements[it] }.distinct()
+    }
+
     /** The selected children's elements, each once, into the window's added elements. */
-    fun add(replacing: Boolean) = onAdd(selected.mapNotNull { elements[it] }.distinct(), replacing)
+    fun add(replacing: Boolean) =
+        onAdd(selected.mapNotNull { elements[it] }.distinct().ifEmpty { heldForMenu }, replacing)
 
     fun clear() {
         if (selected.isEmpty() && main == null) return

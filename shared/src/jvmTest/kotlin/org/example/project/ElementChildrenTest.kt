@@ -20,6 +20,7 @@ import org.example.project.scheduler.domain.SearchDomain.Kind
 import org.example.project.scheduler.model.ChronoEntry
 import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.ui.AddedActionHandlers
+import org.example.project.ui.ElementChildSelection
 import org.example.project.ui.SearchRowOpeners
 import org.example.project.ui.SearchSplits
 import org.example.project.ui.SearchWindow
@@ -30,6 +31,20 @@ import org.example.project.ui.SearchWindow
  * screen, in the real Search window.
  */
 class ElementChildrenTest {
+
+    @Test
+    fun a_child_menu_keeps_the_element_to_add_if_the_menu_yields_the_selection() {
+        val selection = ElementChildSelection()
+        selection.elements["result/Md/md-life-context>Md/md-deliberate"] = "Md/md-deliberate"
+        selection.secondaryClick("result/Md/md-life-context>Md/md-deliberate")
+        selection.captureForMenu("result/Md/md-life-context>Md/md-deliberate")
+        selection.clear()
+
+        var added = emptyList<String>()
+        selection.onAdd = { keys, _ -> added = keys }
+        selection.add(replacing = false)
+        assertEquals(listOf("Md/md-deliberate"), added)
+    }
 
     private val account =
         QuotaScenario.account().copy(chronos = listOf(ChronoEntry(id = "a", label = "First"), ChronoEntry(id = "b", label = "Second")))
