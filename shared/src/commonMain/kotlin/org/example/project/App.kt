@@ -728,7 +728,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val searchSplits = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.SearchSplits>() }
         // Anomaly 2026-11-25: the rows a Search window was given as the menu it was (a menu's entries), by window id —
         // in memory alone: what a menu's entries do lives with the app that drew it.
-        val givenSearchRows = remember { androidx.compose.runtime.mutableStateMapOf<String, org.example.project.ui.SearchOptions>() }
+        val givenSearchRows = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.runtime.State<org.example.project.ui.SearchOptions>>() }
         // Anomaly 2026-11-04: the Online window, opened on the Task Scheduler page, was asked for again from the settings
         // page's menu — and only brought back where it was, on a page not shown, so nothing opened. A window no page owns
         // (any but a Search window and its configurations windows, whose page is their configuration's) is on the page
@@ -2600,22 +2600,23 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             placeDetached(FloatingWindow.ConfigSearch, id, bounds, how, FloatingWindow.ConfigSearch.title, name)
         }
         // A Search pop-up (a field's: the "List of parents") becomes a Search window of its own, beside the user's.
-        val detachSearchPopup = rememberUpdatedState { config: SearchDomain.Config, bounds: Rect, how: org.example.project.ui.DetachedAs, name: String?, given: org.example.project.ui.SearchOptions? ->
+        val detachSearchPopup = rememberUpdatedState { config: SearchDomain.Config, bounds: Rect, how: org.example.project.ui.DetachedAs, name: String?, given: androidx.compose.runtime.State<org.example.project.ui.SearchOptions>?, parts: org.example.project.ui.SearchSplits? ->
             val id = openNewWindow(FloatingWindow.Search, config.encode(), asCopy = true)
             // Anomaly 2026-11-25: a menu become a window lists the entries it was given, while the app runs.
             if (given != null) givenSearchRows[id] = given
             // User rule 2026-11-15: *"if the search bar was not in the window because taken care by the caller that was a
             // text field, then it must appear in the window"* — the window opens whole, its bar included, whatever a
             // window of that id was last left showing.
-            searchSplits[id] = org.example.project.ui.SearchSplits()
+            // Anomaly 2026-11-25: what the pop-up showed, when it says (its bar shown, its head too); else the whole window.
+            searchSplits[id] = parts?.copy(headerRemoved = false, barRemoved = false) ?: org.example.project.ui.SearchSplits()
             placeDetached(FloatingWindow.Search, id, bounds, how, SearchDomain.windowTitle(config), name)
         }
         val popupDetacher = remember {
             org.example.project.ui.PopupDetacher(
                 canDetach = { lateralWindowOf(it) == FloatingWindow.Search },
                 detach = { searchId, bounds, how, name -> detachPopup.value(searchId, bounds, how, name) },
-                detachSearch = { config, bounds, how, name -> detachSearchPopup.value(config, bounds, how, name, null) },
-                detachGiven = { config, options, bounds, how, name -> detachSearchPopup.value(config, bounds, how, name, options) },
+                detachSearch = { config, bounds, how, name, parts -> detachSearchPopup.value(config, bounds, how, name, null, parts) },
+                detachGiven = { config, options, bounds, how, name, parts -> detachSearchPopup.value(config, bounds, how, name, options, parts) },
             )
         }
         // The calendar's "add…" ([add]) or "edit…" at [atMillis]: the Search window a previous one opened, moved to
@@ -6055,7 +6056,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             config = searchConfig,
                             onConfigChange = { setSearchConfig(searchId, it) },
                             // A menu become this window: the entries it was given (anomaly 2026-11-25).
-                            options = givenSearchRows[searchId],
+                            options = givenSearchRows[searchId]?.value,
                             actionRevealAsked = searchActionReveals[searchId],
                             onActionRevealTaken = { searchActionReveals.remove(searchId) },
                             openedConfig = searchOpenedConfigs[searchId],

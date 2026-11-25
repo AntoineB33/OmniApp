@@ -161,7 +161,7 @@ class TransientMenuHost {
      * A press in a pop-up of its own layer, which the root observer never sees ([dismissesMenusOnPress]): the menus
      * close, and no edit — the pop-up is a part of the edit it was opened from (the cell's "▾"), not outside it.
      */
-    fun onPressInPopup(windowPosition: Offset? = null, root: Any? = null) {
+    fun onPressInPopup(windowPosition: Offset? = null, root: Any? = null, keep: Collection<Any> = emptyList()) {
         onActivity()
         // Anomaly 2026-11-15 (*"the selected rows sometimes stay selected even when clicking elsewhere"*): an edit drawn
         // in THAT pop-up's window (a Search window's selected rows there) leaves on a press elsewhere in the same window.
@@ -175,7 +175,7 @@ class TransientMenuHost {
             // pop-up is a press somewhere else for the rows selected in another window ([takeRowSelection]).
             yieldRowSelections(root)
         }
-        dismissMenus(onPress = true)
+        dismissMenus(onPress = true, keep = keep)
     }
 
     /**
@@ -309,6 +309,9 @@ fun rememberOutsidePressEditor(
 fun Modifier.dismissesMenusOnPress(): Modifier {
     val host = LocalTransientMenuHost.current ?: return this
     val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    // Anomaly 2026-11-25: a press in a menu's own window closes the menus opened from it — never that menu, nor those it
+    // was opened from ([LocalEnclosingMenus]) — exactly as a press in the app's window closes every menu over it.
+    val keep by rememberUpdatedState(LocalEnclosingMenus.current)
     return this
         .onGloballyPositioned { coordinates[0] = it }
         .pointerInput(host) {
@@ -319,7 +322,7 @@ fun Modifier.dismissesMenusOnPress(): Modifier {
                     if (event.type != PointerEventType.Press) continue
                     val here = coordinates[0]?.takeIf { it.isAttached }
                     val at = event.changes.firstOrNull()?.position?.let { here?.localToWindow(it) }
-                    host.onPressInPopup(at, here?.findRootCoordinates())
+                    host.onPressInPopup(at, here?.findRootCoordinates(), keep)
                 }
             }
         }

@@ -595,7 +595,7 @@ private fun FieldSearchPopup(
             windowId = "Search",
             onDragStart = { name, travelled ->
                 latestCloseAbove()
-                drag = shownAt?.let { at -> detacher.detachSearch(latestRequest.embedded.config, at, DetachedAs.Moved, name) }
+                drag = shownAt?.let { at -> detacher.detachSearch(latestRequest.embedded.config, at, DetachedAs.Moved, name, null) }
                     ?.also { it.moveBy(travelled) }
             },
             onDrag = { delta -> drag?.moveBy?.invoke(delta) },
@@ -608,7 +608,7 @@ private fun FieldSearchPopup(
                 val at = shownAt
                 val asked = latestRequest
                 asked.onClose()
-                if (at != null) detacher.detachSearch(asked.embedded.config, at, how, name)
+                if (at != null) detacher.detachSearch(asked.embedded.config, at, how, name, null)
             },
         )
     }

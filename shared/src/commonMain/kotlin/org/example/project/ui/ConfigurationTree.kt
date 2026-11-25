@@ -227,8 +227,9 @@ internal fun ConfigurationTreeArrow(
             onDragStart = { name, travelled ->
                 val at = bounds()
                 onDragStart()
+                val made = at?.let { detach.detach(owner, it, DetachedAs.Moved, name) }?.also { it.moveBy(travelled) }
+                dragging[0] = made
                 control.startDrag()
-                dragging[0] = at?.let { detach.detach(owner, it, DetachedAs.Moved, name) }?.also { it.moveBy(travelled) }
             },
             // Read off the screen: the pop-up's own window stepped off it ([PopupWindowControl.pointerMoved]).
             onDrag = { _ -> dragging[0]?.moveBy?.invoke(control.pointerMoved()) },

@@ -50,8 +50,8 @@ class EveryPopupHeadTest {
         val detacher = PopupDetacher(
             canDetach = { false },
             detach = { _, _, _, _ -> DetachedDrag({}, {}) },
-            detachSearch = { config, _, how, _ -> asked += Asked(config, null, how); DetachedDrag({}, {}) },
-            detachGiven = { config, given, _, how, _ -> asked += Asked(config, given, how); DetachedDrag({}, {}) },
+            detachSearch = { config, _, how, _, _ -> asked += Asked(config, null, how); DetachedDrag({}, {}) },
+            detachGiven = { config, given, _, how, _, _ -> asked += Asked(config, given.value, how); DetachedDrag({}, {}) },
         )
         var dismissed = 0
         val scene = onEdt {

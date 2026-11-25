@@ -49,15 +49,15 @@ enum class DetachedAs { Moved, Duplicated, FillWidth, FillHeight, Reduced, Maxim
 class PopupDetacher(
     val canDetach: (searchId: String) -> Boolean,
     val detach: (searchId: String, bounds: Rect, how: DetachedAs, name: String?) -> DetachedDrag,
-    val detachSearch: (config: org.example.project.scheduler.domain.SearchDomain.Config, bounds: Rect, how: DetachedAs, name: String?) -> DetachedDrag,
+    val detachSearch: (config: org.example.project.scheduler.domain.SearchDomain.Config, bounds: Rect, how: DetachedAs, name: String?, parts: SearchSplits?) -> DetachedDrag,
     /**
      * Anomaly 2026-11-25 (*"I right-clicked on a md row, which opened window B, then … show header, but the header doesn't
      * have the buttons to maximize or save the window … and when I drag it it disappear"*): a pop-up whose rows are GIVEN
      * (a menu's entries, [SearchOptions]) becomes a Search window of the app listing those very rows, for as long as the app
      * runs ([detachSearch] for the rest).
      */
-    val detachGiven: (config: org.example.project.scheduler.domain.SearchDomain.Config, options: SearchOptions, bounds: Rect, how: DetachedAs, name: String?) -> DetachedDrag =
-        { config, _, bounds, how, name -> detachSearch(config, bounds, how, name) },
+    val detachGiven: (config: org.example.project.scheduler.domain.SearchDomain.Config, options: androidx.compose.runtime.State<SearchOptions>, bounds: Rect, how: DetachedAs, name: String?, parts: SearchSplits?) -> DetachedDrag =
+        { config, _, bounds, how, name, parts -> detachSearch(config, bounds, how, name, parts) },
 )
 
 /**

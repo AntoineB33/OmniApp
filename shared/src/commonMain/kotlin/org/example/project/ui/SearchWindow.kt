@@ -1099,7 +1099,10 @@ fun SearchWindow(
     // field's window — shows no row selected until the user selects one in it. The row a new question starts at is where
     // its keys start, not a selection: two sections each showing theirs read as two selections in one window. A
     // drop-down's list, the left-side menu and a picker keep theirs: it is the one Enter takes.
-    val unselectedUntilChosen = embedded && !userSelected && options == null && picker == null
+    // Anomaly 2026-11-25 (*"the first row is selected, but it isn't shown in the two other sections"*): ONE rule for every
+    // Search window, framed or not — a row shown selected is the selection the sections read, so none is shown until the
+    // user chooses. The lists a key picks from keep theirs: a menu's or a drop-down's, the left-side menu, a picker.
+    val unselectedUntilChosen = !userSelected && picker == null && menuList == null && !(embedded && options != null)
     val hasSelection = count > 0 && !fieldFocused && subtreeFocusOwner == null && rowsSelectable && !deselected && !unselectedUntilChosen
     // User rule 2026-11-03: the rows are added from the row menu's "add" alone, on the SELECTED rows — Ctrl+A selects them
     // all. The check boxes, "Select all" and "Add" were the same thing a second way.
@@ -1383,6 +1386,10 @@ fun SearchWindow(
         }
     }
 
+    // The window's background menu: open, and what a section of it left there ([SectionBackground]). Here, so the whole
+    // of a pop-up's surface — its padding, its edges — opens it, as the whole of a framed window's content does.
+    var backgroundMenu by remember { mutableStateOf(false) }
+    var sectionEntries by remember { mutableStateOf<List<MenuAction>>(emptyList()) }
     val windowBody: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
       // Three sections: the search on the left; on the right, the actions on the added elements above the list
       // of the added elements. Both separators are dragged to share the room (Compose-only, like the zoom):
@@ -1495,8 +1502,6 @@ fun SearchWindow(
       // What is left on screen: the left section, and the right side while one of its two is there.
       val searchShown = !searchRemoved
       val rightShown = !(actionsRemoved && addedRemoved)
-      var backgroundMenu by remember { mutableStateOf(false) }
-      var sectionEntries by remember { mutableStateOf<List<MenuAction>>(emptyList()) }
       // A section's own background options ([SectionBackground]): its parts, as the window's menu offers the window's.
       fun sectionPartsEntries(): List<MenuAction> =
           partsMenuActions(
@@ -2576,14 +2581,24 @@ fun SearchWindow(
             fun becomes(at: androidx.compose.ui.geometry.Rect, how: DetachedAs, name: String?): DetachedDrag {
                 val given = latestOptions
                 val kept = latestConfig
-                return if (given != null) detacher.detachGiven(kept, given, at, how, name) else detacher.detachSearch(kept, at, how, name)
+                // Anomaly 2026-11-25 (*"the action section and the added elements section are open in B, but I didn't
+                // select to show them"*): the window shows what the pop-up showed — and its head, which a window has.
+                val parts = SearchSplits(
+                    headerRemoved = false, barRemoved = barRemoved, searchRemoved = searchRemoved,
+                    actionsRemoved = actionsRemoved, addedRemoved = addedRemoved,
+                )
+                // Anomaly 2026-11-25 (*"Left clicking on other rows open the right-click menu"*): its entries as the caller
+                // gave them, never through the menu that held them ([SearchOptions.asGiven]) — that one kept itself open.
+                return if (given != null) detacher.detachGiven(kept, given.asGiven ?: mutableStateOf(given), at, how, name, parts)
+                else detacher.detachSearch(kept, at, how, name, parts)
             }
             PopupWindowHead(
                 windowId = "Search",
                 onDragStart = { name, travelled ->
                     val at = popupControl?.boundsInApp() ?: shownBounds[0]
+                    val made = at?.let { becomes(it, DetachedAs.Moved, name) }?.also { it.moveBy(travelled) }
+                    detachDrag = made
                     popupControl?.startDrag()
-                    detachDrag = at?.let { becomes(it, DetachedAs.Moved, name) }?.also { it.moveBy(travelled) }
                 },
                 // Its own window is carried by the screen's pointer ([PopupWindowControl.pointerMoved]); one drawn in the
                 // app's window by the drag's own move.
@@ -2612,7 +2627,19 @@ fun SearchWindow(
                 modifier = modifier.then(placed),
                 head = if (headerRemoved) null else { { SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss, window = popupWindow) } },
             ) {
-                Column(Modifier.fillMaxSize().padding(POPUP_CONTENT_PADDING), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(
+                    Modifier.fillMaxSize()
+                        // Anomaly 2026-11-25 (*"some parts of the background of B doesn't open a window at right-click"*):
+                        // the pop-up's padding is its background too.
+                        .then(
+                            contextMenuModifier(enabled = !isSearchSection(actionRows, addedList), key = "search-surface") {
+                                sectionEntries = emptyList()
+                                backgroundMenu = true
+                            },
+                        )
+                        .padding(POPUP_CONTENT_PADDING),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
                     popupChrome.top?.invoke()
                     windowContent()
                 }
@@ -2677,6 +2704,12 @@ class SearchOptions(
     val separators: Set<String> = emptySet(),
     /** User rule 2026-11-25: what each option is ([MenuAction.id]), by its row id; absent: its name. */
     val elementIds: Map<String, String> = emptyMap(),
+    /**
+     * These options as their caller gives them NOW, where a menu wraps them ([OptionSearchMenu]: kept open after a pick) —
+     * what a window made of the menu lists (anomaly 2026-11-25): live, its labels and greyed entries following the caller
+     * as the menu's do ("Hide the search" turning to "Show the search"). Null: these are.
+     */
+    val asGiven: androidx.compose.runtime.State<SearchOptions>? = null,
 )
 
 /**
@@ -2910,12 +2943,18 @@ internal fun OptionSearchMenu(
         held = true
         act(id)
     }
+    // What the caller gives now — every recomposition of the caller, the menu open or not: a window made of this menu lists
+    // it live (anomaly 2026-11-25).
+    val givenNow = remember { mutableStateOf(options) }
+    val callerOptions = options
+    androidx.compose.runtime.SideEffect { givenNow.value = callerOptions }
     val options = SearchOptions(
         options = options.options, checked = options.checked, onClick = holding(options.onClick),
         onSelectAll = { ids -> held = true; options.onSelectAll(ids) }, onSolo = holding(options.onSolo),
         leading = options.leading, onNearEnd = options.onNearEnd, onDrop = options.onDrop, canDrop = options.canDrop,
         disabled = options.disabled, onCreate = options.onCreate?.let(::holding), integers = options.integers,
         hoverPopup = options.hoverPopup, listName = name, separators = options.separators, elementIds = options.elementIds,
+        asGiven = givenNow,
     )
     // Anomaly 2026-11-21 (*"The right-click doesn't work..."*): the ONE registration of this menu with the host that closes
     // menus on a press outside them. A caller registering the same menu again was closed by this one opening — the host
@@ -2979,7 +3018,7 @@ internal fun OptionSearchMenu(
             options = options,
             onDrop = options.onDrop?.let { drop -> { row -> (row as? SearchDomain.ItemResult)?.id?.let(drop) } },
             canDrop = { row -> (row as? SearchDomain.ItemResult)?.id?.let { it != SearchDomain.SELECT_ALL_OPTION && options.canDrop(it) } == true },
-            modifier = Modifier.width(width).height(height),
+            modifier = Modifier.width(width).height(height).dismissesMenusOnPress(),
         )
         }
         }

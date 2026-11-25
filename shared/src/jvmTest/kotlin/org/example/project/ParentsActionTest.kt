@@ -94,7 +94,7 @@ class ParentsActionTest {
         val detacher = org.example.project.ui.PopupDetacher(
             canDetach = { false },
             detach = { _, _, _, _ -> org.example.project.ui.DetachedDrag({}, {}) },
-            detachSearch = { config, _, how, _ ->
+            detachSearch = { config, _, how, _, _ ->
                 detached += config to how
                 org.example.project.ui.DetachedDrag({}, {})
             },

@@ -302,8 +302,10 @@ private class MenuSession(
     private var dragFrom: Point? = null
     private var dragPointerFrom: Point? = null
     private var lastPointer: Point? = null
-    /** Dragged, it was made invisible where it stood (not sent off the screen): it follows the pointer, unseen. */
+    /** Dragged, it is made invisible over every screen (not sent off the screen): it keeps the pointer, unseen. */
     private var hiddenInPlace = false
+
+
 
     val control = object : PopupWindowControl {
         override fun startDrag() {
@@ -312,13 +314,13 @@ private class MenuSession(
             dragFrom = window.location
             dragPointerFrom = java.awt.MouseInfo.getPointerInfo()?.location
             lastPointer = dragPointerFrom
-            // It is its window now: out of sight, it keeps the pointer (the button is held in it) to finish the drag.
-            // Anomaly 2026-11-25: sent off the screen, it let the window under the pointer take the moves — a row there
-            // was selected by the drag — so it turns invisible where it stands, the pointer still over it; off the screen
-            // only where the platform cannot make it so.
-            // Not 0: a window wholly transparent is one the pointer goes through (Windows' layered windows), and the drag's
-            // moves went to the window under it. Over every screen: the pointer stays in it, moving in it, wherever the
-            // hand goes (a window moved along with the pointer saw it never move, and the drag stopped).
+            // Anomaly 2026-11-25, measured on the desktop — every other way broke the drag: sent off the screen, it let the
+            // window under the pointer take the moves (a row there was selected); wholly transparent, the pointer went
+            // through it; moved along with the pointer, it saw the pointer never move; left where it stood, or turned
+            // invisible only a moment later, the pointer left it and the drag stopped for good. So at once it turns
+            // invisible (not 0: a wholly transparent window is one the pointer goes through) over every screen, the pointer
+            // moving in it wherever the hand goes. Until the window it becomes is drawn — a frame — nothing stands there.
+            // Off the screen only where the platform cannot make it so.
             hiddenInPlace = runCatching {
                 window.opacity = 0.01f
                 val screens = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices
@@ -442,7 +444,10 @@ private class MenuSession(
      */
     private fun rightPressedInApp(): Boolean =
         RightPresses.presses != pressesAtOpen && RightPresses.justPressed() &&
-            RightPresses.window === generateSequence(owner) { it.owner }.last()
+            // Anomaly 2026-11-25 (*"right-clicking twice doesn't open a window, which is not the case on A"*): the window the
+            // menu hangs from, or any it hangs from in turn — a menu's own window (a pop-up's background menu) as the
+            // app's: the right-click there answers, never the loss of the keyboard to it.
+            generateSequence(owner) { it.owner }.any { it === RightPresses.window }
 
     private val focusListener = object : WindowFocusListener {
         override fun windowGainedFocus(event: WindowEvent) {
