@@ -621,6 +621,9 @@ means.
     screen** (opacity 0.01, never 0: a wholly transparent window is one the pointer goes through) — sent off the screen,
     it let the window under the pointer take the drag's moves (a row there was selected); moved along with the pointer,
     it saw the pointer never move and the drag stopped. Off the screen only where the platform cannot make it so.
+    **A menu window is opaque again as it goes back to the pool and as it is taken** (`MenuWindows.shownWhole`; anomaly
+    2026-11-25, *"when a pop-up window becomes a window …, the right-click doesn't work anymore anywhere"*): the windows
+    are reused, and the next menu opened in the dragged one was all but transparent — every menu after a drag, unseen.
   - **A pop-up's head dragged makes it its window AT ONCE, and the drag carries that window** (anomaly 2026-11-15:
     *"when I dragged a window that previously had no tab in the [window bar], it should immediately get a tab. Right
     now, it waits that I release the click, and it jumps away from where I placed it"*; `PopupWindowHead.onDragStart`,

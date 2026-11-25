@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Menus visible again after a pop-up was dragged into a window — 2026-11-25
+
+- Anomaly: *"Maybe when a pop-up window becomes a window …, the right-click doesn't work anymore anywhere?"* Yes: the
+  drag fix of the same day left the pop-up's OS window at 1% opacity, and menu windows are pooled and reused — every
+  menu opened after a drag was invisible. A menu window is made opaque again as it is given back and taken
+  (`MenuWindows`). Checked on the desktop: after two drags, right-clicks in the main window and in the new window open
+  visible menus, and the A > B > background > header > row sequence opens the row's menu.
+- Client rebuild only.
+
 ### A right-click on a menu's row opens its menu while another menu is open — 2026-11-25
 
 - Anomaly: *"right-click on A which opens B > right-click on B > show header > right-click on a row in B, no pop-up

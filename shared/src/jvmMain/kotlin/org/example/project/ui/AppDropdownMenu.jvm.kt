@@ -813,7 +813,17 @@ internal object MenuWindows {
         }
 
     fun take(owner: AwtWindow): ComposeDialog =
-        (spare.remove(owner)?.takeIf { it.isDisplayable } ?: make(owner)).also(::hideOwned)
+        (spare.remove(owner)?.takeIf { it.isDisplayable } ?: make(owner)).also(::hideOwned).also(::shownWhole)
+
+    /**
+     * Anomaly 2026-11-25 (*"when a pop-up window becomes a window …, the right-click doesn't work anymore anywhere"*): a
+     * window that carried a pop-up's drag was left all but transparent ([PopupWindowControl.startDrag]), and the next menu
+     * reusing it opened unseen — every right-click's menu after a pop-up became a window. A window is opaque again as it
+     * is given back and as it is taken.
+     */
+    private fun shownWhole(window: AwtWindow) {
+        runCatching { if (window.opacity < 1f) window.opacity = 1f }
+    }
 
     /** Every window [window] owns, at any depth, hidden while it is still on screen: none comes back with it. */
     private fun hideOwned(window: AwtWindow) {
@@ -830,6 +840,7 @@ internal object MenuWindows {
         // empty grey window where the closed child had been (seen on screen, 2026-11-04).
         hideOwned(dialog)
         dialog.isVisible = false
+        shownWhole(dialog)
         dialog.setContent { }
         if (owner.isDisplayable && spare[owner] == null) spare[owner] = dialog else dialog.dispose()
     }
