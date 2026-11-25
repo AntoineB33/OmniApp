@@ -623,7 +623,10 @@ means.
     it saw the pointer never move and the drag stopped. Off the screen only where the platform cannot make it so.
     Measured 2026-11-25: hiding it any later than the drag's start — left where it stood, or carried under the pointer
     with the window it becomes — the pointer left it or stopped moving in it, and the drag stopped for good. So it hides
-    at once, and for about a frame, until the app draws the window it becomes, nothing stands there.
+    at once, and for about a frame, until the app draws the window it becomes, nothing stands there. **See-through menu
+    windows do not remove that frame** (tried 2026-11-25): a see-through window stretched over every screen keeps its
+    content seen, but the area it grows into is wholly transparent until the next frame draws its catcher, the pointer
+    goes through it, and the drag stopped for good — as with every other way tried.
     **A menu window is opaque again as it goes back to the pool and as it is taken** (`MenuWindows.shownWhole`; anomaly
     2026-11-25, *"when a pop-up window becomes a window …, the right-click doesn't work anymore anywhere"*): the windows
     are reused, and the next menu opened in the dragged one was all but transparent — every menu after a drag, unseen.
