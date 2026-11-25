@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Contexts and "State in each context" — 2026-11-25
+
+- User: *"It is only search configuration elements that define what row is shown in a window. What is built in code is
+  the default values of context-values of search configuration elements."* and *"In the action section of a search
+  configuration element, there is a section to show its state for each context"* — grouped: context row + state row.
+- New `ContextDomain` (the catalog of contexts and their code defaults), element kind **context**, synced
+  `SchedulerState.contextDefaults` (one row per context changed; persisted, merged three-way, undoable), and the action
+  **"State in each context"** on an added search configuration. Menus, drop-downs and a Search window opened on nothing
+  open with their context's configuration.
+- Step 1 of the plan: a menu's ENTRIES are not yet a search configuration (still listed in code), so an option's
+  "default presences" is not there yet.
+- Persisted shape: a new field, absent in an older payload (`ContextDefaultsTest`). Client rebuild only; the server
+  stores the new rows in its existing entity table, no Supabase migration.
+
 ### Copy path includes the row; a menu's entries have the row menu; section background options; separators — 2026-11-25
 
 - User: *"copy path must include the element being clicked. What is copied is the title, unless there is no title, in

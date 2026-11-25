@@ -933,6 +933,12 @@ sealed interface SchedulerIntent {
         val editKey: String? = null,
     ) : SchedulerIntent
 
+    /**
+     * User rule 2026-11-25: the contexts' defaults as they now stand ([org.example.project.scheduler.domain.ContextDomain]),
+     * one History Unit.
+     */
+    data class SetContextDefaults(val entries: List<org.example.project.scheduler.domain.ContextDefault>) : SchedulerIntent
+
     /** User rule 2026-11-02: the links between elements as they now stand, one History Unit ([org.example.project.scheduler.domain.ElementTree]). */
     data class SetElementLinks(val entries: List<org.example.project.scheduler.domain.ElementLink>) : SchedulerIntent
 

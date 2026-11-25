@@ -258,6 +258,8 @@ data class AddedActionHandlers(
     val claudeLogs: () -> org.example.project.claudelogs.ClaudeLogCatalog = { org.example.project.claudelogs.ClaudeLogCatalog.EMPTY },
     /** User rule 2026-11-13: every Search window open or saved, by id ([SearchDomain.AddedAction.ConfigurationStates]). */
     val searchWindows: () -> List<SearchDomain.SearchWindowState> = { emptyList() },
+    /** User rule 2026-11-25: a Search window opened on [SearchDomain.Config] (a context row's, "State in each context"). */
+    val onOpenSearch: (SearchDomain.Config) -> Unit = {},
     val onSetClaudeLogsDirectory: (String) -> Unit = {},
     val onRefreshClaudeLogs: () -> Unit = {},
     /** How loud Claude Code's own sounds are, null where nothing here sets it, and the change. */
@@ -1057,6 +1059,7 @@ private fun AddedActionBlocks(
         // User rule 2026-10-18: every sound of the app off on this device — the lateral menu's switch, here too.
         // User rule 2026-11-13: an added search configuration's state in each Search window, by window id.
         SearchDomain.AddedAction.ConfigurationStates -> ConfigurationStatesAction(state, added, handlers.searchWindows(), handlers.claudeLogs())
+        SearchDomain.AddedAction.ConfigurationContextStates -> ConfigurationContextStatesAction(state, added, { run(SearchDomain.AddedCommand.Raw(it)) }, handlers.onOpenSearch, handlers.claudeLogs())
         // User rule 2026-11-13: an action added to the actions section's own list — its contexts, and its state in each.
         SearchDomain.AddedAction.ActionContexts -> ActionContextsEditor(added)
         SearchDomain.AddedAction.MuteSwitch ->
@@ -2519,6 +2522,53 @@ private fun ConfigurationStatesAction(
                                 }
                             },
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-25: **an added search configuration's state in each context** ([org.example.project.scheduler.domain.ContextDomain.groups])
+ * — per group, the context row (a click opens a Search window whose added elements are the group's contexts) and the state
+ * row: "on" or "off" and the configuration's own control ([SettingEditor]) over the group's first context, a change made
+ * in every context of the group ([org.example.project.scheduler.domain.ContextDomain.withChange]), one History Unit.
+ */
+@Composable
+private fun ConfigurationContextStatesAction(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    onIntent: (SchedulerIntent) -> Unit,
+    onOpenSearch: (SearchDomain.Config) -> Unit,
+    claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog,
+) {
+    val contexts = org.example.project.scheduler.domain.ContextDomain
+    val settings = added.mapNotNull(SearchDomain::settingOf)
+    for (setting in settings) {
+        ElementHeading(setting.label, settings.size)
+        val groups = remember(state.contextDefaults, setting) { contexts.groups(state.contextDefaults, setting) }
+        for (group in groups) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                val names = group.contexts.map { it.title }
+                Text(
+                    if (group.contexts.size == contexts.CONTEXTS.size) "every context" else names.joinToString(", "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onOpenSearch(SearchDomain.contextsSearchConfig(group.contexts.map { it.id })) },
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (group.on) "on" else "off", style = MaterialTheme.typography.bodyMedium)
+                    val shown = contexts.configOf(state.contextDefaults, group.contexts.first().id)
+                    Box(Modifier.weight(1f)) {
+                        SettingEditor(state, setting, shown, null, { next ->
+                            var defaults = state.contextDefaults
+                            for (context in group.contexts) {
+                                val own = contexts.configOf(defaults, context.id)
+                                defaults = contexts.written(defaults, context.id, contexts.withChange(own, shown, next))
+                            }
+                            if (defaults != state.contextDefaults) onIntent(SchedulerIntent.SetContextDefaults(defaults))
+                        }, claudeLogs = claudeLogs)
                     }
                 }
             }

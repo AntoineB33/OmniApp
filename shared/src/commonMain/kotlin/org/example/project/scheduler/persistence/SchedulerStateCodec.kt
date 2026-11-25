@@ -44,6 +44,7 @@ import org.example.project.scheduler.state.ElementLinksDelta
 import org.example.project.scheduler.state.MdElementsDelta
 import org.example.project.scheduler.state.TreeAndMdDelta
 import org.example.project.scheduler.state.WorkplaceSetupsDelta
+import org.example.project.scheduler.state.ContextDefaultsDelta
 import org.example.project.scheduler.state.PresenceEvolutionsDelta
 import org.example.project.scheduler.model.Category
 import org.example.project.scheduler.model.CategoryId
@@ -614,6 +615,7 @@ object SchedulerStateCodec {
             // PRD §18 Chronos: the run state rides along, the timers' rule — the start instant is authoritative.
             chronos = chronos.map { it.toPersisted() },
             workplaceSetups = workplaceSetups.map { it.toPersisted() },
+            contextDefaults = contextDefaults.map { PersistedContextDefault(it.id, it.config) },
             mdElements = mdElements.map { PersistedMdElement(it.id, it.text, it.of) },
             presenceEvolutions = presenceEvolutions.map { it.toPersisted() },
             elementLinks = elementLinks.map { it.toPersisted() },
@@ -989,6 +991,11 @@ object SchedulerStateCodec {
                 PersistedDelta.PresenceEvolutions(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is WorkplaceSetupsDelta ->
                 PersistedDelta.WorkplaceSetups(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
+            is ContextDefaultsDelta ->
+                PersistedDelta.ContextDefaults(
+                    changes.before.values.map { PersistedContextDefault(it.id, it.config) },
+                    changes.after.values.map { PersistedContextDefault(it.id, it.config) },
+                )
             is ChronosDelta ->
                 PersistedDelta.Chronos(changes.before.values.map { it.toPersisted() }, changes.after.values.map { it.toPersisted() })
             is QuotasDelta ->
@@ -1336,6 +1343,9 @@ object SchedulerStateCodec {
             // instant it is due at.
             timers = TimerDomain.assignTimerIds(timers.map { it.toTimerEntry() }).map(TimerDomain::healed),
             workplaceSetups = workplaceSetups.map { it.toWorkplaceSetup() },
+            // User rule 2026-11-25: a row naming no context, or with no configuration, is no default: dropped.
+            contextDefaults = contextDefaults.filter { it.id.isNotBlank() && it.config.isNotBlank() }
+                .distinctBy { it.id }.map { org.example.project.scheduler.domain.ContextDefault(it.id, it.config) },
             mdElements = mdElements.map { it.toMdElement() },
             presenceEvolutions = presenceEvolutions.map { it.toPresenceEvolution() },
             elementLinks = elementLinks.map { it.toElementLink() },
@@ -1632,6 +1642,11 @@ object SchedulerStateCodec {
                 PresenceEvolutionsDelta(before.map { it.toPresenceEvolution() }, after.map { it.toPresenceEvolution() })
             is PersistedDelta.WorkplaceSetups ->
                 WorkplaceSetupsDelta(before.map { it.toWorkplaceSetup() }, after.map { it.toWorkplaceSetup() })
+            is PersistedDelta.ContextDefaults ->
+                ContextDefaultsDelta(
+                    before.map { org.example.project.scheduler.domain.ContextDefault(it.id, it.config) },
+                    after.map { org.example.project.scheduler.domain.ContextDefault(it.id, it.config) },
+                )
             is PersistedDelta.Chronos ->
                 ChronosDelta(
                     ChronoDomain.assignChronoIds(before.map { it.toChronoEntry() }).map(ChronoDomain::healed),
@@ -1842,6 +1857,8 @@ private data class PersistedState(
     val chronos: List<PersistedChrono> = emptyList(),
     /** New 2026-11-01: absent from every older payload, which has none. */
     val workplaceSetups: List<PersistedWorkplaceSetup> = emptyList(),
+    /** New 2026-11-25: absent from every older payload, whose contexts all open with the code's defaults. */
+    val contextDefaults: List<PersistedContextDefault> = emptyList(),
     /** New 2026-11-19: absent from every older payload, whose task texts are lifted into md elements on decode. */
     val mdElements: List<PersistedMdElement> = emptyList(),
     /** New 2026-11-19: absent from every older payload, which has none (a cell's presence formula is lifted on decode). */
@@ -2468,6 +2485,10 @@ private fun PersistedPresenceEvolution.toPresenceEvolution(): org.example.projec
             ?: org.example.project.scheduler.domain.EvolutionTarget.Presence,
     )
 
+/** User rule 2026-11-25: a context's default as the user changed it ([org.example.project.scheduler.domain.ContextDefault]). */
+@Serializable
+private data class PersistedContextDefault(val id: String = "", val config: String = "")
+
 /** User rule 2026-11-01: one workplace setup. Its OS by name: one a later build added reads as the first this one knows. */
 @Serializable
 private data class PersistedWorkplaceSetup(
@@ -2803,6 +2824,14 @@ private sealed interface PersistedDelta {
     data class PresenceEvolutions(
         val before: List<PersistedPresenceEvolution>,
         val after: List<PersistedPresenceEvolution>,
+    ) : PersistedDelta
+
+    /** New 2026-11-25: the contexts' defaults; an older build cannot read it and skips the unit (`decodeUnit`). */
+    @Serializable
+    @SerialName("contextDefaults")
+    data class ContextDefaults(
+        val before: List<PersistedContextDefault>,
+        val after: List<PersistedContextDefault>,
     ) : PersistedDelta
 
     /** New 2026-11-01: the workplace setups; an older build cannot read it and skips the unit (`decodeUnit`). */

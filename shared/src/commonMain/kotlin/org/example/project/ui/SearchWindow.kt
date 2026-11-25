@@ -433,6 +433,8 @@ data class SearchRowOpeners(
             SearchDomain.Kind.Notification, SearchDomain.Kind.ClaudePrompt, SearchDomain.Kind.ClaudeAnswer,
             SearchDomain.Kind.ClaudeReasoning, SearchDomain.Kind.SearchConfiguration, SearchDomain.Kind.Option, SearchDomain.Kind.Integer,
             SearchDomain.Kind.Action -> Unit
+            // A context is seen and changed in the actions of its search configurations (user rule 2026-11-25).
+            SearchDomain.Kind.Context -> Unit
             // An md element is read and edited in its actions (user rule 2026-11-19).
             SearchDomain.Kind.Md -> Unit
             // A presence ratio target evolution is edited in the actions of its tasks (user rule 2026-11-19).
@@ -2706,6 +2708,7 @@ internal fun ActionMenu(name: String,
         modifier = modifier,
         atPointer = atPointer,
         offset = offset,
+        rightClick = true,
         options = SearchOptions(
             options = actions.mapIndexed { i, action -> i.toString() to action.label },
             checked = null,
@@ -2812,7 +2815,11 @@ internal fun OptionSearchMenu(
     /** A right-click menu: at the pointer ([AppDropdownMenu]'s own), or at [offset] from its anchor. */
     atPointer: Boolean = false,
     offset: androidx.compose.ui.unit.DpOffset = androidx.compose.ui.unit.DpOffset(0.dp, 0.dp),
+    /** A right-click menu ([ActionMenu]): its context is its own ([ContextDomain.menuContextId]), else a drop-down's. */
+    rightClick: Boolean = false,
 ) {
+    // User rule 2026-11-25: what it opens with is its context's default — the user's where changed ([ContextDomain]).
+    val contextDefaults = LocalContextDefaults.current
     // User rule 2026-11-15: *"Every menu stay open after you choose an entry"* — a pick acts and the menu stays, whatever
     // its caller does on the pick (most close their own menu in it): it is held open until a press outside it, Escape, or
     // its anchor leaving the screen. A menu the caller closes otherwise closes.
@@ -2856,7 +2863,10 @@ internal fun OptionSearchMenu(
         atPointer = atPointer,
     ) {
         androidx.compose.runtime.CompositionLocalProvider(LocalPopupChrome provides PopupChrome(), LocalEnclosingMenus provides enclosingMenus + menuKey) {
-        val opened = if (options.integers != null) SearchDomain.INTEGER_SEARCH else SearchDomain.OPTION_SEARCH
+        val opened = org.example.project.scheduler.domain.ContextDomain.configOf(
+            contextDefaults,
+            if (options.integers != null) "integers" else org.example.project.scheduler.domain.ContextDomain.menuContextId(name, rightClick),
+        )
         // User rule 2026-11-13: a drop-down's list has an id — the window's it opens over, and its [name], which says
         // what list it is (written where it is called: a place in the code would change from one build to the next).
         val listId = embeddedSearchId("list:$name")
@@ -3073,6 +3083,9 @@ internal class SectionBackground {
     fun leave(entries: List<MenuAction>) { pending = entries }
     fun take(): List<MenuAction>? = pending.also { pending = null }
 }
+
+/** User rule 2026-11-25: the contexts' defaults the user changed, which every menu and drop-down opens with; given by `App`. */
+val LocalContextDefaults = androidx.compose.runtime.compositionLocalOf<List<org.example.project.scheduler.domain.ContextDefault>> { emptyList() }
 
 /** The [SectionBackground] of the window the composition is a section of; null outside one. */
 internal val LocalSectionBackground = androidx.compose.runtime.compositionLocalOf<SectionBackground?> { null }

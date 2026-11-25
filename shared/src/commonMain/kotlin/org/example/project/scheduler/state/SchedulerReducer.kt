@@ -684,6 +684,9 @@ object SchedulerReducer {
             is SchedulerIntent.SetWorkplaceSetups ->
                 if (state.workplaceSetups == intent.entries) state
                 else commitDelta(state, WorkplaceSetupsDelta(state.workplaceSetups, intent.entries, intent.editKey))
+            is SchedulerIntent.SetContextDefaults ->
+                if (state.contextDefaults == intent.entries) state
+                else commitDelta(state, ContextDefaultsDelta(state.contextDefaults, intent.entries))
             is SchedulerIntent.SetQuotas -> {
                 val withIds =
                     org.example.project.scheduler.domain.QuotaDomain.assignQuotaIds(intent.entries)
@@ -7856,6 +7859,34 @@ internal data class PresenceEvolutionsDelta(
 
     override fun commit(state: SchedulerState): SchedulerState =
         state.copy(presenceEvolutions = changes.applyToList(state.presenceEvolutions, forward = true, exact = true) { it.id })
+}
+
+/** User rule 2026-11-25: a change to the contexts' defaults ([org.example.project.scheduler.domain.ContextDomain]): the rows whole. */
+internal data class ContextDefaultsDelta(
+    val changes: EntryChanges<String, org.example.project.scheduler.domain.ContextDefault>,
+    override val coalesceKey: String? = null,
+) : Delta {
+    constructor(
+        before: List<org.example.project.scheduler.domain.ContextDefault>,
+        after: List<org.example.project.scheduler.domain.ContextDefault>,
+    ) : this(EntryChanges.ofList(before, after) { it.id })
+
+    override val label: String
+        get() = "Context defaults"
+
+    override val details: List<String>
+        get() = changes.touched.map { id -> "context: " + (org.example.project.scheduler.domain.ContextDomain.context(id)?.title ?: id) }
+
+    override fun coalesceOnto(previous: Delta): Delta? = null
+
+    override fun undo(state: SchedulerState): SchedulerState =
+        state.copy(contextDefaults = changes.applyToList(state.contextDefaults, forward = false) { it.id })
+
+    override fun redo(state: SchedulerState): SchedulerState =
+        state.copy(contextDefaults = changes.applyToList(state.contextDefaults, forward = true) { it.id })
+
+    override fun commit(state: SchedulerState): SchedulerState =
+        state.copy(contextDefaults = changes.applyToList(state.contextDefaults, forward = true, exact = true) { it.id })
 }
 
 /** User rule 2026-11-01: a change to the account's **workplace setups**: [ChronosDelta]'s rule, the rows whole. */

@@ -1691,7 +1691,11 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         fun searchConfigOf(id: String): SearchDomain.Config =
             // A window opened takes its configuration's default sorting while it follows it (user rule 2026-10-30).
-            searchConfigs[id] ?: SearchDomain.withDefaultSort(SearchDomain.Config.decode(placements[id]?.config) ?: SearchDomain.Config())
+            // User rule 2026-11-25: a window opened on nothing takes its context's default ([ContextDomain.SEARCH_WINDOW]).
+            searchConfigs[id] ?: SearchDomain.withDefaultSort(
+                SearchDomain.Config.decode(placements[id]?.config)
+                    ?: org.example.project.scheduler.domain.ContextDomain.configOf(vm.state.value, org.example.project.scheduler.domain.ContextDomain.SEARCH_WINDOW),
+            )
                 .also {
                     searchConfigs[id] = it
                     searchOpenedConfigs[id] = it
@@ -4523,6 +4527,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             org.example.project.ui.LocalAppNowMillis provides appNowMillis,
             org.example.project.ui.LocalWorkplaceRuns provides workplaceRuns,
             LocalTaskIdentityRow provides taskIdentityRow,
+            // User rule 2026-11-25: what each menu and drop-down opens with ([org.example.project.scheduler.domain.ContextDomain]).
+            org.example.project.ui.LocalContextDefaults provides schedulerState.contextDefaults,
             LocalPeriodRefusal provides periodRefusal,
             org.example.project.ui.LocalPeriodAtLine provides periodAtLine,
             org.example.project.ui.LocalCalendarElementDrag provides calendarElementDrag,
@@ -5882,6 +5888,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onDragOnCalendar = { openNewWindow(FloatingWindow.Calendar) },
                             onSetNotificationsEnabled = { engine.setNotificationsEnabled(it) },
                             onOpenBlocksSearch = { owners -> openLinkedSearch(SearchDomain.blocksSearchConfig(owners)) },
+                            onOpenSearch = { config -> openLinkedSearch(config) },
                             timerRun = { subjects, compact ->
                                 AccountAlarmWindow(
                                     subject = null,

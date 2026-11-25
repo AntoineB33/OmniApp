@@ -953,6 +953,13 @@ data class SchedulerState(
     val workplaceSetups: List<org.example.project.scheduler.domain.WorkplaceSetup> = emptyList(),
 
     /**
+     * User rule 2026-11-25: **the contexts' defaults the user changed** ([org.example.project.scheduler.domain.ContextDefault],
+     * [org.example.project.scheduler.domain.ContextDomain]) — one per context changed, none where the code's default holds.
+     * Authoritative, persisted and synced like [workplaceSetups].
+     */
+    val contextDefaults: List<org.example.project.scheduler.domain.ContextDefault> = emptyList(),
+
+    /**
      * User rule 2026-11-19: the account's **md elements** — markdown texts, each associated with the elements it is about
      * ([org.example.project.scheduler.domain.MdElement]); persisted and synced like [workplaceSetups]. They hold what a task's
      * text held ([org.example.project.scheduler.domain.MdDomain.liftTaskTexts]).

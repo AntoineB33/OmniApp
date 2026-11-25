@@ -1146,6 +1146,17 @@ suggestions before it was ever entered.
   and added list, Search windows of their own, provide none). An Edit Mode's pop-up is a Search window like any.
 - **"add" adds to the window the row is in** — an Edit Mode's pop-up included (user rule 2026-11-25): into ITS added
   elements, hidden or not (the pop-up opens with them hidden; its background menu shows them).
+- **Contexts: what defines the rows a place shows** (user rule 2026-11-25, *"It is only search configuration elements that
+  define what row is shown in a window. What is built in code is the default values of context-values of search
+  configuration elements."*). `ContextDomain.CONTEXTS` is the one catalog of the places that show rows — a Search window
+  opened on nothing, each right-click menu by the name it is drawn under (`RIGHT_CLICK_MENUS`, `ContextCatalogTest`
+  finds every `ActionMenu` of the code there), a drop-down, a list of integers — each with the default configuration the
+  code gives it, the one place such defaults are built. A context is an element (`Kind.Context`). What the user changes
+  of a default is synced (`contextDefaults`, `persistence.md`); a place opens with `ContextDomain.configOf`. An added
+  search configuration's action **"State in each context"** groups the contexts by its state — on, then off; off
+  everywhere is one group — each group a **context row**, opening a Search window whose added elements are those
+  contexts (`contextsSearchConfig`), and a **state row**, "on"/"off" and the configuration's own control, a change made
+  in every context of the group (`ContextDomain.withChange`, field by field), one History Unit.
 - **The Edit Mode menus' rows have the one menu too** (`TaskIdentityRow` for a row naming a task, `EditMenuRow` for the
   others, all greyed). PRD §4's "go to task" left them with "go to task tree".
 - **The blank row ending an element's children is a row like its siblings** (user rule 2026-11-25): pressed, it is

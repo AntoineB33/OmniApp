@@ -193,6 +193,13 @@ object SearchDomain {
         SearchConfiguration("search configuration"),
 
         /**
+         * User rule 2026-11-25: **a context** — a place of the app that shows rows, with the default configuration it opens
+         * with ([ContextDomain]): the code's, or the user's ([ContextDefault]). What a search configuration's "State in each
+         * context" groups and opens a window of.
+         */
+        Context("context"),
+
+        /**
          * User rule 2026-11-12: *"All the drop-down menus of the app must be Search windows as well."* **An option of a
          * drop-down** — what the field it opens from lists ([optionResults]); no element of the account, so a search of
          * the kind elsewhere lists none. With check boxes, the list starts with "Select all" ([SELECT_ALL_OPTION]).
@@ -3890,6 +3897,10 @@ object SearchDomain {
                 // Every configuration of a Search window, named by its label, the type it is about beside it.
                 // Only what a drop-down gives: the account holds none ([optionResults]).
                 Kind.Option -> emptyList()
+                // User rule 2026-11-25: the contexts, in the catalog's order ([ContextDomain.CONTEXTS]).
+                Kind.Context -> ContextDomain.CONTEXTS.map { context ->
+                    ItemResult(kind, context.id, context.title, if (state.contextDefaults.any { it.id == context.id }) "changed" else "")
+                }
                 // Only what the field of a number gives ([integerResults]).
                 Kind.Integer -> emptyList()
                 // Only what the actions section gives its Search window ([actionListRows]).
@@ -4326,7 +4337,7 @@ object SearchDomain {
                         ))
             }
             is ItemResult -> when (result.kind) {
-                Kind.Task, Kind.WorkplaceSetup, Kind.Md, Kind.PresenceEvolution, Kind.MinimumEvolution, Kind.SearchConfiguration, Kind.Option, Kind.Integer, Kind.Action -> true
+                Kind.Task, Kind.WorkplaceSetup, Kind.Md, Kind.PresenceEvolution, Kind.MinimumEvolution, Kind.SearchConfiguration, Kind.Context, Kind.Option, Kind.Integer, Kind.Action -> true
                 Kind.Category ->
                     tri(filters.categoryHasRules, state.categoryById(CategoryId(result.id))?.rules?.isNotEmpty() == true)
                 Kind.RestrictivePeriod -> when (filters.periodOrigin) {
@@ -4975,6 +4986,10 @@ object SearchDomain {
             is ItemResult -> result.kind.name + "/" + result.id
         }
 
+    /** User rule 2026-11-25: the Search window of [contextIds], added — a "State in each context" context row's. */
+    fun contextsSearchConfig(contextIds: List<String>): Config =
+        Config(kinds = setOf(Kind.Context), added = contextIds.map(ContextDomain::keyOf))
+
     /** The calendar element's id ([Kind.Calendar]): there is one. */
     const val CALENDAR_ID: String = "calendar"
 
@@ -5400,6 +5415,12 @@ object SearchDomain {
          * "unfocused notif", a ▾ window that is open or holds a configuration of its own): [SearchWindowState].
          */
         ConfigurationStates(Kind.SearchConfiguration, "State in each window"),
+        /**
+         * User rule 2026-11-25: an added search configuration's **state in each context** ([ContextDomain.groups]): the
+         * contexts grouped by its state, each group a context row (opening a window of those contexts, added) and a state
+         * row, which changes it in every context of the group.
+         */
+        ConfigurationContextStates(Kind.SearchConfiguration, "State in each context"),
 
         /**
          * User rule 2026-11-13: an ACTION added to the actions section's own list ([Kind.Action]) shows **its contexts and
@@ -5627,6 +5648,7 @@ object SearchDomain {
                             (treeRootAdded || it != AddedAction.TaskTreeName) &&
                             // A node of the tree changes nothing itself: no state to show.
                             (it != AddedAction.ConfigurationStates || added.any { row -> settingOf(row) != null }) &&
+                            (it != AddedAction.ConfigurationContextStates || added.any { row -> settingOf(row) != null }) &&
                             // A menu control's action is its setting's alone: listed where that setting is added.
                             APP_SETTING_CONTROL_ACTIONS[it]?.let { setting -> appSettingAdded(added, setting) } != false
                     }
@@ -6001,6 +6023,7 @@ object SearchDomain {
                 "project session title id date file copy"
             AddedAction.ClaudeLogsDirectory -> "folder path read refresh load"
             AddedAction.ConfigurationStates -> "window id open saved value filter sort"
+            AddedAction.ConfigurationContextStates -> "context default menu drop-down on off state value"
             AddedAction.ActionContexts -> "context state elements same value group"
             AddedAction.MuteSwitch -> "silence quiet sound voice ring alarm notification off on"
             else -> ""
