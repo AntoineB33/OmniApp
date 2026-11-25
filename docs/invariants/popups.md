@@ -599,9 +599,15 @@ means.
     opens a window, where I select 'show the header', but the header is not the usual header"*; then *"not the same as
     the header of the default search window"*): **a pop-up's head IS a window's head** — `WindowHead`, the one drawing,
     its drag and buttons going through `HeadActions` (a frame's `frameHeadActions`, a pop-up's `PopupWindowHeadBar`:
-    each makes the pop-up its window first, its "Rename" naming that window, its ☆ adding that window's button). A
-    pop-up with no window form (a picker, a window's own sections) wears the same head, its title and ✕ alone. Never
-    draw a head of its own beside it. `SearchPopupHead` hands it its window part, given by whatever hosts the pop-up (`LocalSearchPopupWindow`; the
+    each makes the pop-up its window first, its "Rename" naming that window, its ☆ adding that window's button). Never
+    draw a head of its own beside it. **Every Search window drawn in no frame has a window form** (anomaly 2026-11-25,
+    *"the header doesn't have the buttons to maximize or save the window … when I drag it it disappear. This means that
+    the app is not unified enough"*, `EveryPopupHeadTest`): where its host gives no head, `SearchWindow` builds the one
+    head itself (`ownPopupHead`) — a menu's or drop-down's list, a cell's picker, a Search window inside another's
+    actions — becoming a Search window of the app on its configuration (`PopupDetacher.detachSearch`), a menu's carrying
+    the entries it was given (`detachGiven`: the window lists them while the app runs). Its own OS window
+    (`LocalPopupWindowControl`) is carried by the screen's pointer; one drawn in the app's window by the drag, hidden
+    meanwhile. A window's SECTIONS (its actions, its added elements) are that window and never become one. `SearchPopupHead` hands it its window part, given by whatever hosts the pop-up (`LocalSearchPopupWindow`; the
     Search window drawn in no frame reads it and gives its own sections null). `FieldSearchPopupLayer` gives it: the
     drag moves the pop-up in the layer, the pop-ups over it closing; let go, or asked by a window button, it is a
     Search window of the app (`PopupDetacher.detachSearch`, a copy beside the user's) with the pop-up's configuration.

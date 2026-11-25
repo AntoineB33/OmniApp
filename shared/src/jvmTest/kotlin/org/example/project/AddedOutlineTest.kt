@@ -72,4 +72,54 @@ class AddedOutlineTest {
             onEdt { scene.close() }
         }
     }
+
+    /**
+     * Anomaly 2026-11-25: *"The outline must not be around all its children. It must be around only the rows that appear
+     * there."* An added row opened on its sub-tree: the row alone is outlined, one row tall; its children are not.
+     */
+    @Test
+    fun an_added_rows_outline_is_its_own_not_around_what_it_opens() {
+        val account = QuotaScenario.account()
+        val area = account.tasks.values.first { it.title == "Area 0" }
+        val scene = onEdt {
+            ImageComposeScene(1200, 900, density = Density(1f)) {
+                var config by remember {
+                    mutableStateOf(SearchDomain.Config(kinds = setOf(Kind.Task), added = listOf(SearchDomain.taskKey(area.id)), query = "Area 0"))
+                }
+                SearchWindow(
+                    state = account,
+                    openers = SearchRowOpeners(
+                        onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {},
+                    ),
+                    onStartTaskNow = {},
+                    onGoToTaskTree = { _, _ -> },
+                    onDeepCopyCell = {},
+                    actionHandlers = AddedActionHandlers(
+                        onStartNow = {}, onEdit = {}, onGoToTaskTree = {}, onDeepCopyCell = {}, onOpenResilienceSearch = {},
+                        onOpenKindSearch = {}, timerRun = { _, _ -> }, reminderEditor = {}, onCreate = {},
+                        onDuplicate = { _, _ -> emptyList() }, onPlaceOnCalendar = {},
+                    ),
+                    onIntent = {},
+                    onDismiss = {},
+                    config = config,
+                    onConfigChange = { config = it },
+                    splits = org.example.project.ui.SearchSplits(expandedResults = setOf(area.id.value)),
+                    initialSize = Size(1200f, 900f),
+                )
+            }
+        }
+        try {
+            repeat(6) { onEdt { scene.render() } }
+            val nodes = onEdt { scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) } }
+            val texts = nodes.mapNotNull { n -> n.config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text } }
+            assertTrue(texts.any { it == "Area 0 task 0" }, "the row is open on its children: $texts")
+            val outlined = nodes.filter { it.config.getOrNull(AddedOutlined) == true }
+            assertTrue(outlined.isNotEmpty(), "the added row is outlined")
+            for (node in outlined) assertTrue(node.boundsInWindow.height < 80f, "one row tall, not its children: ${node.boundsInWindow}")
+            val child = nodes.last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == "Area 0 task 0" } == true }
+            assertTrue(outlined.none { it.boundsInWindow.contains(child.boundsInWindow.center) }, "no outline around a child")
+        } finally {
+            onEdt { scene.close() }
+        }
+    }
 }

@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every frameless Search window has a window's head; the outline is the row's — 2026-11-25
+
+- Anomaly: a row menu's "Show the header" gave a head with no window buttons, and dragging it made it vanish. Only a
+  field's pop-up and the ▾ tree gave their pop-up a window form. Now `SearchWindow` builds the one head itself wherever
+  it is drawn in no frame and its host gives none (menus, drop-downs, pickers, Search windows inside actions): dragged or
+  asked by a button, it becomes a Search window of the app; a menu's lists the entries it was given while the app runs
+  (`PopupDetacher.detachGiven`). `EveryPopupHeadTest`.
+- Anomaly: the added elements' outline went around an open row's children. It is on the row alone now.
+- Client rebuild only.
+
 ### Every right-click menu lists its "Entries, in order" — 2026-11-25
 
 - User: *"Make sure the logic is the same everywhere."* Every right-click menu's context now sets "Entries, in order"

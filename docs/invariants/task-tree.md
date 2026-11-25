@@ -1140,6 +1140,9 @@ suggestions before it was ever entered.
 - **A task row is a tree cell to the user.** Its menu is built for the path the right-click landed on (the row, its
   path box, or a line of its list of paths): deep copy acts on THAT occurrence (`SearchDomain.occurrenceAtPath`,
   walked on the right-click, never per keystroke), and "copy path" copies that path.
+- **The outline is the row's, never around what it opens** (anomaly 2026-11-25): the row itself wears it (`ItemResultRow`'s
+  and `SearchTaskRow`'s `outlined`, a tree cell's `addedOutlined`), not the box that also holds its children; a child is
+  outlined only if it is itself in the added elements — what an added row opens is not added.
 - **A row of the search section whose element is in the window's added elements is outlined** (user rule 2026-11-25,
   `addedOutline`, apart from the selection's look): a result row, a child row under an element's arrow, and a cell of
   a task row's sub-tree (`LocalAddedOutlined`, provided by each Search window to what it draws — its actions section

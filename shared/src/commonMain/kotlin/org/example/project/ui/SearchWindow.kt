@@ -653,8 +653,9 @@ fun SearchWindow(
     }
     // The elements the window this one is a section of shows as added only because they are selected ([LocalNotAdded]).
     val notAddedAbove = LocalNotAdded.current
-    // Drawn as a pop-up that can become a window: its head is a window's ([SearchPopupHead]).
-    val popupWindow = LocalSearchPopupWindow.current
+    // Drawn as a pop-up that can become a window: its head is a window's ([SearchPopupHead]) — the one its host gives
+    // (a field's pop-up, the ▾ tree's), else its own below ([ownPopupHead]).
+    val givenPopupWindow = LocalSearchPopupWindow.current
     // Drawn as a pop-up: it wears a window's surface itself ([WindowSurface]).
     val popupChrome = LocalPopupChrome.current
     val listState = rememberLazyListState(splits?.scrolls?.getOrNull(0) ?: 0, splits?.scrolls?.getOrNull(1) ?: 0)
@@ -1774,6 +1775,7 @@ fun SearchWindow(
                         SearchTaskRow(
                             state = state,
                             result = result,
+                            outlined = elementKeyOf(resultKey(result)) in addedOutlined,
                             picking = picker != null,
                             query = query,
                             selected = rowSelected(index),
@@ -2026,10 +2028,11 @@ fun SearchWindow(
                                     ?.let { members -> members.isNotEmpty() && members.all { SearchDomain.keyOf(it) in notAddedAbove } } == true
                                 else -> false
                             }
-                            Box(
-                                arranged.then(if (notAddedRow) Modifier.alpha(NOT_ADDED_ALPHA) else Modifier)
-                                    .then(if (elementKeyOf(rowKey) in addedOutlined) Modifier.addedOutline() else Modifier),
-                            ) {
+                            // Anomaly 2026-11-25 (*"The outline must not be around all its children. It must be around only
+                            // the rows that appear there"*): the row itself is outlined ([rowOutlined]), never the box that
+                            // also holds what it opens.
+                            val rowOutlined = elementKeyOf(rowKey) in addedOutlined
+                            Box(arranged.then(if (notAddedRow) Modifier.alpha(NOT_ADDED_ALPHA) else Modifier)) {
                             // The left-side menu's items: drawn by the menu, selected and arranged by the list.
                             val given = menuList?.byKey?.get((result as? SearchDomain.ItemResult)?.id)
                             if (menuList != null && given != null) {
@@ -2052,6 +2055,7 @@ fun SearchWindow(
                                 actionRows.wrap(actionRow) {
                                     Column(Modifier.fillMaxWidth().outsidePressPart(resultRows)) {
                                         ItemResultRow(
+                                            outlined = rowOutlined,
                                             kindWidth = resultKindWidth,
                                             item = result,
                                             categories = emptyList(),
@@ -2127,6 +2131,7 @@ fun SearchWindow(
                                     val option = options?.takeIf { SearchDomain.isPickedRow(result.kind) }
                                     val selectAll = result.id == SearchDomain.SELECT_ALL_OPTION
                                     ItemResultRow(
+                                        outlined = rowOutlined,
                                         kindWidth = resultKindWidth,
                                         item = result,
                                         categories = elementCategories[resultKey(result)].orEmpty(),
@@ -2553,11 +2558,58 @@ fun SearchWindow(
             LocalSectionBackground provides (ownSectionBackground ?: enclosingSectionBackground),
         ) { windowBody() }
     }
+    // Anomaly 2026-11-25 (*"the header doesn't have the buttons to maximize or save the window … and when I drag it it
+    // disappear. This means that the app is not unified enough"*): **every Search window drawn in no frame wears a window's
+    // head** — dragged, or asked by one of its buttons, it becomes a Search window of the app where it stood — whatever
+    // draws it: a field's pop-up and the ▾ tree give theirs; a menu, a drop-down, a cell's picker, a Search window inside
+    // another's actions get this one. A section of a window (its actions, its added elements) is that window, never one.
+    val detacher = LocalPopupDetacher.current
+    val popupControl = LocalPopupWindowControl.current
+    val shownBounds = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
+    var detachDrag by remember { mutableStateOf<DetachedDrag?>(null) }
+    val latestClose by rememberUpdatedState(picker?.onCancel ?: onDismiss)
+    val latestOptions by rememberUpdatedState(options)
+    val ownPopupHead: PopupWindowHead? =
+        if (frame != null || isSearchSection(actionRows, addedList) || detacher == null) null
+        else remember(detacher, popupControl) {
+            // What it becomes: a Search window of the app on this one's configuration, listing what it was given.
+            fun becomes(at: androidx.compose.ui.geometry.Rect, how: DetachedAs, name: String?): DetachedDrag {
+                val given = latestOptions
+                val kept = latestConfig
+                return if (given != null) detacher.detachGiven(kept, given, at, how, name) else detacher.detachSearch(kept, at, how, name)
+            }
+            PopupWindowHead(
+                windowId = "Search",
+                onDragStart = { name ->
+                    val at = popupControl?.boundsInApp() ?: shownBounds[0]
+                    popupControl?.startDrag()
+                    detachDrag = at?.let { becomes(it, DetachedAs.Moved, name) }
+                },
+                // Its own window is carried by the screen's pointer ([PopupWindowControl.pointerMoved]); one drawn in the
+                // app's window by the drag's own move.
+                onDrag = { delta -> detachDrag?.moveBy?.invoke(popupControl?.pointerMoved() ?: delta) },
+                onDragEnd = {
+                    detachDrag?.done?.invoke()
+                    detachDrag = null
+                    latestClose()
+                },
+                detach = { how, name ->
+                    val at = popupControl?.boundsInApp() ?: shownBounds[0]
+                    latestClose()
+                    if (at != null) becomes(at, how, name)
+                },
+            )
+        }
+    val popupWindow = givenPopupWindow ?: ownPopupHead
+    // Where it stands, for the window it becomes; hidden while its head's drag carries that window.
+    val placed = Modifier
+        .onGloballyPositioned { shownBounds[0] = it.boundsInWindow() }
+        .then(if (detachDrag != null && popupControl == null) Modifier.alpha(0f) else Modifier)
     if (frame == null && popupChrome != null) {
         // A pop-up: the window's surface, its head at the top edge (anomaly 2026-11-15, 5). What is inside is not it.
         androidx.compose.runtime.CompositionLocalProvider(LocalSearchPopupWindow provides null, LocalPopupChrome provides null) {
             WindowSurface(
-                modifier = modifier,
+                modifier = modifier.then(placed),
                 head = if (headerRemoved) null else { { SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss, window = popupWindow) } },
             ) {
                 Column(Modifier.fillMaxSize().padding(POPUP_CONTENT_PADDING), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -2567,7 +2619,7 @@ fun SearchWindow(
             }
         }
     } else if (frame == null) {
-        Column(modifier) {
+        Column(modifier.then(placed)) {
             // User rule 2026-11-11: shown by its background menu, the head of a Search window drawn in no frame.
             if (!headerRemoved) SearchPopupHead(SearchDomain.windowTitle(config), onClose = picker?.onCancel ?: onDismiss, window = popupWindow)
             // The Search windows inside it (its sections, a field's) are not this pop-up.
@@ -3807,6 +3859,8 @@ private fun SearchTaskRow(
     onSubtreeWalkOut: ((step: Int) -> Unit)? = null,
     /** The window's "Row layout" ([SearchDomain.Config.taskRowLayout]), null for the default row. */
     layout: TaskRowLayout? = null,
+    /** User rule 2026-11-25: its task is in the window's added elements — this row is outlined, not its sub-tree. */
+    outlined: Boolean = false,
 ) {
     val taskId = result.taskId
     val live = state.tasks[taskId]
@@ -3884,6 +3938,7 @@ private fun SearchTaskRow(
             minMinutes = live?.minimumMinutes ?: 0,
             minTimeEditing = minTimeEditing && live != null,
             cellMenu = menu,
+            addedOutlined = outlined,
             onTogglePriorityWeights = {
                 occurrence?.let { occ -> state.cells[occ.cellId]?.parentListId?.let(onSetWeightWindow) }
             },
@@ -4412,6 +4467,8 @@ private fun NotInTreeLogo() {
 private fun ItemResultRow(
     /** The list's kind section's width ([rememberKindSectionWidth]). */
     kindWidth: Dp,
+    /** User rule 2026-11-25: its element is in the window's added elements — this row outlined, never what it opens. */
+    outlined: Boolean = false,
     item: SearchDomain.ItemResult,
     /** The titles of the categories it carries (user rule 2026-11-02). */
     categories: List<String>,
@@ -4467,6 +4524,7 @@ private fun ItemResultRow(
         // Anomaly 2026-11-19: the guide-lines of the levels it hangs from, as a tree cell has ([nestingGuideLines]).
         modifier = Modifier.nestingGuideLines(depth, NESTING_STEP, itemArrowCenter(item.kind, kindWidth))
             .padding(start = NESTING_STEP * depth).then(resultRowModifier(selected, inSelection))
+            .then(if (outlined) Modifier.addedOutline() else Modifier)
             .then(if (enabled) Modifier else Modifier.alpha(0.38f))
             .then(
                 if (onPrimaryRelease == null && onSecondaryRelease == null) Modifier
