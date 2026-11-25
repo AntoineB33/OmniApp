@@ -32,8 +32,8 @@ import org.example.project.ui.SearchWindow
 /**
  * Anomaly 2026-11-19: *"I select the child of 'AI', then click the keyboard top arrow, but it doesn't select 'AI'.
  * However, it works from the grand-child to the child."* The expanded row's sub-tree is the tree's own drawing, and the
- * tree's walk goes on past its edges: ↓ on the row reaches its first child, ↑ on that child reaches the row again — and ←
- * / → walk as ↑ / ↓, as in the tree.
+ * tree's walk goes on past its edges: ↓ on the row reaches its first child, ↑ on that child reaches the row again — → walks
+ * as ↓, and ← goes to the direct parent (user rule 2026-11-24), as in the tree.
  */
 @OptIn(androidx.compose.ui.InternalComposeUiApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 class SearchSubtreeWalkTest {
@@ -123,11 +123,10 @@ class SearchSubtreeWalkTest {
             // In the sub-tree now: → again moves its own selection, off the first child, and ← brings it back.
             key(Key.DirectionRight)
             assertTrue(live.searchSelection.main != kidCell, "→ walked into the sub-tree and on along it")
-            key(Key.DirectionLeft)
-            assertEquals(kidCell, live.searchSelection.main, "← walks back up the sub-tree")
+            // User rule 2026-11-24: ← goes to the direct parent — for a first-level cell, the row the sub-tree hangs under.
             key(Key.DirectionLeft)
             key(Key.X, 'x'.code)
-            val request = assertNotNull(popups.request, "↑ on the first child selected 'AI', which a letter renames")
+            val request = assertNotNull(popups.request, "← on a child of 'AI' selected 'AI', which a letter renames")
             assertEquals("x", assertNotNull(request.rename).draft)
         } finally {
             onEdt { scene.close() }

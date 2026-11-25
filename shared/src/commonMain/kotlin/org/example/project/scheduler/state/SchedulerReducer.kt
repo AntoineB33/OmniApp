@@ -1537,11 +1537,24 @@ object SchedulerReducer {
             )
         }
         val delta = if (direction == SelectionNavigate.Next) 1 else -1
+        // User rule 2026-11-24: ← goes to the row whose expansion shows this one (the root row for a top-level task);
+        // a row no expansion shows walks up as ↑ does.
+        val parent =
+            if (direction == SelectionNavigate.Parent) SchedulerDomain.parentRowOccurrence(state, main, state.selection.renderVia) else null
         // Resolve the neighbor by the selected *occurrence* (main + renderVia), so a mirrored
         // cell moves relative to the row actually displayed beneath it, not its first copy.
         val neighborOccurrence =
-            SchedulerDomain.neighborSelectableOccurrence(state, main, state.selection.renderVia, delta)
+            parent
+                ?: SchedulerDomain.neighborSelectableOccurrence(state, main, state.selection.renderVia, delta)
                 ?: return state
+        if (neighborOccurrence.cellId == SchedulerDomain.rootCellId(state)) {
+            // The root row is selected alone, as a click selects it: no range reaches it (user rule 2026-10-19).
+            return commitDelta(
+                state,
+                SetSelectionDelta(before = state.selection, after = selectionFor(state, main = neighborOccurrence.cellId)),
+                HistoryCategory.Selection,
+            )
+        }
         val neighbor = neighborOccurrence.cellId
         if (!shift) {
             return commitDelta(

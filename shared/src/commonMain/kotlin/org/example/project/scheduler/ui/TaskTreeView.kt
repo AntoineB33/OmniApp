@@ -220,11 +220,16 @@ internal fun TaskTreeView(
      */
     baseDepth: Int = 0,
     /**
-     * ↑ (or ←) on this drawing's FIRST row, ↓ (or →) on its LAST, without Shift: the row the list holding it walks to next
+     * ↑ on this drawing's FIRST row, ↓ (or →) on its LAST, without Shift: the row the list holding it walks to next
      * (-1: up, +1: down), the tree's own walk carried past its edges (anomaly 2026-11-19: ↑ on the first child of a
      * Search row did not reach that row, while ↑ on a grandchild reached the child). Null: the walk stops there.
      */
     onWalkPastEdge: ((step: Int) -> Unit)? = null,
+    /**
+     * ← on a row of this drawing's first list (user rule 2026-11-24): the row the drawing hangs under, its direct parent.
+     * By default the row the walk reaches upwards past the first row; null where the drawing hangs under no row.
+     */
+    onWalkToHolder: (() -> Unit)? = onWalkPastEdge?.let { walk -> { walk(-1) } },
 ) {
     Perf.count("recompose.TaskTreeView")
     // The callbacks this tree hands its rows read the state through HERE, never by capturing it — see the
@@ -861,7 +866,7 @@ internal fun TaskTreeView(
                 if (onWalkPastEdge != null && !event.isShiftPressed && state.selection.selected.size <= 1) {
                     val step =
                         when (event.key) {
-                            Key.DirectionUp, Key.DirectionLeft -> -1
+                            Key.DirectionUp -> -1
                             Key.DirectionDown, Key.DirectionRight -> 1
                             else -> 0
                         }
@@ -871,6 +876,21 @@ internal fun TaskTreeView(
                         onWalkPastEdge(step)
                         return@onPreviewKeyEvent true
                     }
+                }
+                // User rule 2026-11-24: ← goes to the direct parent, the row whose expansion shows this one. A row of this
+                // drawing's first list hangs under the row holding the drawing where there is one ([onWalkToHolder]);
+                // in a tree of its own no expansion shows it, and ← walks up as ↑.
+                if (event.key == Key.DirectionLeft && !event.isShiftPressed) {
+                    val main = state.selection.main
+                    val holder = onWalkToHolder
+                    if (holder != null &&
+                        (main == null || SchedulerDomain.parentRowOccurrence(state, main, state.selection.renderVia) == null)
+                    ) {
+                        holder()
+                    } else {
+                        onIntent(SchedulerIntent.NavigateSelection(direction = SelectionNavigate.Parent))
+                    }
+                    return@onPreviewKeyEvent true
                 }
                 when (event.key) {
                     Key.DirectionUp, Key.DirectionLeft -> {

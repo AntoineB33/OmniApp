@@ -626,8 +626,13 @@ the child"*):
 - **The arrows walk across a row and its sub-tree** (`TaskTreeView.onWalkPastEdge`, `SubtreeEnter`;
   `SearchSubtreeWalkTest`): ↓ on an expanded row selects its first cell, ↑ on the row under one its last; ↑ on the
   sub-tree's first cell selects the row, ↓ on its last the row under it. The tree's own walk goes through the same
-  places; the window's ↑/↓ had skipped the sub-tree and the sub-tree's had stopped at its edges. **← and → walk as ↑
-  and ↓**, in a Search list as in the tree (anomaly 2026-11-19: the list ignored them while its sub-trees walked on them).
+  places; the window's ↑/↓ had skipped the sub-tree and the sub-tree's had stopped at its edges. **→ walks as ↓**, in a
+  Search list as in the tree (anomaly 2026-11-19: the list ignored it while its sub-trees walked on it). **← goes to the
+  direct parent** (user rule 2026-11-24): the row whose expansion shows the selected one — the parent cell
+  (`SchedulerDomain.parentRowOccurrence`, `SelectionNavigate.Parent`), the root row for a top-level task, the Search row a
+  sub-tree's first level hangs under (`TaskTreeView.onWalkToHolder`), the action row for an open action's "Children", the
+  element (or result row) an element child hangs under (`ShownRow.parentChild`). A row no expansion shows (a Search
+  result row, the root row, a tree of its own without one) walks up as ↑. Shift+← still extends the range as Shift+↑.
 - **The same walk through the trees an open row's CONTENT draws** (the actions section's "Children", one tree per task;
   `RowContentWalk`, `LocalRowContentWalk`; `ChildrenActionWalkTest`; user, 2026-11-19: *"↑ on its first child must go
   to the row above, which is the parent"*): ↓ on the open action row enters its first tree, ↑ on a tree's first cell

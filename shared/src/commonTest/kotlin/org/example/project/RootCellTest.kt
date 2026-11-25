@@ -119,6 +119,25 @@ class RootCellTest {
         )
     }
 
+    /**
+     * User rule 2026-11-24: ← goes to the direct parent, not the row above — the root row for a top-level task; the root
+     * row, which no expansion shows, walks up as ↑ (it stays).
+     */
+    @Test
+    fun left_goes_to_the_direct_parent() {
+        val (s0, book) = tree()
+        val bookCell = s0.lists[s0.rootListId]!!.cellIds[0]
+        val s = if (bookCell in s0.expanded) s0 else SchedulerReducer.reduce(s0, SchedulerIntent.ToggleExpand(bookCell))
+        val chapter = s.lists[s.tasks[book]!!.childListId!!]!!.cellIds[0]
+        val second = s.lists[s.tasks[book]!!.childListId!!]!!.cellIds[1]
+        assertEquals(listOf(bookCell, chapter, second), SchedulerDomain.selectableVisibleOrder(s).take(3))
+        val left = SchedulerIntent.NavigateSelection(org.example.project.scheduler.state.SelectionNavigate.Parent)
+        // From the second child: its parent "Book", not "Chapter", the row above.
+        assertEquals(bookCell, SchedulerReducer.reduce(click(s, second), left).selection.main)
+        assertEquals(WellKnownIds.ROOT_CELL, SchedulerReducer.reduce(click(s, bookCell), left).selection.main)
+        assertEquals(WellKnownIds.ROOT_CELL, SchedulerReducer.reduce(click(s, WellKnownIds.ROOT_CELL), left).selection.main)
+    }
+
     /** Collapsing it collapses the tree — the row stays, everything under it goes. */
     @Test
     fun collapsing_the_root_row_hides_the_whole_tree() {

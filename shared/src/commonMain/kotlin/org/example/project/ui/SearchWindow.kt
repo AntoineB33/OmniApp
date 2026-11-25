@@ -1786,6 +1786,14 @@ fun SearchWindow(
                                         val order = shownRowOrder(state, results, expandedElements, windows, schedulerRuns, claudeLogs)
                                         val at = childSelection.main?.let { main -> order.indexOfFirst { it.child?.rowKey == main } }?.takeIf { it >= 0 }
                                             ?: order.indexOfFirst { it.child == null && it.index == selected }
+                                        // User rule 2026-11-24: ← on a row an expansion shows goes to its direct parent — the
+                                        // child row it hangs under, or the result row; a result row walks up as ↑.
+                                        val shownFrom = order.getOrNull(at)?.takeIf { event.key == Key.DirectionLeft && it.child != null }
+                                        if (shownFrom != null && !unselectedUntilChosen) {
+                                            val parent = shownFrom.parentChild
+                                            if (parent != null) childSelection.selectOnly(parent.rowKey, parent.key) else select(shownFrom.index)
+                                            return@onPreviewKeyEvent true
+                                        }
                                         // Nothing shown selected yet ([unselectedUntilChosen]): the first ↓ is the first row.
                                         val next = if (unselectedUntilChosen && down) 0 else at + if (down) 1 else -1
                                         val target = order.getOrNull(next)
@@ -2167,6 +2175,8 @@ fun SearchWindow(
                 }
                 SearchSubtree(
                     onWalkPastEdge = walk?.let { w -> { step -> w.outOf(taskId, step) } },
+                    // ← on a first-level child: the action row every tree of its content hangs under (user rule 2026-11-24).
+                    onWalkToHolder = walk?.let { w -> { w.out(-1) } },
                     enter = walk?.enter?.takeIf { it.first == taskId }?.second,
                     state = state,
                     listId = listId,
@@ -3708,6 +3718,8 @@ private fun SearchSubtree(
     underRow: Boolean = false,
     /** ↑ on its first row, ↓ on its last: the list's walk goes on from the row it hangs under ([TaskTreeView]). */
     onWalkPastEdge: ((step: Int) -> Unit)? = null,
+    /** ← on a first-level row: the row it hangs under ([TaskTreeView]); by default where ↑ goes past the first row. */
+    onWalkToHolder: (() -> Unit)? = onWalkPastEdge?.let { walk -> { walk(-1) } },
     /** The list's walk coming in: its first cell selected (from above) or its last (from below), and the keyboard. */
     enter: SubtreeEnter? = null,
 ) {
@@ -3782,6 +3794,7 @@ private fun SearchSubtree(
         namingSource = state,
         baseDepth = if (underRow) 1 else 0,
         onWalkPastEdge = onWalkPastEdge,
+        onWalkToHolder = onWalkToHolder,
     )
 }
 
@@ -4374,7 +4387,12 @@ internal fun elementChildRows(
 }
 
 /** A row of the result list as drawn: a result ([index]), or a child under an open element ([child]). */
-internal data class ShownRow(val index: Int, val child: ElementChildRow? = null)
+internal data class ShownRow(
+    val index: Int,
+    val child: ElementChildRow? = null,
+    /** The child row whose expansion shows this one; null for a result's own children (their parent is result [index]) and for a result. */
+    val parentChild: ElementChildRow? = null,
+)
 
 /**
  * Anomaly 2026-11-05 (*"the up and down arrow don't work"* on the children): **the result list's rows as drawn, top to
@@ -4388,15 +4406,15 @@ internal fun shownRowOrder(
     schedulerRuns: List<org.example.project.scheduler.state.SchedulerRunEntry> = emptyList(),
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
 ): List<ShownRow> {
-    fun under(parent: String, surface: String, path: Set<String>, index: Int): List<ShownRow> =
+    fun under(parent: String, surface: String, path: Set<String>, index: Int, parentChild: ElementChildRow?): List<ShownRow> =
         elementChildRows(state, parent, surface, path, windows, schedulerRuns, claudeLogs).flatMap { child ->
-            listOf(ShownRow(index, child)) +
-                if (child.rowKey in expanded) under(child.key, childSurface(child.rowKey), path + child.key, index) else emptyList()
+            listOf(ShownRow(index, child, parentChild)) +
+                if (child.rowKey in expanded) under(child.key, childSurface(child.rowKey), path + child.key, index, child) else emptyList()
         }
     return results.flatMapIndexed { index, result ->
         val key = resultKey(result)
         val open = result is SearchDomain.ItemResult && RESULT_SURFACE + key in expanded
-        listOf(ShownRow(index)) + if (open) under(key, RESULT_SURFACE, setOf(key), index) else emptyList()
+        listOf(ShownRow(index)) + if (open) under(key, RESULT_SURFACE, setOf(key), index, null) else emptyList()
     }
 }
 

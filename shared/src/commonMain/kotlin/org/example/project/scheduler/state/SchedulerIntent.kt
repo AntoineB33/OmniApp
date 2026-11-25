@@ -15,6 +15,11 @@ enum class SelectionNavigate {
     Previous,
     /** Down / Right — next visible selectable cell. */
     Next,
+    /**
+     * Left (user rule 2026-11-24) — the row whose expansion shows this one, its direct parent
+     * ([org.example.project.scheduler.domain.SchedulerDomain.parentRowOccurrence]); [Previous] for a row no expansion shows.
+     */
+    Parent,
 }
 
 enum class EditExitNavigation {

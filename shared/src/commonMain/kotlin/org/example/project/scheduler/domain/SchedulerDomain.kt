@@ -318,6 +318,18 @@ object SchedulerDomain {
     }
 
     /**
+     * User rule 2026-11-24, ←: **the row whose expansion shows the row of [cellId] drawn under [renderVia]** — its direct
+     * parent ([VisibleRow.parent]; the root row for a top-level task), or `null` for a row of the drawing's first list,
+     * which no expansion shows. Read off [visibleRows], the one walk of what is drawn, once per keystroke.
+     */
+    fun parentRowOccurrence(state: SchedulerState, cellId: CellId, renderVia: CellId?): VisibleOccurrence? {
+        val rows = visibleRows(state)
+        val row = rows.firstOrNull { it.occurrence.cellId == cellId && it.occurrence.renderVia == renderVia }
+            ?: rows.firstOrNull { it.occurrence.cellId == cellId }
+        return row?.parent
+    }
+
+    /**
      * Depth-first visible cell order starting at [listId].
      * Collapsed cells (not in [SchedulerState.expanded]) omit their subtree.
      */
