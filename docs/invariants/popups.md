@@ -1115,6 +1115,12 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   its registration key to what it draws (`LocalEnclosingMenus`), and `TransientMenuHost.open` closes every other menu but
   those (`keep`). An entry of a menu is a row like any: its right-click opens the one row menu, never runs the entry
   (`MenuEntryRowMenuTest`); a check-box option's former right-click, "check only this", is an entry of that menu.
+- **A right-click reopens an open menu only if the click left it open** (anomaly 2026-11-25, *"right-click on A which
+  opens B > right-click on B > show header > right-click on a row in B, no pop-up opens"*, checked on the desktop): the
+  rule of 2026-11-15 (a right-click reopens a right-click's menu afresh at the new pointer) is read two frames after the
+  press (`HangingMenu`), once it has been answered. A right-click on another row with a menu of its own closes this one
+  as that one opens; reopened at once, as before, the two closed each other and neither stayed. The same row
+  right-clicked again still moves its menu to the new pointer.
 - **A section's background options join its window's** (user rule 2026-11-25): the actions section and the added
   elements list have no background menu of their own; a secondary press on their background leaves their own options
   (`SectionBackground`, `recordsSectionPress`, read before the window's handler as an inner node's), which the window's

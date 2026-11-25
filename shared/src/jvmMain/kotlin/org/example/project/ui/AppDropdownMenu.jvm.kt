@@ -186,11 +186,22 @@ private fun HangingMenu(
     // menu, and is stuck to its row like any other pop-up.
     val openedOnRight = remember(owner) { RightPresses.justPressed() && RightPresses.window === owner }
     val current = remember(owner) { arrayOfNulls<MenuSession>(1) }
+    // Anomaly 2026-11-25 (*"right-click on A which opens B > right-click on B > show header > right-click on a row in B, no
+    // pop-up opens"*): the right press is looked at once it has been answered — two frames on — and the menu opens afresh
+    // only if it is still open then. A right-click on ANOTHER row with a menu of its own (a row of the pop-up this menu
+    // hangs from) closes this one as that one opens ([TransientMenuHost.open]): reopened at once here, as it was, the two
+    // fought and neither stayed.
+    var generation by remember(owner) { androidx.compose.runtime.mutableIntStateOf(0) }
     if (openedOnRight && rightPress != opening[0]) {
-        opening[0] = rightPress
-        if (current[0]?.contains(RightPresses.window) != true) opening[1]++
+        androidx.compose.runtime.LaunchedEffect(rightPress) {
+            androidx.compose.runtime.withFrameNanos { }
+            androidx.compose.runtime.withFrameNanos { }
+            if (rightPress == RightPresses.count && rightPress != opening[0]) {
+                opening[0] = rightPress
+                if (current[0]?.contains(RightPresses.window) != true) generation++
+            }
+        }
     }
-    val generation = opening[1]
     val session = remember(owner, generation) {
         MenuSession(owner, focusable, site, dismiss, shownModifier, shownContent, locals, sides, openedOnRight, callerList, opener).also { current[0] = it }
     }

@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A right-click on a menu's row opens its menu while another menu is open — 2026-11-25
+
+- Anomaly: *"right-click on A which opens B > right-click on B > show header > right-click on a row in B, no pop-up
+  opens"*. Not the header: B's background menu, still open (every menu stays open after its entry), reopened itself at
+  the right-click (the 2026-11-15 rule) as the row's menu opened, and each closed the other. A menu now reopens two
+  frames after the right press, only if it is still open. Checked on the desktop (throwaway account): the row's menu
+  opens; the same row right-clicked again still moves its menu to the new pointer.
+- Client rebuild only.
+
 ### A pop-up dragged into a window follows the hand exactly — 2026-11-25
 
 - User: *"is there a reason for the movement of the window to be very glitchy when dragged?"* Reproduced on the desktop
