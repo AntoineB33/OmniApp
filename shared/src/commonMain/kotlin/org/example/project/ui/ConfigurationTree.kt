@@ -224,11 +224,11 @@ internal fun ConfigurationTreeArrow(
             windowId = "ConfigSearch",
             // The drag makes it its window at once, where it stands; the pop-up's own window steps out of sight and
             // only finishes the drag (anomaly 2026-11-15).
-            onDragStart = { name ->
+            onDragStart = { name, travelled ->
                 val at = bounds()
                 onDragStart()
                 control.startDrag()
-                dragging[0] = at?.let { detach.detach(owner, it, DetachedAs.Moved, name) }
+                dragging[0] = at?.let { detach.detach(owner, it, DetachedAs.Moved, name) }?.also { it.moveBy(travelled) }
             },
             // Read off the screen: the pop-up's own window stepped off it ([PopupWindowControl.pointerMoved]).
             onDrag = { _ -> dragging[0]?.moveBy?.invoke(control.pointerMoved()) },

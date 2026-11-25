@@ -593,9 +593,10 @@ private fun FieldSearchPopup(
         if (detacher == null || picks) null
         else PopupWindowHead(
             windowId = "Search",
-            onDragStart = { name ->
+            onDragStart = { name, travelled ->
                 latestCloseAbove()
                 drag = shownAt?.let { at -> detacher.detachSearch(latestRequest.embedded.config, at, DetachedAs.Moved, name) }
+                    ?.also { it.moveBy(travelled) }
             },
             onDrag = { delta -> drag?.moveBy?.invoke(delta) },
             onDragEnd = {

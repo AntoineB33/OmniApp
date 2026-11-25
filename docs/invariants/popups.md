@@ -614,6 +614,13 @@ means.
     Not a picker's ("Add a parent"): its rows pick for its field. The window it becomes opens whole, **its search bar
     shown** even where the pop-up's bar was its field (user rule 2026-11-15). **Where the search bar is what opened the pop-up** (a
     field's pop-up, a cell's picker), its background menu has no "Hide the search bar" (user rule 2026-11-15).
+  - **The window a pop-up's head drag makes starts under the hand** (anomaly 2026-11-25, *"the movement of the window
+    [is] very glitchy when dragged"*, measured on the desktop): the moves before the drag is known (the slop) and the
+    move it is known on are given to `PopupWindowHead.onDragStart` (`travelled`) — they were dropped, and the window
+    stayed ~20 px behind the pointer for the whole drag. **The pop-up's own OS window, dragged, turns invisible over every
+    screen** (opacity 0.01, never 0: a wholly transparent window is one the pointer goes through) — sent off the screen,
+    it let the window under the pointer take the drag's moves (a row there was selected); moved along with the pointer,
+    it saw the pointer never move and the drag stopped. Off the screen only where the platform cannot make it so.
   - **A pop-up's head dragged makes it its window AT ONCE, and the drag carries that window** (anomaly 2026-11-15:
     *"when I dragged a window that previously had no tab in the [window bar], it should immediately get a tab. Right
     now, it waits that I release the click, and it jumps away from where I placed it"*; `PopupWindowHead.onDragStart`,

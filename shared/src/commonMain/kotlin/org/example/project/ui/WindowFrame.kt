@@ -2011,14 +2011,38 @@ internal fun PopupWindowHeadBar(title: String, window: PopupWindowHead?, onClose
     val actions = remember(window) {
         if (window == null) NO_HEAD_ACTIONS
         else object : HeadActions {
+            // The pointer's move from the press until the drag starts ([windowHeadGestures] reports it before): the window
+            // the pop-up becomes is moved by it, as a frame follows the pointer from its first move.
+            private var beforeStart = Offset.Zero
+            private var started = false
+            // The drag is known on a move ([windowHeadGestures] then reports that move): the window opens with it counted.
+            private var opening = false
             override val fillsWidth get() = false
             override val fillsHeight get() = false
             override val maximized get() = false
             // The drag makes it its window at once (anomaly 2026-11-15: *"it should immediately get a tab"*), which the
             // rest of the drag carries; let go, the pop-up is gone.
-            override fun dragStart(pointer: Offset, headWidth: Float) = window.onDragStart(named)
-            override fun drag(delta: Offset) = window.onDrag(delta)
-            override fun dragEnd() = window.onDragEnd()
+            override fun dragStart(pointer: Offset, headWidth: Float) {
+                opening = true
+            }
+            override fun drag(delta: Offset) {
+                when {
+                    opening -> {
+                        opening = false
+                        started = true
+                        window.onDragStart(named, beforeStart + delta)
+                        beforeStart = Offset.Zero
+                    }
+                    started -> window.onDrag(delta)
+                    else -> beforeStart += delta
+                }
+            }
+            override fun dragEnd() {
+                started = false
+                opening = false
+                beforeStart = Offset.Zero
+                window.onDragEnd()
+            }
             override fun toggleFillWidth() = window.detach(DetachedAs.FillWidth, named)
             override fun toggleFillHeight() = window.detach(DetachedAs.FillHeight, named)
             override fun minimize() = window.detach(DetachedAs.Reduced, named)

@@ -2580,10 +2580,10 @@ fun SearchWindow(
             }
             PopupWindowHead(
                 windowId = "Search",
-                onDragStart = { name ->
+                onDragStart = { name, travelled ->
                     val at = popupControl?.boundsInApp() ?: shownBounds[0]
                     popupControl?.startDrag()
-                    detachDrag = at?.let { becomes(it, DetachedAs.Moved, name) }
+                    detachDrag = at?.let { becomes(it, DetachedAs.Moved, name) }?.also { it.moveBy(travelled) }
                 },
                 // Its own window is carried by the screen's pointer ([PopupWindowControl.pointerMoved]); one drawn in the
                 // app's window by the drag's own move.
@@ -3206,8 +3206,12 @@ internal fun SearchPopupHead(title: String, onClose: () -> Unit, window: PopupWi
 class PopupWindowHead(
     /** The frame id of the window it becomes, or of its kind ("Search", "ConfigSearch"): the head's colour is that one's. */
     val windowId: String,
-    /** The head's drag starts: the pop-up hides, its children close, and it is its window at once (named as said). */
-    val onDragStart: (String?) -> Unit,
+    /**
+     * The head's drag starts: the pop-up hides, its children close, and it is its window at once (named as said), moved
+     * by [travelled] — how far the pointer went before the press became a drag (anomaly 2026-11-25: the window opened
+     * where the pop-up stood and stayed that far behind the hand for the whole drag).
+     */
+    val onDragStart: (name: String?, travelled: androidx.compose.ui.geometry.Offset) -> Unit,
     /** The pointer's move: the window follows it. */
     val onDrag: (androidx.compose.ui.geometry.Offset) -> Unit,
     /** Let go: the window kept where it is, the pop-up gone. */

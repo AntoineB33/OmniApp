@@ -291,6 +291,8 @@ private class MenuSession(
     private var dragFrom: Point? = null
     private var dragPointerFrom: Point? = null
     private var lastPointer: Point? = null
+    /** Dragged, it was made invisible where it stood (not sent off the screen): it follows the pointer, unseen. */
+    private var hiddenInPlace = false
 
     val control = object : PopupWindowControl {
         override fun startDrag() {
@@ -300,7 +302,20 @@ private class MenuSession(
             dragPointerFrom = java.awt.MouseInfo.getPointerInfo()?.location
             lastPointer = dragPointerFrom
             // It is its window now: out of sight, it keeps the pointer (the button is held in it) to finish the drag.
-            window.location = Point(-32000, -32000)
+            // Anomaly 2026-11-25: sent off the screen, it let the window under the pointer take the moves — a row there
+            // was selected by the drag — so it turns invisible where it stands, the pointer still over it; off the screen
+            // only where the platform cannot make it so.
+            // Not 0: a window wholly transparent is one the pointer goes through (Windows' layered windows), and the drag's
+            // moves went to the window under it. Over every screen: the pointer stays in it, moving in it, wherever the
+            // hand goes (a window moved along with the pointer saw it never move, and the drag stopped).
+            hiddenInPlace = runCatching {
+                window.opacity = 0.01f
+                val screens = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices
+                    .map { it.defaultConfiguration.bounds }
+                    .reduce { all, one -> all.union(one) }
+                window.bounds = screens
+            }.isSuccess
+            if (!hiddenInPlace) window.location = Point(-32000, -32000)
         }
 
         override fun drag() {

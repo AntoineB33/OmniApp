@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A pop-up dragged into a window follows the hand exactly — 2026-11-25
+
+- User: *"is there a reason for the movement of the window to be very glitchy when dragged?"* Reproduced on the desktop
+  (throwaway account): the window a pop-up's head drag makes stayed ~20–30 px behind the pointer (the moves before the
+  drag is known were dropped), and rows under the path were selected (the pop-up's own window, sent off the screen,
+  let the window under the pointer take the moves). Now those moves are counted (`PopupWindowHead.onDragStart`'s
+  `travelled`) and the pop-up's window turns invisible over every screen while dragged. Verified: the window ends where
+  the pointer put it, to 2 px; nothing under the path is selected.
+- Pop-up positions: no change found — the placement code is unchanged, and the ▾ pop-up and a drop-down opening at the
+  left of their caller is the 2026-11-15 rule (a field's or button's pop-up tries its caller's left first).
+- Client rebuild only.
+
 ### Every frameless Search window has a window's head; the outline is the row's — 2026-11-25
 
 - Anomaly: a row menu's "Show the header" gave a head with no window buttons, and dragging it made it vanish. Only a
