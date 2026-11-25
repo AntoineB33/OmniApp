@@ -94,20 +94,40 @@ class ElementChildSelectionTest {
         val state = SchedulerState.empty()
         val results = SearchDomain.claudeResults(Kind.ClaudePrompt, "", logs).sortedBy { it.id }
         val (first, second) = results.map(SearchDomain::keyOf)
-        fun name(row: ShownRow) = row.child?.row?.name ?: results[row.index].name
+        // User rule 2026-11-25: the blank row ending each open list of children is walked too.
+        fun name(row: ShownRow) = row.child?.let { it.row?.name ?: "(blank)" } ?: results[row.index].name
 
         assertEquals(listOf("first", "second"), shownRowOrder(state, results, emptySet(), claudeLogs = logs).map(::name))
         val open = setOf("result/" + first)
-        assertEquals(listOf("first", "thinking", "the answer", "second"), shownRowOrder(state, results, open, claudeLogs = logs).map(::name))
+        assertEquals(listOf("first", "thinking", "the answer", "(blank)", "second"), shownRowOrder(state, results, open, claudeLogs = logs).map(::name))
         // A child opened in turn: its own child follows it, then its siblings.
         val chainRow = shownRowOrder(state, results, open, claudeLogs = logs)[1].child!!
         val deeper = open + chainRow.rowKey
         assertEquals(
-            listOf("first", "thinking", "the answer", "the answer", "second"),
+            listOf("first", "thinking", "the answer", "(blank)", "the answer", "(blank)", "second"),
             shownRowOrder(state, results, deeper, claudeLogs = logs).map(::name),
         )
         // Every child keeps the index of the result it stands under.
-        assertEquals(listOf(0, 0, 0, 0, 1), shownRowOrder(state, results, deeper, claudeLogs = logs).map { it.index })
+        assertEquals(listOf(0, 0, 0, 0, 0, 0, 1), shownRowOrder(state, results, deeper, claudeLogs = logs).map { it.index })
         assertEquals(listOf("reply"), shownRowOrder(state, results, setOf("result/" + second), claudeLogs = logs).mapNotNull { it.child?.row?.name })
+        // The blank row stands for no element: it ends the children of the element it is drawn under, its parent the row above.
+        val blank = shownRowOrder(state, results, open, claudeLogs = logs)[3]
+        assertEquals(null, blank.child!!.row)
+        assertEquals(first, blank.child!!.key)
+        assertEquals(null, blank.parentChild)
+    }
+
+    /** User rule 2026-11-25: a blank row selected is selected as its siblings are, and adds no element. */
+    @Test
+    fun theBlankRowIsSelectedLikeItsSiblingsAndAddsNothing() {
+        val selection = org.example.project.ui.ElementChildSelection()
+        var added: List<String>? = null
+        selection.onAdd = { keys, _ -> added = keys }
+        val blank = org.example.project.ui.ElementChildRow("result/Task/a/blank", "Task/a", null)
+        selection.selectRow(blank)
+        assertEquals(setOf("result/Task/a/blank"), selection.selected)
+        assertEquals("result/Task/a/blank", selection.main)
+        selection.add(replacing = false)
+        assertEquals(emptyList(), added)
     }
 }

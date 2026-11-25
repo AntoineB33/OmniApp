@@ -674,14 +674,33 @@ internal fun CellListSection(
         // [currentState], so a held one is never stale.
         val menuTaskId = cellTaskId?.takeIf { selectable || isRootRow }
         val menuStartable = menuTaskId != null && SchedulerDomain.isLeafTask(state, menuTaskId)
-        val menuHasTemplate = !state.defaultSubtreeIsEmpty
+        // The ancestors as drawn: this drawing's rows above, and above its first list (a Search sub-tree's) the live
+        // tree's. Read on the click, off the live state.
+        val copyPath: () -> Unit = remember(path) {
+            {
+                // A first row of a Search sub-tree is drawn under none of its own: its ancestors are the live tree's.
+                val drawn = path.dropLast(1)
+                val ancestors = drawn.ifEmpty { SchedulerDomain.ancestorsOfCell(currentState, cellId).orEmpty() }
+                org.example.project.scheduler.platform.writeSystemClipboardText(
+                    org.example.project.scheduler.domain.SearchDomain.cellPathLabel(currentState, ancestors),
+                )
+            }
+        }
         val cellMenu: TaskCellMenuActions? =
-            if (menuTaskId == null || pinned) {
+            if (pinned) {
                 null
+            } else if (menuTaskId == null) {
+                // User rule 2026-11-25: an empty row's menu is every row's, what it cannot do greyed.
+                remember(copyPath) {
+                    TaskCellMenuActions(
+                        onStartNow = null, onEdit = null, onCopyId = null, onCopyPath = copyPath, onDeepCopy = null,
+                        onCollapseSubtrees = null, onRetractAll = null,
+                    )
+                }
             } else {
                 remember(
-                    menuTaskId, cellId, isRootRow, hasChildren, menuStartable, menuHasTemplate,
-                    onGoToTaskTree, onCopyTaskIdCell, onDeepCopyCell, onOpenTaskEdit, onIntent, onAddTasks,
+                    menuTaskId, cellId, path, isRootRow, hasChildren, menuStartable,
+                    onCopyTaskIdCell, onDeepCopyCell, onOpenTaskEdit, onIntent, onAddTasks,
                 ) {
                     val taskId = menuTaskId
                     val addTargets = {
@@ -692,7 +711,7 @@ internal fun CellListSection(
                         onAdd = onAddTasks?.takeUnless { isRootRow }?.let { add -> { add(addTargets(), false) } },
                         onAddReplacing = onAddTasks?.takeUnless { isRootRow }?.let { add -> { add(addTargets(), true) } },
                         // PRD §13 "start this task now": the plan puts this task at the now-line. It names
-                        // ONE task however many cells are selected — unlike "copy task id", "start *this*
+                        // ONE task however many cells are selected — unlike "copy id", "start *this*
                         // task" has no meaning for a block — and only a schedulable leaf can be asked for.
                         onStartNow =
                             if (menuStartable) {
@@ -701,12 +720,10 @@ internal fun CellListSection(
                                 null
                             },
                         onEdit = if (isRootRow) null else ({ onOpenTaskEdit(taskId) }),
-                        calendarTaskId = taskId.takeUnless { isRootRow },
-                        // PRD §7/§8: offered only where the surface is NOT the tree — the Search
-                        // window's sub-trees today. Same entry, same name and the same RevealCell primitive the
-                        // calendar panel's menu uses.
-                        onGoToTaskTree = onGoToTaskTree?.let { go -> { go(taskId) } },
-                        onCopyTaskId = { onCopyTaskIdCell(cellId) },
+                        onCopyId = { onCopyTaskIdCell(cellId) },
+                        // The ancestors as drawn: this drawing's rows above, and above its first list (a Search
+                        // sub-tree's) the live tree's.
+                        onCopyPath = if (isRootRow) null else ({ copyPath() }),
                         onDeepCopy = { onDeepCopyCell(cellId) },
                         onCollapseSubtrees =
                             if (hasChildren) {
@@ -714,26 +731,11 @@ internal fun CellListSection(
                             } else {
                                 null
                             },
-                        // PRD §7/§13: the template on demand. Like "copy task id", it acts on the whole
-                        // block when the right-click lands inside a multi-selection. It is offered in the
-                        // PRD-4 template's own window too, and unlike the automatic graft it does not wait
-                        // to be opened ([graftDefaultSubtree] only records what a new task id is owed):
-                        // this entry is the asking, so it writes its round there and then.
-                        onAddDefaultSubtree =
-                            if (!menuHasTemplate) {
-                                null
+                        onRetractAll =
+                            if (hasChildren) {
+                                { onIntent(SchedulerIntent.CollapseSubtrees(cellId, includingSelf = true)) }
                             } else {
-                                {
-                                    onIntent(
-                                        SchedulerIntent.AddDefaultSubtree(
-                                            SchedulerDomain.contextMenuCopyTargets(
-                                                currentState,
-                                                currentState.selection,
-                                                cellId,
-                                            ),
-                                        ),
-                                    )
-                                }
+                                null
                             },
                     )
                 }
@@ -3396,22 +3398,18 @@ private fun RowScope.TitleThenSection(
 }
 
 /**
- * PRD §13: the entries of a task cell's right-click menu, in their order — the ONE list of them, used by the tree's cells
- * and by the Search window's task rows, so the two menus can never offer different things. User rule 2026-11-12: the menu
- * is a Search window of them ([org.example.project.ui.ActionMenu]).
+ * User rule 2026-11-25: *"Unify the right-click menu of all the rows of the app."* **The entries of a row's right-click
+ * menu, in their order** — the ONE list of them, used by the tree's cells, the Search window's task rows, its element rows
+ * and the children under an element's arrow, so no two rows offer different things. User rule 2026-11-12: the menu is a
+ * Search window of them ([org.example.project.ui.ActionMenu]). What only some rows can do is greyed, never hidden, but
+ * "start this task now" and "edit task", which name one task's own window or plan. "go to calendar", "go to task tree"
+ * and "add default sub-tree" are a task's actions in the actions section, never on the menu (user rule 2026-11-25).
  */
-@Composable
-internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.example.project.ui.MenuAction> {
-    // PRD §8 "go to calendar" (user spec 2026-09-26): the calendar, locked on this task's panel closest to the
-    // now-line — with a loading mark while no panel of it exists yet but one can come, and not offered at all when
-    // none can. Asked once as the menu opens.
-    val calendar = LocalCalendarGoTo.current
-    val calendarTaskId = cellMenu.calendarTaskId
-    val reach = if (calendar != null && calendarTaskId != null) remember(calendarTaskId) { calendar.reach(calendarTaskId) } else null
-    return buildList {
+internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.example.project.ui.MenuAction> =
+    buildList {
         // PRD §13: only offered on a schedulable leaf — a parent task is never placed.
         cellMenu.onStartNow?.let { add(org.example.project.ui.MenuAction("start this task now", onClick = it)) }
-        // PRD §7 Search (user rule 2026-10-01): a result row's menu ADDS its task to the window's added elements, in the
+        // PRD §7 Search (user rule 2026-10-01): a result row's menu ADDS its element to the window's added elements, in the
         // place "edit task" has elsewhere — the row is already in the window that edits it.
         cellMenu.onAdd?.let { add(org.example.project.ui.MenuAction("add", onClick = it)) }
         // ... and the same, emptying the added elements first: they become what this adds (user rule 2026-10-01).
@@ -3420,68 +3418,55 @@ internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.exampl
         // PRD §13: named "edit task" — the calendar's panel menu offers the very same window beside its own panel "Edit"
         // (PRD §8), so the two surfaces must not call it two things.
         cellMenu.onEdit?.let { add(org.example.project.ui.MenuAction("edit task", onClick = it)) }
-        // PRD §7/§8: the calendar panel's entry under its own name, offered by any surface that is not the tree itself.
-        cellMenu.onGoToTaskTree?.let { add(org.example.project.ui.MenuAction("go to task tree", onClick = it)) }
-        if (calendar != null && calendarTaskId != null && reach != null && reach != CalendarLockDomain.Reach.None) {
-            add(
-                org.example.project.ui.MenuAction(
-                    "go to calendar",
-                    mark = if (reach == CalendarLockDomain.Reach.Pending) {
-                        { CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp) }
-                    } else {
-                        null
-                    },
-                ) { calendar.go(calendarTaskId) },
-            )
-        }
-        add(org.example.project.ui.MenuAction("copy task id (ctrl c)", onClick = cellMenu.onCopyTaskId))
-        // Greyed, never hidden, where no live cell holds the task (a Search row of another tree's task).
-        add(org.example.project.ui.MenuAction("deep copy", enabled = cellMenu.onDeepCopy != null) { cellMenu.onDeepCopy?.invoke() })
-        cellMenu.onCollapseSubtrees?.let { add(org.example.project.ui.MenuAction("collapse sub-trees", onClick = it)) }
-        // PRD §7: only offered where there is a template to add.
-        cellMenu.onAddDefaultSubtree?.let { add(org.example.project.ui.MenuAction("add default sub-tree", onClick = it)) }
+        // User rule 2026-11-25: Ctrl+C on any row copies its id; the entry names the chord.
+        add(org.example.project.ui.MenuAction(COPY_ID_LABEL, enabled = cellMenu.onCopyId != null) { cellMenu.onCopyId?.invoke() })
+        add(org.example.project.ui.MenuAction(COPY_PATH_LABEL, enabled = cellMenu.onCopyPath != null) { cellMenu.onCopyPath?.invoke() })
+        add(org.example.project.ui.MenuAction(DEEP_COPY_LABEL, enabled = cellMenu.onDeepCopy != null) { cellMenu.onDeepCopy?.invoke() })
+        add(org.example.project.ui.MenuAction(COLLAPSE_SUBTREES_LABEL, enabled = cellMenu.onCollapseSubtrees != null) { cellMenu.onCollapseSubtrees?.invoke() })
+        add(org.example.project.ui.MenuAction(RETRACT_ALL_LABEL, enabled = cellMenu.onRetractAll != null) { cellMenu.onRetractAll?.invoke() })
     }
-}
+
+/** The row menu's entries every row shows ([taskCellMenuActions]), each greyed where the row has nothing to do. */
+const val COPY_ID_LABEL: String = "copy id (ctrl c)"
+const val COPY_PATH_LABEL: String = "copy path"
+const val DEEP_COPY_LABEL: String = "deep copy"
+const val COLLAPSE_SUBTREES_LABEL: String = "collapse sub-trees"
+const val RETRACT_ALL_LABEL: String = "retract with every sub-child"
 
 /**
- * PRD §13 the actions of a populated cell's right-click contextual menu. Bundled so a cell either has the
- * whole menu or none of it (empty cells and the root/main cell get null).
- *
- * [onAddDefaultSubtree] is null when there is no §7 template to add, and [onStartNow] when the cell's task is
- * not a schedulable leaf — the two entries that come and go: an account that never defined a default sub-tree
- * is not offered it, and a parent task is a grouping the scheduler never places, so there is nothing to start.
+ * PRD §13 the actions of a row's right-click contextual menu ([taskCellMenuActions]). Bundled so a row either has the
+ * whole menu or none of it. A null action is an entry greyed (or, for [onStartNow] and [onEdit], absent).
  */
 internal class TaskCellMenuActions(
+    /** Null when the row's task is not a schedulable leaf, or the row is no task's: a parent task is never placed. */
     val onStartNow: (() -> Unit)?,
     /**
-     * PRD §13 **"edit task"** — null on the PRD §2 root row, the one row with a menu but no task to edit:
-     * it stands for the tree itself, and the edit window is about a task's screen switch, schedule unit and
-     * text document, none of which the root has.
+     * PRD §13 **"edit task"** — null on the PRD §2 root row, the one row with a menu but no task to edit, and on a
+     * Search row, which is in the window that edits it.
      */
     val onEdit: (() -> Unit)?,
     /**
-     * PRD §7/§8 **"go to task tree"** — null in the account's own tree (you are already there) and in the §4
-     * template, non-null in the Search window's sub-trees, whose rows are the tree's cells shown outside
-     * the tree.
+     * User rule 2026-11-25 **"copy id (ctrl c)"** — the row's id: a task's in the reference shape a paste turns back
+     * into "point this cell at that task", any other element's its key. Ctrl+C's own gesture, named in the row so the
+     * chord is discoverable. Null on a row standing for no element (an empty placeholder).
      */
-    val onGoToTaskTree: (() -> Unit)?,
-    /**
-     * PRD §4/§13 **"copy task id (ctrl c)"** — the task id alone, in the reference shape a paste turns back
-     * into "point this cell at that task". It is Ctrl+C's own gesture, named in the row so the chord is
-     * discoverable; there is no menu entry for a sub-tree copy any more, which is what "deep copy" is for.
-     */
-    val onCopyTaskId: () -> Unit,
-    /** Null (greyed) only for a Search row whose task no live cell holds — a tree cell always has one. */
+    val onCopyId: (() -> Unit)?,
+    /** User rule 2026-11-25 **"copy path"**: the titles of the row's ancestors as drawn, root first. */
+    val onCopyPath: (() -> Unit)?,
+    /** Null (greyed) for a Search row whose task no live cell holds, and for an element that is no task. */
     val onDeepCopy: (() -> Unit)?,
+    /** Every sub-tree under the row closed, the row itself left open on its children; null when nothing is under it. */
     val onCollapseSubtrees: (() -> Unit)?,
-    val onAddDefaultSubtree: (() -> Unit)?,
-    /** PRD §8 "go to calendar": the task it is about, where there is one ([LocalCalendarGoTo] decides the rest). */
-    val calendarTaskId: TaskId? = null,
-    /** PRD §7 Search: "add" — the task into the Search window's added elements; null everywhere else. */
+    /** User rule 2026-11-25: the row closed on its children, and every sub-child closed too; null when nothing is under it. */
+    val onRetractAll: (() -> Unit)?,
+    /** PRD §7 Search: "add" — the element into the Search window's added elements; null everywhere else. */
     val onAdd: (() -> Unit)? = null,
     /** PRD §7 Search: [onAdd] with every element added before removed from the added elements; null elsewhere. */
     val onAddReplacing: (() -> Unit)? = null,
-    /** Entries of the surface the row stands in, where "add" stands elsewhere: an added element's "remove" (user rule 2026-11-13). */
+    /**
+     * Entries of the surface the row stands in, where "add" stands elsewhere: an added element's "remove" (user rule
+     * 2026-11-13), a row a lateral window still owns its "open in …".
+     */
     val extra: List<org.example.project.ui.MenuAction> = emptyList(),
 )
 

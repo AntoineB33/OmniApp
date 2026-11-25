@@ -99,6 +99,9 @@ child of the other."* (`MdDomain`, `MdElementTest`).
   app resolves it, what each is associated with (`MdDomain.claudeFolderFiles`) — and opens Claude Code in a terminal
   there (`openClaudeCodeOn`, desktop only, `docs/PLATFORMS.md`). The folder's `.md` files are written again at every
   press: an edit made there does not reach the app.
+- **An md element's text field leaves edit mode at the first press outside it** (user rule 2026-11-25,
+  `MdBlock` through `leaveOnOutsidePress`), not only when it loses the focus: a press on a bare stretch of a window
+  takes none. An empty one is drawn as "Empty — click to write.", so it can be clicked back into.
 
 ### A task tree IS a task under the root
 
@@ -424,7 +427,7 @@ the menu's "deep copy") and the bare **task-id reference** `taskIdReferenceText`
 - **The menu and Ctrl+C must agree about what "the cell" is**: a right-click INSIDE a multi-selection copies the
   whole block (`contextMenuCopyTargets`), exactly as Ctrl+C does; outside one, that cell alone. Copying only the
   cell under the cursor while a dozen sat selected is what shipped and was wrong.
-- **The gestures divide by WHAT and by how much, and nothing else**: the menu's **"copy task id (ctrl c)"** and
+- **The gestures divide by WHAT and by how much, and nothing else**: the menu's **"copy id (ctrl c)"** and
   **Ctrl+C are one gesture** — the identity alone; "deep copy" is the tasks themselves down to the window's
   number (1 = the cells alone, which is what the old menu "copy" was); and **Ctrl+X is the ENTIRE sub-tree**
   (`FULL_SUBTREE_DEPTH`) **plus the §4 deletion** of the same cells (one history unit, "Cut" — which is what
@@ -1118,13 +1121,28 @@ suggestions before it was ever entered.
   2026-10-03: it made its element straight away, so the row could not be added — which is how a default configuration
   is edited); its third entry, "create", is what the right-click used to do. A tree cell's
   "edit task" opens the Search window holding that task (`openElementSearch`).
-- **A task row is a tree cell to the user.** Its right-click menu is the cell's own — `TaskCellMenuItems`, the
-  one drawing of those entries for both surfaces — built for the path the right-click landed on (the row, its
-  path box, or a line of its list of paths): "go to task tree" reveals THAT occurrence
-  (`SearchDomain.occurrenceAtPath`, walked on the right-click, never per keystroke), and deep copy / collapse /
-  add the default sub-tree act on its cell. "Go to task tree" is always offered, like the calendar panel's; the
-  app's one handler (`goToTaskTreeAt`) says so when no cell holds the task, and otherwise opens, un-reduces,
-  raises and focuses the tree WINDOW before revealing the cell.
+- **Every row of the app has ONE right-click menu** (user rule 2026-11-25): `taskCellMenuActions`, the one list of
+  its entries, for the tree's cells (its empty placeholders included), a Search window's task rows, element rows,
+  action rows, the children under an element's arrow and the blank row ending them. In order: "start this task now"
+  (a schedulable leaf), "add" / "add and remove the others" (or an added element's "remove" entries), the surface's
+  own ("open in …"), "edit task" (a tree cell), then the five every row shows, **greyed, never hidden**, where the row
+  has nothing to do: **"copy id (ctrl c)"** (`SearchDomain.copiedId`: a task's reference, any other element's key),
+  **"copy path"** (the ancestors' titles, the tree's label first — `SearchDomain.cellPathLabel` for a cell, the row's
+  own path for a task row, the elements it is drawn under for a child), **"deep copy"** (a task's), **"collapse
+  sub-trees"** (the row stays open on its children) and **"retract with every sub-child"** (the row closed too). A
+  Search window's rows retract in that window's open rows (`SchedulerState.searchExpanded`, its element rows' keys),
+  never the tree's. **"go to calendar", "go to task tree" and "add default sub-tree" are not on the menu**: they are
+  a task's actions in the actions section (`AddedAction.TaskGoToCalendar`, `TaskGoToTree`, `TaskAddDefaultSubtree`).
+  Ctrl+C in a Search list copies the ids of the selected children, else of the selected rows.
+- **A task row is a tree cell to the user.** Its menu is built for the path the right-click landed on (the row, its
+  path box, or a line of its list of paths): deep copy acts on THAT occurrence (`SearchDomain.occurrenceAtPath`,
+  walked on the right-click, never per keystroke), and "copy path" copies that path.
+- **A row of the search section whose element is in the window's added elements is outlined** (user rule 2026-11-25,
+  `addedOutline`, apart from the selection's look): a result row, and a child row under an element's arrow.
+- **The blank row ending an element's children is a row like its siblings** (user rule 2026-11-25): pressed, it is
+  selected (`ElementChildSelection.selectRow`), the arrows walk onto it (`shownRowOrder` lists it, its `row` null), ←
+  goes to the row it ends, its right-click opens the one menu (copy path alone live), and Enter is its double-click —
+  the Search window whose bar it becomes. It stands for no element: "add" and Ctrl+C take nothing from it.
 - **Every row's selection is the tree's** — the outline (`taskCellOutline`), no fill — and moving it scrolls the
   list only when it would leave what is shown, by just enough to bring it to the nearer edge.
 - **A press anywhere but on a row takes the selection away**, in the result list and in the added elements (anomaly

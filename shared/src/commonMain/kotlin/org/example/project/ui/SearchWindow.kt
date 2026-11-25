@@ -693,6 +693,8 @@ fun SearchWindow(
     // Anomaly 2026-11-05: the children under an element's arrow are selected as the rows are ([ElementChildSelection]),
     // on either surface; a press on anything else leaves none selected.
     val childSelection = remember { ElementChildSelection() }
+    // The key of this window's open sub-tree cells ([SchedulerState.searchExpanded]), for the row menu's retracting.
+    val subtreeCellsKey = subtreeWindowKey()
     childSelection.editor = rememberOutsidePressEditor(active = childSelection.selected.isNotEmpty(), rowSelection = true) { childSelection.clear() }
     val elementCategories = remember(state.elementLinks, state.categories) { ElementTree.categoryTitles(state) }
     var subtreeFocusOwner by remember { mutableStateOf<TaskId?>(null) }
@@ -1055,7 +1057,7 @@ fun SearchWindow(
         when {
             target == null -> Unit
             target.child != null -> {
-                childSelection.selectOnly(target.child.rowKey, target.child.key)
+                childSelection.selectRow(target.child)
                 runCatching { listFocus.requestFocus() }
             }
             else -> selectRow(target.index)
@@ -1199,7 +1201,16 @@ fun SearchWindow(
             runCatching { listFocus.requestFocus() }
         }
     }
+    /**
+     * User rule 2026-11-25: *"Rows in the search section that appear in the added elements list section must be
+     * outlined."* — the added elements' keys, in the search section alone (not the added list, the actions, a menu).
+     */
+    val addedOutlined: Set<String> =
+        remember(config.added, addedList == null, actionRows == null, menuList == null, picker == null) {
+            if (addedList == null && actionRows == null && menuList == null && picker == null) config.added.toHashSet() else emptySet()
+        }
     childSelection.onAdd = { keys, replacing -> addKeys(keys, replacing) }
+    childSelection.addedKeys = addedOutlined
     /**
      * User rule 2026-10-07: the menu of a CHILD cell — one of an expanded row's sub-tree, in the result list or in the
      * added elements — offers "add" and "add and remove the others" too: those cells' tasks (a placeholder holds none).
@@ -1213,6 +1224,38 @@ fun SearchWindow(
      * list of paths): "go to task tree" goes to THAT occurrence, and the entries that act on a cell (deep copy,
      * collapse, add the default sub-tree) act on it. Built on demand, so it never closes over a stale state.
      */
+    /** User rule 2026-11-25: Ctrl+C and the row menu's "copy id" — each element's id ([SearchDomain.copiedId]), a line each. */
+    fun copyIds(keys: List<String>) {
+        val text = keys.distinct().joinToString("\n", transform = SearchDomain::copiedId)
+        if (text.isNotEmpty()) writeSystemClipboardText(text)
+    }
+    /**
+     * The row menu's "copy path" of an element: the names of the elements above it — the ones its row is drawn under
+     * ([ancestors]), else its first parent's, and theirs ([ElementTree.parentsOf]). Nothing above it: nothing copied.
+     */
+    fun copyElementPath(key: String, ancestors: List<String>?) {
+        val state = currentState
+        val above = ancestors ?: buildList {
+            val seen = hashSetOf(key)
+            var at = key
+            while (true) {
+                val parent = ElementTree.parentsOf(state, at).firstOrNull { it !in seen } ?: break
+                seen += parent
+                add(0, parent)
+                at = parent
+            }
+        }
+        if (above.isEmpty()) return
+        val names = SearchDomain.resolve(state, above, { emptyMap() }, windows, schedulerRuns, claudeLogs).associate { resultKey(it) to it.name }
+        writeSystemClipboardText(SearchDomain.pathLabel(above.map { names[it] ?: it }))
+    }
+    /** The cells under the list [listId] closed in this window's sub-trees ([SchedulerState.searchExpanded]). */
+    fun closeSubtreeCells(listId: CellListId) {
+        val key = subtreeCellsKey
+        val open = currentState.searchExpanded[key].orEmpty()
+        val under = SchedulerDomain.cellsUnder(currentState, listId)
+        if (open.any { it in under }) onIntent(SchedulerIntent.SetSearchExpanded(key, open - under))
+    }
     /**
      * User rule 2026-11-13: what a row's menu holds in the added elements list, where a result row's holds "add": the
      * selected elements off the list, the list down to them, and the actions of the row under the pointer alone.
@@ -1234,7 +1277,8 @@ fun SearchWindow(
         val live = state.tasks[taskId]
         val atPath = path?.let { SearchDomain.occurrenceAtPath(state, taskId, it) }
         val occurrence = atPath ?: SchedulerDomain.firstTaskOccurrence(state, taskId)
-        val hasChildren = live?.childListId?.let { state.lists[it]?.cellIds?.isNotEmpty() } == true
+        val childListId = live?.childListId?.takeIf { state.lists[it]?.cellIds?.isNotEmpty() == true }
+        val shownPath = path ?: result.shownPath
         return TaskCellMenuActions(
             onStartNow =
                 if (live != null && SchedulerDomain.isPlaceableTask(state, taskId)) {
@@ -1251,18 +1295,35 @@ fun SearchWindow(
             onAdd = if (addedList == null && (picker == null || !addedRemoved)) { { addSelected() } } else null,
             onAddReplacing = if (addedList == null && (picker == null || !addedRemoved)) { { addSelected(replacing = true) } } else null,
             extra = addedMenu(result).orEmpty(),
-            calendarTaskId = taskId,
-            // Always offered, like the calendar panel's: the app's handler says so when no cell holds the task.
-            onGoToTaskTree = { onGoToTaskTree(taskId, atPath) },
-            onCopyTaskId = { writeSystemClipboardText(SchedulerDomain.TASK_ID_REFERENCE_PREFIX + taskId.value) },
+            onCopyId = { copyIds(listOf(resultKey(result))) },
+            onCopyPath = shownPath.takeIf { it.isNotEmpty() }?.let { { writeSystemClipboardText(SearchDomain.pathLabel(it)) } },
             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
-            onCollapseSubtrees =
-                occurrence?.takeIf { hasChildren }?.let { { onIntent(SchedulerIntent.CollapseSubtrees(it.cellId)) } },
-            onAddDefaultSubtree =
-                occurrence?.takeIf { !state.defaultSubtreeIsEmpty }
-                    ?.let { { onIntent(SchedulerIntent.AddDefaultSubtree(listOf(it.cellId))) } },
+            // The row's sub-tree is this window's ([SchedulerState.searchExpanded]), never the tree's: closed here.
+            onCollapseSubtrees = childListId?.let { listId -> { closeSubtreeCells(listId) } },
+            onRetractAll = childListId?.let { listId ->
+                {
+                    closeSubtreeCells(listId)
+                    expandedTasks = expandedTasks - taskId
+                }
+            },
         )
     }
+
+    /** User rule 2026-11-25: the row menu's entries every element row has, for the element [key] drawn as [rowKey]. */
+    fun elementMenu(key: String, rowKey: String, ancestors: List<String>?): RowMenuCommon =
+        RowMenuCommon(
+            onCopyId = { copyIds(listOf(key)) },
+            onCopyPath = { copyElementPath(key, ancestors) },
+            // The rows open under it: drawn on surfaces whose keys start with its own ([childSurface]). Greyed with none open.
+            onCollapseSubtrees = if (expandedElements.none { it.startsWith("$rowKey>") }) null else {
+                { expandedElements = expandedElements.filterNot { it.startsWith("$rowKey>") }.toSet() }
+            },
+            onRetractAll = if (rowKey !in expandedElements) null else {
+                { expandedElements = expandedElements.filterNot { it == rowKey || it.startsWith("$rowKey>") }.toSet() }
+            },
+        )
+
+    childSelection.menuOf = { key, rowKey, ancestors -> elementMenu(key, rowKey, ancestors) }
 
     /**
      * The drop button of [row] while [SearchDomain.Config.dropButtons] is on — [onDrop], else the row leaves the list as an
@@ -1823,7 +1884,7 @@ fun SearchWindow(
                                         when {
                                             next < 0 -> runCatching { fieldFocus.requestFocus() }
                                             target == null -> Unit
-                                            target.child != null -> childSelection.selectOnly(target.child.rowKey, target.child.key)
+                                            target.child != null -> childSelection.selectRow(target.child)
                                             else -> select(target.index)
                                         }
                                         true
@@ -1841,11 +1902,20 @@ fun SearchWindow(
                                             shownRowOrder(state, results, expandedElements, windows, schedulerRuns, claudeLogs)
                                                 .firstOrNull { it.child?.rowKey == main }?.child
                                         }
-                                        if (child != null) openers.open(state, child.row) else openSelected()
+                                        val childRow = child?.row
+                                        when {
+                                            child == null -> openSelected()
+                                            childRow != null -> openers.open(state, childRow)
+                                            // The blank row ending a list of children: its double-click's window.
+                                            else -> childSelection.openBar(child.rowKey) { openers.onOpenChildSearch(child.key) }
+                                        }
                                         true
                                     }
-                                    ctrl && event.key == Key.C && current is SearchDomain.TaskResult -> {
-                                        taskActions(current, null).onCopyTaskId()
+                                    // User rule 2026-11-25: Ctrl+C copies the id of ANY row — the selected children, else
+                                    // the selected rows ([copyIds]); a blank row has none.
+                                    ctrl && event.key == Key.C -> {
+                                        val children = childSelection.selected.mapNotNull { childSelection.elements[it] }
+                                        copyIds(children.ifEmpty { menuRows().ifEmpty { listOfNotNull(current?.let(::resultKey)) } })
                                         true
                                     }
                                     // PRD §4: typing on a selected task row enters Edit Mode — renaming, always. What
@@ -1890,7 +1960,10 @@ fun SearchWindow(
                                     ?.let { members -> members.isNotEmpty() && members.all { SearchDomain.keyOf(it) in notAddedAbove } } == true
                                 else -> false
                             }
-                            Box(arranged.then(if (notAddedRow) Modifier.alpha(NOT_ADDED_ALPHA) else Modifier)) {
+                            Box(
+                                arranged.then(if (notAddedRow) Modifier.alpha(NOT_ADDED_ALPHA) else Modifier)
+                                    .then(if (rowKey in addedOutlined) Modifier.addedOutline() else Modifier),
+                            ) {
                             // The left-side menu's items: drawn by the menu, selected and arranged by the list.
                             val given = menuList?.byKey?.get((result as? SearchDomain.ItemResult)?.id)
                             if (menuList != null && given != null) {
@@ -1932,6 +2005,13 @@ fun SearchWindow(
                                             onAdd = { addSelected() },
                                             onAddReplacing = { addSelected(replacing = true) },
                                             hasMenu = true,
+                                            // An action is open on its controls, not on children: retracting closes it.
+                                            rowMenu = RowMenuCommon(
+                                                onCopyId = { copyIds(listOf(resultKey(result))) },
+                                                onCopyPath = null,
+                                                onCollapseSubtrees = null,
+                                                onRetractAll = if (actionRow.open) { { actionRows.onToggle(actionRow.id) } } else null,
+                                            ),
                                             depth = actionRow.depth,
                                         )
                                         if (actionRow.open && actionRow.action != null) {
@@ -2018,6 +2098,7 @@ fun SearchWindow(
                                         onAdd = { addSelected() },
                                         onAddReplacing = { addSelected(replacing = true) },
                                         menuActions = addedMenu(result),
+                                        rowMenu = elementMenu(resultKey(result), elementKey, null),
                                         timerRun = if (result.kind == SearchDomain.Kind.Timer) {
                                             {
                                                 actionHandlers.timerRun(
@@ -2475,6 +2556,36 @@ class MenuAction(
     val hoverPopup: (@Composable () -> Unit)? = null,
     val onClick: () -> Unit,
 )
+
+/**
+ * User rule 2026-11-25: **the row menu's entries every element row has** — "copy id", "copy path", "collapse sub-trees" and
+ * "retract with every sub-child" — for a row that is no tree cell; [menu] makes them the one menu
+ * ([org.example.project.scheduler.ui.taskCellMenuActions]). A null entry is greyed.
+ */
+internal class RowMenuCommon(
+    val onCopyId: (() -> Unit)?,
+    val onCopyPath: (() -> Unit)?,
+    val onCollapseSubtrees: (() -> Unit)?,
+    val onRetractAll: (() -> Unit)?,
+) {
+    fun menu(onAdd: (() -> Unit)?, onAddReplacing: (() -> Unit)?, extra: List<MenuAction>): TaskCellMenuActions =
+        TaskCellMenuActions(
+            onStartNow = null,
+            onEdit = null,
+            onCopyId = onCopyId,
+            onCopyPath = onCopyPath,
+            onDeepCopy = null,
+            onCollapseSubtrees = onCollapseSubtrees,
+            onRetractAll = onRetractAll,
+            onAdd = onAdd,
+            onAddReplacing = onAddReplacing,
+            extra = extra,
+        )
+
+    companion object {
+        val NONE = RowMenuCommon(null, null, null, null)
+    }
+}
 
 /**
  * User rule 2026-11-12: *"All the drop-down menus of the app must be Search windows as well"* — right-click menus too, the
@@ -3387,6 +3498,14 @@ internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false):
         .then(selectionLook(selected, inSelection))
         .padding(horizontal = RESULT_ROW_PADDING)
 
+/**
+ * User rule 2026-11-25: the outline of a search section's row whose element is in the window's added elements — apart
+ * from the selection's look ([selectionLook]), so a row can show both.
+ */
+@Composable
+internal fun Modifier.addedOutline(): Modifier =
+    this.border(1.5.dp, MaterialTheme.colorScheme.tertiary, RoundedCornerShape(4.dp))
+
 /** A result row's own padding, at each side of what it shows. */
 internal val RESULT_ROW_PADDING: Dp = 6.dp
 
@@ -4100,6 +4219,8 @@ private fun ItemResultRow(
     hasMenu: Boolean = true,
     /** What the menu holds in place of "add" and "add and remove the others" (the added elements list); null: those two. */
     menuActions: List<MenuAction>? = null,
+    /** User rule 2026-11-25: the entries every row's menu has ([taskCellMenuActions]); null, each greyed. */
+    rowMenu: RowMenuCommon? = null,
     /** A drop-down's option: what its right-click does, on the RELEASE ([pickOnSecondaryRelease]). */
     onSecondaryRelease: (() -> Unit)? = null,
     /** A drop-down option's click, taken on the release ([pickOnRelease]); null: the row's press selects it. */
@@ -4183,11 +4304,17 @@ private fun ItemResultRow(
                 SearchDomain.Kind.WorkplaceSetup -> "apply"
                 else -> null
             }
+        // User rule 2026-11-25: every row's menu is the one list ([taskCellMenuActions]).
         ActionMenu("ItemResultRow",
             open = menuOpen,
             onDismiss = { menuOpen = false },
-            actions = (menuActions ?: listOf(MenuAction("add") { onAdd() }, MenuAction(ADD_REPLACING_LABEL) { onAddReplacing() })) +
-                listOfNotNull(elsewhere?.let { MenuAction(it) { onOpen() } }),
+            actions = org.example.project.scheduler.ui.taskCellMenuActions(
+                (rowMenu ?: RowMenuCommon.NONE).menu(
+                    onAdd = if (menuActions == null) onAdd else null,
+                    onAddReplacing = if (menuActions == null) onAddReplacing else null,
+                    extra = menuActions.orEmpty() + listOfNotNull(elsewhere?.let { MenuAction(it) { onOpen() } }),
+                ),
+            ),
             atPointer = LocalRowMenusAtPointer.current,
         )
     }
@@ -4231,7 +4358,7 @@ private fun ElementChildren(
     // A Shift+click's range runs over these siblings.
     val siblings by rememberUpdatedState(children.map { it.rowKey })
     for (child in children) {
-        val row = child.row
+        val row = child.row ?: continue
         val key = child.key
         androidx.compose.runtime.key(key) {
             val rowKey = child.rowKey
@@ -4251,7 +4378,7 @@ private fun ElementChildren(
                         selected = rowKey in selection.selected && isMain,
                         inSelection = rowKey in selection.selected && !isMain,
                     ),
-                )
+                ).then(if (key in selection.addedKeys) Modifier.addedOutline() else Modifier)
                     .recordPressModifiers(selection.pressModifiers)
                     .resultRowGestures(
                         rowKey,
@@ -4275,12 +4402,16 @@ private fun ElementChildren(
             }
             // The menu, on the selected children: added to the window's elements, as a result row's "add" adds.
             // User rule 2026-11-12: the menu is a Search window of its entries.
+            // User rule 2026-11-25: the one row menu ([taskCellMenuActions]).
             ActionMenu("ElementChildren",
                 open = menuOpen,
                 onDismiss = { menuOpen = false },
-                actions = listOf(
-                    MenuAction("add") { selection.add(replacing = false) },
-                    MenuAction(ADD_REPLACING_LABEL) { selection.add(replacing = true) },
+                actions = org.example.project.scheduler.ui.taskCellMenuActions(
+                    selection.menuOf(key, rowKey, path.toList()).menu(
+                        onAdd = { selection.add(replacing = false) },
+                        onAddReplacing = { selection.add(replacing = true) },
+                        extra = emptyList(),
+                    ),
                 ),
                 atPointer = LocalRowMenusAtPointer.current,
             )
@@ -4296,15 +4427,45 @@ private fun ElementChildren(
     // siblings' rectangles stand at the indent (user rule 2026-11-15), so does its own.
     // User rule 2026-11-19: double-clicked, it is the search bar of the window it opens, its ✕ and ▾ beside it in the row,
     // until that window is closed.
-    var barOf by remember(parent, surface) { mutableStateOf<String?>(null) }
-    val linked = barOf?.let(openers.linkedWindow)
+    // User rule 2026-11-25: selected, walked and right-clicked as its siblings are — a task's sub-tree's placeholder is.
+    val blankKey = blankChildRowKey(surface, parent)
+    val linked = selection.linkedBars[blankKey]?.let(openers.linkedWindow)
     if (linked != null) {
         LinkedSearchBar(linked, state, windows, claudeLogs, indent.then(resultRowModifier(selected = false)))
     } else {
-        Box(
-            modifier = indent.then(resultRowModifier(selected = false))
-                .resultRowGestures(surface + parent + "/blank", onSelect = {}, onSecondarySelect = {}, onOpen = { barOf = openers.onOpenChildSearch(parent) }, onOpenMenu = {}),
-        )
+        var menuOpen by remember(blankKey) { mutableStateOf(false) }
+        val isMain = blankKey == selection.main
+        Box(Modifier.outsidePressPart(selection.editor)) {
+            Box(
+                modifier = indent.then(
+                    resultRowModifier(
+                        selected = blankKey in selection.selected && isMain,
+                        inSelection = blankKey in selection.selected && !isMain,
+                    ),
+                )
+                    .recordPressModifiers(selection.pressModifiers)
+                    .resultRowGestures(
+                        blankKey,
+                        onSelect = { selection.click(siblings + blankKey, blankKey) },
+                        onSecondarySelect = { selection.secondaryClick(blankKey) },
+                        onOpen = { selection.openBar(blankKey) { openers.onOpenChildSearch(parent) } },
+                        onOpenMenu = {
+                            selection.captureForMenu(blankKey)
+                            menuOpen = true
+                        },
+                    ),
+            )
+            // Standing for no element: its ancestors' path alone.
+            ActionMenu("ElementChildren blank",
+                open = menuOpen,
+                onDismiss = { menuOpen = false },
+                actions = org.example.project.scheduler.ui.taskCellMenuActions(
+                    RowMenuCommon(null, selection.menuOf(parent, blankKey, path.toList()).onCopyPath, null, null)
+                        .menu(onAdd = null, onAddReplacing = null, extra = emptyList()),
+                ),
+                atPointer = LocalRowMenusAtPointer.current,
+            )
+        }
     }
 }
 
@@ -4359,8 +4520,15 @@ internal fun LinkedSearchBar(
 @Composable
 internal fun subtreeWindowKey(): String = LocalArrowOwner.current.orEmpty()
 
-/** One row under an element's arrow: where it is drawn ([rowKey]: surface and path), the element, its row. */
-internal class ElementChildRow(val rowKey: String, val key: String, val row: SearchDomain.Result)
+/**
+ * One row under an element's arrow: where it is drawn ([rowKey]: surface and path), the element, its row. A null [row] is
+ * the BLANK row ending the list (user rule 2026-11-02), its [key] the element whose children it ends — selected and walked
+ * as its siblings are (user rule 2026-11-25), as a task's sub-tree ends on its selectable placeholder.
+ */
+internal class ElementChildRow(val rowKey: String, val key: String, val row: SearchDomain.Result?)
+
+/** The row key of the blank row ending the children of [parent] drawn on [surface]. */
+internal fun blankChildRowKey(surface: String, parent: String): String = surface + parent + "/blank"
 
 /** The surface the children of the child row [rowKey] are drawn on: open rows are told apart by it. */
 private fun childSurface(rowKey: String): String = "$rowKey>"
@@ -4410,7 +4578,7 @@ internal fun shownRowOrder(
         elementChildRows(state, parent, surface, path, windows, schedulerRuns, claudeLogs).flatMap { child ->
             listOf(ShownRow(index, child, parentChild)) +
                 if (child.rowKey in expanded) under(child.key, childSurface(child.rowKey), path + child.key, index, child) else emptyList()
-        }
+        } + ShownRow(index, ElementChildRow(blankChildRowKey(surface, parent), parent, null), parentChild)
     return results.flatMapIndexed { index, result ->
         val key = resultKey(result)
         val open = result is SearchDomain.ItemResult && RESULT_SURFACE + key in expanded
@@ -4446,6 +4614,32 @@ internal class ElementChildSelection {
         anchor = next.anchor
         main = rowKey
         onTake(rowKey)
+    }
+
+    /** User rule 2026-11-25: the row menu's entries of a child row ([RowMenuCommon]), given by the window. */
+    var menuOf: (key: String, rowKey: String, ancestors: List<String>) -> RowMenuCommon = { _, _, _ -> RowMenuCommon.NONE }
+    /** The elements the window's added elements list holds: their rows in the search section are outlined. */
+    var addedKeys: Set<String> = emptySet()
+    /** The window each blank row's field is the search bar of ([LinkedSearchBar]), by the blank row's key. */
+    val linkedBars = androidx.compose.runtime.mutableStateMapOf<String, String>()
+
+    /** A blank row's double-click (or Enter): the Search window [open] opens, its bar in the row. */
+    fun openBar(blankRowKey: String, open: () -> String?) {
+        val id = open() ?: return
+        linkedBars[blankRowKey] = id
+    }
+
+    /** [child] selected alone, as an arrow moves onto it — a blank row stands for no element. */
+    fun selectRow(child: ElementChildRow) {
+        if (child.row == null) {
+            elements.remove(child.rowKey)
+            selected = setOf(child.rowKey)
+            anchor = child.rowKey
+            main = child.rowKey
+            onTake(child.rowKey)
+        } else {
+            selectOnly(child.rowKey, child.key)
+        }
     }
 
     /** [rowKey] selected alone, as an arrow moves onto it. */

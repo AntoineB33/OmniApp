@@ -148,7 +148,9 @@ internal fun MdAskClaudeButton(state: SchedulerState, added: List<SearchDomain.R
 
 /**
  * One md element: its text drawn as markdown ([renderMarkdown]); a click turns it into its text field, which writes as it
- * is typed ([onText], one History Unit per field through its edit key) and is drawn again once it loses the focus.
+ * is typed ([onText], one History Unit per field through its edit key) and is drawn again once it loses the focus — or
+ * (user rule 2026-11-25) at the first press anywhere outside it, which a bare stretch of a window does without taking the
+ * focus ([leaveOnOutsidePress]). An empty one is drawn as a line saying so, which a click edits.
  */
 @Composable
 internal fun MdBlock(md: MdElement, modifier: Modifier = Modifier, onText: (String) -> Unit) {
@@ -159,6 +161,7 @@ internal fun MdBlock(md: MdElement, modifier: Modifier = Modifier, onText: (Stri
     if (editing) {
         val focus = remember { FocusRequester() }
         var hadFocus by remember { mutableStateOf(false) }
+        val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
         OutlinedTextField(
             value = draft,
             onValueChange = {
@@ -167,16 +170,22 @@ internal fun MdBlock(md: MdElement, modifier: Modifier = Modifier, onText: (Stri
             },
             placeholder = { Text("markdown — [[Name]] links an md element, [[>Name]] makes it a child") },
             textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            modifier = modifier.heightIn(min = 72.dp).focusRequester(focus).onFocusChanged { f ->
-                if (f.isFocused) hadFocus = true
-                else if (hadFocus && draft.isNotEmpty()) editing = false
-            },
+            modifier = modifier.heightIn(min = 72.dp)
+                .leaveOnOutsidePress(active = true) {
+                    editing = false
+                    focusManager.clearFocus()
+                }
+                .focusRequester(focus).onFocusChanged { f ->
+                    if (f.isFocused) hadFocus = true
+                    else if (hadFocus) editing = false
+                },
         )
         LaunchedEffect(Unit) { if (md.text.isNotEmpty()) runCatching { focus.requestFocus() } }
     } else {
         Text(
-            renderMarkdown(md.text),
+            if (md.text.isEmpty()) AnnotatedString("Empty — click to write.") else renderMarkdown(md.text),
             style = MaterialTheme.typography.bodyMedium,
+            fontStyle = if (md.text.isEmpty()) FontStyle.Italic else null,
             modifier = modifier
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
                 .clickable { editing = true }

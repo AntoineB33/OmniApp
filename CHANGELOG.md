@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### One right-click menu for every row; blank child row selectable; md edit leaves on outside press — 2026-11-25
+
+- User: *"Unify the right-click menu of all the rows of the app. ctrl+c must work on any row (to copy its id)."* Tree
+  cells (placeholders included), Search task / element / action rows, element children and the blank row ending them
+  all draw `taskCellMenuActions`. New entries: "copy path", "retract with every sub-child"
+  (`CollapseSubtrees.includingSelf`); "copy task id" is "copy id", copying any element's id (`SearchDomain.copiedId`).
+  "go to calendar", "go to task tree" and "add default sub-tree" left the menu — they stay actions in the actions
+  section (user's choice). Ctrl+C in a Search list copies the selected children's or rows' ids.
+- A Search row's "collapse sub-trees" closed the LIVE tree's cells, not the window's: it now closes the window's own
+  (`searchExpanded`).
+- The blank row ending an element's children is selected, walked and right-clicked as its siblings are.
+- Search-section rows whose element is in the added elements list are outlined.
+- An md element's text field leaves edit mode at the first press outside it.
+- No persisted shape changed (`CollapseSubtrees` is an intent, its new field defaulted). Client rebuild only.
+
 ### The configurations window by group and type is deleted — 2026-11-22
 
 - User: *"It is obsolete."* `ConfigurationSearchWindow` (its groups by how many rows they apply to, its shared fields,

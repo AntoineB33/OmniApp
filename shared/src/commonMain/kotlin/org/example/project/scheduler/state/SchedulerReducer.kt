@@ -324,7 +324,7 @@ object SchedulerReducer {
             SchedulerIntent.EmptySelectedCells -> reduceEmptySelected(state)
             is SchedulerIntent.ExitEdit -> reduceExitEdit(state, intent.navigation)
             is SchedulerIntent.ToggleExpand -> reduceToggleExpand(state, intent.cellId)
-            is SchedulerIntent.CollapseSubtrees -> reduceCollapseSubtrees(state, intent.cellId)
+            is SchedulerIntent.CollapseSubtrees -> reduceCollapseSubtrees(state, intent.cellId, intent.includingSelf)
             is SchedulerIntent.RevealCell -> reduceRevealCell(state, intent.cellId, intent.ancestors)
             is SchedulerIntent.ReplaceTaskTitles -> reduceReplaceTaskTitles(state, intent.titles)
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
@@ -2304,26 +2304,10 @@ object SchedulerReducer {
      * dropped from the expansion set, [cellId] itself is NOT — the gesture trims the branch back to the
      * cell the user right-clicked, leaving its own children on screen.
      */
-    private fun reduceCollapseSubtrees(state: SchedulerState, cellId: CellId): SchedulerState {
-        val cell = state.cells[cellId] ?: return state
-        val taskId = cell.taskId ?: return state
-        val childListId = state.tasks[taskId]?.childListId ?: return state
-        val subtree = mutableSetOf<CellId>()
-        val visitedLists = mutableSetOf<CellListId>()
-
-        fun walk(listId: CellListId) {
-            if (!visitedLists.add(listId)) return
-            val list = state.lists[listId] ?: return
-            for (childId in list.cellIds) {
-                subtree += childId
-                val childTaskId = state.cells[childId]?.taskId ?: continue
-                val nextListId = state.tasks[childTaskId]?.childListId ?: continue
-                walk(nextListId)
-            }
-        }
-
-        walk(childListId)
-        val collapsed = state.expanded - subtree
+    private fun reduceCollapseSubtrees(state: SchedulerState, cellId: CellId, includingSelf: Boolean): SchedulerState {
+        val childListId = state.cells[cellId]?.taskId?.let { state.tasks[it]?.childListId } ?: return state
+        val subtree = SchedulerDomain.cellsUnder(state, childListId)
+        val collapsed = state.expanded - subtree - (if (includingSelf) setOf(cellId) else emptySet())
         if (collapsed == state.expanded) return state
         return commitDelta(state, SetExpandedDelta(before = state.expanded, after = collapsed))
     }

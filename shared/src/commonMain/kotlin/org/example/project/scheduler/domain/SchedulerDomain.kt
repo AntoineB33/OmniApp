@@ -393,6 +393,45 @@ object SchedulerDomain {
     }
 
     /**
+     * Every cell drawn under the list [listId], at any depth — each list walked once (a mirrored sub-tree is ONE list).
+     * What "collapse sub-trees" and "retract with every sub-child" close, in the tree and in a Search window's sub-trees.
+     */
+    fun cellsUnder(state: SchedulerState, listId: CellListId): Set<CellId> {
+        val found = LinkedHashSet<CellId>()
+        val visitedLists = HashSet<CellListId>()
+        fun walk(id: CellListId) {
+            if (!visitedLists.add(id)) return
+            val list = state.lists[id] ?: return
+            for (childId in list.cellIds) {
+                found += childId
+                val next = state.cells[childId]?.taskId?.let { state.tasks[it]?.childListId } ?: continue
+                walk(next)
+            }
+        }
+        walk(listId)
+        return found
+    }
+
+    /**
+     * The cells above [cellId] in the live tree, outermost first — the first place the tree's reading order meets it
+     * ([firstTaskOccurrence]'s walk, each list once); null where no live list holds it.
+     */
+    fun ancestorsOfCell(state: SchedulerState, cellId: CellId): List<CellId>? {
+        val visitedLists = HashSet<CellListId>()
+        fun walk(listId: CellListId, ancestors: List<CellId>): List<CellId>? {
+            if (!visitedLists.add(listId)) return null
+            val list = state.lists[listId] ?: return null
+            if (cellId in list.cellIds) return ancestors
+            for (id in list.cellIds) {
+                val next = state.cells[id]?.taskId?.let { state.tasks[it]?.childListId } ?: continue
+                walk(next, ancestors + id)?.let { return it }
+            }
+            return null
+        }
+        return walk(state.rootListId, emptyList())
+    }
+
+    /**
      * [firstTaskOccurrence] for **every** task at once, in one walk.
      *
      * [tasksInTree] needs the first occurrence of every task, and asking one task at a time would re-walk the

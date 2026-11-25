@@ -3262,6 +3262,31 @@ object SearchDomain {
 
     fun pathLabel(path: List<String>): String = path.joinToString(PATH_SEPARATOR)
 
+    /**
+     * User rule 2026-11-25, the row menu's "copy path": the path of a cell whose ancestors are the cells [ancestors]
+     * names, outermost first — read as a task row's path reads ([allPathsInAnyTree]): the tree's label, then each title.
+     * When the first of them is not in the live tree's first list (a Search window's sub-tree starts lower), the live
+     * tree's cells above it come first ([SchedulerDomain.ancestorsOfCell]).
+     */
+    fun cellPathLabel(state: SchedulerState, ancestors: List<CellId>): String {
+        val first = ancestors.firstOrNull()
+        val above =
+            if (first == null || first in state.lists[state.rootListId]?.cellIds.orEmpty()) emptyList()
+            else SchedulerDomain.ancestorsOfCell(state, first).orEmpty()
+        val titles = (above + ancestors).mapNotNull { id ->
+            state.cells[id]?.taskId?.takeUnless(SchedulerDomain::isRootTask)?.let { state.tasks[it]?.title.orEmpty() }
+        }
+        return pathLabel(listOf(liveRootLabel(state)) + titles)
+    }
+
+    /**
+     * User rule 2026-11-25: **what Ctrl+C (and the row menu's "copy id") copies of a row's element** — a task's id in the
+     * reference shape a paste turns back into the task ([SchedulerDomain.TASK_ID_REFERENCE_PREFIX]), any other element's
+     * key, its kind and id.
+     */
+    fun copiedId(key: String): String =
+        if (key.substringBefore('/') == Kind.Task.name) SchedulerDomain.TASK_ID_REFERENCE_PREFIX + key.substringAfter('/') else key
+
     /** Shortest first, then alphabetically — PRD §4's order for paths, so the two menus rank alike. */
     private val pathOrder: Comparator<List<String>> =
         compareBy<List<String>>({ it.size }, { pathLabel(it) })
