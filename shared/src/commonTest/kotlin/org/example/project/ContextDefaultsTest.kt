@@ -104,8 +104,8 @@ class ContextDefaultsTest {
         val ids = org.example.project.scheduler.ui.taskCellMenuActions(full).map { it.id }
         assertEquals(emptyList(), ids - ContextDomain.ROW_MENU_ENTRIES.toSet(), "every entry is named")
         assertEquals(ids, ContextDomain.ROW_MENU_ENTRIES.filter { it in ids }, "in the builder's order")
-        // A menu that is no row's sets none: whatever the code gives.
-        assertEquals(emptyList(), ContextDomain.configOf(emptyList(), "menu:SearchPartsMenu").entries)
+        // User rule 2026-11-25 ("the same everywhere"): every right-click menu sets its own.
+        assertTrue(ContextDomain.configOf(emptyList(), "menu:SearchPartsMenu").entries.isNotEmpty())
         // Kept and read back; an older payload has none.
         val on = SearchDomain.Config(entries = listOf("add", "copy path"))
         assertEquals(on, SearchDomain.Config.decode(on.encode()))
@@ -115,12 +115,15 @@ class ContextDefaultsTest {
     @Test
     fun an_entrys_default_presences_and_putting_it_in_or_out() {
         val presences = ContextDomain.presences(emptyList(), "add")
-        assertEquals(ContextDomain.ROW_MENUS.map { "menu:$it" }.toSet(), presences.listed.map { it.id }.toSet())
-        assertEquals(emptyList(), presences.unlisted)
-        assertTrue(presences.unset.any { it.id == "menu:SearchPartsMenu" })
+        assertEquals(
+            ContextDomain.MENU_ENTRIES.filterValues { "add" in it }.keys.map { "menu:$it" }.toSet(),
+            presences.listed.map { it.id }.toSet(),
+        )
+        assertTrue(presences.unlisted.any { it.id == "menu:SearchPartsMenu" }, "a menu whose entries leave it out")
+        assertTrue(presences.unset.none { it.id.startsWith("menu:") }, "every menu sets its entries")
         val out = ContextDomain.withEntry(emptyList(), listOf("menu:task cell menu"), "add", on = false)
         assertFalse("add" in ContextDomain.configOf(out, "menu:task cell menu").entries)
-        assertEquals(listOf("menu:task cell menu"), ContextDomain.presences(out, "add").unlisted.map { it.id })
+        assertTrue("menu:task cell menu" in ContextDomain.presences(out, "add").unlisted.map { it.id })
         val back = ContextDomain.withEntry(out, listOf("menu:task cell menu"), "add", on = true)
         assertEquals("add", ContextDomain.configOf(back, "menu:task cell menu").entries.last(), "put back at the end")
         // The action is offered for an added entry.

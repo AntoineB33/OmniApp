@@ -2108,7 +2108,7 @@ internal fun RelativePriorityWindow(
                     org.example.project.ui.ActionMenu("RelativePriorityWindow",
                         open = relativeToMenuOpen,
                         onDismiss = { relativeToMenuOpen = false },
-                        actions = options.map { option -> org.example.project.ui.MenuAction(relativeToLabel(state, option)) { relativeTo = option } },
+                        actions = options.map { option -> org.example.project.ui.MenuAction(relativeToLabel(state, option), id = "relative to") { relativeTo = option } },
                     )
                 }
                 Spacer(Modifier.weight(1f))

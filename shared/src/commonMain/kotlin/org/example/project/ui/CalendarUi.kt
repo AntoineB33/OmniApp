@@ -7292,11 +7292,11 @@ private fun DayColumn(
                     // PRD §8 (phone): the panel info tops the touch contextual menu — a phone has no hover bubble. A row
                     // of its own, greyed: it names the task and its time, and does nothing.
                     if (menuFromTouch && topMost != null) {
-                        add(MenuAction(SchedulerDomain.taskTitleLabel(topMost.title) + "  ·  " + placedTimeRange(topMost, tz), enabled = false) {})
+                        add(MenuAction(SchedulerDomain.taskTitleLabel(topMost.title) + "  ·  " + placedTimeRange(topMost, tz), enabled = false, id = "element here") {})
                     }
                     if (branch.isNotEmpty()) {
                         // The "restrictive period" chooser, in place of the menu that opened it.
-                        branch.forEach { child -> add(MenuAction(child.label, keepsOpen = true) { pickChoice(child) }) }
+                        branch.forEach { child -> add(MenuAction(child.label, keepsOpen = true, id = "choices") { pickChoice(child) }) }
                     } else {
                         // PRD §8, user rule 2026-10-11: ONE entry, "edit…", whatever is under the cursor — one thing or
                         // several (the LAYER bands included, user rule 2026-10-01), it opens the Search window of what is

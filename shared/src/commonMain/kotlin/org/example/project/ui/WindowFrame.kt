@@ -1932,10 +1932,10 @@ private fun WindowHead(
                 onAddToMenu?.let { add(HeadMenuEntry("Add a button for this window to the left menu") { it(title) }) }
                 onDuplicate?.let { add(HeadMenuEntry("Duplicate", onClick = it)) }
                 if (windowButtons) {
-                    add(HeadMenuEntry(if (actions.fillsWidth) "Stop filling the width" else "Fill the width") { actions.toggleFillWidth() })
-                    add(HeadMenuEntry(if (actions.fillsHeight) "Stop filling the height" else "Fill the height") { actions.toggleFillHeight() })
+                    add(HeadMenuEntry(if (actions.fillsWidth) "Stop filling the width" else "Fill the width", id = "Fill the width") { actions.toggleFillWidth() })
+                    add(HeadMenuEntry(if (actions.fillsHeight) "Stop filling the height" else "Fill the height", id = "Fill the height") { actions.toggleFillHeight() })
                     if (canMinimize) add(HeadMenuEntry("Reduce") { actions.minimize() })
-                    add(HeadMenuEntry(if (actions.maximized) "Restore" else "Maximize") { actions.toggleMaximize() })
+                    add(HeadMenuEntry(if (actions.maximized) "Restore" else "Maximize", id = "Maximize") { actions.toggleMaximize() })
                 }
                 add(HeadMenuEntry("Close", onClick = onClose))
             },
@@ -2106,7 +2106,7 @@ val LocalPopupChrome = compositionLocalOf<PopupChrome?> { null }
 val LocalBareMenu = compositionLocalOf { false }
 
 /** One entry of a window head's right-click menu ([AppWindowFrame]'s `headMenu`, and the frame's own). */
-class HeadMenuEntry(val label: String, val enabled: Boolean = true, val onClick: () -> Unit)
+class HeadMenuEntry(val label: String, val enabled: Boolean = true, val id: String = label, val onClick: () -> Unit)
 
 /** The head's right-click menu (user rule 2026-10-15): at the pointer, a menu like the others (`popups.md`). */
 @Composable
@@ -2115,7 +2115,7 @@ private fun HeadMenu(open: Boolean, onDismiss: () -> Unit, entries: List<HeadMen
     ActionMenu("HeadMenu",
         open = open,
         onDismiss = onDismiss,
-        actions = entries.map { entry -> MenuAction(entry.label, enabled = entry.enabled, onClick = entry.onClick) },
+        actions = entries.map { entry -> MenuAction(entry.label, enabled = entry.enabled, id = entry.id, onClick = entry.onClick) },
         atPointer = true,
     )
 }
@@ -2390,7 +2390,7 @@ fun WindowBar(
                 MenuAction("close selection", enabled = any) { host.closeSelection() },
                 MenuAction("minimize selection", enabled = host.selectionHasShown) { host.minimizeSelection() },
                 MenuAction("open selection", enabled = any) { host.openSelection() },
-                MenuAction((if (allGlobal) "✓ " else "") + "global", enabled = globalizable.isNotEmpty()) { onSetGlobal(globalizable, !allGlobal) },
+                MenuAction((if (allGlobal) "✓ " else "") + "global", enabled = globalizable.isNotEmpty(), id = "global") { onSetGlobal(globalizable, !allGlobal) },
             ),
             offset = with(density) { DpOffset((menuAt?.x ?: 0f).toDp(), 0.dp) },
         )

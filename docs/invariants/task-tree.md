@@ -1160,8 +1160,12 @@ suggestions before it was ever entered.
 - **A menu's entries are one search configuration** (user rule 2026-11-25, *"one search configuration that basically just
   set the elements in the right place"*): **"Entries, in order"** (`Config.entries`, entry ids) — on in every row menu's
   context (`ContextDomain.ROW_MENUS`, default `ROW_MENU_ENTRIES`), whose list names what the menu lists and where; the
-  code gives each entry its id (`MenuAction.id`, "remove 3" is "remove") and what it does, never where it stands. A
-  context that sets none lists what its menu gives, in the code's order. An added menu entry's action **"Default
+  code gives each entry its id (`MenuAction.id`, "remove 3" is "remove") and what it does, never where it stands.
+  **Every right-click menu has its list** (user rule 2026-11-25, *"Make sure the logic is the same everywhere"*,
+  `ContextDomain.MENU_ENTRIES`): a label that changes keeps one id ("Maximize" / "Restore", "✓ all pages"), a section's
+  background entries are "section …", and rows that stand for data (a task's paths, the time steps, the calendar's
+  choices) share their group's id, the group standing where it does. `MenuEntriesCatalogTest` fails on an entry of the
+  code no menu names — it would never be shown. A context that sets none (a drop-down) lists what it is given. An added menu entry's action **"Default
   presences"** (`ContextDomain.presences`) groups the contexts naming it, those whose entries leave it out (each group's
   switch puts it in, at the end, or takes it out) and those that set none; each group's context row opens them.
 - **The Edit Mode menus' rows have the one menu too** (`TaskIdentityRow` for a row naming a task, `EditMenuRow` for the

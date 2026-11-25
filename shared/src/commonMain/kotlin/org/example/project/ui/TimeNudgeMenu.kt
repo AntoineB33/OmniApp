@@ -94,7 +94,7 @@ internal fun NudgeMenu(enabled: Boolean, stepsMillis: List<Long>, onNudge: (delt
         ActionMenu("NudgeMenu",
             open = open,
             onDismiss = { open = false },
-            actions = stepsMillis.map { delta -> MenuAction(nudgeLabel(delta), keepsOpen = true) { onNudge(delta) } },
+            actions = stepsMillis.map { delta -> MenuAction(nudgeLabel(delta), keepsOpen = true, id = "time steps") { onNudge(delta) } },
         )
     }
 }

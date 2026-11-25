@@ -75,16 +75,47 @@ object ContextDomain {
 
     /** The right-click menus that are a row's: they list [ROW_MENU_ENTRIES] by default. */
     val ROW_MENUS: Set<String> = setOf(
-        "task cell menu", "ItemResultRow", "ElementChildren", "ElementChildren blank", "TaskPathBox", "TaskPathBox#2",
+        "task cell menu", "ItemResultRow", "ElementChildren", "ElementChildren blank", "TaskPathBox",
         "TaskIdentityRow", "EditMenuRow",
     )
+
+    /** A Search window's background entries ("Show / Hide the header"…), by id, the window's or a section's. */
+    private val SEARCH_PARTS: List<String> = listOf("the header", "the search bar", "the search", "the actions", "the added elements")
+
+    /**
+     * User rule 2026-11-25 (*"Make sure the logic is the same everywhere."*): **the default "Entries, in order" of every
+     * right-click menu** — the row menus' [ROW_MENU_ENTRIES], and each other menu's own. A row that stands for data (a
+     * task's paths, the time steps, the calendar's choices) has its group's id: the group stands where its id does.
+     */
+    val MENU_ENTRIES: Map<String, List<String>> by lazy {
+        ROW_MENUS.associateWith { ROW_MENU_ENTRIES } + mapOf(
+            "TaskPathBox#2" to listOf("paths"),
+            "SearchPartsMenu" to listOf("Reset", "Copy id") + SEARCH_PARTS + "separator" + SEARCH_PARTS.map { "section $it" },
+            "calendar grid menu" to listOf("element here", "choices", "edit…", "move", "add…", "day…", "display…", "lock…"),
+            "calendar held drag menu" to listOf("cancel", "resume drag"),
+            "LateralMenu" to listOf("Reset"),
+            "lateral menu button menu" to listOf("Update", "Rename", "all pages", "match the whole state", "Remove", "Reset"),
+            "MenuAddableBox" to listOf("add in the left-side menu"),
+            "HeadMenu" to listOf(
+                "Rename", "Copy id", "Remove from menu", "Copy all", "Add a button for this window to the left menu", "Duplicate",
+                "Fill the width", "Fill the height", "Reduce", "Maximize", "Close",
+            ),
+            "window bar menu" to listOf("close selection", "minimize selection", "open selection", "global"),
+            "WindowBarMoreButton" to listOf("undo", "redo"),
+            "priority column menu" to listOf("relative priority", "priority weights"),
+            "priority weight column menu" to listOf("Add column to the right", "Reset to default", "Delete column"),
+            "RelativePriorityWindow" to listOf("relative to"),
+            "NudgeMenu" to listOf("time steps"),
+            "time nudge menu" to listOf("time steps"),
+            "TreeRowMenu" to listOf("add"),
+        )
+    }
 
     /** Every context, in the order the action lists them. */
     val CONTEXTS: List<SearchContext> by lazy {
         listOf(SearchContext(SEARCH_WINDOW, "default of a Search window", SearchDomain.Config())) +
             RIGHT_CLICK_MENUS.map { (name, what) ->
-                val default = if (name in ROW_MENUS) SearchDomain.OPTION_SEARCH.copy(entries = ROW_MENU_ENTRIES) else SearchDomain.OPTION_SEARCH
-                SearchContext(MENU_PREFIX + name, "default of the right-click menu of $what", default)
+                SearchContext(MENU_PREFIX + name, "default of the right-click menu of $what", SearchDomain.OPTION_SEARCH.copy(entries = MENU_ENTRIES[name].orEmpty()))
             } +
             listOf(
                 SearchContext(DROP_DOWN, "default of a drop-down", SearchDomain.OPTION_SEARCH),

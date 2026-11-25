@@ -1502,6 +1502,7 @@ fun SearchWindow(
               removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved, barRemoved = barRemoved),
               more = emptyList(),
               parts = SearchPart.entries.let { if (barOutside || picker != null) it - SearchPart.Bar else it },
+              idPrefix = SECTION_ENTRY_PREFIX,
           ) { part ->
               val next = part.toggled(splitsNow())
               headerRemoved = next.headerRemoved
@@ -2659,9 +2660,15 @@ class MenuAction(
 ) {
     companion object {
         /** A line between two groups of a menu's entries. */
-        fun separator(): MenuAction = MenuAction(SEPARATOR_LABEL, enabled = false, separator = true) {}
+        fun separator(): MenuAction = MenuAction(SEPARATOR_LABEL, enabled = false, separator = true, id = SEPARATOR_ID) {}
     }
 }
+
+/** What a section's background entries' ids start with ([partsMenuActions]). */
+const val SECTION_ENTRY_PREFIX: String = "section "
+
+/** A separator's entry id ([SearchDomain.Config.entries]). */
+const val SEPARATOR_ID: String = "separator"
 
 /** What a separator row is called, for the bar's finder and "Listed from". */
 internal const val SEPARATOR_LABEL: String = "———"
@@ -3067,7 +3074,7 @@ internal fun SearchPartsMenu(
     ActionMenu("SearchPartsMenu",
         open = open,
         onDismiss = onDismiss,
-        actions = partsMenuActions(removed, more, parts, onToggle) + (if (after.isEmpty()) emptyList() else listOf(MenuAction.separator()) + after),
+        actions = partsMenuActions(removed, more, parts, onToggle = onToggle) + (if (after.isEmpty()) emptyList() else listOf(MenuAction.separator()) + after),
         atPointer = true,
     )
 }
@@ -3081,9 +3088,13 @@ internal fun partsMenuActions(
     removed: SearchSplits,
     more: List<MenuAction>,
     parts: List<SearchPart>,
+    /** User rule 2026-11-25: what the entries' ids start with — a section's ("section ") are not the window's. */
+    idPrefix: String = "",
     onToggle: (SearchPart) -> Unit,
 ): List<MenuAction> =
-    more + parts.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed)), keepsOpen = true) { onToggle(part) } }
+    more + parts.map { part ->
+        MenuAction(part.menuLabel(removed = part.isRemoved(removed)), keepsOpen = true, id = idPrefix + part.entryId) { onToggle(part) }
+    }
 
 /**
  * User rule 2026-11-25: *"When right-clicking the background of the Search window S, if it is done in the action section or
@@ -3178,6 +3189,9 @@ internal enum class SearchPart(private val label: String) {
 
     /** "Hide …" while it is there, "Show …" once taken off. */
     fun menuLabel(removed: Boolean): String = (if (removed) "Show " else "Hide ") + label
+
+    /** Its background menu entry's id, shown or hidden alike ([MenuAction.id]). */
+    val entryId: String get() = label
 
     /** [splits] with this part taken off, or put back expanded. */
     fun toggled(splits: SearchSplits): SearchSplits {
@@ -4206,7 +4220,7 @@ private fun TaskPathBox(
                     open = listOpen,
                     onDismiss = { listOpen = false },
                     actions = result.paths.map { path ->
-                        MenuAction(SearchDomain.pathLabel(path)) {
+                        MenuAction(SearchDomain.pathLabel(path), id = "paths") {
                             selectNow()
                             onOpenMenu(path)
                         }

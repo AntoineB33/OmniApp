@@ -1253,7 +1253,7 @@ internal fun menuItemActions(
     buildList {
         if (button == null) {
             add(MenuAction("Rename", enabled = false) {})
-            add(MenuAction("✓ all pages", enabled = false) {})
+            add(MenuAction("✓ all pages", enabled = false, id = "all pages") {})
             add(MenuAction("Remove", enabled = false) {})
             add(MenuAction("Reset") { onReset() })
             return@buildList
@@ -1262,11 +1262,11 @@ internal fun menuItemActions(
         if (CustomMenuButtons.canRename(button)) add(MenuAction("Rename") { onStartRename(button.id) })
         // Checked while the item stands in the menu of every page. A folder is its items, each global or not.
         // User rule 2026-11-04: named "all pages" (it was "Global").
-        if (!button.folder) add(MenuAction((if (button.global) "✓ " else "") + "all pages") { onSetGlobal(button.id, !button.global) })
+        if (!button.folder) add(MenuAction((if (button.global) "✓ " else "") + "all pages", id = "all pages") { onSetGlobal(button.id, !button.global) })
         // User rule 2026-11-05: a window's button only — checked, it brings back its window only as it keeps it whole.
         if (!button.folder && button.control == null && button.action == null && button.windowId.isNotBlank()) {
             val on = CustomMenuButtons.wholeStateOn(button)
-            add(MenuAction((if (on) "✓ " else "") + "match the whole state") { onSetWholeState(button.id, !on) })
+            add(MenuAction((if (on) "✓ " else "") + "match the whole state", id = "match the whole state") { onSetWholeState(button.id, !on) })
         }
         add(MenuAction("Remove") { onRemove(button.id) })
         add(MenuAction("Reset") { onReset() })

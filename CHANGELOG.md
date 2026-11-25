@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every right-click menu lists its "Entries, in order" — 2026-11-25
+
+- User: *"Make sure the logic is the same everywhere."* Every right-click menu's context now sets "Entries, in order"
+  (`ContextDomain.MENU_ENTRIES`), not the row menus alone: window background, calendar, left-side menu, window head and
+  bar, priority columns, time nudges, a task's paths. Changing labels keep one id; data rows share their group's id.
+  `MenuEntriesCatalogTest` guards that every entry of the code is named by a menu.
+- Client rebuild only.
+
 ### "Entries, in order" and an entry's "Default presences" — 2026-11-25
 
 - User: *"it can be simply one search configuration that basically just set the elements in the right place. For example,
