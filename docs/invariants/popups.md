@@ -621,6 +621,9 @@ means.
     screen** (opacity 0.01, never 0: a wholly transparent window is one the pointer goes through) — sent off the screen,
     it let the window under the pointer take the drag's moves (a row there was selected); moved along with the pointer,
     it saw the pointer never move and the drag stopped. Off the screen only where the platform cannot make it so.
+    Measured 2026-11-25: hiding it any later than the drag's start — left where it stood, or carried under the pointer
+    with the window it becomes — the pointer left it or stopped moving in it, and the drag stopped for good. So it hides
+    at once, and for about a frame, until the app draws the window it becomes, nothing stands there.
     **A menu window is opaque again as it goes back to the pool and as it is taken** (`MenuWindows.shownWhole`; anomaly
     2026-11-25, *"when a pop-up window becomes a window …, the right-click doesn't work anymore anywhere"*): the windows
     are reused, and the next menu opened in the dragged one was all but transparent — every menu after a drag, unseen.
@@ -1124,6 +1127,15 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   press (`HangingMenu`), once it has been answered. A right-click on another row with a menu of its own closes this one
   as that one opens; reopened at once, as before, the two closed each other and neither stayed. The same row
   right-clicked again still moves its menu to the new pointer.
+- **A pop-up's background is a window's background** (anomalies 2026-11-25, A's background menu B, checked on the
+  desktop): its whole surface, padding included, opens its background menu (the surface's `contextMenuModifier`); a
+  press in a menu's own window closes the menus opened from it, never that menu nor those it hangs from
+  (`dismissesMenusOnPress` keeps `LocalEnclosingMenus`), as a press in the app's window closes the menus over it; and a
+  menu losing the keyboard to a window it hangs from, by a right-click there, is not closed by that loss
+  (`rightPressedInApp` reads every window it hangs from) — so a second right-click reopens it, as in the app's window.
+- **The window a pop-up becomes is the pop-up's**: the sections it showed (`PopupDetacher` takes its `SearchSplits`;
+  its head and bar shown), and a menu's entries live as their caller gives them (`SearchOptions.asGiven`, a `State`):
+  through the menu's own wrapper, a click set that menu's "held" flag and the menu came back.
 - **A section's background options join its window's** (user rule 2026-11-25): the actions section and the added
   elements list have no background menu of their own; a secondary press on their background leaves their own options
   (`SectionBackground`, `recordsSectionPress`, read before the window's handler as an inner node's), which the window's

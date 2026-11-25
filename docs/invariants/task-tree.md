@@ -1140,6 +1140,9 @@ suggestions before it was ever entered.
 - **A task row is a tree cell to the user.** Its menu is built for the path the right-click landed on (the row, its
   path box, or a line of its list of paths): deep copy acts on THAT occurrence (`SearchDomain.occurrenceAtPath`,
   walked on the right-click, never per keystroke), and "copy path" copies that path.
+- **No row is shown selected until the user chooses one**, in every Search window, framed or not (anomaly 2026-11-25:
+  a framed window's first row looked selected while its sections, reading the user's selection, showed none). The
+  lists a key picks from keep their first row: a menu's or a drop-down's, the left-side menu, a picker.
 - **The outline is the row's, never around what it opens** (anomaly 2026-11-25): the row itself wears it (`ItemResultRow`'s
   and `SearchTaskRow`'s `outlined`, a tree cell's `addedOutlined`), not the box that also holds its children; a child is
   outlined only if it is itself in the added elements — what an added row opens is not added.

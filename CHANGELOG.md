@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A pop-up's background menu, drag and window behave as a window's — 2026-11-25
+
+- Anomalies on A's background menu B, each checked on the desktop: its padding opened nothing on a right-click; a second
+  right-click on its background opened nothing (unlike A); the window it became showed sections B did not, a first row
+  shown selected that its sections ignored, and a left-click on an entry reopened the right-click menu; the drag
+  stopped. All fixed by B doing what A does (`popups.md`); one selection rule for every Search window (`task-tree.md`).
+- Left: dragging B, it vanishes for about a frame before its window is drawn — every way of keeping it seen broke the
+  drag; menu windows with a see-through background would allow it.
+- Client rebuild only.
+
 ### Menus visible again after a pop-up was dragged into a window — 2026-11-25
 
 - Anomaly: *"Maybe when a pop-up window becomes a window …, the right-click doesn't work anymore anywhere?"* Yes: the
