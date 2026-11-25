@@ -964,6 +964,10 @@ private fun AddedActionBlocks(
             }
         }
         // The entries that act on a CELL act on each task's first live one; a task no cell holds has none.
+        // User rule 2026-11-25: the calendar block editors' fields, over the checked blocks.
+        SearchDomain.AddedAction.BlockTask, SearchDomain.AddedAction.BlockPins, SearchDomain.AddedAction.BlockRepeat,
+        SearchDomain.AddedAction.BlockOpenBounds, SearchDomain.AddedAction.BlockReminderTag ->
+            CheckedBlocksActionEditor(state, action, added, config, nowMillis) { run(SearchDomain.AddedCommand.Raw(it)) }
         // User rule 2026-11-25: the Task relations window's buttons, over the added pairs.
         SearchDomain.AddedAction.TaskRelationKeep, SearchDomain.AddedAction.TaskRelationDrop -> {
             val keys = added.filterIsInstance<SearchDomain.ItemResult>().filter { it.kind == SearchDomain.Kind.TaskRelation }.mapNotNull { SearchDomain.relationKeyOf(it.id) }

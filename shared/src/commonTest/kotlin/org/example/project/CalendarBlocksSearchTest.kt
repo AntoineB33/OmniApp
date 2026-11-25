@@ -306,4 +306,47 @@ class CalendarBlocksSearchTest {
         assertTrue(general(category, "Alarm/alarm-0").containsAll(calendar))
         assertEquals(listOf("Alarm/alarm-0"), SearchDomain.blockOwners(added(s, category, "Alarm/alarm-0")))
     }
+
+    /**
+     * User rule 2026-11-25 (*"the search window is the only window of the app"*): the calendar block editors are the
+     * "Checked blocks" group of the element's Search window — "Blocks on the calendar" and the rows over the blocks it
+     * checks, each writing the panel as the editor's Save did.
+     */
+    @Test
+    fun the_block_editors_are_rows_over_the_checked_blocks() {
+        var s = account()
+        val read = taskWithTitle(s, "Read")
+        s = r(s, SchedulerIntent.AddCalendarElements(SearchDomain.calendarDrafts(s, added(s, "Task/" + read.value), at, tz, endMillis = at + hour)))
+        val owner = added(s, "Task/" + read.value)
+        val group = assertNotNullGroup(owner)
+        assertEquals(SearchDomain.BLOCK_ACTIONS, group.actions)
+        assertEquals(group.id, SearchDomain.taggedGroupId(owner, SearchDomain.BLOCKS_GROUP))
+
+        val block = SearchDomain.blocksOfAdded(s, owner, tz).single()
+        val panel = SearchDomain.blockPanel(s, block)!!
+        // Pins, the repetition and the task are written through the panel; a change to nothing writes nothing.
+        assertNull(SearchDomain.blockPanelIntent(s, block, pins = panel.pins))
+        val pinned = SearchDomain.blockPanelIntent(s, block, pins = panel.pins.copy(position = true)) as SchedulerIntent.UpdateTaskPanel
+        assertTrue(pinned.pins.position)
+        val repeated = r(s, SearchDomain.blockPanelIntent(s, block, repeatEveryDays = 7)!!)
+        assertEquals(7, repeated.panels.first { it.id == panel.id }.repeat?.everyDays)
+        val walk = taskWithTitle(s, "Walk")
+        val moved = SearchDomain.blockPanelIntent(s, block, taskId = walk, title = "Walk") as SchedulerIntent.UpdateTaskPanel
+        assertEquals(walk, moved.taskId)
+
+        // A reminder's tag: done and pinned, through the calendar's element save.
+        s = s.copy(panels = s.panels + TaskPanel("chore/reminder-0/0", null, "Water", at + 2 * hour, at + 2 * hour, chore = true))
+        val tag = SearchDomain.blocksOfAdded(s, added(s, "Reminder/reminder-0"), tz).single()
+        assertTrue(SearchDomain.blockPanelIntent(s, tag, reminderChecked = true) is SchedulerIntent.AddCalendarElements)
+        assertNull(SearchDomain.blockPanelIntent(s, tag, reminderChecked = false))
+    }
+
+    private fun assertNotNullGroup(added: List<SearchDomain.Result>): SearchDomain.ActionGroup {
+        val groups = SearchDomain.actionGroups(
+            SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added),
+            added,
+        )
+        fun all(g: SearchDomain.ActionGroup): List<SearchDomain.ActionGroup> = listOf(g) + g.inner.flatMap(::all)
+        return groups.flatMap(::all).single { it.tag == SearchDomain.BLOCKS_GROUP }
+    }
 }

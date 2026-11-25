@@ -46,10 +46,16 @@ window, a period's, a category's, a notice — is the same thing with the same m
   draws what the Online window showed (`OnlineContent`, `LocalOnlineContent`). **The default alarm / timer / reminder
   window** is the Search window of that kind's creation row, its group pinned (`openDefaultsSearch`,
   `SearchDomain.groupIdOf`). **The reminder "constrained in" picker** is a drop-down's Search pop-up stuck to its button
-  (`ReminderConstraintPicker`). Still windows of their own: the default sub-tree's window and its per-object windows (its
-  tree is not the account's), the editors a double-click on a calendar block opens (a block, a period draft, a reminder
-  tag — drafts saved by their Save, the one place a derived block is materialized), and the debug time-simulation panel,
-  which is no window of the app.
+  (`ReminderConstraintPicker`). **A double-click on a calendar block** opens
+  the Search window of its element (the task, the period kind, the reminder) with the block checked and the "Checked
+  blocks" group pinned (`openBlocksSearch`): "Blocks on the calendar" (its start, its end, its removal) and the rows
+  the block editors asked — Task, Pins, Repeat every, Open bounds (∞), Reminder tag (done, pinned) — each written at once
+  through the panel's intent (`SearchDomain.blockPanelIntent`, `CheckedBlocksActionEditor`). A band the app derives
+  (a past stretch of inactivity) is no block: its double-click opens the period's Search window with "Add to the
+  calendar" pinned at the band's start. The block, period, reminder-tag and "add… / edit…" editor windows are gone from
+  `App`. A pinned Search window is matched by its added elements, not its search alone (`openPinnedSearch`). Still windows
+  of their own: the default sub-tree's window and its per-object windows (its tree is not the account's), and the debug
+  time-simulation panel, which is no window of the app.
 - **The blank row ending a list of children shows a POP-UP, never a window** (user rule 2026-11-25: *"instead of opening a
   new window with a tab in the system tray, open a pop-up window. Add the arrow indicating that a pop-up window will appear
   when hovered over."*; `ChildSearchPopup`, `HoverPopupRow`'s `ask`). Hovered it shows the Search window of what can be

@@ -1592,6 +1592,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The default configuration of a new alarm, timer or reminder: a Search window on that kind's creation row, its
         // group pinned — the creation row's actions ARE that configuration (user rule 2026-11-25).
         var openDefaultsSearch: (ObjectWindowKey.Kind) -> Unit = {}
+        // A calendar block's editors are the "Checked blocks" group of its element's Search window (user rule 2026-11-25).
+        var openBlocksSearch: (owner: String, blockIds: List<String>) -> Unit = { _, _ -> }
         // A per-object window named by its key: opened on its object (or brought back when one is open on it) — or,
         // at startup, reopened under the [number] it had. The one reading of a key, for the ☆ buttons and the
         // restore alike.
@@ -2557,6 +2559,21 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val linked = searchSource()?.let { source -> SearchDomain.linkedConfig(config, source, searchConfigOf(source)) } ?: config
             return openNewWindow(FloatingWindow.Search, linked.encode())
         }
+        // User rule 2026-11-25: a Search window on [config]'s added elements, to show one of their rows (pinned) and the
+        // blocks checked: the one open on those same elements is brought back and told them, else one opens. Matched by
+        // its elements, not its search alone — two tasks' windows share their search and are two windows.
+        fun openPinnedSearch(config: SearchDomain.Config): String {
+            val linked = searchSource()?.let { source -> SearchDomain.linkedConfig(config, source, searchConfigOf(source)) } ?: config
+            val wanted = config.added.toSet()
+            val id = openNewWindow(
+                FloatingWindow.Search, linked.encode(),
+                matches = { open -> searchConfigOf(open).let { it.kinds == config.kinds && it.added.toSet() == wanted } },
+            )
+            val held = searchConfigOf(id)
+            val told = held.copy(pinnedActionRow = config.pinnedActionRow ?: held.pinnedActionRow, pickedBlocks = config.pickedBlocks.ifEmpty { held.pickedBlocks })
+            if (told != held) setSearchConfig(id, told)
+            return id
+        }
         windowPageOf = { frameId ->
             // A global window is on every page: the one shown (user rule 2026-10-18).
             if (frameId in globalWindows) page
@@ -2848,7 +2865,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (keys.isEmpty()) return
             val rows = SearchDomain.resolve(vm.state.value, keys, { emptyMap() })
             val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task), added = keys, pinnedActionRow = pinnedOf(rows))
-            openLinkedSearch(config)
+            openPinnedSearch(config)
         }
         // The same block "copy" takes: a deep copy of a multi-selection is every selected cell's task.
         openDeepCopySearch = { cellId ->
@@ -2863,6 +2880,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (task == null) appMessage = "This sub-list holds no task yet."
             else openPinnedTaskSearch(listOf(task)) { SearchDomain.actionRowId(it, SearchDomain.AddedAction.TaskPriorityWeights) }
         }
+        openBlocksSearch = { owner, blockIds ->
+            val kind = SearchDomain.Kind.entries.firstOrNull { owner.startsWith(it.name + "/") }
+            if (kind != null) {
+                val rows = SearchDomain.resolve(vm.state.value, listOf(owner), { emptyMap() })
+                openPinnedSearch(
+                    SearchDomain.Config(
+                        kinds = setOf(kind), added = listOf(owner), pickedBlocks = blockIds.toSet(),
+                        pinnedActionRow = SearchDomain.taggedGroupId(rows, SearchDomain.BLOCKS_GROUP),
+                    ),
+                )
+            }
+        }
         openDefaultsSearch = { kind ->
             val made = when (kind) {
                 ObjectWindowKey.Kind.AlarmDefaults -> SearchDomain.Kind.Alarm
@@ -2873,7 +2902,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (made != null) {
                 val key = SearchDomain.Kind.Creation.name + "/" + made.name
                 val rows = SearchDomain.resolve(vm.state.value, listOf(key), { emptyMap() })
-                openLinkedSearch(
+                openPinnedSearch(
                     SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Creation), added = listOf(key), pinnedActionRow = SearchDomain.groupIdOf(rows, key)),
                 )
             }
@@ -4558,29 +4587,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // The same hues read the other way, for the windows that NAME a task on an ordinary light surface
         // rather than drawing it on the timeline ([org.example.project.ui.TaskTitleLabel]).
         val taskSheetColors = remember(taskHues) { TaskPalette.sheetColors(taskHues) }
-        // The calendar's per-object windows — about something transient (a draft, a spot), so no ☆.
-        // PRD §8 edit window: the calendar blocks being edited.
-        val blockEditWindows = remember { ObjectWindows<PlacedRecord>() }
-        // PRD §14: the reminder tags the "edit…" chooser's `reminder` row is open on. A tag had no editor
-        // reachable from the calendar at all before the chooser — only "add reminder" did.
-        val reminderTagWindows = remember { ObjectWindows<PlacedRecord>() }
-        // PRD §8: the periods the period editor is open on. A period's own row of the "edit…" chooser opens it,
-        // and it is the one-element case of the element window's period section — nothing is laid on the
-        // calendar until Save, which is what lets a period be given an open ("∞") bound the grid could never be
-        // dragged to.
-        val periodDraftWindows = remember { ObjectWindows<PeriodDraft>() }
-        // PRD §8 contextual menu **"add…" / "edit…"**: what the element window is open on — the instant it is
-        // anchored at, and, for "edit…", the elements at the mouse it is confined to. Both entries open the one
-        // window ([org.example.project.ui.CalendarElementsWindow]).
-        val elementsWindows = remember { ObjectWindows<CalendarElementsDraftSet>() }
-
-
-        // PRD §7: switching focus to another window leaves Edit Mode in any window — close the calendar's
-        // edit surface so it doesn't linger over the newly focused window.
-        LaunchedEffect(schedulerState.focusedWindow) {
-            blockEditWindows.closeAll()
-        }
-
         // PRD §8: which period kinds refuse which task — what the calendar's drag preview retracts by, the
         // reducer's own question ([SchedulerDomain.periodRefuses]) asked of the same tasks.
         val periodRefusalTasks = schedulerState.tasks
@@ -5268,17 +5274,39 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                             choice.label == EDIT_LABEL_SLEEP_SCHEDULE -> sleepWindowOpen = true
                                             choice.label == EDIT_LABEL_ALARM ||
                                                 choice.label == EDIT_LABEL_TIMER -> alarmWindowOpen = true
-                                            choice.label == EDIT_LABEL_REMINDER -> head?.let(reminderTagWindows::open)
-                                            choice.periodKind.isNotBlank() && head != null ->
-                                                periodDraftWindows.open(
-                                                    PeriodDraft(
-                                                        kind = choice.periodKind,
-                                                        blocks = choice.records,
-                                                        startMillis = head.fullStartMillis,
-                                                        endMillis = head.fullEndMillis,
-                                                    ),
+                                            // User rule 2026-11-25: no editor window — the element's Search window, the
+                                            // block checked in its "Checked blocks" group, pinned ([openBlocksSearch]).
+                                            choice.label == EDIT_LABEL_REMINDER && head != null ->
+                                                openBlocksSearch(
+                                                    SearchDomain.Kind.Reminder.name + "/" + SchedulerDomain.reminderIdOfChorePanel(head.entryId.orEmpty()).orEmpty(),
+                                                    listOfNotNull(head.entryId),
                                                 )
-                                            head != null -> blockEditWindows.open(head)
+                                            choice.periodKind.isNotBlank() && head != null -> {
+                                                val stated = choice.records.flatMap { it.entryIds.ifEmpty { listOfNotNull(it.entryId) } }
+                                                val periodKey = SearchDomain.Kind.RestrictivePeriod.name + "/" + choice.periodKind
+                                                if (stated.isNotEmpty()) {
+                                                    openBlocksSearch(periodKey, stated)
+                                                } else {
+                                                    // A band the app derives (a past stretch of inactivity) is no block yet: stating it
+                                                    // is adding a period there, the period's "Add to the calendar" at its start.
+                                                    openPinnedSearch(
+                                                        SearchDomain.calendarAddConfig(head.fullStartMillis).copy(
+                                                            kinds = setOf(SearchDomain.Kind.RestrictivePeriod),
+                                                            added = listOf(periodKey),
+                                                            pinnedActionRow = SearchDomain.actionRowId(
+                                                                SearchDomain.resolve(vm.state.value, listOf(periodKey), { emptyMap() }),
+                                                                SearchDomain.AddedAction.PlaceOnCalendar,
+                                                            ),
+                                                        ),
+                                                    )
+                                                }
+                                            }
+                                            head != null -> {
+                                                val task = head.taskId
+                                                if (task != null) {
+                                                    openBlocksSearch(SearchDomain.Kind.Task.name + "/" + task.value, head.entryIds.ifEmpty { listOfNotNull(head.entryId) })
+                                                }
+                                            }
                                         }
                                     },
                                     // PRD §8 "go to task tree" — the app's one handler, shared with the "All
@@ -5357,208 +5385,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         // The calendar's own editors: where a calendar is drawn — its page, or every page while one is
                         // global (user rule 2026-10-18).
                         if (page == OmniPage.TaskScheduler || globalWindows.any { it in calendarWindowIds() }) {
-                        // PRD §8 edit window, opened over the calendar window and the tree — the
-                        // one-element case of a TASK PANEL, reached from the "edit…" chooser and from a
-                        // double-click. Adding one goes through [CalendarElementsWindow] now, so this
-                        // window only ever edits something that exists and always carries its bin. A window
-                        // like any other since ADR 0014: no scrim, and it takes its turn in the one
-                        // stacking order.
-                        ObjectWindowsHost(blockEditWindows) { w ->
-                            val block = w.subject
-                            val close = w::close
-                            ManualEntryEditWindow(
-                                initialTitle = block.title,
-                                initialTaskId = block.taskId,
-                                startMillis = block.fullStartMillis,
-                                endMillis = block.fullEndMillis,
-                                tz = tz,
-                                taskMenuEntries = { draft, exclude ->
-                                    SchedulerDomain.calendarTaskMenuEntries(schedulerState, draft, exclude)
-                                },
-                                titleSuggestions = { SchedulerDomain.placeableTaskTitleSuggestions(schedulerState, it) },
-                                taskIdForTitle = { SchedulerDomain.placeableTaskIdForTitle(schedulerState, it) },
-                                titleForTaskId = { schedulerState.tasks[it]?.title },
-                                initialPins = block.pins,
-                                noScreenResilienceForTaskId = { id ->
-                                    schedulerState.tasks[id]?.resilienceFor(PeriodKinds.NO_SCREEN)
-                                },
-                                // The pattern of the panel this block is (an occurrence reads its pattern's).
-                                initialRepeatDays = repeatDaysOf(schedulerState.panels, block.entryId),
-                                repeatExceptions = repeatExceptionsOf(schedulerState, block.entryId, tz),
-                                onDismiss = { close() },
-                                // PRD §8: the bin — the menu's "Remove" now lives in the window that names
-                                // what it deletes.
-                                onRemove = {
-                                    removeBlockIntent(block)?.let(vm::dispatch)
-                                    close()
-                                },
-                                onSave = { taskId, title, startMillis, endMillis, pins, noScreenResilience, repeatDays ->
-                                    commitBoundsIntent(block, taskId, title, startMillis, endMillis, pins, repeatEveryDays = repeatDays)
-                                        ?.let(vm::dispatch)
-                                    // `side-dev/README.md`: the task's resilience to "no on-screen task",
-                                    // saved alongside the panel — the one thing the old pair of switches
-                                    // really said. Only dispatched when it actually changed (no no-op unit).
-                                    val task = taskId?.let { schedulerState.tasks[it] }
-                                    if (task != null && task.resilienceFor(PeriodKinds.NO_SCREEN) != noScreenResilience) {
-                                        vm.dispatch(
-                                            SchedulerIntent.SetTaskResilience(
-                                                taskId, PeriodKinds.NO_SCREEN, noScreenResilience,
-                                            ),
-                                        )
-                                    }
-                                    close()
-                                },
-                                )
-                        }
 
-                        // PRD §8: the period editor — one window for every kind, reached from the "add…"
-                        // chooser and from a period's own row of the "edit…" chooser.
-                        ObjectWindowsHost(periodDraftWindows) { w ->
-                            val draft = w.subject
-                            val close = w::close
-                            PeriodEditWindow(
-                                kind = draft.kind,
-                                isNew = draft.blocks.isEmpty(),
-                                startMillis = draft.startMillis,
-                                endMillis = draft.endMillis,
-                                nowMillis = nowMillis,
-                                tz = tz,
-                                onDismiss = { close() },
-                                // PRD §8: the bin — the ONE way to get rid of a period now that the menu has
-                                // no "Remove". Offered only where there is something stored to delete: a
-                                // derived band has no panel behind it, so there is nothing to bin (the way to
-                                // be rid of one is to stop whatever derives it).
-                                onRemove =
-                                    draft.blocks.takeIf { blocks -> blocks.any { it.entryId != null } }
-                                        ?.let { blocks ->
-                                            {
-                                                blocks.forEach { removeBlockIntent(it)?.let(vm::dispatch) }
-                                                close()
-                                            }
-                                        },
-                                initialRepeatDays = repeatDaysOf(schedulerState.panels, draft.blocks.firstOrNull { it.entryId != null }?.entryId),
-                                repeatExceptions = repeatExceptionsOf(schedulerState, draft.blocks.firstOrNull { it.entryId != null }?.entryId, tz),
-                                onSave = { start, end, repeatDays ->
-                                    if (draft.blocks.isEmpty()) {
-                                        // `side-dev/README.md`: one intent lays a period of any kind.
-                                        vm.dispatch(SchedulerIntent.AddRestrictivePeriod(draft.kind, start, end, repeatDays))
-                                    } else {
-                                        // Every period the row stands for takes the new bounds — one for an
-                                        // ordinary period, two where a "no screen" stretch is spelt as the
-                                        // computer + phone pair.
-                                        draft.blocks.forEach { block ->
-                                            val intent =
-                                                if (block.entryId != null) {
-                                                    // The ordinary panel-bounds commit, which re-applies the
-                                                    // period's own override rule over its new span.
-                                                    commitBoundsIntent(
-                                                        block, null, block.title, start, end, block.pins,
-                                                        repeatEveryDays = repeatDays,
-                                                    )
-                                                } else {
-                                                    // A DERIVED band: the app was reporting this stretch and
-                                                    // the user has just stated it, so the edit lays the
-                                                    // period the band was standing in for. Its own kind, not
-                                                    // the row's: a wind-down hour materializes as
-                                                    // `before bed`, never as plain inactivity.
-                                                    SchedulerIntent.AddRestrictivePeriod(
-                                                        block.restrictiveKind.ifBlank { draft.kind }, start, end, repeatDays,
-                                                    )
-                                                }
-                                            intent?.let(vm::dispatch)
-                                        }
-                                    }
-                                    close()
-                                },
-                            )
-                        }
 
-                        // PRD §8 "add…" / "edit…": the ONE window both entries open. It holds a LIST of
-                        // elements and their configuration grouped by who shares it, and — unlike the
-                        // chooser it replaced — it is the placement path itself, so its Save is where
-                        // "nothing is placed until Save" and "one Save is one Ctrl+Z" are both owed.
-                        ObjectWindowsHost(elementsWindows) { w ->
-                            val open = w.subject
-                            val close = w::close
-                            CalendarElementsWindow(
-                                mode = open.mode,
-                                atMillis = open.atMillis,
-                                nowMillis = nowMillis,
-                                tz = tz,
-                                candidates = open.candidates,
-                                periodKinds = schedulerState.allPeriodKinds,
-                                // The same intent the task edit window's `+` sends — defining a kind is an
-                                // account setting, and this is a second door onto it, not a second rule.
-                                onCreatePeriodKind = { vm.dispatch(SchedulerIntent.AddPeriodKind(it)) },
-                                taskMenuEntries = { draft, exclude ->
-                                    SchedulerDomain.calendarTaskMenuEntries(schedulerState, draft, exclude)
-                                },
-                                taskTitleSuggestions = {
-                                    SchedulerDomain.placeableTaskTitleSuggestions(schedulerState, it)
-                                },
-                                taskIdForTitle = { SchedulerDomain.placeableTaskIdForTitle(schedulerState, it) },
-                                titleForTaskId = { schedulerState.tasks[it]?.title },
-                                noScreenResilienceForTaskId = {
-                                    schedulerState.tasks[it]?.resilienceFor(PeriodKinds.NO_SCREEN)
-                                },
-                                // PRD §8 Manual add: the default task a blank search means.
-                                defaultTaskId = { SchedulerDomain.manualAddTaskId(schedulerState) },
-                                // PRD §8 Manual add: a fresh panel is the task's own minimum time long.
-                                panelSpanMillisFor = { taskId -> SearchDomain.panelSpanMillis(schedulerState, taskId) },
-                                periodSpanMillisFor = { kind -> SearchDomain.periodOwnLength(schedulerState, kind) },
-                                reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
-                                reminderTitleSuggestions = {
-                                    SchedulerDomain.reminderTitleSuggestions(schedulerState, it)
-                                },
-                                reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
-                                alarms = schedulerState.alarms,
-                                // PRD §18: what an alarm added here starts with — the account's defaults.
-                                newAlarm = schedulerState.newAlarmDefaults,
-                                // PRD §8: the bin of one row. A row the window is only ADDING has nothing
-                                // stored behind it, so the window never calls this for one.
-                                onRemove = { draft ->
-                                    removeCalendarElementIntents(draft, schedulerState).forEach(vm::dispatch)
-                                },
-                                onSave = { drafts ->
-                                    saveCalendarElementIntents(drafts, schedulerState, tz).forEach(vm::dispatch)
-                                    close()
-                                },
-                                onDismiss = { close() },
-                            )
-                        }
 
-                        // PRD §14: the same editor, opened on an EXISTING tag by the "edit…" chooser's
-                        // `reminder` row. A tag had no way of being edited from the calendar before the
-                        // chooser — only added, and only checked off — so the row is what made this window
-                        // need a seed and a bin.
-                        ObjectWindowsHost(reminderTagWindows) { w ->
-                            val tag = w.subject
-                            val close = w::close
-                            ReminderEditWindow(
-                                initialMillis = tag.fullStartMillis,
-                                tz = tz,
-                                initial = ReminderEditSeed(tag.title, tag.checked, tag.pinned),
-                                reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
-                                titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
-                                reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
-                                titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
-                                onDismiss = { close() },
-                                onRemove = {
-                                    removeBlockIntent(tag)?.let(vm::dispatch)
-                                    close()
-                                },
-                                // A tag's identity is its panel, and §14 lays one through AddReminder — so an
-                                // edit is the old tag struck off and the new one laid, in that order. (Two
-                                // intents, therefore two history units: an edited tag takes two Ctrl+Z. The
-                                // alternative is a third way of writing a reminder panel, which is the kind
-                                // of second funnel this whole reshape exists to remove.)
-                                onSave = { reminderId, title, at, checked, pinned ->
-                                    removeBlockIntent(tag)?.let(vm::dispatch)
-                                    vm.dispatch(SchedulerIntent.AddReminder(reminderId, title, at, checked, pinned))
-                                    close()
-                                },
-                            )
-                        }
                         }
 
                     }

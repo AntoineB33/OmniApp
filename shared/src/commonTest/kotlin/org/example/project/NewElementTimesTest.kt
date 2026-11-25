@@ -76,7 +76,7 @@ class NewElementTimesTest {
         // One alarm added: its group holds the default configuration of a new alarm.
         val one = SearchDomain.resolve(state, listOf("Alarm/alarm-1"))
         val sections = SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(one)), one)
-        val inner = SearchDomain.actionGroups(sections, one).single().inner.single()
+        val inner = SearchDomain.actionGroups(sections, one).single().inner.single { it.tag == null }
         assertEquals("Default configuration of a new alarm", inner.heading)
         assertTrue(listOf(SearchDomain.AddedAction.AlarmTime, SearchDomain.AddedAction.AlarmDays, SearchDomain.AddedAction.AlarmAlert).all { it in inner.actions })
         // A reminder's too.

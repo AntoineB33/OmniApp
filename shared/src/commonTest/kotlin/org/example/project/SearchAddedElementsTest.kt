@@ -449,13 +449,13 @@ class SearchAddedElementsTest {
         assertTrue(searched.all { SearchDomain.AddedAction.OpenEach in it.actions }, "sorted, never hidden")
         assertEquals(SearchDomain.AddedAction.OpenEach, SearchDomain.actionGroups(SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(listOf(a, x, b))), listOf(a, x, b)), listOf(a, x, b), "remove from list")[1].actions.first())
         assertTrue(SearchDomain.AddedAction.QuotaNew in mixed[1].actions && SearchDomain.AddedAction.QuotaNew !in mixed[2].actions)
-        assertTrue(SearchDomain.AddedAction.QuotaTitle in mixed[1].actions && mixed[1].inner.size == 1 && mixed[0].inner.isEmpty())
+        assertTrue(SearchDomain.AddedAction.QuotaTitle in mixed[1].actions && mixed[1].inner.count { it.tag == null } == 1 && mixed[0].inner.none { it.tag == null })
         assertEquals(SearchDomain.AddedAction.AlarmOnOff, mixed[3].actions[1])
         assertTrue(SearchDomain.AddedAction.AlarmNew in mixed[3].actions && SearchDomain.AddedAction.AlarmDelete in mixed[3].actions)
 
         // A "New quota" creation row beside a quota: its own group edits the default configuration, nothing else.
         val creation = SearchDomain.ItemResult(SearchDomain.Kind.Creation, SearchDomain.Kind.Quota.name, "New quota", "")
-        assertTrue(groups(listOf(a, b, creation)).all { it.inner.isEmpty() }, "its creation row is added: the default has its own group")
+        assertTrue(groups(listOf(a, b, creation)).all { g -> g.inner.none { it.tag == null } }, "its creation row is added: the default has its own group")
         val default = groups(listOf(a, creation)).single { it.members == listOf(creation) }
         assertTrue(default.actions.containsAll(listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop)))
         assertTrue(SearchDomain.AddedAction.QuotaProgress !in default.actions && SearchDomain.AddedAction.QuotaLoops !in default.actions)

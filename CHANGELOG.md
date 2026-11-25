@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Calendar block editors are action rows — 2026-11-26
+
+- A double-click on a block opens its element's Search window with the block checked and the "Checked blocks" group
+  pinned: Blocks on the calendar, Task, Pins, Repeat every, Open bounds (∞), Reminder tag. Each writes at once (one
+  History Unit per edit) where the editors waited for Save.
+- A derived band (a past stretch of inactivity) opens the period's "Add to the calendar" at its start: it no longer
+  keeps the band's own end, as the period editor's Save did.
+- Not checked on screen. Client rebuild only.
+
 ### The left-side menu's windows are Search windows — 2026-11-26
 
 - History, Sleep, Alarms, Task relations, Categories, Keyboard shortcuts and Online open a Search window set for what

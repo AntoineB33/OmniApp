@@ -22,6 +22,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.plus
 import org.example.project.scheduler.model.TaskPanel
+import org.example.project.scheduler.model.PanelPins
 import org.example.project.scheduler.model.TaskTimeRange
 import kotlinx.datetime.isoDayNumber
 import kotlinx.serialization.Serializable
@@ -5156,6 +5157,17 @@ object SearchDomain {
          * the action's button and following the pointer over the calendar until it is released ([calendarDragTargets]).
          */
         DragOnCalendar(null, "Drag on the calendar"),
+        /**
+         * User rule 2026-11-25 (*"the search window is the only window of the app"*): what the calendar's block editors
+         * asked — the task panel's, the period's, the reminder tag's — as rows over the blocks checked in "Blocks on the
+         * calendar" ([Config.pickedBlocks]), all in the "Checked blocks" group ([BLOCK_ACTIONS]). Each writes at once
+         * through the panel's own intent ([blockPanelIntent]), as the editors' Save did.
+         */
+        BlockTask(null, "Task of the checked blocks"),
+        BlockPins(null, "Pins of the checked blocks"),
+        BlockRepeat(null, "Repeat every (days)"),
+        BlockOpenBounds(null, "Open bounds (∞)"),
+        BlockReminderTag(null, "Reminder tag"),
         ClearList(null, "Remove every element from the list"),
         /**
          * An added CREATION row (user rule 2026-10-04): a Search window on every element of the kind the row makes —
@@ -5696,7 +5708,7 @@ object SearchDomain {
                 val elements = added.any { ElementTree.isElement(it.kind) && it.kind != Kind.Action }
                 val onlyTasks = added.all { it.kind == Kind.Task }
                 actions.filter {
-                    (onCalendar || it !in CALENDAR_ACTIONS) && !(onlyTimers && it == AddedAction.CalendarBlocks) &&
+                    (onCalendar || it !in CALENDAR_ACTIONS) && !(onlyTimers && (it == AddedAction.CalendarBlocks || it in BLOCK_EDIT_ACTIONS)) &&
                         (elements || it !in ELEMENT_ACTIONS) && !(onlyTasks && it in ELEMENT_CATEGORY_ACTIONS)
                 }.takeIf { it.isNotEmpty() }?.let { kind to it }
             } else if (added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
@@ -5913,17 +5925,42 @@ object SearchDomain {
      */
     private fun withDeepCopyGroup(group: ActionGroup): ActionGroup {
         val inner = group.inner.map(::withDeepCopyGroup)
-        val copying = DEEP_COPY_ACTIONS.filter { it in group.actions }
-        if (copying.isEmpty()) return if (inner == group.inner) group else group.copy(inner = inner)
-        val deep = ActionGroup(Kind.Task, group.members, copying, heading = DEEP_COPY_TITLE, tag = DEEP_COPY_GROUP)
-        return group.copy(actions = group.actions.filterNot { it in copying }, inner = listOf(deep) + inner)
+        var actions = group.actions
+        val made = ArrayList<ActionGroup>()
+        for ((tag, title, bundle) in TAGGED_GROUPS) {
+            val taken = bundle.filter { it in actions }
+            if (taken.isEmpty()) continue
+            made += ActionGroup(group.kind, group.members, taken, heading = title, tag = tag)
+            actions = actions.filterNot { it in taken }
+        }
+        if (made.isEmpty()) return if (inner == group.inner) group else group.copy(inner = inner)
+        return group.copy(actions = actions, inner = made + inner)
+    }
+
+    /**
+     * User rule 2026-11-25: **the groups made of a window's controls** — each a tag, its title and its rows, in order:
+     * the deep copy window's ([DEEP_COPY_ACTIONS]) and the calendar block editors' ([BLOCK_ACTIONS]).
+     */
+    private val TAGGED_GROUPS: List<Triple<String, String, List<AddedAction>>>
+        get() = listOf(
+            Triple(DEEP_COPY_GROUP, DEEP_COPY_TITLE, DEEP_COPY_ACTIONS),
+            Triple(BLOCKS_GROUP, BLOCKS_TITLE, BLOCK_ACTIONS),
+        )
+
+    /** The "Checked blocks" group: the list that checks the blocks, then the rows over them. */
+    val BLOCK_ACTIONS: List<AddedAction>
+        get() = listOf(AddedAction.CalendarBlocks) + BLOCK_EDIT_ACTIONS
+    const val BLOCKS_GROUP: String = "blocks"
+    const val BLOCKS_TITLE: String = "Checked blocks"
+
+    /** User rule 2026-11-25: the id of the group tagged [tag] the section lists for [added], null where none. */
+    fun taggedGroupId(added: List<Result>, tag: String): String? {
+        fun find(group: ActionGroup): String? = if (group.tag == tag) group.id else group.inner.firstNotNullOfOrNull(::find)
+        return addedActionGroups(added).firstNotNullOfOrNull(::find)
     }
 
     /** The id of the "Deep copy" group the section lists for [added] ([actionGroups]), null where it lists none. */
-    fun deepCopyGroupId(added: List<Result>): String? {
-        fun find(group: ActionGroup): String? = if (group.tag == DEEP_COPY_GROUP) group.id else group.inner.firstNotNullOfOrNull(::find)
-        return addedActionGroups(added).firstNotNullOfOrNull(::find)
-    }
+    fun deepCopyGroupId(added: List<Result>): String? = taggedGroupId(added, DEEP_COPY_GROUP)
 
     /**
      * User rule 2026-11-25: the id of the first row of the actions section showing [action] for [added] ([microGroupId]) —
@@ -6128,6 +6165,11 @@ object SearchDomain {
             AddedAction.TaskCopyIds -> "copy"
             AddedAction.TaskDeepCopy -> "deep copy clipboard"
             AddedAction.TaskRelationKeep -> "keep file first section"
+            AddedAction.BlockTask -> "task of the checked blocks change new task"
+            AddedAction.BlockPins -> "pins existence position spanning distance"
+            AddedAction.BlockRepeat -> "repeat every days pattern recurs"
+            AddedAction.BlockOpenBounds -> "open bound infinite past future period"
+            AddedAction.BlockReminderTag -> "reminder tag done checked pinned"
             AddedAction.TaskRelationDrop -> "strike off remove weight table row"
             AddedAction.DeepCopyMaxDepth -> "deep copy maximum depth levels"
             AddedAction.DeepCopyWholeSubtree -> "deep copy entire sub-tree unlimited"
@@ -6493,7 +6535,14 @@ object SearchDomain {
 
     /** The general actions about the calendar: listed for the elements that can be on it ([CALENDAR_ADD_KINDS]). */
     val CALENDAR_ACTIONS: Set<AddedAction> =
-        setOf(AddedAction.PlaceOnCalendar, AddedAction.CalendarBlocks, AddedAction.DragOnCalendar)
+        setOf(AddedAction.PlaceOnCalendar, AddedAction.CalendarBlocks, AddedAction.DragOnCalendar) + BLOCK_EDIT_ACTIONS
+
+    /** User rule 2026-11-25: the rows over the checked blocks, after the list that checks them ([BLOCK_ACTIONS]). */
+    val BLOCK_EDIT_ACTIONS: List<AddedAction>
+        get() = listOf(
+            AddedAction.BlockTask, AddedAction.BlockPins, AddedAction.BlockRepeat, AddedAction.BlockOpenBounds,
+            AddedAction.BlockReminderTag,
+        )
 
     /**
      * Whose blocks the "Drag on the calendar" action holds — the added elements that can be on the calendar, by what
@@ -7670,6 +7719,66 @@ object SearchDomain {
         return SchedulerIntent.UpdateTaskPanel(
             panel.id, panel.taskId, panel.title, startMillis, endMillis, SchedulerDomain.pinsAfterHandPlacement(panel.pins),
         )
+    }
+
+    /**
+     * User rule 2026-11-25: **the panel [block] is** — the one the state holds, or the occurrence of a repeating one under
+     * its own id (written through it, it leaves its pattern) — and null for a ring, a night of a rule or a gone block.
+     */
+    fun blockPanel(state: SchedulerState, block: CalendarBlock): TaskPanel? {
+        if (block.derivedKind != null || blockRingId(block) != null) return null
+        return state.panels.firstOrNull { it.id == block.id }
+            ?: PanelRepeats.baseIdOf(block.id)?.let { baseId -> state.panels.firstOrNull { it.id == baseId }?.copy(id = block.id) }
+    }
+
+    /**
+     * User rule 2026-11-25: **what writes a change of [block]'s panel** that is not where it stands — its task, its pins,
+     * its repetition, an open bound — through [SchedulerIntent.UpdateTaskPanel], the block editor's Save; a reminder's
+     * tag (done, pinned) through the calendar's element save, as a drag of it does. Null where nothing changes.
+     */
+    fun blockPanelIntent(
+        state: SchedulerState,
+        block: CalendarBlock,
+        taskId: TaskId? = null,
+        title: String? = null,
+        pins: PanelPins? = null,
+        repeatEveryDays: Int? = null,
+        startMillis: Long? = null,
+        endMillis: Long? = null,
+        reminderChecked: Boolean? = null,
+        reminderPinned: Boolean? = null,
+    ): SchedulerIntent? {
+        val panel = blockPanel(state, block) ?: return null
+        if (panel.chore) {
+            val checked = reminderChecked ?: panel.checked
+            val pinned = reminderPinned ?: panel.pinned
+            if (checked == panel.checked && pinned == panel.pinned) return null
+            return SchedulerIntent.AddCalendarElements(
+                listOf(
+                    CalendarElements.Draft(
+                        kind = CalendarElements.Kind.Reminder,
+                        existingId = panel.id,
+                        name = panel.title,
+                        startMillis = panel.startEpochMillis,
+                        endMillis = panel.startEpochMillis,
+                        reminderId = SchedulerDomain.reminderIdOfChorePanel(panel.id).orEmpty(),
+                        reminderChecked = checked,
+                        reminderPinned = pinned,
+                    ),
+                ),
+            )
+        }
+        val nextTask = taskId ?: panel.taskId
+        val nextTitle = title ?: panel.title
+        val nextPins = pins ?: panel.pins
+        val start = startMillis ?: panel.startEpochMillis
+        val end = endMillis ?: panel.endEpochMillis
+        val repeatNow = panel.repeat?.everyDays ?: 0
+        val unchanged =
+            nextTask == panel.taskId && nextTitle == panel.title && nextPins == panel.pins && start == panel.startEpochMillis &&
+                end == panel.endEpochMillis && (repeatEveryDays == null || repeatEveryDays == repeatNow)
+        if (unchanged || end <= start) return null
+        return SchedulerIntent.UpdateTaskPanel(panel.id, nextTask, nextTitle, start, end, nextPins, repeatEveryDays = repeatEveryDays)
     }
 
     /**
