@@ -1206,8 +1206,8 @@ fun SearchWindow(
      * outlined."* — the added elements' keys, in the search section alone (not the added list, the actions, a menu).
      */
     val addedOutlined: Set<String> =
-        remember(config.added, addedList == null, actionRows == null, menuList == null, picker == null) {
-            if (addedList == null && actionRows == null && menuList == null && picker == null) config.added.toHashSet() else emptySet()
+        remember(config.added, addedList == null, actionRows == null, menuList == null) {
+            if (addedList == null && actionRows == null && menuList == null) config.added.toHashSet() else emptySet()
         }
     childSelection.onAdd = { keys, replacing -> addKeys(keys, replacing) }
     childSelection.addedKeys = addedOutlined
@@ -1292,8 +1292,9 @@ fun SearchWindow(
             // User rule 2026-10-01: the menu's "add" adds every SELECTED row — the right-click selected this one first
             // when it was not among them.
             // A picker's rows add once its added elements are shown (user rule 2026-11-11).
-            onAdd = if (addedList == null && (picker == null || !addedRemoved)) { { addSelected() } } else null,
-            onAddReplacing = if (addedList == null && (picker == null || !addedRemoved)) { { addSelected(replacing = true) } } else null,
+            // User rule 2026-11-25: in an Edit Mode's pop-up too — into ITS added elements (its background menu shows them).
+            onAdd = if (addedList == null) { { addSelected() } } else null,
+            onAddReplacing = if (addedList == null) { { addSelected(replacing = true) } } else null,
             extra = addedMenu(result).orEmpty(),
             onCopyId = { copyIds(listOf(resultKey(result))) },
             onCopyPath = shownPath.takeIf { it.isNotEmpty() }?.let { { writeSystemClipboardText(SearchDomain.pathLabel(it)) } },
@@ -1342,7 +1343,7 @@ fun SearchWindow(
         }
     }
 
-    val windowContent: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
+    val windowBody: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
       // Three sections: the search on the left; on the right, the actions on the added elements above the list
       // of the added elements. Both separators are dragged to share the room (Compose-only, like the zoom):
       // each split starts at half and neither section shrinks below its minimum. Their joint moves both at once.
@@ -2464,6 +2465,11 @@ fun SearchWindow(
     }
     // User rule 2026-11-04: with the bar's match case or whole word on, only what matches with them is highlighted.
     androidx.compose.runtime.CompositionLocalProvider(LocalSearchMatch provides filters.queryOptions) {
+    // User rule 2026-11-25: what this window draws outlines the added elements' rows — its sub-trees' cells included. A
+    // section that is a Search window of its own (the actions, the added elements) provides its own, empty.
+    val windowContent: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
+        androidx.compose.runtime.CompositionLocalProvider(LocalAddedOutlined provides addedOutlined) { windowBody() }
+    }
     if (frame == null && popupChrome != null) {
         // A pop-up: the window's surface, its head at the top edge (anomaly 2026-11-15, 5). What is inside is not it.
         androidx.compose.runtime.CompositionLocalProvider(LocalSearchPopupWindow provides null, LocalPopupChrome provides null) {
@@ -3504,7 +3510,17 @@ internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false):
  */
 @Composable
 internal fun Modifier.addedOutline(): Modifier =
-    this.border(1.5.dp, MaterialTheme.colorScheme.tertiary, RoundedCornerShape(4.dp))
+    this.semantics { this[AddedOutlined] = true }
+        .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+
+/**
+ * The added elements' keys whose rows are outlined ([addedOutline]) — given by a search section to what it draws, so the
+ * cells of a row's sub-tree are outlined as its rows are. Empty everywhere else.
+ */
+internal val LocalAddedOutlined = androidx.compose.runtime.compositionLocalOf<Set<String>> { emptySet() }
+
+/** Said to the tests that read which rows show the added elements' outline ([addedOutline]). */
+internal val AddedOutlined = androidx.compose.ui.semantics.SemanticsPropertyKey<Boolean>("AddedOutlined")
 
 /** A result row's own padding, at each side of what it shows. */
 internal val RESULT_ROW_PADDING: Dp = 6.dp
@@ -4055,6 +4071,8 @@ internal fun TaskIdentityRow(
     allPaths: Map<TaskId, List<List<String>>>,
     item: EditMenuItem,
     onIntent: (SchedulerIntent) -> Unit,
+    /** The row menu's "deep copy" of a cell (the app's deep-copy window). */
+    onDeepCopyCell: (CellId) -> Unit = {},
 ) {
     val taskId = item.taskId ?: return
     val task = state.tasks[taskId]
@@ -4078,7 +4096,7 @@ internal fun TaskIdentityRow(
     // an unbounded one is the "Can't represent a width of 2147483563 … in Constraints" crash (anomaly 2026-10-03,
     // typing in a cell and picking from its menus). A narrower parent (a drop-down) still wins.
     Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().then(contextMenuModifier(item.actions != null, key = rowKey) { menuOpen = true })) {
+        Box(Modifier.fillMaxWidth().then(contextMenuModifier(true, key = rowKey) { menuOpen = true })) {
             TaskRow(
                 depth = 0,
                 cellId = CellId("identity-row/$rowKey"),
@@ -4130,13 +4148,38 @@ internal fun TaskIdentityRow(
                 },
                 afterTitleMinWidth = MIN_PATH_BOX_WIDTH + 8.dp,
             )
-            item.actions?.let { actions ->
-                // User rule 2026-11-12: the menu is a Search window of its entries.
-                // PRD §4: "go to task" is GREYED, never absent, when the row's task is nowhere in the tree.
+            // User rule 2026-11-25: the one row menu ([org.example.project.scheduler.ui.taskCellMenuActions]), built on demand.
+            if (menuOpen) {
+                val latest = state
+                val occurrence = SchedulerDomain.firstTaskOccurrence(latest, taskId)
+                val shownPath = paths.firstOrNull()
+                val cellsKey = subtreeWindowKey()
+                val closeCells = {
+                    val open = latest.searchExpanded[cellsKey].orEmpty()
+                    val under = childListId?.let { SchedulerDomain.cellsUnder(latest, it) }.orEmpty()
+                    if (open.any { it in under }) onIntent(SchedulerIntent.SetSearchExpanded(cellsKey, open - under))
+                }
                 ActionMenu("TaskIdentityRow",
                     open = menuOpen,
                     onDismiss = { menuOpen = false },
-                    actions = listOf(MenuAction("go to task", enabled = actions.onGoToTask != null) { actions.onGoToTask?.invoke() }),
+                    actions = org.example.project.scheduler.ui.taskCellMenuActions(
+                        TaskCellMenuActions(
+                            onStartNow = if (SchedulerDomain.isPlaceableTask(latest, taskId)) {
+                                { onIntent(SchedulerIntent.ForceTaskStart(taskId)) }
+                            } else null,
+                            onEdit = null,
+                            onCopyId = { writeSystemClipboardText(SearchDomain.copiedId(SearchDomain.taskKey(taskId))) },
+                            onCopyPath = shownPath?.let { { writeSystemClipboardText(SearchDomain.pathLabel(it)) } },
+                            onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
+                            onCollapseSubtrees = if (hasChildren) closeCells else null,
+                            onRetractAll = if (hasChildren && expanded) {
+                                {
+                                    closeCells()
+                                    expanded = false
+                                }
+                            } else null,
+                        ),
+                    ),
                 )
             }
         }

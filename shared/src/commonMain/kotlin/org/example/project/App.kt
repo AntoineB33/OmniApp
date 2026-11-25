@@ -4514,7 +4514,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 SearchDomain.allPathsInAnyTree(schedulerState)
             }
         val taskIdentityRow: @Composable (EditMenuItem) -> Unit = { item ->
-            TaskIdentityRow(schedulerState, identityPaths, item, onIntent = { vm.dispatch(it) })
+            TaskIdentityRow(schedulerState, identityPaths, item, onIntent = { vm.dispatch(it) }, onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) })
         }
         val patternExceptionDispatch = remember(vm) { { intent: SchedulerIntent -> vm.dispatch(intent) } }
         val appNowMillis = remember(clock) { { clock.nowMillis() } }

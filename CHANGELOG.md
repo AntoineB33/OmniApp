@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Outline in pop-ups and sub-trees; Edit Mode rows get the one menu; pop-up "add" — 2026-11-25
+
+- User: *"I don't see any outline around the rows that are in the added elements list."* The outline was drawn only on a
+  plain Search window's top-level rows: not in an Edit Mode's pop-up (a picker), not on a task row's sub-tree cells. It
+  is drawn there now, 2 dp in the primary colour (was 1.5 dp tertiary).
+- *"Unify the two rows left."* `TaskIdentityRow` and `EditMenuRow` draw the one row menu; nothing built their old
+  "go to task" menu any more (`EditMenuRowActions` had no caller), so they had none. `EditMenuRowActions` is removed.
+- *"'add' in the right-click menu of the task rows in pop-up window A … will add it in the added elements list of A."*
+  A picker's rows always offer "add", into the pop-up's own added elements (shown from its background menu).
+- Client rebuild only.
+
 ### One right-click menu for every row; blank child row selectable; md edit leaves on outside press — 2026-11-25
 
 - User: *"Unify the right-click menu of all the rows of the app. ctrl+c must work on any row (to copy its id)."* Tree

@@ -1138,7 +1138,13 @@ suggestions before it was ever entered.
   path box, or a line of its list of paths): deep copy acts on THAT occurrence (`SearchDomain.occurrenceAtPath`,
   walked on the right-click, never per keystroke), and "copy path" copies that path.
 - **A row of the search section whose element is in the window's added elements is outlined** (user rule 2026-11-25,
-  `addedOutline`, apart from the selection's look): a result row, and a child row under an element's arrow.
+  `addedOutline`, apart from the selection's look): a result row, a child row under an element's arrow, and a cell of
+  a task row's sub-tree (`LocalAddedOutlined`, provided by each Search window to what it draws — its actions section
+  and added list, Search windows of their own, provide none). An Edit Mode's pop-up is a Search window like any.
+- **"add" adds to the window the row is in** — an Edit Mode's pop-up included (user rule 2026-11-25): into ITS added
+  elements, hidden or not (the pop-up opens with them hidden; its background menu shows them).
+- **The Edit Mode menus' rows have the one menu too** (`TaskIdentityRow` for a row naming a task, `EditMenuRow` for the
+  others, all greyed). PRD §4's "go to task" left them with "go to task tree".
 - **The blank row ending an element's children is a row like its siblings** (user rule 2026-11-25): pressed, it is
   selected (`ElementChildSelection.selectRow`), the arrows walk onto it (`shownRowOrder` lists it, its `row` null), ←
   goes to the row it ends, its right-click opens the one menu (copy path alone live), and Enter is its double-click —

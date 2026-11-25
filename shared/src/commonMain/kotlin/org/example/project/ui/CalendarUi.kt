@@ -11245,17 +11245,16 @@ internal fun EditMenuSectionLabel(text: String) {
  *    focus off a title field. The reminders manager's editor stays open only while its row has focus, so a
  *    focus change there would collapse it before the pick registered; elsewhere `Modifier.clickable` is used.
  *    [onClick] is read through [rememberUpdatedState] so the once-started tap detector always runs the latest closure.
- *  - [actions] is the row's own right-click contextual menu (PRD §4), or null where the row has none. The
- *    secondary press is read by the tree cell's own [contextMenuModifier], which CONSUMES it — so the
- *    left-click pick ([onClick], whether it runs through `clickable` or the tap detector) never fires on a
- *    right-click, exactly as a tree row's menu never doubles as a selection.
+ *  - Its right-click opens the one row menu (user rule 2026-11-25). The secondary press is read by the tree
+ *    cell's own [contextMenuModifier], which CONSUMES it — so the left-click pick ([onClick], whether it runs
+ *    through `clickable` or the tap detector) never fires on a right-click, exactly as a tree row's menu never
+ *    doubles as a selection.
  */
 @Composable
 internal fun EditMenuRow(
     label: String,
     selected: Boolean = false,
     focusPreserving: Boolean = false,
-    actions: EditMenuRowActions? = null,
     color: Color? = null,
     taskColor: Color? = null,
     onClick: () -> Unit,
@@ -11272,7 +11271,7 @@ internal fun EditMenuRow(
                 .then(clickModifier)
                 // Inside the click modifier, so a secondary press is answered — and consumed — on the Main
                 // pass before the pick handler wrapping it ever sees it.
-                .then(contextMenuModifier(actions != null) { menuOpen = true })
+                .then(contextMenuModifier(true) { menuOpen = true })
                 // A row that names a task is drawn in that task's colour, like the task tree's own cell
                 // ([TaskTitleLabel] — this is the block form, the row IS the task). Under the outline
                 // below, which says something else entirely and has to stay readable on top of it.
@@ -11294,37 +11293,20 @@ internal fun EditMenuRow(
             // On the task's colour: the colour of highest contrast with it (user rule 2026-10-01).
             color = taskColor?.let(TaskPalette::foreground) ?: color ?: MaterialTheme.colorScheme.onSurface,
         )
-        if (actions != null) {
-            // User rule 2026-11-12: the menu is a Search window of its entries.
-            // PRD §4: "go to task" is GREYED, never absent, when the row's task is nowhere in the tree. The row is still a task
-            // the field can be pointed at; what it has not got is a place to go, and a vanishing entry would read as "this row has
-            // no menu" instead of saying so.
-            ActionMenu("EditMenuRow",
-                open = menuOpen,
-                onDismiss = { menuOpen = false },
-                actions = listOf(MenuAction("go to task", enabled = actions.onGoToTask != null) { actions.onGoToTask?.invoke() }),
-            )
-        }
+        // User rule 2026-11-25: every row's menu is the one list ([org.example.project.scheduler.ui.taskCellMenuActions]). A
+        // row that names no element (a title suggestion, "New task") has its entries greyed: nothing to copy or retract.
+        ActionMenu("EditMenuRow",
+            open = menuOpen,
+            onDismiss = { menuOpen = false },
+            actions = org.example.project.scheduler.ui.taskCellMenuActions(RowMenuCommon.NONE.menu(null, null, emptyList())),
+        )
     }
 }
-
-/**
- * PRD §4: the right-click contextual menu of an **identity (id) row** of an [EditModeMenuBlock] — one entry
- * today, "go to task", which reveals the row's task in the tree.
- *
- * Three states, and all three are meant: **no [EditMenuRowActions] at all** ⇒ the row has no contextual menu
- * (a *title suggestion* names a string, not one task, so there is nothing to go to); **[onGoToTask] null** ⇒
- * the entry is drawn **greyed**, because that task is not in the task tree — a detached parent, a tombstone
- * kept alive for its records, or the "New task" row, which names no task yet; **non-null** ⇒ it goes there.
- */
-data class EditMenuRowActions(val onGoToTask: (() -> Unit)?)
 
 /** One row of an [EditModeMenuBlock] menu — an identity row or a title suggestion. */
 data class EditMenuItem(
     val label: String,
     val selected: Boolean = false,
-    /** The row's right-click contextual menu, or null where it has none (every title suggestion). */
-    val actions: EditMenuRowActions? = null,
     /**
      * The colour to write the row in, or null for the ordinary one. Set only where the row's own SUBJECT
      * says something about it — PRD §7's task picker writes a task the now-line's periods forbid in red and
@@ -11467,7 +11449,6 @@ private fun EditMenuSectionRow(row: EditMenuItem, focusPreserving: Boolean) {
         label = row.label,
         selected = row.selected,
         focusPreserving = focusPreserving,
-        actions = row.actions,
         color = row.color,
         taskColor = row.taskColor,
         onClick = row.onClick,

@@ -198,7 +198,7 @@ import org.example.project.ui.taskSheetTitleBounds
 import org.example.project.ui.taskSheetGuideLines
 import org.example.project.ui.printableChar
 import org.example.project.ui.EditMenuItem
-import org.example.project.ui.EditMenuRowActions
+import org.example.project.ui.addedOutline
 import org.example.project.ui.EditModeMenuBlock
 import org.example.project.ui.TaskCategoryCell
 import org.example.project.ui.EditModeOption
@@ -619,6 +619,8 @@ internal fun CellListSection(
     // reading the freshest value at the instant the user presses something.
     val currentState by rememberUpdatedState(state)
     val currentVisibleOrder by rememberUpdatedState(visibleOrder)
+    // User rule 2026-11-25: the cells whose task a Search window's search section has added are outlined there.
+    val addedKeys = org.example.project.ui.LocalAddedOutlined.current
     // Where the selected cells of OTHER sub-lists are drawn selected ([SchedulerDomain.selectionHighlightVias]):
     // empty — one pass over the selection — unless a Ctrl or Shift click reached across sub-lists.
     val otherListVias =
@@ -785,6 +787,8 @@ internal fun CellListSection(
             // as a whole ("collapse sub-trees" first among them). What it does not get is "edit task" —
             // see [TaskCellMenuActions.onEdit].
             cellMenu = cellMenu,
+            addedOutlined = cellTaskId != null && addedKeys.isNotEmpty() &&
+                org.example.project.scheduler.domain.SearchDomain.taskKey(cellTaskId) in addedKeys,
             onTogglePriorityWeights = { onTogglePriorityWeights(listId) },
             onOpenRelativePriority = { onOpenRelativePriority(cellId) },
             onSetMinTime = { minutes ->
@@ -2477,6 +2481,8 @@ internal fun TaskRow(
     minTimeEditing: Boolean,
     /** PRD §13: the right-click contextual menu's actions; null for a cell that has no menu. */
     cellMenu: TaskCellMenuActions?,
+    /** User rule 2026-11-25: the cell's task is in the Search window's added elements ([org.example.project.ui.addedOutline]). */
+    addedOutlined: Boolean = false,
     /**
      * PRD §2: draw this row as the **root strip** — the expand arrow and nothing else. No title column, no
      * percentage, no minimum time, no categories.
@@ -2859,6 +2865,7 @@ internal fun TaskRow(
                 .tracksHover(cellHovered)
                 .background(cellBackground)
                 .then(cellBorder)
+                .then(if (addedOutlined) Modifier.addedOutline() else Modifier)
                 .then(selectionPointerModifier())
                 .then(
                     contextMenuModifier(
@@ -3293,7 +3300,7 @@ internal fun TaskRow(
  * A right-click (secondary button) opens a contextual menu — the cell's own ("edit task" / "copy" / "deep copy" /
  * "add default sub-tree")
  * on the row, the two-option one on the priority-percentage column (PRD §5), and the "go to task" one on an
- * **id row of Edit Mode's Tasks menu** (PRD §4, via `org.example.project.ui.EditMenuRowActions`). Returns a
+ * **id row of Edit Mode's Tasks menu** (PRD §4, `org.example.project.ui.EditMenuRow`). Returns a
  * no-op modifier
  * when [enabled] is false and there is no [onSelect] either (rows with no menu and nothing to select), so
  * only eligible targets react. [onOpen]
@@ -4233,4 +4240,3 @@ private fun PeriodFormulaEditor(
         FormulaButton("⌫", PeriodFormula.canRemoveLast(shown)) { onChange(PeriodFormula.removeLast(shown)) }
     }
 }
-
