@@ -774,9 +774,13 @@ fun SearchWindow(
                 val kept = options.options.filter { (id, name) ->
                     if (id in options.separators) config.separators && query.isBlank() else SearchDomain.optionKey(name) in keptKeys
                 }
+                // User rule 2026-11-25: the entries its "Entries, in order" names, in that order; none set, all of them.
+                val ordered =
+                    if (config.entries.isEmpty()) kept
+                    else config.entries.flatMap { entry -> kept.filter { (id, name) -> (options.elementIds[id] ?: name) == entry } }
                 // A separator stands BETWEEN entries: none at an end, none doubled.
-                val shown = kept.filterIndexed { i, (id, _) ->
-                    id !in options.separators || (i > 0 && i < kept.lastIndex && kept[i + 1].first !in options.separators)
+                val shown = ordered.filterIndexed { i, (id, _) ->
+                    id !in options.separators || (i > 0 && i < ordered.lastIndex && ordered[i + 1].first !in options.separators)
                 }
                 SearchDomain.optionResults(shown, query, options.checked, creates = options.onCreate != null)
             }
@@ -1198,6 +1202,7 @@ fun SearchWindow(
         val given = options ?: return rowKey
         if (!rowKey.startsWith(SearchDomain.Kind.Option.name + "/")) return rowKey
         val id = rowKey.substringAfter('/')
+        given.elementIds[id]?.let { return SearchDomain.optionKey(it) }
         return given.options.firstOrNull { it.first == id }?.second?.let(SearchDomain::optionKey) ?: rowKey
     }
     fun addKeys(keys: List<String>, replacing: Boolean = false) {
@@ -1297,7 +1302,7 @@ fun SearchWindow(
         val given = addedList ?: return null
         val picked = menuRows().toSet().ifEmpty { setOf(resultKey(row)) }
         return listOfNotNull(
-            MenuAction(if (picked.size == 1) "remove" else "remove ${picked.size}") { given.onRemove(picked) },
+            MenuAction(if (picked.size == 1) "remove" else "remove ${picked.size}", id = "remove") { given.onRemove(picked) },
             // Nothing to offer once the selection is all the list holds.
             MenuAction(REMOVE_OTHERS_LABEL) { given.onKeepOnly(picked) }.takeIf { given.rows.size > picked.size },
             // About the row under the pointer alone, whatever is selected: a group is ONE element's.
@@ -2617,6 +2622,8 @@ class SearchOptions(
     val listName: String? = null,
     /** User rule 2026-11-25: the ids of the separator rows ([MenuAction.separator]), drawn while the list shows them. */
     val separators: Set<String> = emptySet(),
+    /** User rule 2026-11-25: what each option is ([MenuAction.id]), by its row id; absent: its name. */
+    val elementIds: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -2643,6 +2650,11 @@ class MenuAction(
     val hoverPopup: (@Composable () -> Unit)? = null,
     /** User rule 2026-11-25: a horizontal line between groups of entries, no entry ([SearchDomain.Config.separators]). */
     val separator: Boolean = false,
+    /**
+     * User rule 2026-11-25: **what the entry is**, whatever its label says now ("remove 3" is "remove"): what a menu's
+     * "Entries, in order" names it by ([SearchDomain.Config.entries]), and its key as an element.
+     */
+    val id: String = label,
     val onClick: () -> Unit,
 ) {
     companion object {
@@ -2721,6 +2733,7 @@ internal fun ActionMenu(name: String,
             disabled = actions.indices.filter { !actions[it].enabled }.mapTo(HashSet()) { it.toString() },
             hoverPopup = if (actions.any { it.hoverPopup != null }) { id -> id.toIntOrNull()?.let(latest::getOrNull)?.hoverPopup } else null,
             separators = actions.indices.filter { actions[it].separator }.mapTo(HashSet()) { it.toString() },
+            elementIds = actions.withIndex().associate { (i, action) -> i.toString() to action.id },
         ),
     )
 }
@@ -2843,7 +2856,7 @@ internal fun OptionSearchMenu(
         onSelectAll = { ids -> held = true; options.onSelectAll(ids) }, onSolo = holding(options.onSolo),
         leading = options.leading, onNearEnd = options.onNearEnd, onDrop = options.onDrop, canDrop = options.canDrop,
         disabled = options.disabled, onCreate = options.onCreate?.let(::holding), integers = options.integers,
-        hoverPopup = options.hoverPopup, listName = name, separators = options.separators,
+        hoverPopup = options.hoverPopup, listName = name, separators = options.separators, elementIds = options.elementIds,
     )
     // Anomaly 2026-11-21 (*"The right-click doesn't work..."*): the ONE registration of this menu with the host that closes
     // menus on a press outside them. A caller registering the same menu again was closed by this one opening — the host

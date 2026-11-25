@@ -1157,6 +1157,13 @@ suggestions before it was ever entered.
   everywhere is one group — each group a **context row**, opening a Search window whose added elements are those
   contexts (`contextsSearchConfig`), and a **state row**, "on"/"off" and the configuration's own control, a change made
   in every context of the group (`ContextDomain.withChange`, field by field), one History Unit.
+- **A menu's entries are one search configuration** (user rule 2026-11-25, *"one search configuration that basically just
+  set the elements in the right place"*): **"Entries, in order"** (`Config.entries`, entry ids) — on in every row menu's
+  context (`ContextDomain.ROW_MENUS`, default `ROW_MENU_ENTRIES`), whose list names what the menu lists and where; the
+  code gives each entry its id (`MenuAction.id`, "remove 3" is "remove") and what it does, never where it stands. A
+  context that sets none lists what its menu gives, in the code's order. An added menu entry's action **"Default
+  presences"** (`ContextDomain.presences`) groups the contexts naming it, those whose entries leave it out (each group's
+  switch puts it in, at the end, or takes it out) and those that set none; each group's context row opens them.
 - **The Edit Mode menus' rows have the one menu too** (`TaskIdentityRow` for a row naming a task, `EditMenuRow` for the
   others, all greyed). PRD §4's "go to task" left them with "go to task tree".
 - **The blank row ending an element's children is a row like its siblings** (user rule 2026-11-25): pressed, it is

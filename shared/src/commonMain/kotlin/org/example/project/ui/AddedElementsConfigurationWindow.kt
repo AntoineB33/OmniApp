@@ -1059,6 +1059,8 @@ private fun AddedActionBlocks(
         // User rule 2026-10-18: every sound of the app off on this device — the lateral menu's switch, here too.
         // User rule 2026-11-13: an added search configuration's state in each Search window, by window id.
         SearchDomain.AddedAction.ConfigurationStates -> ConfigurationStatesAction(state, added, handlers.searchWindows(), handlers.claudeLogs())
+        SearchDomain.AddedAction.OptionPresences ->
+            OptionPresencesAction(state, added, { run(SearchDomain.AddedCommand.Raw(it)) }, handlers.onOpenSearch)
         SearchDomain.AddedAction.ConfigurationContextStates -> ConfigurationContextStatesAction(state, added, { run(SearchDomain.AddedCommand.Raw(it)) }, handlers.onOpenSearch, handlers.claudeLogs())
         // User rule 2026-11-13: an action added to the actions section's own list — its contexts, and its state in each.
         SearchDomain.AddedAction.ActionContexts -> ActionContextsEditor(added)
@@ -2569,6 +2571,51 @@ private fun ConfigurationContextStatesAction(
                             }
                             if (defaults != state.contextDefaults) onIntent(SchedulerIntent.SetContextDefaults(defaults))
                         }, claudeLogs = claudeLogs)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-25: **an added menu entry's default presences** ([org.example.project.scheduler.domain.ContextDomain.presences])
+ * — the contexts whose "Entries, in order" names it, those whose entries leave it out, and those that set none (they list
+ * whatever their menu gives). Each group: its context row (a click opens a Search window of those contexts, added) and
+ * its state row, a switch for the first two — put in at the end of each context's entries, or taken out — one History Unit.
+ */
+@Composable
+private fun OptionPresencesAction(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    onIntent: (SchedulerIntent) -> Unit,
+    onOpenSearch: (SearchDomain.Config) -> Unit,
+) {
+    val contexts = org.example.project.scheduler.domain.ContextDomain
+    val entries = added.filter { it.kind == SearchDomain.Kind.Option }.mapNotNull { (it as? SearchDomain.ItemResult)?.id }
+    for (entry in entries) {
+        ElementHeading(entry, entries.size)
+        val presences = remember(state.contextDefaults, entry) { contexts.presences(state.contextDefaults, entry) }
+        val groups = listOf(
+            Triple(presences.listed, "listed", true),
+            Triple(presences.unlisted, "not listed", false),
+            Triple(presences.unset, "lists whatever its menu has", null),
+        ).filter { it.first.isNotEmpty() }
+        for ((group, said, on) in groups) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    group.joinToString(", ") { it.title },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onOpenSearch(SearchDomain.contextsSearchConfig(group.map { it.id })) },
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(said, style = MaterialTheme.typography.bodyMedium)
+                    if (on != null) {
+                        CompactSwitch(checked = on, onCheckedChange = { next ->
+                            val defaults = contexts.withEntry(state.contextDefaults, group.map { it.id }, entry, next)
+                            if (defaults != state.contextDefaults) onIntent(SchedulerIntent.SetContextDefaults(defaults))
+                        })
                     }
                 }
             }

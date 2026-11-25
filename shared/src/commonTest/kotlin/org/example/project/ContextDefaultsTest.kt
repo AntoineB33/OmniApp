@@ -89,4 +89,43 @@ class ContextDefaultsTest {
         assertEquals(1, rows.size)
         assertEquals("default of the right-click menu of the calendar", rows.single().name)
     }
+
+    /**
+     * User rule 2026-11-25: *"for the right-click menu of a task element, there would be a search configuration that is on
+     * in this context and that says put 'add', then 'add and remove', then…"* — "Entries, in order", on in every row menu's
+     * context, names every entry the row menu can give, by the id the code gives it.
+     */
+    @Test
+    fun the_row_menus_list_their_entries_by_one_search_configuration() {
+        val task = ContextDomain.configOf(emptyList(), "menu:task cell menu")
+        assertEquals(ContextDomain.ROW_MENU_ENTRIES, task.entries)
+        assertTrue(Setting.Entries in SearchDomain.activeSettings(task), "on in that context")
+        val full = org.example.project.scheduler.ui.TaskCellMenuActions({}, {}, {}, {}, {}, {}, {}, onAdd = {}, onAddReplacing = {})
+        val ids = org.example.project.scheduler.ui.taskCellMenuActions(full).map { it.id }
+        assertEquals(emptyList(), ids - ContextDomain.ROW_MENU_ENTRIES.toSet(), "every entry is named")
+        assertEquals(ids, ContextDomain.ROW_MENU_ENTRIES.filter { it in ids }, "in the builder's order")
+        // A menu that is no row's sets none: whatever the code gives.
+        assertEquals(emptyList(), ContextDomain.configOf(emptyList(), "menu:SearchPartsMenu").entries)
+        // Kept and read back; an older payload has none.
+        val on = SearchDomain.Config(entries = listOf("add", "copy path"))
+        assertEquals(on, SearchDomain.Config.decode(on.encode()))
+        assertEquals(emptyList(), SearchDomain.Config.decode(SearchDomain.Config().encode())!!.entries)
+    }
+
+    @Test
+    fun an_entrys_default_presences_and_putting_it_in_or_out() {
+        val presences = ContextDomain.presences(emptyList(), "add")
+        assertEquals(ContextDomain.ROW_MENUS.map { "menu:$it" }.toSet(), presences.listed.map { it.id }.toSet())
+        assertEquals(emptyList(), presences.unlisted)
+        assertTrue(presences.unset.any { it.id == "menu:SearchPartsMenu" })
+        val out = ContextDomain.withEntry(emptyList(), listOf("menu:task cell menu"), "add", on = false)
+        assertFalse("add" in ContextDomain.configOf(out, "menu:task cell menu").entries)
+        assertEquals(listOf("menu:task cell menu"), ContextDomain.presences(out, "add").unlisted.map { it.id })
+        val back = ContextDomain.withEntry(out, listOf("menu:task cell menu"), "add", on = true)
+        assertEquals("add", ContextDomain.configOf(back, "menu:task cell menu").entries.last(), "put back at the end")
+        // The action is offered for an added entry.
+        val added = listOf(SearchDomain.ItemResult(SearchDomain.Kind.Option, "add", "add", ""))
+        val actions = SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added)
+        assertTrue(actions.any { (_, list) -> SearchDomain.AddedAction.OptionPresences in list }, "$actions")
+    }
 }

@@ -61,10 +61,31 @@ object ContextDomain {
         "TreeRowMenu" to "a row of the configurations tree",
     )
 
+    /**
+     * User rule 2026-11-25 (*"for the right-click menu of a task element, there would be a search configuration that is on
+     * in this context and that says put 'add', then 'add and remove', then…"*): **the entries of a row's menu, by id, in
+     * their order** — the default "Entries, in order" of every row menu ([ROW_MENUS]). The code gives each entry its id
+     * (`MenuAction.id`); which are listed, and where, is this.
+     */
+    val ROW_MENU_ENTRIES: List<String> = listOf(
+        "start this task now", "add", "add and remove the others", "remove", "remove the others", "show only its actions",
+        "check only this", "open in Task relations", "open in Keyboard shortcuts", "show window", "create", "apply",
+        "edit task", "copy id (ctrl c)", "copy path", "deep copy", "collapse sub-trees", "retract with every sub-child",
+    )
+
+    /** The right-click menus that are a row's: they list [ROW_MENU_ENTRIES] by default. */
+    val ROW_MENUS: Set<String> = setOf(
+        "task cell menu", "ItemResultRow", "ElementChildren", "ElementChildren blank", "TaskPathBox", "TaskPathBox#2",
+        "TaskIdentityRow", "EditMenuRow",
+    )
+
     /** Every context, in the order the action lists them. */
     val CONTEXTS: List<SearchContext> by lazy {
         listOf(SearchContext(SEARCH_WINDOW, "default of a Search window", SearchDomain.Config())) +
-            RIGHT_CLICK_MENUS.map { (name, what) -> SearchContext(MENU_PREFIX + name, "default of the right-click menu of $what", SearchDomain.OPTION_SEARCH) } +
+            RIGHT_CLICK_MENUS.map { (name, what) ->
+                val default = if (name in ROW_MENUS) SearchDomain.OPTION_SEARCH.copy(entries = ROW_MENU_ENTRIES) else SearchDomain.OPTION_SEARCH
+                SearchContext(MENU_PREFIX + name, "default of the right-click menu of $what", default)
+            } +
             listOf(
                 SearchContext(DROP_DOWN, "default of a drop-down", SearchDomain.OPTION_SEARCH),
                 SearchContext("integers", "default of a list of integers", SearchDomain.INTEGER_SEARCH),
@@ -102,6 +123,30 @@ object ContextDomain {
         val (on, off) = CONTEXTS.partition { setting in SearchDomain.activeSettings(configOf(defaults, it.id)) }
         return listOfNotNull(StateGroup(true, on).takeIf { on.isNotEmpty() }, StateGroup(false, off).takeIf { off.isNotEmpty() })
     }
+
+    /**
+     * User rule 2026-11-25: **an entry's default presences** — the contexts whose "Entries, in order" names [entryId]
+     * ([listed]), those whose entries are set and do not ([unlisted], where it can be put), and those that set none and
+     * list whatever their menu gives ([unset]).
+     */
+    data class Presences(val listed: List<SearchContext>, val unlisted: List<SearchContext>, val unset: List<SearchContext>)
+
+    fun presences(defaults: List<ContextDefault>, entryId: String): Presences {
+        val withEntries = CONTEXTS.map { it to configOf(defaults, it.id).entries }
+        return Presences(
+            listed = withEntries.filter { (_, entries) -> entryId in entries }.map { it.first },
+            unlisted = withEntries.filter { (_, entries) -> entries.isNotEmpty() && entryId !in entries }.map { it.first },
+            unset = withEntries.filter { (_, entries) -> entries.isEmpty() }.map { it.first },
+        )
+    }
+
+    /** The defaults once [entryId] is listed in [contextIds] (at their end) or taken out of them ([on] false). */
+    fun withEntry(defaults: List<ContextDefault>, contextIds: List<String>, entryId: String, on: Boolean): List<ContextDefault> =
+        contextIds.fold(defaults) { acc, id ->
+            val config = configOf(acc, id)
+            val entries = if (on) (config.entries - entryId) + entryId else config.entries - entryId
+            written(acc, id, config.copy(entries = entries))
+        }
 
     /**
      * **[target] with what changed from [before] to [after]** — field by field, a filter's own fields one by one: the

@@ -982,6 +982,12 @@ object SearchDomain {
          */
         val separators: Boolean = false,
         /**
+         * User rule 2026-11-25, a search configuration ([Setting.Entries]): *"one search configuration that basically just
+         * set the elements in the right place"* — **the entries a menu lists, by id, in this order**; an entry the code
+         * gives and this does not name is not listed. Empty: every entry the code gives, in its order.
+         */
+        val entries: List<String> = emptyList(),
+        /**
          * User rule 2026-11-22, a search configuration ([Setting.TaskRowLayout]): **what a task row shows, in this order**
          * ([TaskRowPart]). Empty — the default — is the row as the tree draws it: the kind, the arrow, the title clipped
          * to its column, the path, the percentage, the minimum time, the categories. Given, the row is exactly these parts,
@@ -1154,6 +1160,7 @@ object SearchDomain {
                     dropButtons = dropButtons,
                     buttonFollowsExpansion = buttonFollowsExpansion,
                     separators = separators,
+                    entries = entries,
                     taskRowLayout = taskRowLayout.map { it.name },
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
@@ -1305,6 +1312,7 @@ object SearchDomain {
                     dropButtons = stored.dropButtons,
                     buttonFollowsExpansion = stored.buttonFollowsExpansion,
                     separators = stored.separators,
+                    entries = stored.entries,
                     taskRowLayout = TaskRowPart.decode(stored.taskRowLayout),
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
@@ -2190,6 +2198,8 @@ object SearchDomain {
         ButtonFollowsExpansion(null, "Button saves open rows"),
         /** User rule 2026-11-25: the horizontal separators between groups of rows ([Config.separators]). */
         Separators(null, "Separators between groups"),
+        /** User rule 2026-11-25: the entries a menu lists, in order ([Config.entries]). */
+        Entries(null, "Entries, in order"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -2303,7 +2313,7 @@ object SearchDomain {
             setting.sorts || setting == Setting.SearchSortsOnly -> SettingRole.Sort
             setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults -> SettingRole.Children
             setting == Setting.DropButtons || setting == Setting.CompletionList || setting == Setting.MenuCustomizing ||
-                setting == Setting.ButtonFollowsExpansion || setting == Setting.TaskRowLayout || setting == Setting.Separators -> SettingRole.Display
+                setting == Setting.ButtonFollowsExpansion || setting == Setting.TaskRowLayout || setting == Setting.Separators || setting == Setting.Entries -> SettingRole.Display
             setting == Setting.ResetSearch -> null
             else -> SettingRole.Filter
         }
@@ -2361,6 +2371,7 @@ object SearchDomain {
             Setting.DropButtons.takeIf { config.dropButtons },
             Setting.ButtonFollowsExpansion.takeIf { config.buttonFollowsExpansion },
             Setting.Separators.takeIf { config.separators },
+            Setting.Entries.takeIf { config.entries.isNotEmpty() },
             Setting.TaskRowLayout.takeIf { config.taskRowLayout.isNotEmpty() },
         )
 
@@ -2907,6 +2918,9 @@ object SearchDomain {
             Setting.SearchSortsOnly -> "The actions section's bar sorts the actions and hides none."
             Setting.MenuCustomizing -> "A press selects a row and activates nothing; a held press drags the selected rows into the order kept."
             Setting.DropButtons -> "A button on every element to drop it from the list."
+            Setting.Entries ->
+                "The entries the menu lists, by name, in this order: one the menu has and this does not name is not listed. " +
+                    "Empty: every entry the menu has, in its own order."
             Setting.Separators ->
                 "A horizontal line between groups of rows: in a background menu, between the window's own options and those of " +
                     "the section right-clicked (its actions or its added elements)."
@@ -3172,6 +3186,8 @@ object SearchDomain {
         val buttonFollowsExpansion: Boolean = false,
         /** New 2026-11-25: absent = no separator ([Config.separators]). */
         val separators: Boolean = false,
+        /** New 2026-11-25: absent = every entry the code gives ([Config.entries]). */
+        val entries: List<String> = emptyList(),
         /** New 2026-11-22: absent = the default task row ([Config.taskRowLayout]); a part this build does not know is skipped. */
         val taskRowLayout: List<String> = emptyList(),
         /** New 2026-10-11: absent from an older build's = the actions in their own order. */
@@ -5421,6 +5437,11 @@ object SearchDomain {
          * row, which changes it in every context of the group.
          */
         ConfigurationContextStates(Kind.SearchConfiguration, "State in each context"),
+        /**
+         * User rule 2026-11-25: an added menu entry's **default presences** — the contexts whose "Entries, in order"
+         * ([Config.entries]) names it, and those that could ([ContextDomain.presences]).
+         */
+        OptionPresences(Kind.Option, "Default presences"),
 
         /**
          * User rule 2026-11-13: an ACTION added to the actions section's own list ([Kind.Action]) shows **its contexts and
@@ -6024,6 +6045,7 @@ object SearchDomain {
             AddedAction.ClaudeLogsDirectory -> "folder path read refresh load"
             AddedAction.ConfigurationStates -> "window id open saved value filter sort"
             AddedAction.ConfigurationContextStates -> "context default menu drop-down on off state value"
+            AddedAction.OptionPresences -> "default presences contexts menus where found listed entries"
             AddedAction.ActionContexts -> "context state elements same value group"
             AddedAction.MuteSwitch -> "silence quiet sound voice ring alarm notification off on"
             else -> ""

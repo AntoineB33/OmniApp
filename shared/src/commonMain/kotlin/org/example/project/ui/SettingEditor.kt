@@ -201,6 +201,8 @@ internal fun SettingEditor(
         // User rule 2026-11-12: a button on every element of the list to drop it.
         SearchDomain.Setting.DropButtons ->
             CompactSwitch(checked = config.dropButtons, onCheckedChange = { onChange(config.copy(dropButtons = it)) })
+        SearchDomain.Setting.Entries ->
+            EntriesEditor(config.entries) { onChange(config.copy(entries = it)) }
         SearchDomain.Setting.Separators ->
             CompactSwitch(checked = config.separators, onCheckedChange = { onChange(config.copy(separators = it)) })
         SearchDomain.Setting.ButtonFollowsExpansion ->
@@ -607,6 +609,46 @@ private fun TaskRowLayoutEditor(
                 MoveMark("↑", enabled = index > 0) { onChange(SearchDomain.movedTaskRowPart(layout, index, index - 1)) }
                 MoveMark("↓", enabled = index < layout.lastIndex) { onChange(SearchDomain.movedTaskRowPart(layout, index, index + 1)) }
                 CrossButton { onChange(SearchDomain.withTaskRowPart(layout, part, on = false)) }
+            }
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-25: **"Entries, in order"** — the entries a menu lists, each moved up or down or taken out, and one
+ * added from every entry a row's menu can have ([org.example.project.scheduler.domain.ContextDomain.ROW_MENU_ENTRIES]).
+ */
+@Composable
+private fun EntriesEditor(entries: List<String>, onChange: (List<String>) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(COMPACT_ROW_GAP), modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val left = org.example.project.scheduler.domain.ContextDomain.ROW_MENU_ENTRIES.filter { it !in entries }
+            var open by remember { mutableStateOf(false) }
+            val popupOpener = rememberPopupOpener()
+            Box { OpenedBy(popupOpener) {
+                FrameButton("Add an entry", enabled = left.isNotEmpty()) { open = !open }
+                OptionSearchMenu("menu entries",
+                    open = open,
+                    onDismiss = { open = false },
+                    options = choiceOptions(left, { it }) { entry ->
+                        open = false
+                        onChange(entries + entry)
+                    },
+                )
+            }}
+            if (entries.isNotEmpty()) FrameButton("Every entry") { onChange(emptyList()) }
+            InfoMark("Empty: every entry the menu has, in its own order. Set: these, in this order; the others are not listed.")
+        }
+        entries.forEachIndexed { index, entry ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.defaultMinSize(minHeight = org.example.project.scheduler.ui.TASK_ROW_MIN_HEIGHT),
+            ) {
+                Text(text = "${index + 1}. $entry", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                MoveMark("↑", enabled = index > 0) { onChange(entries.toMutableList().apply { add(index - 1, removeAt(index)) }) }
+                MoveMark("↓", enabled = index < entries.lastIndex) { onChange(entries.toMutableList().apply { add(index + 1, removeAt(index)) }) }
+                CrossButton { onChange(entries - entry) }
             }
         }
     }

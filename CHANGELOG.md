@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Entries, in order" and an entry's "Default presences" — 2026-11-25
+
+- User: *"it can be simply one search configuration that basically just set the elements in the right place. For example,
+  for the right-click menu of a task element, there would be a search configuration that is on in this context and that
+  says put 'add', then 'add and remove', then…"* New search configuration **"Entries, in order"** (`Config.entries`,
+  stored, absent = every entry), on by default in every row menu's context with the row menu's order; its editor moves,
+  removes and adds entries. Entries carry a stable id (`MenuAction.id`).
+- New action **"Default presences"** on an added menu entry: the contexts listing it, those leaving it out (a switch puts
+  it in or out), those that set no entries.
+- Other menus (window background, calendar, …) set no entries yet: they list what the code gives.
+- Client rebuild only.
+
 ### Contexts and "State in each context" — 2026-11-25
 
 - User: *"It is only search configuration elements that define what row is shown in a window. What is built in code is
