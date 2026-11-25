@@ -1127,13 +1127,16 @@ suggestions before it was ever entered.
   (a schedulable leaf), "add" / "add and remove the others" (or an added element's "remove" entries), the surface's
   own ("open in …"), "edit task" (a tree cell), then the five every row shows, **greyed, never hidden**, where the row
   has nothing to do: **"copy id (ctrl c)"** (`SearchDomain.copiedId`: a task's reference, any other element's key),
-  **"copy path"** (the ancestors' titles, the tree's label first — `SearchDomain.cellPathLabel` for a cell, the row's
-  own path for a task row, the elements it is drawn under for a child), **"deep copy"** (a task's), **"collapse
+  **"copy path"** (the path down to the row clicked, the row included, the tree's label first — each segment its title,
+  its id where it has none, `SearchDomain.pathSegment`; `SearchDomain.cellPathLabel` for a cell, the row's own path for
+  a task row, the elements it is drawn under for a child, the menu's name for a menu's entry), **"deep copy"** (a task's), **"collapse
   sub-trees"** (the row stays open on its children) and **"retract with every sub-child"** (the row closed too). A
   Search window's rows retract in that window's open rows (`SchedulerState.searchExpanded`, its element rows' keys),
   never the tree's. **"go to calendar", "go to task tree" and "add default sub-tree" are not on the menu**: they are
   a task's actions in the actions section (`AddedAction.TaskGoToCalendar`, `TaskGoToTree`, `TaskAddDefaultSubtree`).
-  Ctrl+C in a Search list copies the ids of the selected children, else of the selected rows.
+  Ctrl+C in a Search list copies the ids of the selected children, else of the selected rows. **A menu's entry is such a
+  row** (anomaly 2026-11-25): its "add" puts it in that menu's own added elements, kept by its NAME
+  (`SearchDomain.optionKey`, `elementKeyOf`: an entry's row id is its place in the menu).
 - **A task row is a tree cell to the user.** Its menu is built for the path the right-click landed on (the row, its
   path box, or a line of its list of paths): deep copy acts on THAT occurrence (`SearchDomain.occurrenceAtPath`,
   walked on the right-click, never per keystroke), and "copy path" copies that path.

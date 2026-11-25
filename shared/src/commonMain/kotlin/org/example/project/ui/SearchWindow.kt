@@ -736,6 +736,12 @@ fun SearchWindow(
                         ?.let { SearchDomain.ItemResult(SearchDomain.Kind.Action, it.key, it.title, it.detail) }
                 }
             }
+        } else if (options != null) {
+            // User rule 2026-11-25: a menu's added entries, kept by name ([SearchDomain.optionKey]).
+            remember(config.added) {
+                config.added.filter { it.startsWith(SearchDomain.Kind.Option.name + "/") }
+                    .map { key -> key.substringAfter('/').let { SearchDomain.ItemResult(SearchDomain.Kind.Option, it, it, "") } }
+            }
         } else
         remember(
             config.added, state.tasks, state.categories, state.periodKinds, state.panels, state.alarms,
@@ -763,8 +769,14 @@ fun SearchWindow(
             remember(options.options, options.checked, query, config.kinds, filters) {
                 // Its entries, by name ([SearchDomain.optionKey]): an entry's id is its place, which changes with the list.
                 val keptKeys = SearchDomain.keptListed(state, config, options.options.map { (_, name) -> SearchDomain.ItemResult(SearchDomain.Kind.Option, name, name, "") })
-                val kept = options.options.filter { (_, name) -> SearchDomain.optionKey(name) in keptKeys }
-                SearchDomain.optionResults(kept, query, options.checked, creates = options.onCreate != null)
+                val kept = options.options.filter { (id, name) ->
+                    if (id in options.separators) config.separators && query.isBlank() else SearchDomain.optionKey(name) in keptKeys
+                }
+                // A separator stands BETWEEN entries: none at an end, none doubled.
+                val shown = kept.filterIndexed { i, (id, _) ->
+                    id !in options.separators || (i > 0 && i < kept.lastIndex && kept[i + 1].first !in options.separators)
+                }
+                SearchDomain.optionResults(shown, query, options.checked, creates = options.onCreate != null)
             }
         } else if (actionRows != null) {
             // The section has sorted and filtered them by its bar already ([SearchDomain.shownActionGroups]).
@@ -1176,13 +1188,23 @@ fun SearchWindow(
      * [keys] into the added elements, each once ([SearchDomain.withAdded]); [replacing]: every element added before
      * leaves the list first, so it holds exactly these.
      */
+    /**
+     * User rule 2026-11-25: an element's key as the window keeps it — a menu's entry by its NAME ([SearchDomain.optionKey]),
+     * its row's id being its place in the menu; any other row's own.
+     */
+    fun elementKeyOf(rowKey: String): String {
+        val given = options ?: return rowKey
+        if (!rowKey.startsWith(SearchDomain.Kind.Option.name + "/")) return rowKey
+        val id = rowKey.substringAfter('/')
+        return given.options.firstOrNull { it.first == id }?.second?.let(SearchDomain::optionKey) ?: rowKey
+    }
     fun addKeys(keys: List<String>, replacing: Boolean = false) {
         if (addedList != null) {
             addedList.onAdd(keys, replacing)
             return
         }
         val current = latestConfig
-        val next = SearchDomain.withAdded(if (replacing) emptyList() else current.added, keys)
+        val next = SearchDomain.withAdded(if (replacing) emptyList() else current.added, keys.map(::elementKeyOf).distinct())
         if (next != current.added) onConfigChange(current.copy(added = next))
     }
     /**
@@ -1210,6 +1232,10 @@ fun SearchWindow(
             if (addedList == null && actionRows == null && menuList == null) config.added.toHashSet() else emptySet()
         }
     childSelection.onAdd = { keys, replacing -> addKeys(keys, replacing) }
+    // User rule 2026-11-25: where this window's sections leave their background options ([SectionBackground]) — a section
+    // has none of its own, and leaves its in its window's.
+    val enclosingSectionBackground = LocalSectionBackground.current
+    val ownSectionBackground = if (isSearchSection(actionRows, addedList)) null else remember { SectionBackground() }
     childSelection.addedKeys = addedOutlined
     /**
      * User rule 2026-10-07: the menu of a CHILD cell — one of an expanded row's sub-tree, in the result list or in the
@@ -1226,18 +1252,18 @@ fun SearchWindow(
      */
     /** User rule 2026-11-25: Ctrl+C and the row menu's "copy id" — each element's id ([SearchDomain.copiedId]), a line each. */
     fun copyIds(keys: List<String>) {
-        val text = keys.distinct().joinToString("\n", transform = SearchDomain::copiedId)
+        val text = keys.map(::elementKeyOf).distinct().joinToString("\n", transform = SearchDomain::copiedId)
         if (text.isNotEmpty()) writeSystemClipboardText(text)
     }
     /**
      * The row menu's "copy path" of an element: the names of the elements above it — the ones its row is drawn under
      * ([ancestors]), else its first parent's, and theirs ([ElementTree.parentsOf]). Nothing above it: nothing copied.
      */
-    fun copyElementPath(key: String, ancestors: List<String>?) {
+    fun copyElementPath(key: String?, ancestors: List<String>?, selfName: String? = null) {
         val state = currentState
-        val above = ancestors ?: buildList {
+        val above = ancestors ?: if (key == null) emptyList() else buildList {
             val seen = hashSetOf(key)
-            var at = key
+            var at: String = key
             while (true) {
                 val parent = ElementTree.parentsOf(state, at).firstOrNull { it !in seen } ?: break
                 seen += parent
@@ -1245,10 +1271,15 @@ fun SearchWindow(
                 at = parent
             }
         }
-        if (above.isEmpty()) return
-        val names = SearchDomain.resolve(state, above, { emptyMap() }, windows, schedulerRuns, claudeLogs).associate { resultKey(it) to it.name }
-        writeSystemClipboardText(SearchDomain.pathLabel(above.map { names[it] ?: it }))
+        // User rule 2026-11-25: the path includes the row clicked; each segment its title, its id where it has none.
+        val keys = above + listOfNotNull(key)
+        if (keys.isEmpty()) return
+        val names = SearchDomain.resolve(state, keys, { emptyMap() }, windows, schedulerRuns, claudeLogs).associate { resultKey(it) to it.name }
+        val segments = keys.map { k -> SearchDomain.pathSegment(if (k == key && selfName != null) selfName else names[k], k.substringAfter('/')) }
+        writeSystemClipboardText(SearchDomain.pathLabel(segments))
     }
+    /** A path already named, segment by segment. */
+    fun copyPathOf(segments: List<String>) = writeSystemClipboardText(SearchDomain.pathLabel(segments))
     /** The cells under the list [listId] closed in this window's sub-trees ([SchedulerState.searchExpanded]). */
     fun closeSubtreeCells(listId: CellListId) {
         val key = subtreeCellsKey
@@ -1297,7 +1328,8 @@ fun SearchWindow(
             onAddReplacing = if (addedList == null) { { addSelected(replacing = true) } } else null,
             extra = addedMenu(result).orEmpty(),
             onCopyId = { copyIds(listOf(resultKey(result))) },
-            onCopyPath = shownPath.takeIf { it.isNotEmpty() }?.let { { writeSystemClipboardText(SearchDomain.pathLabel(it)) } },
+            // User rule 2026-11-25: the path includes the row clicked — its title, its id where it has none.
+            onCopyPath = { writeSystemClipboardText(SearchDomain.pathLabel(shownPath + SearchDomain.pathSegment(live?.title ?: result.title, taskId.value))) },
             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
             // The row's sub-tree is this window's ([SchedulerState.searchExpanded]), never the tree's: closed here.
             onCollapseSubtrees = childListId?.let { listId -> { closeSubtreeCells(listId) } },
@@ -1311,10 +1343,10 @@ fun SearchWindow(
     }
 
     /** User rule 2026-11-25: the row menu's entries every element row has, for the element [key] drawn as [rowKey]. */
-    fun elementMenu(key: String, rowKey: String, ancestors: List<String>?): RowMenuCommon =
+    fun elementMenu(key: String, rowKey: String, ancestors: List<String>?, selfName: String? = null): RowMenuCommon =
         RowMenuCommon(
             onCopyId = { copyIds(listOf(key)) },
-            onCopyPath = { copyElementPath(key, ancestors) },
+            onCopyPath = { copyElementPath(key, ancestors, selfName) },
             // The rows open under it: drawn on surfaces whose keys start with its own ([childSurface]). Greyed with none open.
             onCollapseSubtrees = if (expandedElements.none { it.startsWith("$rowKey>") }) null else {
                 { expandedElements = expandedElements.filterNot { it.startsWith("$rowKey>") }.toSet() }
@@ -1456,6 +1488,24 @@ fun SearchWindow(
       val searchShown = !searchRemoved
       val rightShown = !(actionsRemoved && addedRemoved)
       var backgroundMenu by remember { mutableStateOf(false) }
+      var sectionEntries by remember { mutableStateOf<List<MenuAction>>(emptyList()) }
+      // A section's own background options ([SectionBackground]): its parts, as the window's menu offers the window's.
+      fun sectionPartsEntries(): List<MenuAction> =
+          partsMenuActions(
+              removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved, barRemoved = barRemoved),
+              more = emptyList(),
+              parts = SearchPart.entries.let { if (barOutside || picker != null) it - SearchPart.Bar else it },
+          ) { part ->
+              val next = part.toggled(splitsNow())
+              headerRemoved = next.headerRemoved
+              barRemoved = next.barRemoved
+              searchRemoved = next.searchRemoved
+              actionsRemoved = next.actionsRemoved
+              addedRemoved = next.addedRemoved
+              searchCollapsed = next.searchHidden
+              actionsCollapsed = next.actionsHidden
+              addedCollapsed = next.addedHidden
+          }
       Box(
           Modifier.fillMaxWidth().weight(1f)
               // A right-click no row, field or control answered (they consume theirs): the window's own menu.
@@ -1463,11 +1513,18 @@ fun SearchWindow(
               // must be only for the whole search window, even if the three sections are search windows themselves."* A
               // section — the actions section, the added elements list — has no background menu of its own: its right-click
               // goes on to the window it is a section of ([isSearchSection]).
-              .then(contextMenuModifier(enabled = !isSearchSection(actionRows, addedList), key = "search-background") { backgroundMenu = true }),
+              .then(contextMenuModifier(enabled = !isSearchSection(actionRows, addedList), key = "search-background") {
+                  // User rule 2026-11-25: a right-click on a section's background gives the window's menu that section's own
+                  // options too, after a separator ([SectionBackground]).
+                  sectionEntries = ownSectionBackground?.take().orEmpty()
+                  backgroundMenu = true
+              })
+              .then(if (isSearchSection(actionRows, addedList)) Modifier.recordsSectionPress(enclosingSectionBackground) { sectionPartsEntries() } else Modifier),
       ) {
       SearchPartsMenu(
           open = backgroundMenu,
           onDismiss = { backgroundMenu = false },
+          after = sectionEntries,
           removed = SearchSplits(headerRemoved = headerRemoved, searchRemoved = searchRemoved, actionsRemoved = actionsRemoved, addedRemoved = addedRemoved, barRemoved = barRemoved),
           // User rule 2026-11-22: the window's id on the clipboard — what its Search row and "Made in window" name.
           more = menuList?.backgroundActions.orEmpty() +
@@ -1963,7 +2020,7 @@ fun SearchWindow(
                             }
                             Box(
                                 arranged.then(if (notAddedRow) Modifier.alpha(NOT_ADDED_ALPHA) else Modifier)
-                                    .then(if (rowKey in addedOutlined) Modifier.addedOutline() else Modifier),
+                                    .then(if (elementKeyOf(rowKey) in addedOutlined) Modifier.addedOutline() else Modifier),
                             ) {
                             // The left-side menu's items: drawn by the menu, selected and arranged by the list.
                             val given = menuList?.byKey?.get((result as? SearchDomain.ItemResult)?.id)
@@ -2040,6 +2097,11 @@ fun SearchWindow(
                                 }
                                 return@itemsIndexed
                             }
+                            // User rule 2026-11-25: a separator row is a line, nothing to select or act on.
+                            if (result is SearchDomain.ItemResult && options != null && result.id in options.separators) {
+                                HorizontalDivider(Modifier.fillMaxWidth().padding(vertical = 4.dp))
+                                return@Box
+                            }
                             // User rule 2026-11-12: with the drop buttons on, each element has one at its right.
                             DropButtonRow(drop = dropOf(result)) {
                             when (result) {
@@ -2067,15 +2129,14 @@ fun SearchWindow(
                                         inSelection = rowInSelection(index),
                                         onSelect = { clickRow(index, pressModifiers.ctrl, pressModifiers.shift, keepIfSelected = false) },
                                         onSecondarySelect = { clickRow(index, ctrl = false, shift = false, keepIfSelected = true) },
-                                        // An option acts on the RELEASE of either button ([pickOnRelease]): its click picks it,
-                                        // its right-click picks it alone, the list closed.
+                                        // An option acts on the RELEASE of its click ([pickOnRelease]). Its right-click opens the
+                                        // one row menu, as every row's (user rule 2026-11-25); "check only this" is in it.
                                         onPrimaryRelease = option?.let {
                                             {
                                                 select(index)
                                                 actOnOption(result.id)
                                             }
                                         },
-                                        onSecondaryRelease = option?.takeIf { !selectAll }?.let { given -> { given.onSolo(result.id) } },
                                         onOpen = { openers.open(state, result) },
                                         // User rule 2026-10-01: a double-click ADDS the element (a task row's enters
                                         // Edit Mode, the tree's rule) — never opens another window on it. A "creation"
@@ -2094,12 +2155,22 @@ fun SearchWindow(
                                             if (hoverPopup == null) mark?.let { draw -> { draw(result.id) } }
                                             else { { HoverPopupArrow(); mark?.invoke(result.id) } }
                                         },
-                                        hasMenu = option == null,
+                                        // User rule 2026-11-25: an option's right-click opens the one row menu — "add" putting it
+                                        // in THIS list's added elements, by its name ([SearchDomain.optionKey]).
+                                        hasMenu = !selectAll && result.id != SearchDomain.CREATE_OPTION,
                                         enabled = option == null || result.id !in option.disabled,
                                         onAdd = { addSelected() },
                                         onAddReplacing = { addSelected(replacing = true) },
-                                        menuActions = addedMenu(result),
-                                        rowMenu = elementMenu(resultKey(result), elementKey, null),
+                                        menuActions = addedMenu(result)
+                                            ?: option?.checked?.let { listOf(MenuAction(CHECK_ONLY_LABEL) { option.onSolo(result.id) }) },
+                                        rowMenu = if (option != null) {
+                                            RowMenuCommon(
+                                                onCopyId = { copyIds(listOf(resultKey(result))) },
+                                                onCopyPath = { copyPathOf(listOfNotNull(option.listName) + result.name) },
+                                                onCollapseSubtrees = null,
+                                                onRetractAll = null,
+                                            )
+                                        } else elementMenu(resultKey(result), elementKey, null),
                                         timerRun = if (result.kind == SearchDomain.Kind.Timer) {
                                             {
                                                 actionHandlers.timerRun(
@@ -2468,7 +2539,11 @@ fun SearchWindow(
     // User rule 2026-11-25: what this window draws outlines the added elements' rows — its sub-trees' cells included. A
     // section that is a Search window of its own (the actions, the added elements) provides its own, empty.
     val windowContent: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
-        androidx.compose.runtime.CompositionLocalProvider(LocalAddedOutlined provides addedOutlined) { windowBody() }
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalAddedOutlined provides addedOutlined,
+            // A whole window gives its sections where to leave their background options; a section passes its window's on.
+            LocalSectionBackground provides (ownSectionBackground ?: enclosingSectionBackground),
+        ) { windowBody() }
     }
     if (frame == null && popupChrome != null) {
         // A pop-up: the window's surface, its head at the top edge (anomaly 2026-11-15, 5). What is inside is not it.
@@ -2536,6 +2611,10 @@ class SearchOptions(
     val integers: IntegerRows? = null,
     /** User rule 2026-11-21: the pop-up an option shows while hovered ([MenuAction.hoverPopup]); null for none. */
     val hoverPopup: ((String) -> (@Composable () -> Unit)?)? = null,
+    /** The menu's name, a copied path's first segment ([OptionSearchMenu]'s own). */
+    val listName: String? = null,
+    /** User rule 2026-11-25: the ids of the separator rows ([MenuAction.separator]), drawn while the list shows them. */
+    val separators: Set<String> = emptySet(),
 )
 
 /**
@@ -2560,14 +2639,27 @@ class MenuAction(
      * calendar's "add…" and "edit…" showing the Search window of what to add or edit. Null: none.
      */
     val hoverPopup: (@Composable () -> Unit)? = null,
+    /** User rule 2026-11-25: a horizontal line between groups of entries, no entry ([SearchDomain.Config.separators]). */
+    val separator: Boolean = false,
     val onClick: () -> Unit,
-)
+) {
+    companion object {
+        /** A line between two groups of a menu's entries. */
+        fun separator(): MenuAction = MenuAction(SEPARATOR_LABEL, enabled = false, separator = true) {}
+    }
+}
+
+/** What a separator row is called, for the bar's finder and "Listed from". */
+internal const val SEPARATOR_LABEL: String = "———"
 
 /**
  * User rule 2026-11-25: **the row menu's entries every element row has** — "copy id", "copy path", "collapse sub-trees" and
  * "retract with every sub-child" — for a row that is no tree cell; [menu] makes them the one menu
  * ([org.example.project.scheduler.ui.taskCellMenuActions]). A null entry is greyed.
  */
+/** A check-box option's row menu entry: that option checked alone (what its right-click did until 2026-11-25). */
+internal const val CHECK_ONLY_LABEL: String = "check only this"
+
 internal class RowMenuCommon(
     val onCopyId: (() -> Unit)?,
     val onCopyPath: (() -> Unit)?,
@@ -2625,6 +2717,7 @@ internal fun ActionMenu(name: String,
             leading = if (actions.any { it.mark != null }) { id -> id.toIntOrNull()?.let(actions::getOrNull)?.mark?.invoke() } else null,
             disabled = actions.indices.filter { !actions[it].enabled }.mapTo(HashSet()) { it.toString() },
             hoverPopup = if (actions.any { it.hoverPopup != null }) { id -> id.toIntOrNull()?.let(latest::getOrNull)?.hoverPopup } else null,
+            separators = actions.indices.filter { actions[it].separator }.mapTo(HashSet()) { it.toString() },
         ),
     )
 }
@@ -2743,14 +2836,15 @@ internal fun OptionSearchMenu(
         onSelectAll = { ids -> held = true; options.onSelectAll(ids) }, onSolo = holding(options.onSolo),
         leading = options.leading, onNearEnd = options.onNearEnd, onDrop = options.onDrop, canDrop = options.canDrop,
         disabled = options.disabled, onCreate = options.onCreate?.let(::holding), integers = options.integers,
-        hoverPopup = options.hoverPopup,
+        hoverPopup = options.hoverPopup, listName = name, separators = options.separators,
     )
     // Anomaly 2026-11-21 (*"The right-click doesn't work..."*): the ONE registration of this menu with the host that closes
     // menus on a press outside them. A caller registering the same menu again was closed by this one opening — the host
     // closes every other menu as one opens — and took the menu with it: the calendar's right-click menu was gone in the
     // frame it opened, the left-side menu's background menu too. Keyed on [closings], so a press that closes the menu and
     // opens it again registers it again.
-    androidx.compose.runtime.key(closings) { transientMenuDismissal(shown, close) }
+    val menuKey = androidx.compose.runtime.key(closings) { transientMenuDismissal(shown, close) }
+    val enclosingMenus = LocalEnclosingMenus.current
     // It is a Search window: its menu window shows it bare, and it wears a window's surface ([LocalPopupChrome]).
     androidx.compose.runtime.CompositionLocalProvider(LocalBareMenu provides true) {
     AppDropdownMenu(
@@ -2761,7 +2855,7 @@ internal fun OptionSearchMenu(
         offset = offset,
         atPointer = atPointer,
     ) {
-        androidx.compose.runtime.CompositionLocalProvider(LocalPopupChrome provides PopupChrome()) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalPopupChrome provides PopupChrome(), LocalEnclosingMenus provides enclosingMenus + menuKey) {
         val opened = if (options.integers != null) SearchDomain.INTEGER_SEARCH else SearchDomain.OPTION_SEARCH
         // User rule 2026-11-13: a drop-down's list has an id — the window's it opens over, and its [name], which says
         // what list it is (written where it is called: a place in the code would change from one build to the next).
@@ -2939,17 +3033,63 @@ internal fun SearchPartsMenu(
     more: List<MenuAction> = emptyList(),
     /** The parts the menu offers: all of them, but the header for the left-side menu (user rule 2026-11-14). */
     parts: List<SearchPart> = SearchPart.entries,
+    /**
+     * User rule 2026-11-25: the options of the section right-clicked (the actions section, the added elements list — Search
+     * windows of their own), after the window's, a separator between.
+     */
+    after: List<MenuAction> = emptyList(),
     onToggle: (SearchPart) -> Unit,
 ) {
     // User rule 2026-11-12: the menu is a Search window of its entries.
     ActionMenu("SearchPartsMenu",
         open = open,
         onDismiss = onDismiss,
-        // Anomaly 2026-11-15 (*"the right-click menu of the background of the search window disappears when selecting an
-        // option"*): each entry shows or hides a part, its label turning to say the other — the menu stays for the next.
-        actions = more + parts.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed)), keepsOpen = true) { onToggle(part) } },
+        actions = partsMenuActions(removed, more, parts, onToggle) + (if (after.isEmpty()) emptyList() else listOf(MenuAction.separator()) + after),
         atPointer = true,
     )
+}
+
+/**
+ * A Search window's background options: [more], then one per part — anomaly 2026-11-15 (*"the right-click menu of the
+ * background of the search window disappears when selecting an option"*): each shows or hides a part, its label turning to
+ * say the other, the menu staying for the next.
+ */
+internal fun partsMenuActions(
+    removed: SearchSplits,
+    more: List<MenuAction>,
+    parts: List<SearchPart>,
+    onToggle: (SearchPart) -> Unit,
+): List<MenuAction> =
+    more + parts.map { part -> MenuAction(part.menuLabel(removed = part.isRemoved(removed)), keepsOpen = true) { onToggle(part) } }
+
+/**
+ * User rule 2026-11-25: *"When right-clicking the background of the Search window S, if it is done in the action section or
+ * the added elements list section, the options specific for those two search windows (embedded in S) appear after the ones
+ * for S, after a horizontal separator."* What a section's background press leaves for the window's menu, which takes it as
+ * it opens: the section's press is read first (an inner node's), the window's after.
+ */
+internal class SectionBackground {
+    private var pending: List<MenuAction>? = null
+    fun leave(entries: List<MenuAction>) { pending = entries }
+    fun take(): List<MenuAction>? = pending.also { pending = null }
+}
+
+/** The [SectionBackground] of the window the composition is a section of; null outside one. */
+internal val LocalSectionBackground = androidx.compose.runtime.compositionLocalOf<SectionBackground?> { null }
+
+/** A section's background: a secondary press no row took leaves [entries] for the window's menu ([SectionBackground]). */
+private fun Modifier.recordsSectionPress(holder: SectionBackground?, entries: () -> List<MenuAction>): Modifier {
+    holder ?: return this
+    return this.pointerInput(holder) {
+        awaitPointerEventScope {
+            while (true) {
+                val press = awaitPointerEvent()
+                if (press.type == PointerEventType.Press && press.buttons.isSecondaryPressed && press.changes.none { it.isConsumed }) {
+                    holder.leave(entries())
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -4169,7 +4309,9 @@ internal fun TaskIdentityRow(
                             } else null,
                             onEdit = null,
                             onCopyId = { writeSystemClipboardText(SearchDomain.copiedId(SearchDomain.taskKey(taskId))) },
-                            onCopyPath = shownPath?.let { { writeSystemClipboardText(SearchDomain.pathLabel(it)) } },
+                            onCopyPath = {
+                                writeSystemClipboardText(SearchDomain.pathLabel(shownPath.orEmpty() + SearchDomain.pathSegment(latest.tasks[taskId]?.title, taskId.value)))
+                            },
                             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
                             onCollapseSubtrees = if (hasChildren) closeCells else null,
                             onRetractAll = if (hasChildren && expanded) {

@@ -70,9 +70,12 @@ class TransientMenuHost {
     var anyOpen: Boolean by mutableStateOf(false)
         private set
 
-    /** Registers a newly opened menu, closing any menu already open — a second one is never wanted. */
-    fun open(key: Any, opener: PopupOpener? = null, onDismiss: () -> Unit) {
-        dismissMenus()
+    /**
+     * Registers a newly opened menu, closing any menu already open — a second one is never wanted — but those it is opened
+     * from ([keep]): anomaly 2026-11-25, a row of a right-click menu right-clicked opens its own menu over it.
+     */
+    fun open(key: Any, opener: PopupOpener? = null, keep: Collection<Any> = emptyList(), onDismiss: () -> Unit) {
+        dismissMenus(keep = keep)
         entries[key] = opener to onDismiss
         anyOpen = true
     }
@@ -179,9 +182,10 @@ class TransientMenuHost {
      * [onPress]: closed by a press — which leaves alone the menu whose own control it lands on: that control's click
      * answers it ([PopupOpeners.pressAnsweredBy], anomaly 2026-11-20).
      */
-    private fun dismissMenus(onPress: Boolean = false) {
+    private fun dismissMenus(onPress: Boolean = false, keep: Collection<Any> = emptyList()) {
         if (entries.isEmpty()) return
         for ((key, entry) in entries.entries.toList()) {
+            if (key in keep) continue
             if (onPress && PopupOpeners.pressAnsweredBy(entry.first)) continue
             entries.remove(key)
             entry.second()
@@ -373,17 +377,27 @@ fun Modifier.leaveFocusOnOutsidePress(): Modifier {
  * why the menu's own `Popup` must be `focusable = false`.
  */
 @Composable
-fun transientMenuDismissal(open: Boolean, onDismiss: () -> Unit) {
+fun transientMenuDismissal(open: Boolean, onDismiss: () -> Unit): Any {
     val host = LocalTransientMenuHost.current
     val key = remember { Any() }
     val latestDismiss by rememberUpdatedState(onDismiss)
     // The control that opens it, whose click a press on it is (anomaly 2026-11-20, [PopupOpener]).
     val opener = LocalPopupOpener.current
-    DisposableEffect(host, key, open, opener) {
-        if (open) host?.open(key, opener) { latestDismiss() }
+    // The menus it is opened from: they stay open under it (anomaly 2026-11-25).
+    val within = LocalEnclosingMenus.current
+    DisposableEffect(host, key, open, opener, within) {
+        if (open) host?.open(key, opener, within) { latestDismiss() }
         onDispose { host?.close(key) }
     }
+    return key
 }
+
+/**
+ * Anomaly 2026-11-25 (*"when I right-click a row, then right-click a row in the right-click menu R, it doesn't open a
+ * right-click menu as well"*): **the menus the composition stands in**, outermost first — a menu opened from a row of
+ * another keeps that one open ([TransientMenuHost.open]'s `keep`).
+ */
+val LocalEnclosingMenus = androidx.compose.runtime.compositionLocalOf<List<Any>> { emptyList() }
 
 /**
  * The press handler of the field a **drop-down hangs from**: a click opens the menu, and a click while it is

@@ -314,7 +314,7 @@ object SearchDomain {
      * The drop-down's Search window as it is kept: options, its bar empty, the order its options were given in. Its
      * options are said by its "Listed from" ([ListedFrom]), given each time it opens.
      */
-    val OPTION_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Option)) }
+    val OPTION_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Option), separators = true) }
 
     /**
      * User rule 2026-11-21 (*"In the down arrow of the left-side menu, in 'Currently on', there is only 'Types: option'.
@@ -969,6 +969,12 @@ object SearchDomain {
          */
         val buttonFollowsExpansion: Boolean = false,
         /**
+         * User rule 2026-11-25, a search configuration ([Setting.Separators]): **the horizontal separators between the groups
+         * of a list's rows** — a window's own background options, then a section's of it. Off but in a menu's list
+         * ([OPTION_SEARCH]).
+         */
+        val separators: Boolean = false,
+        /**
          * User rule 2026-11-22, a search configuration ([Setting.TaskRowLayout]): **what a task row shows, in this order**
          * ([TaskRowPart]). Empty — the default — is the row as the tree draws it: the kind, the arrow, the title clipped
          * to its column, the path, the percentage, the minimum time, the categories. Given, the row is exactly these parts,
@@ -1140,6 +1146,7 @@ object SearchDomain {
                     arranged = arranged,
                     dropButtons = dropButtons,
                     buttonFollowsExpansion = buttonFollowsExpansion,
+                    separators = separators,
                     taskRowLayout = taskRowLayout.map { it.name },
                     actionSearch = actionSearch,
                     pickedBlocks = pickedBlocks.sorted(),
@@ -1290,6 +1297,7 @@ object SearchDomain {
                     arranged = stored.arranged,
                     dropButtons = stored.dropButtons,
                     buttonFollowsExpansion = stored.buttonFollowsExpansion,
+                    separators = stored.separators,
                     taskRowLayout = TaskRowPart.decode(stored.taskRowLayout),
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
@@ -2173,6 +2181,8 @@ object SearchDomain {
         DropButtons(null, "A drop button per element"),
         /** User rule 2026-11-19: the menu button that opened the window keeps its open rows ([Config.buttonFollowsExpansion]). */
         ButtonFollowsExpansion(null, "Button saves open rows"),
+        /** User rule 2026-11-25: the horizontal separators between groups of rows ([Config.separators]). */
+        Separators(null, "Separators between groups"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
         CategorySort(Kind.Category, "Sort by", sorts = true),
         PeriodSort(Kind.RestrictivePeriod, "Sort by", sorts = true),
@@ -2286,7 +2296,7 @@ object SearchDomain {
             setting.sorts || setting == Setting.SearchSortsOnly -> SettingRole.Sort
             setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults -> SettingRole.Children
             setting == Setting.DropButtons || setting == Setting.CompletionList || setting == Setting.MenuCustomizing ||
-                setting == Setting.ButtonFollowsExpansion || setting == Setting.TaskRowLayout -> SettingRole.Display
+                setting == Setting.ButtonFollowsExpansion || setting == Setting.TaskRowLayout || setting == Setting.Separators -> SettingRole.Display
             setting == Setting.ResetSearch -> null
             else -> SettingRole.Filter
         }
@@ -2343,6 +2353,7 @@ object SearchDomain {
             Setting.MenuCustomizing.takeIf { config.menuCustomizing },
             Setting.DropButtons.takeIf { config.dropButtons },
             Setting.ButtonFollowsExpansion.takeIf { config.buttonFollowsExpansion },
+            Setting.Separators.takeIf { config.separators },
             Setting.TaskRowLayout.takeIf { config.taskRowLayout.isNotEmpty() },
         )
 
@@ -2889,6 +2900,9 @@ object SearchDomain {
             Setting.SearchSortsOnly -> "The actions section's bar sorts the actions and hides none."
             Setting.MenuCustomizing -> "A press selects a row and activates nothing; a held press drags the selected rows into the order kept."
             Setting.DropButtons -> "A button on every element to drop it from the list."
+            Setting.Separators ->
+                "A horizontal line between groups of rows: in a background menu, between the window's own options and those of " +
+                    "the section right-clicked (its actions or its added elements)."
             Setting.TaskRowLayout ->
                 "What a task row shows, in this order. Default: the row as the tree draws it. Set, a title in it is shown " +
                     "whole and the list scrolls sideways (Shift + wheel, or the bar under it) where a row is wider than it."
@@ -3149,6 +3163,8 @@ object SearchDomain {
         val dropButtons: Boolean = false,
         /** New 2026-11-19: absent = the menu button keeps what it kept ([Config.buttonFollowsExpansion]). */
         val buttonFollowsExpansion: Boolean = false,
+        /** New 2026-11-25: absent = no separator ([Config.separators]). */
+        val separators: Boolean = false,
         /** New 2026-11-22: absent = the default task row ([Config.taskRowLayout]); a part this build does not know is skipped. */
         val taskRowLayout: List<String> = emptyList(),
         /** New 2026-10-11: absent from an older build's = the actions in their own order. */
@@ -3263,8 +3279,8 @@ object SearchDomain {
     fun pathLabel(path: List<String>): String = path.joinToString(PATH_SEPARATOR)
 
     /**
-     * User rule 2026-11-25, the row menu's "copy path": the path of a cell whose ancestors are the cells [ancestors]
-     * names, outermost first — read as a task row's path reads ([allPathsInAnyTree]): the tree's label, then each title.
+     * User rule 2026-11-25, the row menu's "copy path": the path of the cells [ancestors] names, outermost first — the
+     * clicked cell last, the path including it; each its title, or its task's id where it has none ([pathSegment]) — read as a task row's path reads ([allPathsInAnyTree]): the tree's label, then each title.
      * When the first of them is not in the live tree's first list (a Search window's sub-tree starts lower), the live
      * tree's cells above it come first ([SchedulerDomain.ancestorsOfCell]).
      */
@@ -3274,10 +3290,13 @@ object SearchDomain {
             if (first == null || first in state.lists[state.rootListId]?.cellIds.orEmpty()) emptyList()
             else SchedulerDomain.ancestorsOfCell(state, first).orEmpty()
         val titles = (above + ancestors).mapNotNull { id ->
-            state.cells[id]?.taskId?.takeUnless(SchedulerDomain::isRootTask)?.let { state.tasks[it]?.title.orEmpty() }
+            state.cells[id]?.taskId?.takeUnless(SchedulerDomain::isRootTask)?.let { pathSegment(state.tasks[it]?.title, it.value) }
         }
         return pathLabel(listOf(liveRootLabel(state)) + titles)
     }
+
+    /** User rule 2026-11-25: one segment of a copied path — the element's title, its id where it has none. */
+    fun pathSegment(title: String?, id: String): String = title?.takeIf { it.isNotBlank() } ?: id
 
     /**
      * User rule 2026-11-25: **what Ctrl+C (and the row menu's "copy id") copies of a row's element** — a task's id in the

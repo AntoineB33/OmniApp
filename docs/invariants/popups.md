@@ -1097,6 +1097,17 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   it opened — the calendar's right-click menu and the left-side menu's background menu vanished at once. A press that
   closes a menu and opens it again (a right-click elsewhere) is registered again by the menu itself (keyed on its
   closings), which is what the calendar's per-anchor copy had been for.
+- **A menu opened from a row of another keeps that one open** (anomaly 2026-11-25, *"when I right-click a row, then
+  right-click a row in the right-click menu R, it doesn't open a right-click menu as well"*): `OptionSearchMenu` provides
+  its registration key to what it draws (`LocalEnclosingMenus`), and `TransientMenuHost.open` closes every other menu but
+  those (`keep`). An entry of a menu is a row like any: its right-click opens the one row menu, never runs the entry
+  (`MenuEntryRowMenuTest`); a check-box option's former right-click, "check only this", is an entry of that menu.
+- **A section's background options join its window's** (user rule 2026-11-25): the actions section and the added
+  elements list have no background menu of their own; a secondary press on their background leaves their own options
+  (`SectionBackground`, `recordsSectionPress`, read before the window's handler as an inner node's), which the window's
+  menu shows after its own, a separator between (`SearchPartsMenu`'s `after`, `SectionBackgroundMenuTest`). The separator
+  is a menu entry (`MenuAction.separator()`), drawn while the list's search configuration "Separators between groups"
+  (`Config.separators`, on in a menu's list, `OPTION_SEARCH`) is on; never at an end, never doubled.
 - **The one exception is a menu that holds text fields** (the quota's resilience values, `QuotaResilienceEditor`): a
   field in a popup that cannot be focused cannot be typed into, so that menu is `focusable = true`, registers nothing
   with the observer, and leaves through its own `onDismissRequest` on the first press outside — which it consumes.

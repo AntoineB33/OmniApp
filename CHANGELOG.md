@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Copy path includes the row; a menu's entries have the row menu; section background options; separators — 2026-11-25
+
+- User: *"copy path must include the element being clicked. What is copied is the title, unless there is no title, in
+  which case the id is copied."* (`SearchDomain.pathSegment`).
+- Anomaly: *"when I right-click a row, then right-click a row in the right-click menu R, it doesn't open a right-click
+  menu"* — opening a menu closed every other, its parent included, and an entry's right-click RAN the entry (a check-box
+  option's checked it alone). Now a menu opened from inside another keeps it (`LocalEnclosingMenus`), and an entry's
+  right-click opens the one row menu: "add" into R's own added elements (by name), copy id, copy path, and "check only
+  this" for a check-box option.
+- User: a right-click on the background of the actions section or the added elements list shows the window's options,
+  a separator, then the section's own. New search configuration **"Separators between groups"** (`Config.separators`,
+  stored, absent in an older payload = off; on in a menu's list).
+- Not done: the option's "default presences" action — the user's answer (menus' rows defined by search configuration
+  elements whose context-values have defaults in code) is a larger change, to be agreed first.
+- Client rebuild only.
+
 ### Outline in pop-ups and sub-trees; Edit Mode rows get the one menu; pop-up "add" — 2026-11-25
 
 - User: *"I don't see any outline around the rows that are in the added elements list."* The outline was drawn only on a

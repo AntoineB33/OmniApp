@@ -95,8 +95,48 @@ class RowMenuTest {
     }
 
     @Test
+    fun copy_path_includes_the_row_clicked_each_segment_its_title_or_its_id() {
+        var s = tree()
+        val pie = cell(s, "Pie")
+        val crust = cell(s, "Crust")
+        val ancestors = SchedulerDomain.ancestorsOfCell(s, crust)!!
+        assertEquals(
+            SearchDomain.pathLabel(listOf(SchedulerDomain.ROOT_TASK_TITLE, "Apple", "Pie", "Crust")),
+            SearchDomain.cellPathLabel(s, ancestors + crust),
+        )
+        // A task with no title: its id stands in its place.
+        val pieTask = task(s, "Pie")
+        s = s.copy(tasks = s.tasks + (pieTask to s.tasks[pieTask]!!.copy(title = "")))
+        assertEquals(
+            SearchDomain.pathLabel(listOf(SchedulerDomain.ROOT_TASK_TITLE, "Apple", pieTask.value)),
+            SearchDomain.cellPathLabel(s, SchedulerDomain.ancestorsOfCell(s, pie)!! + pie),
+        )
+        assertEquals("Title", SearchDomain.pathSegment("Title", "id"))
+        assertEquals("id", SearchDomain.pathSegment(" ", "id"))
+        assertEquals("id", SearchDomain.pathSegment(null, "id"))
+    }
+
+    @Test
+    fun the_separators_are_a_search_configuration_on_in_a_menus_list_and_absent_from_an_older_payload() {
+        assertTrue(SearchDomain.OPTION_SEARCH.separators, "a menu's list shows them")
+        assertFalse(SearchDomain.Config().separators, "a plain Search window has none")
+        assertEquals(SearchDomain.SettingRole.Display, SearchDomain.roleOf(SearchDomain.Setting.Separators))
+        assertTrue(SearchDomain.Setting.Separators in SearchDomain.activeSettings(SearchDomain.OPTION_SEARCH))
+        assertTrue("separator" !in SearchDomain.settingDescription(SearchDomain.Setting.Separators).lowercase() ||
+            SearchDomain.settingDescription(SearchDomain.Setting.Separators) != SearchDomain.Setting.Separators.label)
+        // Kept and read back.
+        val on = SearchDomain.Config(separators = true)
+        assertEquals(on, SearchDomain.Config.decode(on.encode()))
+        // A payload written before 2026-11-25 has no such field: it decodes, with none.
+        val older = SearchDomain.Config().encode().replace(Regex(",?\"separators\":(true|false)"), "")
+        assertFalse(older.contains("separators"))
+        assertFalse(SearchDomain.Config.decode(older)!!.separators)
+    }
+
+    @Test
     fun copy_id_is_a_tasks_reference_and_any_other_elements_key() {
         assertEquals(SchedulerDomain.TASK_ID_REFERENCE_PREFIX + "abc", SearchDomain.copiedId("Task/abc"))
         assertEquals("Alarm/7", SearchDomain.copiedId("Alarm/7"))
+        assertEquals("Option/beta", SearchDomain.copiedId(SearchDomain.optionKey("beta")))
     }
 }

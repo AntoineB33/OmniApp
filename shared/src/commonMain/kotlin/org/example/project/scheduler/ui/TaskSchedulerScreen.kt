@@ -681,10 +681,11 @@ internal fun CellListSection(
         val copyPath: () -> Unit = remember(path) {
             {
                 // A first row of a Search sub-tree is drawn under none of its own: its ancestors are the live tree's.
+                // User rule 2026-11-25: the path includes the row clicked.
                 val drawn = path.dropLast(1)
                 val ancestors = drawn.ifEmpty { SchedulerDomain.ancestorsOfCell(currentState, cellId).orEmpty() }
                 org.example.project.scheduler.platform.writeSystemClipboardText(
-                    org.example.project.scheduler.domain.SearchDomain.cellPathLabel(currentState, ancestors),
+                    org.example.project.scheduler.domain.SearchDomain.cellPathLabel(currentState, ancestors + cellId),
                 )
             }
         }

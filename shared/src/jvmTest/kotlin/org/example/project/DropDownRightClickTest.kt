@@ -28,7 +28,8 @@ import org.example.project.ui.CheckBoxDropDown
 /**
  * Anomaly 2026-10-15: *"I right-clicked on the element type drop-down menu in the Search window, and it opened a menu
  * as if I right-clicked on the element in the result list."* The type list opens OVER the result rows; a right-click
- * on one of its options checks that option alone — and must reach nothing under the list.
+ * on one of its options opens its row menu, whose "check only this" checks it alone (user rule 2026-11-25) — and must
+ * reach nothing under the list.
  */
 @OptIn(InternalComposeUiApi::class, ExperimentalComposeUiApi::class)
 class DropDownRightClickTest {
@@ -40,7 +41,7 @@ class DropDownRightClickTest {
     }
 
     @Test
-    fun a_right_click_on_an_option_picks_it_alone_and_opens_no_menu_under_the_list() = onEdt<Unit> {
+    fun a_right_click_on_an_option_opens_its_row_menu_whose_check_only_this_picks_it_alone() = onEdt<Unit> {
         val probe = Probe()
         val scene =
             ImageComposeScene(width = 500, height = 700, density = Density(1f)) {
@@ -77,6 +78,17 @@ class DropDownRightClickTest {
             // and closed under a button still held it let the rest of the click reach the row beneath.
             assertEquals(setOf(0, 1, 2), probe.checked, "nothing picked before the release")
             scene.sendPointerEvent(PointerEventType.Release, at, buttons = PointerButtons(), button = PointerButton.Secondary)
+            frames()
+            // User rule 2026-11-25: its right-click opens the one row menu, as every row's — "check only this" checks it alone.
+            assertEquals(setOf(0, 1, 2), probe.checked, "the right-click checks nothing by itself")
+            assertEquals(0, probe.rowMenus, "no row under the list opened its menu")
+            val only =
+                scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                    .last { n -> n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == org.example.project.ui.CHECK_ONLY_LABEL } == true }
+                    .boundsInWindow.center
+            scene.sendPointerEvent(PointerEventType.Move, only)
+            scene.sendPointerEvent(PointerEventType.Press, only, buttons = PointerButtons(isPrimaryPressed = true), button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Release, only, buttons = PointerButtons(), button = PointerButton.Primary)
             frames()
             assertEquals(setOf(1), probe.checked, "the option right-clicked, alone")
             assertEquals(0, probe.rowMenus, "no row under the list opened its menu")
