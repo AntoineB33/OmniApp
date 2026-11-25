@@ -298,6 +298,10 @@ object ElementTree {
             elementSource = parent,
             // A kind the page does not hold (a workplace setup's children on the Task Scheduler page) is offered all the same.
             pageTypesOnly = config.pageTypesOnly && (kind == null || kind in config.offeredKinds),
+            // User rule 2026-11-25: the creation row at the top — its parent excluded is no filter of the user's, and a
+            // category's children of every kind still lead with what makes one.
+            sorts = SearchDomain.CREATION_FIRST_SORTS,
+            sortFollowsDefault = false,
         )
     }
 }

@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Deep copy as Search rows, pinned action rows, md link and blank-row pop-ups — 2026-11-25
+
+- The deep copy window is a "Deep copy" group of action rows (each control a row); a row's "deep copy" opens a Search
+  window on the tasks with that group pinned. The account's weight table and relative priority open as Search windows
+  with their row pinned. The default sub-tree keeps its windows; the other windows still standing are listed in
+  `popups.md` § *There is ONE sort of window*.
+- A row of an actions section can be pinned ("pin this row"): kept with the window (`Config.pinnedActionRow`, new
+  stored field, absent = none), opened with its ancestors and scrolled to the top whenever the added elements change.
+- `[[` / `[[>` in an md text shows the other md elements, creation row first.
+- The blank row ending a list of children shows a stuck pop-up with the hover arrow, not a window.
+- Creation rows lead: the children pop-up, any one-kind search whose only filter is the excluded parent, and a
+  drop-down's "create" row.
+- Not checked on screen: placement of the two new pop-ups and the md pop-up's behaviour while typing.
+- Client rebuild only.
+
 ### A pop-up's background menu, drag and window behave as a window's — 2026-11-25
 
 - Anomalies on A's background menu B, each checked on the desktop: its padding opened nothing on a right-click; a second

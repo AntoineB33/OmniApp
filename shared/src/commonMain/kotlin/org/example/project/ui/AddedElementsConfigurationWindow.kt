@@ -413,6 +413,25 @@ private fun AddedActionList(
     val rows = SearchDomain.actionListRows(groups, config)
     val latestConfig by rememberUpdatedState(config)
     val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(latestConfig, id, listed)) }
+    // User rule 2026-11-25: the row to start at — what the window asks ([reveal]) or the pinned row, the later ask winning.
+    var asks by remember { mutableStateOf(0) }
+    var shownReveal by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    LaunchedEffect(reveal) { reveal?.let { shownReveal = it.first to ++asks } }
+    // User rule 2026-11-25: **the pinned row** ([SearchDomain.Config.pinnedActionRow]) — whenever the added elements change
+    // (and as it is pinned, and as the window opens), it and its ancestors are opened where it can be reached, and the list
+    // scrolls it to its top.
+    val latestGroups by rememberUpdatedState(groups)
+    val latestRows by rememberUpdatedState(rows)
+    val addedKeys = remember(added) { added.map(SearchDomain::keyOf) }
+    LaunchedEffect(addedKeys, config.pinnedActionRow) {
+        val pinned = latestConfig.pinnedActionRow ?: return@LaunchedEffect
+        val opened = SearchDomain.withPinnedActionRowOpen(latestConfig, latestGroups) ?: return@LaunchedEffect
+        if (opened != latestConfig) onConfigChange(opened)
+        // The rows it opened are listed a frame or two later.
+        repeat(3) { androidx.compose.runtime.withFrameNanos { } }
+        val key = latestRows.firstOrNull { it.id == pinned }?.key ?: return@LaunchedEffect
+        shownReveal = key to ++asks
+    }
     // User rule 2026-11-13: the section is a Search window with its OWN added elements (rows of it, added by their menu),
     // its own actions section over them and that section's bar and open rows — kept with the window it stands in, under
     // the section's id ([rememberInsideConfig]). The rows open in the section itself stay this window's
@@ -500,8 +519,10 @@ private fun AddedActionList(
                     val action = row.action
                     if (action == null) draw() else AddableAction(action, row.group.members, config) { draw() }
                 },
-                reveal = reveal,
+                reveal = shownReveal,
                 noneListed = noneListed,
+                pinned = config.pinnedActionRow,
+                onPin = { id -> onConfigChange(SearchDomain.withActionRowPinned(latestConfig, id)) },
             ),
             modifier = modifier,
         )
@@ -936,12 +957,12 @@ private fun AddedActionBlocks(
             }
         }
         // The entries that act on a CELL act on each task's first live one; a task no cell holds has none.
-        SearchDomain.AddedAction.TaskDeepCopy -> {
-            val cells = SearchDomain.addedTaskCells(state, added)
-            FrameButton(if (cells.size == 1) "Deep copy" else "Deep copy ${cells.size}", enabled = cells.isNotEmpty()) {
-                cells.forEach(handlers.onDeepCopyCell)
-            }
-        }
+        // User rule 2026-11-25: the deep copy window's controls, each a row of the "Deep copy" group.
+        SearchDomain.AddedAction.TaskDeepCopy, SearchDomain.AddedAction.DeepCopyMaxDepth, SearchDomain.AddedAction.DeepCopyWholeSubtree,
+        SearchDomain.AddedAction.DeepCopyIds, SearchDomain.AddedAction.DeepCopyWeightTables, SearchDomain.AddedAction.DeepCopyPercentages,
+        SearchDomain.AddedAction.DeepCopyMinimumTime, SearchDomain.AddedAction.DeepCopyText, SearchDomain.AddedAction.DeepCopyExcludeTitle,
+        SearchDomain.AddedAction.DeepCopyPath, SearchDomain.AddedAction.DeepCopyReset ->
+            DeepCopyActionEditor(state, action, added) { run(SearchDomain.AddedCommand.Raw(it)) }
         SearchDomain.AddedAction.TaskCollapseSubtrees ->
             FrameButton("Collapse", enabled = SearchDomain.addedTaskCells(state, added).isNotEmpty()) {
                 run(SearchDomain.AddedCommand.CollapseSubtrees)

@@ -34,6 +34,24 @@ window, a period's, a category's, a notice — is the same thing with the same m
   PRD §4): several may stand open at once, from both trees, so each reads its own tree's state and sends its
   intents back into it. There is no app-wide "which tree asked" any more.
 
+- **The Search window is to be the only window of the app** (user rule 2026-11-25: *"Generalize this fix so that the search
+  window is the only window of the app."*). Done for the account's deep copy, weight table and relative priority (a
+  Search window with the row asked for pinned, `task-tree.md` § *The grouped actions*), and for the blank row ending a list
+  of children, which shows a pop-up instead of a window (below). Still windows of their own: the default sub-tree's
+  per-object windows (its tree is not the account's), the calendar block editors, a period draft, the reminder tag and
+  constraint pickers, the default alarm / timer / reminder windows, and the lateral windows History, Sleep, Alarms, Task
+  relations, Categories, Default sub-tree, Keyboard shortcuts, Online and Time simulation.
+- **The blank row ending a list of children shows a POP-UP, never a window** (user rule 2026-11-25: *"instead of opening a
+  new window with a tab in the system tray, open a pop-up window. Add the arrow indicating that a pop-up window will appear
+  when hovered over."*; `ChildSearchPopup`, `HoverPopupRow`'s `ask`). Hovered it shows the Search window of what can be
+  made its parent's child (`ElementTree.childSearchConfig`), stuck to the row on `MenuSide.SUBMENU`'s sides, the row
+  wearing `HoverPopupArrow` at its end; a click, a double-click or Enter shows it pinned.
+- **A pop-up's creation row is at the top** (user rule 2026-11-25: *"In the pop-up window, the creation element must
+  appear at the top. So fix the default searching configuration of this pop-up window, and fix it as well for other
+  contexts."*): `childSearchConfig` sorts by `CREATION_FIRST_SORTS`; `defaultSortsOf` no longer counts the element a
+  pop-up comes from (`excludedElements`) as a filter of the user's; a drop-down's "create “…”" row
+  (`SearchDomain.optionResults`) leads its list, before "Select all".
+
 ## The task tree is a window — removed 2026-11-11
 
 **User rule 2026-11-11: there is no task tree window any more.** `TaskTreeWindow`, `FloatingWindow.TaskTree` and the

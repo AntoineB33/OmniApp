@@ -17,7 +17,7 @@ import androidx.compose.ui.window.PopupProperties
 /** [row] as a [HoverPopupRow] showing [popup], or as it is where [popup] is null. */
 @Composable
 internal fun WithHoverPopup(popup: (@Composable () -> Unit)?, row: @Composable () -> Unit) {
-    if (popup == null) row() else HoverPopupRow(popup, row)
+    if (popup == null) row() else HoverPopupRow(popup, row = row)
 }
 
 /**
@@ -42,6 +42,8 @@ internal fun HoverPopupArrow(modifier: Modifier = Modifier) {
 @Composable
 internal fun HoverPopupRow(
     popup: @Composable () -> Unit,
+    /** User rule 2026-11-25: raised, the pop-up is shown pinned — a blank child row's double-click or Enter. */
+    ask: Int = 0,
     row: @Composable () -> Unit,
 ) {
     // The list of rows the row is in (the menu's result list gives it), which the pop-up must not hide.
@@ -51,6 +53,12 @@ internal fun HoverPopupRow(
     val branch = rememberMenuHoverTracker(parent = around) { open = false }
     val opener = rememberPopupOpener()
     val latestOpen by rememberUpdatedState(open)
+    androidx.compose.runtime.LaunchedEffect(ask) {
+        if (ask > 0) {
+            open = true
+            branch.pin()
+        }
+    }
     Box(
         Modifier
             .reportsHover(branch)

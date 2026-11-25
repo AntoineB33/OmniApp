@@ -281,10 +281,11 @@ object SearchDomain {
                 ItemResult(Kind.Option, CREATE_OPTION, "create “$typed”", "")
                     .takeIf { creates && typed.isNotEmpty() && options.none { it.second.equals(typed, ignoreCase = true) } },
             )
-        val rows = listed.map { (id, name) -> ItemResult(Kind.Option, id, name, "") } + create
-        if (checked == null || listed.isEmpty()) return rows
+        // User rule 2026-11-25: the creation row at the very top of the list, as in every Search window.
+        val rows = listed.map { (id, name) -> ItemResult(Kind.Option, id, name, "") }
+        if (checked == null || listed.isEmpty()) return create + rows
         val all = listed.all { it.first in checked }
-        return listOf(ItemResult(Kind.Option, SELECT_ALL_OPTION, if (all) "Deselect all" else "Select all", "")) + rows
+        return create + listOf(ItemResult(Kind.Option, SELECT_ALL_OPTION, if (all) "Deselect all" else "Select all", "")) + rows
     }
 
     /** What "Select all" leaves checked: every [listed] option, or none of them once they all were. */
@@ -667,7 +668,7 @@ object SearchDomain {
         val since = config.filters.notificationsSinceMillis ?: return false
         // What the app writes itself (the calendar's view of the notifications) and what the hand opens or picks in the
         // actions section are no change of the window's search; an element added beside the calendar is.
-        val search = config.copy(added = emptyList(), calendarView = "", calendarDay = null, calendarDayMode = null, toggledActionRows = emptySet())
+        val search = config.copy(added = emptyList(), calendarView = "", calendarDay = null, calendarDayMode = null, toggledActionRows = emptySet(), pinnedActionRow = null)
         return search == notificationsConfig(since) && config.added.all { it == CALENDAR_KEY }
     }
 
@@ -935,6 +936,13 @@ object SearchDomain {
          */
         val toggledActionRows: Set<String> = emptySet(),
         /**
+         * User rule 2026-11-25: **the pinned row of the actions section** ([ActionGroup.id] or [microGroupId]), null for
+         * none. Pinned from its right-click menu, it is opened; and whenever the added elements change, if it can be
+         * reached by opening rows, it and its ancestors are opened and the section scrolls it to its top
+         * ([withPinnedActionRowOpen]). One per window: pinning a row unpins the one before. Kept with the window's id.
+         */
+        val pinnedActionRow: String? = null,
+        /**
          * User rule 2026-11-12, a search configuration ([Setting.GroupByAddedElements]): **the actions grouped by the
          * added elements they act on**, from the largest set of them to the smallest — each group a row whose children
          * are its actions ([actionGroups]). Off: one flat list of action rows, each naming the elements it acts on.
@@ -1152,6 +1160,7 @@ object SearchDomain {
                     addedFor = addedFor,
                     actionQuery = actionQuery,
                     toggledActionRows = toggledActionRows.sorted(),
+                    pinnedActionRow = pinnedActionRow,
                     actionsGrouped = actionsGrouped,
                     actionsExpanded = actionsExpanded,
                     actionSearchSortsOnly = actionSearchSortsOnly,
@@ -1304,6 +1313,7 @@ object SearchDomain {
                     // The retracted groups an older build kept ([Stored.collapsedActionGroups]) were open by default:
                     // read as rows toggled from today's default (closed), they would open what was closed. Dropped.
                     toggledActionRows = stored.toggledActionRows.toSet(),
+                    pinnedActionRow = stored.pinnedActionRow,
                     actionsGrouped = stored.actionsGrouped,
                     actionsExpanded = stored.actionsExpanded,
                     actionSearchSortsOnly = stored.actionSearchSortsOnly,
@@ -1937,7 +1947,9 @@ object SearchDomain {
     fun defaultSortsOf(config: Config): List<SortMethod>? {
         // User rule 2026-11-16: the search configurations alone are in the tree's order, whatever the bar holds — the ▾'s.
         if (config.searchedKinds == setOf(Kind.SearchConfiguration)) return TREE_ORDER_SORTS
-        if (config.query.isNotBlank() || config.filters.activeCount > 0) return null
+        // User rule 2026-11-25 (*"the creation element must appear at the top … fix it as well for other contexts"*): the
+        // element a pop-up comes from, excluded from its own list, is no filter of the user's.
+        if (config.query.isNotBlank() || config.filters.copy(excludedElements = emptySet()).activeCount > 0) return null
         if (config.searchedKinds.isNotEmpty() && config.searchedKinds.all { it in CLAUDE_KINDS }) return CLAUDE_SORTS
         val kind = config.searchedKinds.singleOrNull() ?: return null
         return CREATION_FIRST_SORTS.takeIf { kind in CREATABLE }
@@ -1977,6 +1989,7 @@ object SearchDomain {
             addedFor = null,
             actionQuery = "",
             toggledActionRows = emptySet(),
+            pinnedActionRow = null,
             actionSearch = "",
             pickedBlocks = emptySet(),
             pickedTimers = emptySet(),
@@ -3173,6 +3186,8 @@ object SearchDomain {
         val collapsedActionGroups: List<String> = emptyList(),
         /** New 2026-11-12: absent = every row of the actions section at its default ([Config.toggledActionRows]). */
         val toggledActionRows: List<String> = emptyList(),
+        /** New 2026-11-25: absent = no row pinned ([Config.pinnedActionRow]). */
+        val pinnedActionRow: String? = null,
         /** New 2026-11-12: absent = the actions grouped, closed, the bar sorting ([Config.actionsGrouped]…). */
         val actionsGrouped: Boolean = true,
         val actionsExpanded: Boolean = false,
@@ -5189,7 +5204,24 @@ object SearchDomain {
         TaskGoToTree(Kind.Task, "Go to task tree"),
         TaskGoToCalendar(Kind.Task, "Go to calendar"),
         TaskCopyIds(Kind.Task, "Copy task ids"),
-        TaskDeepCopy(Kind.Task, "Deep copy"),
+        /**
+         * User rule 2026-11-25 (*"Transform the deep copy window into a search window where every action is a row"*): the
+         * deep copy window's controls are rows of a "Deep copy" group inside the group of the added tasks
+         * ([DEEP_COPY_ACTIONS], [ActionGroup.tag]): this one copies the added tasks' first live cells down to the depth and
+         * with what the rows above it say, which are the account's settings ([SchedulerState.deepCopyMaxDepth], the
+         * `copy*` flags), written as they are changed.
+         */
+        TaskDeepCopy(Kind.Task, "Copy to the clipboard"),
+        DeepCopyMaxDepth(Kind.Task, "Maximum depth"),
+        DeepCopyWholeSubtree(Kind.Task, "Copy the entire sub-tree"),
+        DeepCopyIds(Kind.Task, "Copy the task ids"),
+        DeepCopyWeightTables(Kind.Task, "Copy the priority weight tables"),
+        DeepCopyPercentages(Kind.Task, "Copy priority percentages"),
+        DeepCopyMinimumTime(Kind.Task, "Copy minimum time"),
+        DeepCopyText(Kind.Task, "Copy the task text"),
+        DeepCopyExcludeTitle(Kind.Task, "Exclude tasks with title"),
+        DeepCopyPath(Kind.Task, "Copied down to"),
+        DeepCopyReset(Kind.Task, "Reset the deep copy settings"),
         TaskCollapseSubtrees(Kind.Task, "Collapse sub-trees"),
         TaskAddDefaultSubtree(Kind.Task, "Add default sub-tree"),
         /**
@@ -5747,6 +5779,11 @@ object SearchDomain {
         val heading: String? = null,
         /** What ONE element contains, which [actionGroups] puts first while the section's bar is found in it. */
         val contents: Boolean = false,
+        /**
+         * User rule 2026-11-25: an [inner] group of actions that is no default configuration — the "Deep copy" group
+         * ([DEEP_COPY_GROUP]) — known by this tag and its members.
+         */
+        val tag: String? = null,
     ) {
         /**
          * What the group is known by across edits of the list — what its expansion arrow is remembered under
@@ -5756,6 +5793,7 @@ object SearchDomain {
         val id: String
             get() = when {
                 contents -> "contents/" + members.joinToString(",") { keyOf(it) }
+                tag != null -> tag + "/" + members.joinToString(",") { keyOf(it) }
                 heading != null -> "default/" + kind?.name
                 element -> "element/" + members.joinToString(",") { keyOf(it) }
                 kind != null -> "kind/" + kind.name
@@ -5833,12 +5871,59 @@ object SearchDomain {
         AddedAction.entries.filterTo(HashSet()) { it.label == "New" || it.label == "Duplicate" || it.label == "Delete" } +
             setOf(
                 AddedAction.CreationSearchAll, AddedAction.TaskAddCategory, AddedAction.TaskRemoveCategory,
-                AddedAction.TaskCopyIds, AddedAction.TaskDeepCopy, AddedAction.TaskCollapseSubtrees,
+                AddedAction.TaskCopyIds, AddedAction.TaskCollapseSubtrees,
                 AddedAction.TaskAddDefaultSubtree, AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow,
                 AddedAction.PeriodReset, AddedAction.TimerLowestCountdown, AddedAction.ChronoHighestCount,
                 AddedAction.NotificationCalendar,
-            )
+            ) + DEEP_COPY_ACTIONS
     }
+
+    /**
+     * User rule 2026-11-25: **the rows of the "Deep copy" group** ([DEEP_COPY_GROUP]), in their order: what the deep copy
+     * window asked, each a row of its own, then the copy itself. About the account's settings and the added tasks as a set.
+     */
+    val DEEP_COPY_ACTIONS: List<AddedAction> =
+        listOf(
+            AddedAction.DeepCopyMaxDepth, AddedAction.DeepCopyWholeSubtree, AddedAction.DeepCopyIds, AddedAction.DeepCopyWeightTables,
+            AddedAction.DeepCopyPercentages, AddedAction.DeepCopyMinimumTime, AddedAction.DeepCopyText, AddedAction.DeepCopyExcludeTitle,
+            AddedAction.DeepCopyPath, AddedAction.TaskDeepCopy, AddedAction.DeepCopyReset,
+        )
+
+    /** The tag of the group of [DEEP_COPY_ACTIONS] inside a group of elements ([ActionGroup.tag]), and its title. */
+    const val DEEP_COPY_GROUP: String = "deepcopy"
+    const val DEEP_COPY_TITLE: String = "Deep copy"
+
+    /**
+     * [group] with its [DEEP_COPY_ACTIONS] taken into a group of their own inside it (user rule 2026-11-25), and so for the
+     * groups inside it. A group without them is as it was.
+     */
+    private fun withDeepCopyGroup(group: ActionGroup): ActionGroup {
+        val inner = group.inner.map(::withDeepCopyGroup)
+        val copying = DEEP_COPY_ACTIONS.filter { it in group.actions }
+        if (copying.isEmpty()) return if (inner == group.inner) group else group.copy(inner = inner)
+        val deep = ActionGroup(Kind.Task, group.members, copying, heading = DEEP_COPY_TITLE, tag = DEEP_COPY_GROUP)
+        return group.copy(actions = group.actions.filterNot { it in copying }, inner = listOf(deep) + inner)
+    }
+
+    /** The id of the "Deep copy" group the section lists for [added] ([actionGroups]), null where it lists none. */
+    fun deepCopyGroupId(added: List<Result>): String? {
+        fun find(group: ActionGroup): String? = if (group.tag == DEEP_COPY_GROUP) group.id else group.inner.firstNotNullOfOrNull(::find)
+        return addedActionGroups(added).firstNotNullOfOrNull(::find)
+    }
+
+    /**
+     * User rule 2026-11-25: the id of the first row of the actions section showing [action] for [added] ([microGroupId]) —
+     * what a window opened to show one action pins ([Config.pinnedActionRow]); null where no group lists it.
+     */
+    fun actionRowId(added: List<Result>, action: AddedAction): String? {
+        fun find(group: ActionGroup): String? =
+            if (action in group.actions) microGroupId(group, action) else group.inner.firstNotNullOfOrNull(::find)
+        return addedActionGroups(added).firstNotNullOfOrNull(::find)
+    }
+
+    /** The groups the actions section lists for [added], nothing filtered or sorted ([actionGroups]). */
+    private fun addedActionGroups(added: List<Result>): List<ActionGroup> =
+        actionGroups(actionsFor(addedActions("", Kind.entries.toSet(), actionKindsOf(added)), added), added)
 
     fun isSetAction(action: AddedAction): Boolean =
         action.section == null || action.section == Kind.AppSetting || action in SET_ACTIONS
@@ -5887,6 +5972,57 @@ object SearchDomain {
      */
     fun isActionRowOpen(config: Config, id: String, top: Boolean): Boolean =
         (top && config.actionsExpanded) != (id in config.toggledActionRows)
+
+    /**
+     * User rule 2026-11-25: **the rows from the top of the actions section down to the row [id]**, [id] last — the rows
+     * that must be open for it to be listed ([actionListRows]: the same walk, whatever is open now), each with whether it
+     * is a top row. Null where no row of [groups] is [id]: it cannot be reached by opening rows.
+     */
+    fun actionRowPath(groups: List<ActionGroup>, config: Config, id: String): List<Pair<String, Boolean>>? {
+        fun inGroup(group: ActionGroup, top: Boolean, above: List<Pair<String, Boolean>>): List<Pair<String, Boolean>>? {
+            val path = above + (group.id to top)
+            if (group.id == id) return path
+            for (entry in microGroups(group, "")) {
+                when (entry) {
+                    is MicroGroup.One -> if (microGroupId(group, entry.action) == id) return path + (id to false)
+                    is MicroGroup.Inner -> inGroup(entry.group, false, path)?.let { return it }
+                }
+            }
+            return null
+        }
+        for (group in groups) {
+            if (config.actionsGrouped) {
+                inGroup(group, true, emptyList())?.let { return it }
+            } else {
+                for (entry in microGroups(group, "")) {
+                    when (entry) {
+                        is MicroGroup.One -> if (microGroupId(group, entry.action) == id) return listOf(id to true)
+                        is MicroGroup.Inner -> inGroup(entry.group, true, emptyList())?.let { return it }
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * User rule 2026-11-25: [config] with **its pinned row ([Config.pinnedActionRow]) and every row above it open**, where
+     * [groups] can list it; null where there is no pinned row or no way to reach it. The rows stay as they were otherwise.
+     */
+    fun withPinnedActionRowOpen(config: Config, groups: List<ActionGroup>): Config? {
+        val pinned = config.pinnedActionRow ?: return null
+        val path = actionRowPath(groups, config, pinned) ?: return null
+        var toggled = config.toggledActionRows
+        for ((row, top) in path) {
+            if (!isActionRowOpen(config.copy(toggledActionRows = toggled), row, top)) {
+                toggled = if (row in toggled) toggled - row else toggled + row
+            }
+        }
+        return config.copy(toggledActionRows = toggled)
+    }
+
+    /** User rule 2026-11-25: [config] with [id] the pinned row of its actions section (the one before unpinned), or none. */
+    fun withActionRowPinned(config: Config, id: String?): Config = config.copy(pinnedActionRow = id)
 
     /**
      * User rule 2026-11-01, **a new element added to a window, and the added elements' "show only its actions"** (the same
@@ -5972,7 +6108,14 @@ object SearchDomain {
             AddedAction.TaskEdit -> "edit"
             AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar -> "go"
             AddedAction.TaskCopyIds -> "copy"
-            AddedAction.TaskDeepCopy -> "deep copy"
+            AddedAction.TaskDeepCopy -> "deep copy clipboard"
+            AddedAction.DeepCopyMaxDepth -> "deep copy maximum depth levels"
+            AddedAction.DeepCopyWholeSubtree -> "deep copy entire sub-tree unlimited"
+            AddedAction.DeepCopyIds, AddedAction.DeepCopyWeightTables, AddedAction.DeepCopyPercentages,
+            AddedAction.DeepCopyMinimumTime, AddedAction.DeepCopyText -> "deep copy"
+            AddedAction.DeepCopyExcludeTitle -> "deep copy exclude title"
+            AddedAction.DeepCopyPath -> "deep copy path deepest"
+            AddedAction.DeepCopyReset -> "deep copy reset"
             AddedAction.TaskCollapseSubtrees -> "collapse"
             AddedAction.TaskAddDefaultSubtree -> "add default sub-tree"
             AddedAction.TaskDefaultSubtree -> "open default sub-tree template window"
@@ -6250,7 +6393,10 @@ object SearchDomain {
         }
     }
 
-    fun actionGroups(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>): List<ActionGroup> {
+    fun actionGroups(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>): List<ActionGroup> =
+        groupedActions(sections, added).map(::withDeepCopyGroup)
+
+    private fun groupedActions(sections: List<Pair<Kind?, List<AddedAction>>>, added: List<Result>): List<ActionGroup> {
         if (added.isEmpty()) return sections.map { (kind, actions) -> ActionGroup(kind, emptyList(), actions) }
         fun membersOf(kind: Kind?) = added.filter { kind == null || actionKindOf(it) == kind || it.kind == kind }
         // A creation row acted on as its kind ("New quota") has that kind's default configuration, nothing else of it.

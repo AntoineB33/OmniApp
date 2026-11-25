@@ -127,6 +127,39 @@ object MdDomain {
         }.toList()
 
     /**
+     * User rule 2026-11-25 (*"In an md file, when writing [[ or [[>, there must be a pop-up window to show all the md files
+     * except the current one, with the md creation row at the top."*): **the link being written at the caret** — `[[` (or
+     * `[[>`) before [caret] on its line, not closed before it, and what is typed after it ([typed]); [nameStart] is where
+     * the name begins. Null where the caret is in no open link.
+     */
+    data class OpenLink(val start: Int, val nameStart: Int, val child: Boolean, val typed: String)
+
+    fun openLinkAt(text: String, caret: Int): OpenLink? {
+        if (caret < 2 || caret > text.length) return null
+        val start = text.lastIndexOf("[[", caret - 2)
+        if (start < 0) return null
+        val between = text.substring(start + 2, caret)
+        if ('\n' in between || ']' in between || '[' in between || '|' in between || '#' in between) return null
+        val child = between.startsWith(CHILD_MARK)
+        val nameStart = start + 2 + if (child) 1 else 0
+        return OpenLink(start, nameStart, child, text.substring(nameStart, caret))
+    }
+
+    /**
+     * [text] with the open [link] at [caret] completed to [name] and closed (its `]]` written unless it follows already),
+     * and the caret after it.
+     */
+    fun completeLink(text: String, caret: Int, link: OpenLink, name: String): Pair<String, Int> {
+        val after = text.substring(caret)
+        val closing = if (after.startsWith("]]")) "" else "]]"
+        val next = text.substring(0, link.nameStart) + name + closing + after
+        return next to (link.nameStart + name.length + 2)
+    }
+
+    /** The name a link to [element] is written with: its title, else its id ([resolve] reads both). */
+    fun linkName(element: MdElement): String = title(element).ifEmpty { element.id }
+
+    /**
      * The md element a link's [name] points at: by its title ([title]), else by its file's name in the folder Claude Code
      * is given ([fileNames]), else by its id — case aside, the account's first. Null: no md element of that name (yet).
      */

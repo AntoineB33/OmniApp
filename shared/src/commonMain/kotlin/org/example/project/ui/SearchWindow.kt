@@ -1979,8 +1979,8 @@ fun SearchWindow(
                                         when {
                                             child == null -> openSelected()
                                             childRow != null -> openers.open(state, childRow)
-                                            // The blank row ending a list of children: its double-click's window.
-                                            else -> childSelection.openBar(child.rowKey) { openers.onOpenChildSearch(child.key) }
+                                            // The blank row ending a list of children: its pop-up (user rule 2026-11-25).
+                                            else -> childSelection.openPopup(child.rowKey)
                                         }
                                         true
                                     }
@@ -2086,6 +2086,13 @@ fun SearchWindow(
                                                 onCopyPath = null,
                                                 onCollapseSubtrees = null,
                                                 onRetractAll = if (actionRow.open) { { actionRows.onToggle(actionRow.id) } } else null,
+                                                // User rule 2026-11-25: a row of an actions section can be pinned.
+                                                extra = listOfNotNull(
+                                                    actionRows.onPin?.let { pin ->
+                                                        if (actionRows.pinned == actionRow.id) MenuAction(UNPIN_ROW_LABEL, id = PIN_ROW_ID) { pin(null) }
+                                                        else MenuAction(PIN_ROW_LABEL, id = PIN_ROW_ID) { pin(actionRow.id) }
+                                                    },
+                                                ),
                                             ),
                                             depth = actionRow.depth,
                                         )
@@ -2771,6 +2778,8 @@ internal class RowMenuCommon(
     val onCopyPath: (() -> Unit)?,
     val onCollapseSubtrees: (() -> Unit)?,
     val onRetractAll: (() -> Unit)?,
+    /** Entries only this row has, after "add" (user rule 2026-11-25: an action row's "pin this row"). */
+    val extra: List<MenuAction> = emptyList(),
 ) {
     fun menu(onAdd: (() -> Unit)?, onAddReplacing: (() -> Unit)?, extra: List<MenuAction>): TaskCellMenuActions =
         TaskCellMenuActions(
@@ -2783,7 +2792,7 @@ internal class RowMenuCommon(
             onRetractAll = onRetractAll,
             onAdd = onAdd,
             onAddReplacing = onAddReplacing,
-            extra = extra,
+            extra = extra + this.extra,
         )
 
     companion object {
@@ -2854,9 +2863,19 @@ class ActionSearchRows(
     val wrap: @Composable (SearchDomain.ActionListRow, @Composable () -> Unit) -> Unit = { _, row -> row() },
     val reveal: Pair<String, Int>? = null,
     val noneListed: String = "No action matches.",
+    /** User rule 2026-11-25: the row pinned in the section ([SearchDomain.Config.pinnedActionRow]), by its id. */
+    val pinned: String? = null,
+    /** Pins the row of that id (the one before unpinned), or unpins with null; null where rows cannot be pinned. */
+    val onPin: ((String?) -> Unit)? = null,
 ) {
     val byKey: Map<String, SearchDomain.ActionListRow> = rows.associateBy { it.key }
 }
+
+/** User rule 2026-11-25: the right-click entries pinning an action row ([ActionSearchRows.onPin]). */
+const val PIN_ROW_LABEL: String = "pin this row"
+const val UNPIN_ROW_LABEL: String = "unpin this row"
+const val PIN_ROW_ID: String = "pin"
+
 
 /**
  * User rule 2026-11-15: *"Add a visual indication in the added elements list and the action section for elements that
@@ -4754,13 +4773,14 @@ private fun ElementChildren(
     // User rule 2026-11-19: double-clicked, it is the search bar of the window it opens, its ✕ and ▾ beside it in the row,
     // until that window is closed.
     // User rule 2026-11-25: selected, walked and right-clicked as its siblings are — a task's sub-tree's placeholder is.
+    // User rule 2026-11-25 (*"instead of opening a new window with a tab in the system tray, open a pop-up window. Add the
+    // arrow indicating that a pop-up window will appear when hovered over."*): hovered, it shows the Search window of what
+    // can be made its parent's child ([ChildSearchPopup]), stuck to it; a click, a double-click or Enter pins it open.
     val blankKey = blankChildRowKey(surface, parent)
-    val linked = selection.linkedBars[blankKey]?.let(openers.linkedWindow)
-    if (linked != null) {
-        LinkedSearchBar(linked, state, windows, claudeLogs, indent.then(resultRowModifier(selected = false)))
-    } else {
+    run {
         var menuOpen by remember(blankKey) { mutableStateOf(false) }
         val isMain = blankKey == selection.main
+        HoverPopupRow(popup = { ChildSearchPopup(parent) }, ask = selection.popupAsks[blankKey] ?: 0) {
         Box(Modifier.outsidePressPart(selection.editor)) {
             Box(
                 modifier = indent.then(
@@ -4774,13 +4794,15 @@ private fun ElementChildren(
                         blankKey,
                         onSelect = { selection.click(siblings + blankKey, blankKey) },
                         onSecondarySelect = { selection.secondaryClick(blankKey) },
-                        onOpen = { selection.openBar(blankKey) { openers.onOpenChildSearch(parent) } },
+                        onOpen = { selection.openPopup(blankKey) },
                         onOpenMenu = {
                             selection.captureForMenu(blankKey)
                             menuOpen = true
                         },
                     ),
-            )
+            ) {
+                HoverPopupArrow(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp))
+            }
             // Standing for no element: its ancestors' path alone.
             ActionMenu("ElementChildren blank",
                 open = menuOpen,
@@ -4792,7 +4814,38 @@ private fun ElementChildren(
                 atPointer = LocalRowMenusAtPointer.current,
             )
         }
+        }
     }
+}
+
+/** How large the Search window a blank child row shows is ([ChildSearchPopup]); the app's window caps it. */
+private val CHILD_SEARCH_POPUP_WIDTH = 760.dp
+private val CHILD_SEARCH_POPUP_HEIGHT = 480.dp
+
+/**
+ * User rule 2026-11-25: **the Search window the blank row ending [parent]'s children shows** — what its double-click
+ * opened as a window of the app until that day ([ElementTree.childSearchConfig]: its kind, [parent] excluded, the
+ * creation row first), drawn as every Search window inside another is ([LocalEmbeddedSearch]), its head hidden.
+ */
+@Composable
+internal fun ChildSearchPopup(parent: String) {
+    val search = LocalEmbeddedSearch.current ?: return
+    val opened = remember(parent) { org.example.project.scheduler.domain.ElementTree.childSearchConfig(parent, "") }
+    var config by remember(opened) { mutableStateOf(opened) }
+    val id = embeddedSearchId("children of:$parent")
+    RegisterEmbeddedSearch(id, "children", config, open = true, saved = false, set = { config = it })
+    var parts by rememberKeptParts(id, SearchSplits(headerRemoved = true))
+    search(
+        EmbeddedSearchRequest(
+            config = config,
+            onConfigChange = { config = it },
+            onDrop = null,
+            splits = parts,
+            onSplitsChange = { parts = it },
+            openedConfig = opened,
+        ),
+        Modifier.width(CHILD_SEARCH_POPUP_WIDTH).height(CHILD_SEARCH_POPUP_HEIGHT),
+    )
 }
 
 /**
@@ -4949,7 +5002,15 @@ internal class ElementChildSelection {
     /** The window each blank row's field is the search bar of ([LinkedSearchBar]), by the blank row's key. */
     val linkedBars = androidx.compose.runtime.mutableStateMapOf<String, String>()
 
-    /** A blank row's double-click (or Enter): the Search window [open] opens, its bar in the row. */
+    /** User rule 2026-11-25: how many times each blank row's pop-up was asked open (a double-click, Enter), by its key. */
+    val popupAsks = androidx.compose.runtime.mutableStateMapOf<String, Int>()
+
+    /** A blank row's double-click (or Enter): its pop-up shown and pinned ([ChildSearchPopup]). */
+    fun openPopup(blankRowKey: String) {
+        popupAsks[blankRowKey] = (popupAsks[blankRowKey] ?: 0) + 1
+    }
+
+    /** A blank row's double-click (or Enter) until 2026-11-25: the Search window [open] opens, its bar in the row. */
     fun openBar(blankRowKey: String, open: () -> String?) {
         val id = open() ?: return
         linkedBars[blankRowKey] = id

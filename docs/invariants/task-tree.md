@@ -93,6 +93,13 @@ child of the other."* (`MdDomain`, `MdElementTest`).
   **The child is derived from the text, never stored**: `ElementTree.childrenOf` / `parentsOf` / `parentIndex` read it
   (`MdDomain.childIdsOf`, the one funnel), and no ✕ of the tree takes it out (`canUnlink`): the text does. A plain link
   makes neither a parent nor a child, and neither does an association.
+- **`[[` or `[[>` typed in an md text shows the other md elements** (user rule 2026-11-25: *"there must be a pop-up window
+  to show all the md files except the current one, with the md creation row at the top."*; `MdDomain.openLinkAt`,
+  `completeLink`, `MdLinkPopup`). While the caret stands in a link not yet closed on its line, a Search window of every md
+  element but this one hangs from the field (which keeps the caret), its creation row first, narrowed to those whose name
+  holds what is typed after the brackets. A pick writes its name (its title, else its id) and `]]`; the creation row makes
+  an md element of the typed name and links it, both in ONE History Unit. Sent away (Escape, a press outside), it stays
+  away until another link is begun.
 - **"Ask Claude Code"** (`AddedAction.MdAskClaude`, user rule 2026-11-21): the press writes every md element into the
   device's md folder (`<state dir>/md`, a file each named by its title, `MdDomain.fileNames`, so a `[[Title]]` names a
   file beside it) with a `CLAUDE.md` guide — how links read, the added md elements as where to start, the graph as the
@@ -1457,6 +1464,25 @@ suggestions before it was ever entered.
     children) and **Search sorts, hides nothing** (`actionSearchSortsOnly`, on: the behaviour below; off, the bar
     filters — an action listed only if it answers, a group while one of its actions or its own title does,
     `SearchDomain.shownActionGroups`). A right-click on its background is ITS OWN menu (it showed the enclosing window's until 2026-11-13 in the text only: the code always gave it its own).
+  - **A row of an actions section can be PINNED** (user rule 2026-11-25: *"add the right-click option to pin the row. It
+    expands the row, and whenever the list updates (change in the added elements list …), if the row is accessible via row
+    expansion it will be expanded (as well as its ancestors) and the list will scroll so that the view is as high as
+    possible with the pinned row at the top. Pinning a row unpins the previously pinned row of the list. It is preserved
+    with the id of the window."*; `Config.pinnedActionRow`, `SearchDomain.actionRowPath`, `withPinnedActionRowOpen`,
+    `withActionRowPinned`, `ActionSearchRows.onPin`, `SearchWindowEverywhereTest`). The row menu's "pin this row" /
+    "unpin this row" (entry id `pin`, after "show only its actions"). The pinned row is an id ([ActionGroup.id] or
+    `microGroupId`); where the added elements no longer list it, nothing moves. The scroll is the section's reveal (the
+    row at the very top, its parent just out of view). Kept with the window's configuration, so with its id.
+  - **The deep copy window is a group of rows** (user rule 2026-11-25: *"Transform the deep copy window into a search
+    window where every action is a row"*; `SearchDomain.DEEP_COPY_ACTIONS`, `ActionGroup.tag`, `DeepCopyActionEditor`).
+    In the group of the added tasks, a "Deep copy" group inside it holds one row per control the window had: Maximum
+    depth, Copy the entire sub-tree, the five "what a copy carries" switches, Exclude tasks with title, Copied down to,
+    Copy to the clipboard, Reset. They are the account's settings, written as changed (one History Unit per stretch,
+    `DEEP_COPY_SETTINGS`). A row's menu "deep copy" opens a Search window on the selection's tasks with that group pinned
+    (`App.openDeepCopySearch`). **The account's weight table and relative priority open the same way** — a Search window
+    on a task of the sub-list / the cell's task, its "Priority weights" / "Relative priority" row pinned
+    (`openWeightSearch`, `openRelativeSearch`, `SearchDomain.actionRowId`). The default sub-tree's keep their windows: a
+    Search window acts on the account's tree.
   - **The section has a SEARCH BAR, which sorts the actions inside each group and moves no group** (user rule
     2026-10-11: *"The actions are separated into macro groups (for each set of elements the actions will apply to)
     and micro groups ('add to calendar' actions, 'Combinations' actions (for periods), etc…). The search bar sorts

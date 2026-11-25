@@ -54,19 +54,25 @@ class ElementChildrenTest {
         splits: SearchSplits,
         onSplits: (SearchSplits) -> Unit,
         opened: MutableList<String>,
-        linked: androidx.compose.runtime.MutableState<SearchDomain.Config>? = null,
+        /** What each pop-up a blank row showed comes from ([SearchDomain.Config.elementSource]). */
+        popups: MutableList<String?> = ArrayList(),
     ) =
         ImageComposeScene(1200, 620, density = Density(1f)) {
             var state by remember { mutableStateOf(account.copy(elementLinks = links)) }
             var config by remember { mutableStateOf(SearchDomain.Config(kinds = setOf(Kind.Chrono), query = "First")) }
+            val menus = remember { org.example.project.ui.TransientMenuHost() }
+            androidx.compose.runtime.CompositionLocalProvider(
+                org.example.project.ui.LocalTransientMenuHost provides menus,
+                org.example.project.ui.LocalEmbeddedSearch provides { request, _ ->
+                    androidx.compose.runtime.SideEffect { popups += request.config.elementSource }
+                    androidx.compose.material3.Text("CHILD POPUP")
+                },
+            ) {
             SearchWindow(
                 state = state,
                 openers = SearchRowOpeners(
                     onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {},
-                    onOpenChildSearch = { opened += it; if (linked != null) "Search#9" else null },
-                    linkedWindow = { id ->
-                        linked?.let { held -> org.example.project.ui.LinkedSearchWindow(id, held.value, SearchDomain.Config()) { held.value = it } }
-                    },
+                    onOpenChildSearch = { opened += it; null },
                 ),
                 onStartTaskNow = {},
                 onGoToTaskTree = { _, _ -> },
@@ -84,6 +90,7 @@ class ElementChildrenTest {
                 onSplitsChange = onSplits,
                 initialSize = Size(1200f, 620f),
             )
+            }
         }
 
     private fun doubleClick(scene: ImageComposeScene, at: Offset, start: Long) {
@@ -98,18 +105,25 @@ class ElementChildrenTest {
         press(start + 120); frame(); release(start + 170); repeat(4) { frame() }
     }
 
+    /**
+     * User rule 2026-11-25: *"In a blank row at the end of a children list …, instead of opening a new window with a tab in
+     * the system tray, open a pop-up window."* — a double-click on it shows the Search pop-up of what can be made the
+     * element's child ([org.example.project.ui.ChildSearchPopup]), and opens no window.
+     */
     @Test
-    fun a_double_click_on_the_blank_field_opens_a_search_from_the_element() {
+    fun a_double_click_on_the_blank_field_shows_a_pop_up_from_the_element() {
         val opened = ArrayList<String>()
-        val scene = onEdt { scene(emptyList(), SearchSplits(expandedElements = setOf("result/Chrono/a")), {}, opened) }
+        val popups = ArrayList<String?>()
+        val scene = onEdt { scene(emptyList(), SearchSplits(expandedElements = setOf("result/Chrono/a")), {}, opened, popups) }
         try {
             repeat(4) { i -> onEdt { scene.render((i + 1) * 16_000_000L) } }
             // Under the only row of the list, whichever band of the head the list starts at.
             for ((i, y) in (130..260 step 17).withIndex()) {
-                if (opened.isNotEmpty()) break
+                if (popups.isNotEmpty()) break
                 doubleClick(scene, Offset(300f, y.toFloat()), 1000L + i * 1000L)
             }
-            assertEquals(listOf("Chrono/a"), opened)
+            assertEquals("Chrono/a", popups.firstOrNull())
+            assertEquals(emptyList(), opened, "no window: a pop-up")
         } finally {
             onEdt { scene.close() }
         }
@@ -117,20 +131,20 @@ class ElementChildrenTest {
 
     /**
      * Anomaly 2026-11-03: the blank field ends the list of children, and it is the PARENT's: under an expanded element with
-     * a child, a double-click on it opens a search from that element — never from the child, which is not expanded.
+     * a child, its pop-up searches from that element — never from the child, which is not expanded.
      */
     @Test
     fun the_blank_field_ending_the_children_is_the_parents() {
-        val opened = ArrayList<String>()
+        val popups = ArrayList<String?>()
         val links = listOf(ElementLink(ElementTree.linkId("Chrono/a", "Chrono/b"), "Chrono/a", "Chrono/b"))
-        val scene = onEdt { scene(links, SearchSplits(expandedElements = setOf("result/Chrono/a")), {}, opened) }
+        val scene = onEdt { scene(links, SearchSplits(expandedElements = setOf("result/Chrono/a")), {}, ArrayList(), popups) }
         try {
             repeat(4) { i -> onEdt { scene.render((i + 1) * 16_000_000L) } }
             for ((i, y) in (130..300 step 17).withIndex()) {
-                if (opened.isNotEmpty()) break
+                if (popups.isNotEmpty()) break
                 doubleClick(scene, Offset(300f, y.toFloat()), 1000L + i * 1000L)
             }
-            assertEquals(listOf("Chrono/a"), opened)
+            assertEquals("Chrono/a", popups.firstOrNull())
         } finally {
             onEdt { scene.close() }
         }
@@ -172,32 +186,6 @@ class ElementChildrenTest {
         val scene = onEdt { scene(links, SearchSplits(expandedElements = open), {}, ArrayList()) }
         try {
             repeat(6) { i -> onEdt { scene.render((i + 1) * 16_000_000L) } }
-        } finally {
-            onEdt { scene.close() }
-        }
-    }
-
-    /**
-     * User rule 2026-11-19: *"Some rows can get the down arrow as well when one of their field is double clicked, and the field
-     * gets the search bar function for the window that opens."* Double-clicked, the blank field is that window's bar.
-     */
-    @Test
-    fun the_double_clicked_field_is_the_bar_of_the_window_it_opened() {
-        val opened = ArrayList<String>()
-        val linked = mutableStateOf(SearchDomain.Config())
-        val scene = onEdt { scene(emptyList(), SearchSplits(expandedElements = setOf("result/Chrono/a")), {}, opened, linked) }
-        try {
-            repeat(4) { i -> onEdt { scene.render((i + 1) * 16_000_000L) } }
-            for ((i, y) in (130..260 step 17).withIndex()) {
-                if (opened.isNotEmpty()) break
-                doubleClick(scene, Offset(300f, y.toFloat()), 1000L + i * 1000L)
-            }
-            assertEquals(listOf("Chrono/a"), opened)
-            // It is the window's bar now, no blank field: the same double-click opens no other window.
-            linked.value = linked.value.copy(query = "abc")
-            repeat(2) { i -> onEdt { scene.render((50 + i) * 16_000_000_000L) } }
-            for ((i, y) in (130..260 step 17).withIndex()) doubleClick(scene, Offset(300f, y.toFloat()), 90_000L + i * 1000L)
-            assertEquals(listOf("Chrono/a"), opened, "a bar, not a blank field: nothing opened again")
         } finally {
             onEdt { scene.close() }
         }

@@ -3,6 +3,7 @@ package org.example.project.ui
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +25,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -56,7 +59,7 @@ internal fun MdElementsEditor(
         if (shown.isEmpty()) NoteText("No md element.")
         for (md in shown) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                MdBlock(md, Modifier.weight(1f)) { text -> run(SearchDomain.AddedCommand.MdSetText(md.id, text, editKey = "md/" + md.id)) }
+                MdBlock(md, Modifier.weight(1f), state.mdElements, mdLinkNew(state, md, run)) { text -> run(SearchDomain.AddedCommand.MdSetText(md.id, text, editKey = "md/" + md.id)) }
                 CrossButton { run(SearchDomain.AddedCommand.MdDissociate(md.id)) }
             }
         }
@@ -77,7 +80,7 @@ internal fun MdTextEditor(
     val shown = state.mdElements.filter { it.id in ids }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (md in shown) {
-            MdBlock(md, Modifier.fillMaxWidth()) { text -> run(SearchDomain.AddedCommand.MdSetText(md.id, text, editKey = "md/" + md.id)) }
+            MdBlock(md, Modifier.fillMaxWidth(), state.mdElements, mdLinkNew(state, md, run)) { text -> run(SearchDomain.AddedCommand.MdSetText(md.id, text, editKey = "md/" + md.id)) }
         }
     }
 }
@@ -153,24 +156,39 @@ internal fun MdAskClaudeButton(state: SchedulerState, added: List<SearchDomain.R
  * focus ([leaveOnOutsidePress]). An empty one is drawn as a line saying so, which a click edits.
  */
 @Composable
-internal fun MdBlock(md: MdElement, modifier: Modifier = Modifier, onText: (String) -> Unit) {
+internal fun MdBlock(
+    md: MdElement,
+    modifier: Modifier = Modifier,
+    /** Every md element of the account: what a `[[` offers ([MdLinkPopup]). */
+    all: List<MdElement> = emptyList(),
+    /** A `[[`'s creation row: this block's text with the link written, and the new md element it names, in one change. */
+    onLinkNew: ((String, MdElement) -> Unit)? = null,
+    onText: (String) -> Unit,
+) {
     var editing by remember(md.id) { mutableStateOf(md.text.isEmpty()) }
-    var draft by remember(md.id) { mutableStateOf(md.text) }
+    var value by remember(md.id) { mutableStateOf(TextFieldValue(md.text)) }
+    val draft = value.text
     // Another device's (or an Undo's) text reaches a block not being typed into.
-    if (!editing && draft != md.text) draft = md.text
+    if (!editing && draft != md.text) value = TextFieldValue(md.text)
     if (editing) {
         val focus = remember { FocusRequester() }
         var hadFocus by remember { mutableStateOf(false) }
         val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+        // User rule 2026-11-25: the link being written at the caret, and the one whose pop-up was sent away (by where it starts).
+        val link = if (value.selection.collapsed) MdDomain.openLinkAt(draft, value.selection.start) else null
+        var dismissed by remember(md.id) { mutableStateOf<Int?>(null) }
+        if (link == null && dismissed != null) dismissed = null
+        Box(modifier) {
         OutlinedTextField(
-            value = draft,
+            value = value,
             onValueChange = {
-                draft = it
-                onText(it)
+                val changed = it.text != value.text
+                value = it
+                if (changed) onText(it.text)
             },
             placeholder = { Text("markdown — [[Name]] links an md element, [[>Name]] makes it a child") },
             textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            modifier = modifier.heightIn(min = 72.dp)
+            modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
                 .leaveOnOutsidePress(active = true) {
                     editing = false
                     focusManager.clearFocus()
@@ -180,6 +198,32 @@ internal fun MdBlock(md: MdElement, modifier: Modifier = Modifier, onText: (Stri
                     else if (hadFocus) editing = false
                 },
         )
+        if (link != null && dismissed != link.start) {
+            // Keyed by the link: once it is closed (or another is begun) this pop-up is gone with it.
+            androidx.compose.runtime.key(link.start) {
+                MdLinkPopup(
+                    current = md,
+                    all = all,
+                    typed = link.typed,
+                    onDismiss = { dismissed = link.start },
+                    onPick = { picked ->
+                        val (text, caret) = MdDomain.completeLink(draft, value.selection.start, link, MdDomain.linkName(picked))
+                        value = TextFieldValue(text, TextRange(caret))
+                        onText(text)
+                    },
+                    onNew = onLinkNew?.let { made ->
+                        {
+                            val id = MdDomain.mintId(all.map { it.id })
+                            val element = MdElement(id = id, text = link.typed.trim())
+                            val (text, caret) = MdDomain.completeLink(draft, value.selection.start, link, MdDomain.linkName(element))
+                            value = TextFieldValue(text, TextRange(caret))
+                            made(text, element)
+                        }
+                    },
+                )
+            }
+        }
+        }
         LaunchedEffect(Unit) { if (md.text.isNotEmpty()) runCatching { focus.requestFocus() } }
     } else {
         Text(
@@ -192,6 +236,54 @@ internal fun MdBlock(md: MdElement, modifier: Modifier = Modifier, onText: (Stri
                 .padding(8.dp),
         )
     }
+}
+
+/** What a `[[`'s creation row does in [md]'s block: the block's text and the new md element, one History Unit. */
+private fun mdLinkNew(state: SchedulerState, md: MdElement, run: (SearchDomain.AddedCommand) -> Unit): (String, MdElement) -> Unit =
+    { text, made ->
+        val next = state.mdElements.map { if (it.id == md.id) it.copy(text = text) else it } + made
+        run(SearchDomain.AddedCommand.Raw(org.example.project.scheduler.state.SchedulerIntent.SetMdElements(next)))
+    }
+
+/** The id of a `[[`'s creation row ([MdLinkPopup]). */
+private const val NEW_MD_OPTION: String = "new md"
+
+/**
+ * User rule 2026-11-25: **the pop-up a `[[` or `[[>` shows in an md text** — every md element but [current], its creation
+ * row at the top, narrowed to those whose name holds what is typed after the brackets ([typed]). A Search window of them
+ * ([OptionSearchMenu]) hanging from the field, which keeps the caret: a click on one writes its name and closes the link
+ * ([MdDomain.completeLink]); the creation row makes an md element of that name and links it.
+ */
+@Composable
+private fun MdLinkPopup(
+    current: MdElement,
+    all: List<MdElement>,
+    typed: String,
+    onDismiss: () -> Unit,
+    onPick: (MdElement) -> Unit,
+    onNew: (() -> Unit)?,
+) {
+    val wanted = typed.trim()
+    val others = remember(all, current.id, wanted) {
+        all.filter { it.id != current.id }
+            .filter { wanted.isEmpty() || MdDomain.linkName(it).contains(wanted, ignoreCase = true) }
+            .sortedBy { MdDomain.linkName(it).lowercase() }
+    }
+    val byId = others.associateBy { it.id }
+    val creation =
+        if (onNew == null) emptyList()
+        else listOf(NEW_MD_OPTION to (if (wanted.isEmpty()) "New md element" else "New md element “$wanted”"))
+    OptionSearchMenu(
+        "md links",
+        open = true,
+        onDismiss = onDismiss,
+        focusable = false,
+        options = SearchOptions(
+            options = creation + others.map { it.id to MdDomain.linkName(it) },
+            checked = null,
+            onClick = { id -> if (id == NEW_MD_OPTION) onNew?.invoke() else byId[id]?.let(onPick) },
+        ),
+    )
 }
 
 /**

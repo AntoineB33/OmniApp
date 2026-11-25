@@ -1585,6 +1585,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // actions are that window's. Set once `openNewWindow` exists (below); the ☆ buttons reach it through
         // [openObjectWindow], which is declared before it.
         var openElementSearch: (SearchDomain.Kind, String) -> Unit = { _, _ -> }
+        // User rule 2026-11-25 (*"the search window is the only window of the app"*): the account's deep copy, weight table
+        // and relative priority are Search windows on the tasks, the row of what was asked pinned. Set with
+        // [openElementSearch]. The default sub-tree's keep their windows: a Search window acts on the account's tree.
+        var openDeepCopySearch: (CellId) -> Unit = {}
+        var openWeightSearch: (CellListId) -> Unit = {}
+        var openRelativeSearch: (CellId) -> Unit = {}
         // PRD §14/§18: the default configuration of a new alarm, timer and reminder — one window each, opened from
         // the bottom of any such element's editor. The subject is the kind ([ObjectWindowKey.Kind.AlarmDefaults]…).
         val defaultsWindows = remember {
@@ -1604,9 +1610,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 ObjectWindowKey.Kind.CategoryEdit ->
                     if (key.template) categoryWindows.openOn(TreeObject(CategoryId(key.id), true)) else search(SearchDomain.Kind.Category)
                 ObjectWindowKey.Kind.PeriodKindEdit -> search(SearchDomain.Kind.RestrictivePeriod)
-                ObjectWindowKey.Kind.PriorityWeights -> weightWindows.openOn(TreeObject(CellListId(key.id), key.template))
-                ObjectWindowKey.Kind.RelativePriority -> relativeWindows.openOn(TreeObject(CellId(key.id), key.template))
-                ObjectWindowKey.Kind.DeepCopy -> deepCopyWindows.openOn(TreeObject(CellId(key.id), key.template))
+                ObjectWindowKey.Kind.PriorityWeights ->
+                    if (key.template) weightWindows.openOn(TreeObject(CellListId(key.id), true)) else if (number == null) openWeightSearch(CellListId(key.id))
+                ObjectWindowKey.Kind.RelativePriority ->
+                    if (key.template) relativeWindows.openOn(TreeObject(CellId(key.id), true)) else if (number == null) openRelativeSearch(CellId(key.id))
+                ObjectWindowKey.Kind.DeepCopy ->
+                    if (key.template) deepCopyWindows.openOn(TreeObject(CellId(key.id), true)) else if (number == null) openDeepCopySearch(CellId(key.id))
                 ObjectWindowKey.Kind.Alarm -> search(SearchDomain.Kind.Alarm)
                 ObjectWindowKey.Kind.Timer -> search(SearchDomain.Kind.Timer)
                 ObjectWindowKey.Kind.Chrono -> search(SearchDomain.Kind.Chrono)
@@ -2810,6 +2819,32 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             presentWindow(search, existing)
         }
         openElementSearch = { kind, id -> openLinkedSearch(SearchDomain.elementSearchConfig(kind, id)) }
+        // A Search window on [tasks], its row [pinnedOf] picks pinned ([SearchDomain.Config.pinnedActionRow]).
+        fun openPinnedTaskSearch(tasks: List<TaskId>, pinnedOf: (List<SearchDomain.Result>) -> String?) {
+            val keys = tasks.distinct().map { SearchDomain.Kind.Task.name + "/" + it.value }
+            if (keys.isEmpty()) return
+            val rows = SearchDomain.resolve(vm.state.value, keys, { emptyMap() })
+            val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task), added = keys, pinnedActionRow = pinnedOf(rows))
+            openLinkedSearch(config)
+        }
+        // The same block "copy" takes: a deep copy of a multi-selection is every selected cell's task.
+        openDeepCopySearch = { cellId ->
+            val st = vm.state.value
+            val cells = SchedulerDomain.contextMenuCopyTargets(st, st.selection, cellId)
+            openPinnedTaskSearch(cells.mapNotNull { st.cells[it]?.taskId }, SearchDomain::deepCopyGroupId)
+        }
+        // A sub-list's table is the "Priority weights" of a task standing in it.
+        openWeightSearch = { listId ->
+            val st = vm.state.value
+            val task = st.lists[listId]?.cellIds?.firstNotNullOfOrNull { st.cells[it]?.taskId }
+            if (task == null) appMessage = "This sub-list holds no task yet."
+            else openPinnedTaskSearch(listOf(task)) { SearchDomain.actionRowId(it, SearchDomain.AddedAction.TaskPriorityWeights) }
+        }
+        openRelativeSearch = { cellId ->
+            vm.state.value.cells[cellId]?.taskId?.let { task ->
+                openPinnedTaskSearch(listOf(task)) { SearchDomain.actionRowId(it, SearchDomain.AddedAction.TaskRelativePriority) }
+            }
+        }
         // A window button that is NOT in the lateral menu (the default sub-tree's, atop the task tree window): open
         // it (and focus) when closed; close it when it is the window being worked in; otherwise bring it back to the
         // front and the focus without closing.
@@ -4525,7 +4560,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 SearchDomain.allPathsInAnyTree(schedulerState)
             }
         val taskIdentityRow: @Composable (EditMenuItem) -> Unit = { item ->
-            TaskIdentityRow(schedulerState, identityPaths, item, onIntent = { vm.dispatch(it) }, onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) })
+            TaskIdentityRow(schedulerState, identityPaths, item, onIntent = { vm.dispatch(it) }, onDeepCopyCell = { openDeepCopySearch(it) })
         }
         val patternExceptionDispatch = remember(vm) { { intent: SchedulerIntent -> vm.dispatch(intent) } }
         val appNowMillis = remember(clock) { { clock.nowMillis() } }
@@ -4886,8 +4921,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 // what the tree's does — a click opens that sub-list's weight window, a
                                 // right-click opens this window on the chain cell. Both in the same tree as
                                 // this one: the chain cell belongs to it.
-                                onOpenWeightWindow = { weightWindows.open(TreeObject(it, template)) },
-                                onOpenRelativePriority = { relativeWindows.open(TreeObject(it, template)) },
+                                onOpenWeightWindow = { if (template) weightWindows.open(TreeObject(it, true)) else openWeightSearch(it) },
+                                onOpenRelativePriority = { if (template) relativeWindows.open(TreeObject(it, true)) else openRelativeSearch(it) },
                                 modifier = Modifier.align(Alignment.Center),
                             )
                         }
@@ -5881,14 +5916,14 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onGoToTaskTree = { taskId ->
                                 goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), null)
                             },
-                            onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                            onDeepCopyCell = { openDeepCopySearch(it) },
                             // User rule 2026-11-11: the default sub-tree's window, from a task element's actions.
                             onOpenDefaultSubtree = {
                                 if (!defaultSubtreeWindowOpen) defaultSubtreeWindowOpen = true
                                 presentWindow(FloatingWindow.DefaultSubtree, FloatingWindow.DefaultSubtree.name)
                             },
-                            onOpenWeightWindow = { weightWindows.open(TreeObject(it, false)) },
-                            onOpenRelativePriority = { relativeWindows.open(TreeObject(it, false)) },
+                            onOpenWeightWindow = { openWeightSearch(it) },
+                            onOpenRelativePriority = { openRelativeSearch(it) },
                             onOpenResilienceSearch = { kind -> openLinkedSearch(SearchDomain.resilienceSearchConfig(kind)) },
                             onOpenKindSearch = { kind -> openLinkedSearch(SearchDomain.kindSearchConfig(kind)) },
                             schedulerRuns = { schedulerRuns },
@@ -5957,15 +5992,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 openers = if (ownerId == null) searchRowOpeners else searchRowOpeners.askedThrough(askedFrom(ownerId)),
                                 onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
                                 onGoToTaskTree = { taskId, at -> goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at) },
-                                onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                                onDeepCopyCell = { openDeepCopySearch(it) },
                                 actionHandlers = if (ownerId == null) addedActionHandlers else addedActionHandlers.askedThrough(askedFrom(ownerId)),
                                 calendarLayerKindsAt = calendarLayers::kindsAt,
                                 onIntent = {
                                     if (ownerId == null) vm.dispatch(it)
                                     else vm.dispatch(SchedulerIntent.MadeIn(HistoryWindow.Search, ownerId.removePrefix(FloatingWindow.Search.name), it))
                                 },
-                                onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
-                                onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
+                                onSetWeightWindow = { id -> id?.let { openWeightSearch(it) } },
+                                onSetRelativeWindow = { id -> id?.let { openRelativeSearch(it) } },
                                 windows = if (request.config.readsWindows) searchWindowEntries() else emptyList(),
                                 schedulerRuns = schedulerRuns,
                                 nowMillis = clock::nowMillis,
@@ -6037,7 +6072,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onGoToTaskTree = { taskId, at ->
                                 goToTaskTreeAt(taskId, schedulerState.tasks[taskId]?.title.orEmpty(), at)
                             },
-                            onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                            onDeepCopyCell = { openDeepCopySearch(it) },
                             actionHandlers = addedActionHandlers.askedThrough(askedFrom(searchId)),
                             calendarLayerKindsAt = calendarLayers::kindsAt,
                             // What this window commits is its own, even when it lands after the press that left it
@@ -6046,8 +6081,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                 vm.dispatch(SchedulerIntent.MadeIn(HistoryWindow.Search, searchId.removePrefix(FloatingWindow.Search.name), it))
                             },
                             // A row's percentage, as a tree cell's: the weight table and the relative priority.
-                            onSetWeightWindow = { weightWindows.setFrom(template = false, it) },
-                            onSetRelativeWindow = { relativeWindows.setFrom(template = false, it) },
+                            onSetWeightWindow = { id -> id?.let { openWeightSearch(it) } },
+                            onSetRelativeWindow = { id -> id?.let { openRelativeSearch(it) } },
                             windows = if (searchConfig.readsWindows) searchWindowEntries() else emptyList(),
                             schedulerRuns = schedulerRuns,
                             nowMillis = clock::nowMillis,
@@ -6102,7 +6137,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             openers = searchRowOpeners,
                             onStartTaskNow = { vm.dispatch(SchedulerIntent.ForceTaskStart(it)) },
                             onGoToTaskTree = { taskId, at -> goToTaskTreeAt(taskId, account.tasks[taskId]?.title.orEmpty(), at) },
-                            onDeepCopyCell = { deepCopyWindows.open(TreeObject(it)) },
+                            onDeepCopyCell = { openDeepCopySearch(it) },
                             actionHandlers = addedActionHandlers,
                             onIntent = vm::dispatch,
                             nowMillis = clock::nowMillis,

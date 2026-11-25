@@ -68,7 +68,7 @@ object ContextDomain {
      * (`MenuAction.id`); which are listed, and where, is this.
      */
     val ROW_MENU_ENTRIES: List<String> = listOf(
-        "start this task now", "add", "add and remove the others", "remove", "remove the others", "show only its actions",
+        "start this task now", "add", "add and remove the others", "remove", "remove the others", "show only its actions", "pin",
         "check only this", "open in Task relations", "open in Keyboard shortcuts", "show window", "create", "apply",
         "edit task", "copy id (ctrl c)", "copy path", "deep copy", "collapse sub-trees", "retract with every sub-child",
     )

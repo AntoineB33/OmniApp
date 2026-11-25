@@ -4013,7 +4013,7 @@ private fun DeepCopySwitchRow(label: String, checked: Boolean, onCheckedChange: 
  * with a draggable scrollbar under it for the parents that fall off the left.
  */
 @Composable
-private fun DeepCopyPathRow(path: List<String>) {
+internal fun DeepCopyPathRow(path: List<String>) {
     val scroll = rememberScrollState()
     // Before the row is measured `maxValue` is Int.MAX_VALUE, which is not a length to divide by.
     val maxScroll = scroll.maxValue.takeIf { it != Int.MAX_VALUE } ?: 0

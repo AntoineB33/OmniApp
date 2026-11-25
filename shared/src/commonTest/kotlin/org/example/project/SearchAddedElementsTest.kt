@@ -489,9 +489,13 @@ class SearchAddedElementsTest {
         assertFalse(older.actionsExpanded)
         assertTrue(older.actionSearchSortsOnly)
 
-        // Nothing added (the window of every configuration): one group per kind, as before.
+        // Nothing added (the window of every configuration): one group per kind, as before — the task's deep copy rows in
+        // a "Deep copy" group inside it (user rule 2026-11-25).
         val sections = SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet())
-        assertEquals(sections, SearchDomain.actionGroups(sections, emptyList()).map { it.kind to it.actions })
+        assertEquals(
+            sections.map { it.first to it.second.toSet() },
+            SearchDomain.actionGroups(sections, emptyList()).map { g -> g.kind to (g.actions + g.inner.flatMap { it.actions }).toSet() },
+        )
     }
 
     /**
@@ -1134,7 +1138,9 @@ class SearchAddedElementsTest {
             // …and the menu's "Minimum time weight", an app setting's action since 2026-11-04 and the calendar element's
             // since 2026-11-12 (the calendar window held it).
             listOf(
-                SearchDomain.AddedAction.TaskMinimumTime, SearchDomain.AddedAction.TaskMinimumFormula, SearchDomain.AddedAction.CalendarMinimumTimeWeight,
+                // User rule 2026-11-25: the deep copy's "Copy minimum time" is an action too.
+                SearchDomain.AddedAction.TaskMinimumTime, SearchDomain.AddedAction.DeepCopyMinimumTime,
+                SearchDomain.AddedAction.TaskMinimumFormula, SearchDomain.AddedAction.CalendarMinimumTimeWeight,
                 SearchDomain.AddedAction.MinimumTimeWeightControl,
             ),
             SearchDomain.addedActions("minimum", SearchDomain.Kind.entries.toSet()).flatMap { it.second },
