@@ -1579,8 +1579,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         val categoryWindows = remember {
             ObjectWindows(treeKey<CategoryId>(ObjectWindowKey.Kind.CategoryEdit) { it.value }, objectWindowMemory)
         }
-        // PRD §14 "constrained in": the picker of the reminder (by id) a Search window's reminder editor asked it for.
-        val reminderConstraintWindows = remember { ObjectWindows<String>() }
         // User rule 2026-10-01: an element's own edit window is a Search window holding that element alone — its
         // actions are that window's. Set once `openNewWindow` exists (below); the ☆ buttons reach it through
         // [openObjectWindow], which is declared before it.
@@ -1591,11 +1589,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         var openDeepCopySearch: (CellId) -> Unit = {}
         var openWeightSearch: (CellListId) -> Unit = {}
         var openRelativeSearch: (CellId) -> Unit = {}
-        // PRD §14/§18: the default configuration of a new alarm, timer and reminder — one window each, opened from
-        // the bottom of any such element's editor. The subject is the kind ([ObjectWindowKey.Kind.AlarmDefaults]…).
-        val defaultsWindows = remember {
-            ObjectWindows<ObjectWindowKey.Kind>({ ObjectWindowKey(it, "").encode() }, objectWindowMemory)
-        }
+        // The default configuration of a new alarm, timer or reminder: a Search window on that kind's creation row, its
+        // group pinned — the creation row's actions ARE that configuration (user rule 2026-11-25).
+        var openDefaultsSearch: (ObjectWindowKey.Kind) -> Unit = {}
         // A per-object window named by its key: opened on its object (or brought back when one is open on it) — or,
         // at startup, reopened under the [number] it had. The one reading of a key, for the ☆ buttons and the
         // restore alike.
@@ -1621,7 +1617,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 ObjectWindowKey.Kind.Chrono -> search(SearchDomain.Kind.Chrono)
                 ObjectWindowKey.Kind.Reminder -> search(SearchDomain.Kind.Reminder)
                 ObjectWindowKey.Kind.AlarmDefaults, ObjectWindowKey.Kind.TimerDefaults, ObjectWindowKey.Kind.ReminderDefaults ->
-                    defaultsWindows.openOn(key.kind)
+                    if (number == null) openDefaultsSearch(key.kind)
             }
         }
         // Startup: the per-object windows open when the app last stopped come back, on their objects, under their
@@ -2407,6 +2403,30 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // [WindowFrameHost.openAtBack]) — the notifications pair.
         // [matches]: which open window of [kind] is the one asked for — by default the same configurations
         // ([sameWindowConfigurations]); a "match the whole state" button's, its whole state ([CustomMenuButtons.isSameWindow]).
+        // User rule 2026-11-25: the Search window a left-side menu window became — its kinds, and for the Sleep and Online
+        // windows their element added and its action pinned ([SearchDomain.Config.pinnedActionRow]). Null: still a window.
+        fun lateralAsSearch(kind: FloatingWindow): SearchDomain.Config? {
+            fun pinnedOn(key: String, action: SearchDomain.AddedAction): SearchDomain.Config {
+                val rows = SearchDomain.resolve(vm.state.value, listOf(key), { emptyMap() })
+                val searched = SearchDomain.Kind.entries.first { key.startsWith(it.name + "/") }
+                return SearchDomain.Config(kinds = setOf(searched), added = listOf(key), pinnedActionRow = SearchDomain.actionRowId(rows, action))
+            }
+            val config = when (kind) {
+                FloatingWindow.History -> SearchDomain.Config(kinds = setOf(SearchDomain.Kind.HistoryUnit))
+                FloatingWindow.Alarms -> SearchDomain.Config(
+                    kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Chrono, SearchDomain.Kind.Reminder),
+                )
+                FloatingWindow.TaskRelations -> SearchDomain.Config(kinds = setOf(SearchDomain.Kind.TaskRelation))
+                FloatingWindow.Categories -> SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Category))
+                FloatingWindow.Shortcuts -> SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Shortcut))
+                FloatingWindow.Sleep ->
+                    pinnedOn(SearchDomain.Kind.RestrictivePeriod.name + "/" + PeriodKinds.SLEEP, SearchDomain.AddedAction.PeriodSleepSchedule)
+                FloatingWindow.Online ->
+                    pinnedOn(SearchDomain.Kind.AppSetting.name + "/" + SearchDomain.AppSettingEntry.Online.name, SearchDomain.AddedAction.OnlineControl)
+                else -> null
+            }
+            return config?.let { SearchDomain.withDefaultSort(it.copy(pageTypesOnly = false)) }
+        }
         fun openWindowOnItsPage(
             kind: FloatingWindow,
             config: String? = null,
@@ -2414,6 +2434,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             atBack: Boolean = false,
             matches: ((String) -> Boolean)? = null,
         ): String {
+            // User rule 2026-11-25 (*"the search window is the only window of the app"*): these windows are Search windows
+            // set for what they showed ([lateralAsSearch]) — the one open is brought back, else one opens.
+            lateralAsSearch(kind)?.let { search -> return openWindowOnItsPage(FloatingWindow.Search, search.encode(), atBack = atBack) }
             // User rule 2026-11-12: "the calendar" is a Search window holding the calendar element — asked for with no
             // configuration, the one open (the focused one first) is brought back, else one opens; asked for with a
             // view ([config]: what a calendar window held, the notifications it shows), the one showing that view.
@@ -2840,9 +2863,35 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (task == null) appMessage = "This sub-list holds no task yet."
             else openPinnedTaskSearch(listOf(task)) { SearchDomain.actionRowId(it, SearchDomain.AddedAction.TaskPriorityWeights) }
         }
+        openDefaultsSearch = { kind ->
+            val made = when (kind) {
+                ObjectWindowKey.Kind.AlarmDefaults -> SearchDomain.Kind.Alarm
+                ObjectWindowKey.Kind.TimerDefaults -> SearchDomain.Kind.Timer
+                ObjectWindowKey.Kind.ReminderDefaults -> SearchDomain.Kind.Reminder
+                else -> null
+            }
+            if (made != null) {
+                val key = SearchDomain.Kind.Creation.name + "/" + made.name
+                val rows = SearchDomain.resolve(vm.state.value, listOf(key), { emptyMap() })
+                openLinkedSearch(
+                    SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Creation), added = listOf(key), pinnedActionRow = SearchDomain.groupIdOf(rows, key)),
+                )
+            }
+        }
         openRelativeSearch = { cellId ->
             vm.state.value.cells[cellId]?.taskId?.let { task ->
                 openPinnedTaskSearch(listOf(task)) { SearchDomain.actionRowId(it, SearchDomain.AddedAction.TaskRelativePriority) }
+            }
+        }
+        // User rule 2026-11-25: a left-side menu window that became a Search window ([lateralAsSearch]), asked open by any
+        // path — a flag set by a menu entry, a window left open before the update — opens that Search window instead.
+        val searchLaterals = FloatingWindow.entries.filter { lateralAsSearch(it) != null }
+        LaunchedEffect(historyManagerOpen, sleepWindowOpen, alarmWindowOpen, taskRelationsWindowOpen, categoriesWindowOpen, shortcutsWindowOpen, onlineWindowOpen) {
+            for (kind in searchLaterals) {
+                if (!isWindowOpen(kind)) continue
+                setWindowOpen(kind, false)
+                updatePlacementById(kind.name) { it.copy(visible = false) }
+                openWindowOnItsPage(kind)
             }
         }
         // A window button that is NOT in the lateral menu (the default sub-tree's, atop the task tree window): open
@@ -3276,7 +3325,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
                 ObjectWindowKey.Kind.entries.firstOrNull { objectWindowType(it) == type }
                     ?.takeIf { it == ObjectWindowKey.Kind.AlarmDefaults || it == ObjectWindowKey.Kind.TimerDefaults || it == ObjectWindowKey.Kind.ReminderDefaults }
-                    ?.let { defaultsWindows.open(it) }
+                    ?.let { openDefaultsSearch(it) }
                 return
             }
             val kind = lateralWindowOf(frameId)
@@ -4857,7 +4906,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // but never spill onto the lateral menu (PRD §7).
                 // User rule 2026-11-04: the menu's controls are the Search window's actions too, drawn by the same code
                 // ([org.example.project.ui.LocalMenuControlHost]) — so every window can draw them.
-                CompositionLocalProvider(org.example.project.ui.LocalMenuControlHost provides menuControlHost) {
+                CompositionLocalProvider(
+                    org.example.project.ui.LocalMenuControlHost provides menuControlHost,
+                    // User rule 2026-11-25: what the Online window showed, the Online app setting's action now.
+                    org.example.project.ui.LocalOnlineContent provides {
+                        org.example.project.scheduler.ui.OnlineContent(
+                            state = syncStateValue,
+                            account = accountValue,
+                            offline = offlineValue,
+                            onSetOffline = vm::setOffline,
+                            onSignIn = { e, p -> vm.signIn(e, p) },
+                            onCreateAccount = { e, p -> vm.createAccount(e, p) },
+                            onSignOut = { vm.signOut() },
+                            onFetch = { vm.syncNow() },
+                        )
+                    },
+                ) {
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -5500,96 +5564,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     }
 
                     if (page == OmniPage.TaskScheduler) {
-                    // PRD §14 / PRD §7 Search: the per-object window of one reminder — opened from its Search row.
-                    // It closes itself when its row is gone (ChoresManagerWindow). No existence check here: the
-                    // window follows its row even when the id menu makes it adopt another reminder's id (and its
-                    // "+ New reminder" moves it on), and closes itself once the row is gone — one rule, in one place.
-                    // PRD §14 "constrained in": the picker a Search window's reminder editor opened, on one reminder. It writes
-                    // that reminder's constraint into the account's list, the editor's own write.
-                    ObjectWindowsHost(reminderConstraintWindows) { w ->
-                        // One reminder's id, or several joined by a line break (the Search window's "Constrained in",
-                        // over every added reminder at once): what is saved, all of them get.
-                        val reminderIds = w.subject.split('\n').toSet()
-                        val reminderId = w.subject.substringBefore('\n')
-                        val reminder = schedulerState.chores.firstOrNull { it.id == reminderId }
-                        if (reminder == null) {
-                            w.close()
-                        } else {
-                            ReminderConstraintEditWindow(
-                                initialReminderId =
-                                    schedulerState.chores.filter { it.id in reminderIds }
-                                        .map { it.constrainedToReminderId }.distinct().singleOrNull().orEmpty(),
-                                // A reminder can't be constrained to itself, so hide its own identity from the picker
-                                // (with several, the save below skips the one that is the constraint).
-                                excludeReminderId = if (reminderIds.size == 1) reminderId else "",
-                                reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
-                                titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
-                                reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
-                                titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
-                                onDismiss = w::close,
-                                onSave = { constraint ->
-                                    val todayStartMillis = today.atStartOfDayIn(tz).toEpochMilliseconds()
-                                    vm.dispatch(
-                                        SchedulerIntent.SetChores(
-                                            schedulerState.chores.map {
-                                                if (it.id in reminderIds && it.id != constraint) it.copy(constrainedToReminderId = constraint) else it
-                                            },
-                                            todayStartMillis,
-                                            nowMillis,
-                                        ),
-                                    )
-                                    w.close()
-                                },
-                            )
-                        }
-                    }
 
                     }
 
-                    // PRD §5/§6 History Manager: floating window listing every category's history units.
-                    LateralWindow(FloatingWindow.History, historyManagerOpen) {
-                        val historyId = windowInstanceId(FloatingWindow.History.name)
-                        HistoryManagerWindow(
-                            histories = schedulerState.histories,
-                            savedFilter = placements[historyId]?.config,
-                            onFilterChange = { kept -> updatePlacementById(historyId) { it.copy(config = kept) } },
-                            notificationLog = schedulerState.notificationLog,
-                            supabaseUsageLog = schedulerState.supabaseUsageLog,
-                            schedulerRuns = schedulerRuns,
-                            onDismiss = { historyManagerOpen = false },
-                            // Cascade: open down-right of center so the calendar window stays reachable.
-                            initialOffset = historyOffset,
-                            initialSize = historySize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                historyOffset = windowOffset
-                                historySize = windowSize
-                                persistPlacement(FloatingWindow.History, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.History) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
-                        )
-                    }
 
-                    // Sleep schedule: floating window to configure the nightly sleep window the scheduler avoids.
-                    LateralWindow(FloatingWindow.Sleep, sleepWindowOpen) {
-                        SleepWindow(
-                            sleep = schedulerState.sleep ?: SchedulerDomain.DEFAULT_SLEEP,
-                            onSave = { vm.dispatch(SchedulerIntent.SetSleepSchedule(it, today.toEpochDays().toLong())) },
-                            onDismiss = { sleepWindowOpen = false },
-                            // Cascade: open up-right of center so the other windows stay reachable.
-                            initialOffset = sleepOffset,
-                            initialSize = sleepSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                sleepOffset = windowOffset
-                                sleepSize = windowSize
-                                persistPlacement(FloatingWindow.Sleep, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.Sleep) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
-                        )
-                    }
 
                     // PRD §18 Alarms and timers: floating window listing the account's alarms (time, sound
                     // length, vibration) and, in its second section, its timers. Both lists are authoritative
@@ -5688,9 +5666,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             newTimer = schedulerState.newTimerDefaults,
                             onOpenDefaults = { isAlarm ->
-                                defaultsWindows.open(
-                                    if (isAlarm) ObjectWindowKey.Kind.AlarmDefaults else ObjectWindowKey.Kind.TimerDefaults,
-                                )
+                                openDefaultsSearch(if (isAlarm) ObjectWindowKey.Kind.AlarmDefaults else ObjectWindowKey.Kind.TimerDefaults)
                             },
                             defaults = defaults,
                             embeddedSubjects = embeddedSubjects,
@@ -5699,107 +5675,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
 
-                    LateralWindow(FloatingWindow.Alarms, alarmWindowOpen) {
-                        AccountAlarmWindow(
-                            subject = null,
-                            onDismiss = { alarmWindowOpen = false },
-                            // Cascade: open down-left of center so the other windows stay reachable.
-                            initialOffset = alarmOffset,
-                            initialSize = alarmSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                alarmOffset = windowOffset
-                                alarmSize = windowSize
-                                persistPlacement(FloatingWindow.Alarms, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.Alarms) },
-                            modifier = Modifier.align(Alignment.Center),
-                        )
-                    }
-
-                    // PRD §14/§18: the default configuration of a new alarm / timer / reminder — the element's own
-                    // editor, settings only, writing the account's defaults (NewElementDefaults).
-                    if (page == OmniPage.TaskScheduler) ObjectWindowsHost(defaultsWindows) { w ->
-                        if (w.subject == ObjectWindowKey.Kind.ReminderDefaults) {
-                            TransientPopupLayer(windowInstanceId(REMINDER_DEFAULTS_FRAME_ID)) {
-                                ChoresManagerWindow(
-                                    chores = listOf(schedulerState.newReminderDefaults.copy(id = DEFAULT_CONFIGURATION_ROW_ID)),
-                                    onChange = { entries ->
-                                        entries.firstOrNull()?.let { vm.dispatch(SchedulerIntent.SetNewReminderDefaults(it)) }
-                                    },
-                                    onDismiss = w::close,
-                                    subject = DEFAULT_CONFIGURATION_ROW_ID,
-                                    defaults = true,
-                                    // "constrained in" is a setting too: its picker names the account's reminders.
-                                    reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
-                                    titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
-                                    reminderIdForTitle = { SchedulerDomain.reminderIdForTitle(schedulerState, it) },
-                                    titleForReminderId = { SchedulerDomain.reminderTitleForId(schedulerState, it) },
-                                    modifier = Modifier.align(Alignment.Center),
-                                )
-                            }
-                        } else {
-                            TransientPopupLayer(windowInstanceId(ALARM_DEFAULTS_FRAME_ID)) {
-                                AccountAlarmWindow(
-                                    subject = AlarmWindowSubject(
-                                        DEFAULT_CONFIGURATION_ROW_ID,
-                                        if (w.subject == ObjectWindowKey.Kind.AlarmDefaults) AlarmWindowSubject.Kind.Alarm
-                                        else AlarmWindowSubject.Kind.Timer,
-                                    ),
-                                    onDismiss = w::close,
-                                    modifier = Modifier.align(Alignment.Center),
-                                    defaults = true,
-                                )
-                            }
-                        }
-                    }
 
 
-                    // PRD §5 Task relations: every (task, relational target) pair the priority machinery
-                    // has raised, in four sections. It reads the LIVE state — a relation is a fact about the
-                    // account's own tree — and its two buttons are the only writers of
-                    // `SchedulerState.taskRelations` beside the relative-priority window's own recording.
-                    LateralWindow(FloatingWindow.TaskRelations, taskRelationsWindowOpen) {
-                        TaskRelationsWindow(
-                            state = schedulerState,
-                            onIntent = { vm.dispatch(it) },
-                            onDismiss = { taskRelationsWindowOpen = false },
-                            initialOffset = taskRelationsOffset,
-                            initialSize = taskRelationsSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                taskRelationsOffset = windowOffset
-                                taskRelationsSize = windowSize
-                                persistPlacement(FloatingWindow.TaskRelations, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.TaskRelations) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
-                        )
-                    }
 
-                    // PRD §5 Categories: every category the account holds — the question neither the task
-                    // cell's field (one task, every category) nor the category edit window (one category,
-                    // every task) asks. It reads the LIVE state, and a row's ✎ opens that category's own
-                    // category window, which stays the one place a category is renamed, ruled or deleted.
-                    LateralWindow(FloatingWindow.Categories, categoriesWindowOpen) {
-                        CategoriesWindow(
-                            state = schedulerState,
-                            onIntent = { vm.dispatch(it) },
-                            // The account's own categories, never the template's projection — this window is
-                            // about the live state, so the pop-up it opens must be too.
-                            onOpenCategoryEdit = { openElementSearch(SearchDomain.Kind.Category, it.value) },
-                            onDismiss = { categoriesWindowOpen = false },
-                            initialOffset = categoriesOffset,
-                            initialSize = categoriesSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                categoriesOffset = windowOffset
-                                categoriesSize = windowSize
-                                persistPlacement(FloatingWindow.Categories, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.Categories) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
-                        )
-                    }
+
 
                     // PRD §7 Search: a task, a task category, a restrictive-period kind, an alarm, a timer or a
                     // reminder, found by name. It reads the LIVE state, and every gesture on a row goes through
@@ -5946,10 +5825,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             onPlaceOnCalendar = { drafts ->
                                 saveCalendarElementIntents(drafts, vm.state.value, tz).forEach(vm::dispatch)
                             },
-                            // One picker over every added reminder: their ids, joined (the host below splits them).
-                            onEditReminderConstraint = { ids ->
-                                if (ids.isNotEmpty()) reminderConstraintWindows.open(ids.joinToString("\n"))
-                            },
                             onDuplicate = { intents, kind ->
                                 val before = vm.state.value
                                 intents.forEach(vm::dispatch)
@@ -5963,9 +5838,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                                     onDismiss = {},
                                     subject = "",
                                     embeddedSubjects = subjects,
-                                    onEditConstraint = { reminderConstraintWindows.open(it) },
                                     newReminder = schedulerState.newReminderDefaults,
-                                    onOpenDefaults = { defaultsWindows.open(ObjectWindowKey.Kind.ReminderDefaults) },
+                                    onOpenDefaults = { openDefaultsSearch(ObjectWindowKey.Kind.ReminderDefaults) },
                                     reminderMenuEntries = { SchedulerDomain.reminderMenuEntries(schedulerState, it) },
                                     titleSuggestions = { SchedulerDomain.reminderTitleSuggestions(schedulerState, it) },
                                     knownReminderIds = {
@@ -6160,32 +6034,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         modifier = Modifier.zIndex(Float.MAX_VALUE),
                     )
 
-                    // PRD §5: every online configuration of this device — status, work offline, the account.
-                    LateralWindow(FloatingWindow.Online, onlineWindowOpen) {
-                        OnlineWindow(
-                            state = syncStateValue,
-                            account = accountValue,
-                            offline = offlineValue,
-                            onSetOffline = vm::setOffline,
-                            onSignIn = { e, p -> vm.signIn(e, p) },
-                            onCreateAccount = { e, p -> vm.createAccount(e, p) },
-                            onSignOut = { vm.signOut() },
-                            // PRD §15: manual server check. The reconcile emits a unified sync moment, which also
-                            // runs the side channels (active sessions, derived pauses, exact pause gaps) — see
-                            // SchedulerEngine.launchSyncMomentSideChannels.
-                            onFetch = { vm.syncNow() },
-                            onDismiss = { onlineWindowOpen = false },
-                            initialOffset = onlineOffset,
-                            initialSize = onlineSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                onlineOffset = windowOffset
-                                onlineSize = windowSize
-                                persistPlacement(FloatingWindow.Online, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.Online) },
-                            modifier = Modifier.align(Alignment.Center),
-                        )
-                    }
 
 
                     // PRD §7 Search: every configuration of the Search window, in sections per kind. It edits
@@ -6315,45 +6163,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                     }
 
-                    // PRD §7 Keyboard shortcuts: the reference list of every chord, plus what claim the OS
-                    // granted the system-wide ones (the only shortcuts another application can take —
-                    // and so the only ones the window lets the user rebind).
-                    LateralWindow(FloatingWindow.Shortcuts, shortcutsWindowOpen) {
-                        ShortcutsWindow(
-                            claim = globalHotkeyClaim,
-                            bindings = schedulerState.shortcutBindings,
-                            onRebind = { shortcut, binding ->
-                                vm.dispatch(SchedulerIntent.SetGlobalShortcutBinding(shortcut, binding))
-                            },
-                            windows = shortcutWindowTitles(),
-                            windowShortcuts = windowShortcuts,
-                            // The window's row there: its first mapping given the chord, or one made for it; "Remove"
-                            // takes away every mapping of that window.
-                            onBindWindow = { id, binding ->
-                                val existing = windowShortcuts.firstOrNull { it.window == id }
-                                saveWindowShortcuts(
-                                    when {
-                                        binding == null -> windowShortcuts.filterNot { it.window == id }
-                                        existing != null -> org.example.project.ui.WindowShortcuts.with(windowShortcuts, existing.copy(chord = binding))
-                                        else ->
-                                            windowShortcuts +
-                                                org.example.project.ui.WindowShortcut(org.example.project.ui.WindowShortcuts.mintId(windowShortcuts), id, binding)
-                                    },
-                                )
-                            },
-                            onDismiss = { shortcutsWindowOpen = false },
-                            initialOffset = shortcutsOffset,
-                            initialSize = shortcutsSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                shortcutsOffset = windowOffset
-                                shortcutsSize = windowSize
-                                persistPlacement(FloatingWindow.Shortcuts, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.Shortcuts) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
-                        )
-                    }
 
                     // Debug-only time-acceleration control (gated by DebugFlags.TIME_SIMULATION).
                     if (DebugFlags.TIME_SIMULATION) {

@@ -37,10 +37,19 @@ window, a period's, a category's, a notice — is the same thing with the same m
 - **The Search window is to be the only window of the app** (user rule 2026-11-25: *"Generalize this fix so that the search
   window is the only window of the app."*). Done for the account's deep copy, weight table and relative priority (a
   Search window with the row asked for pinned, `task-tree.md` § *The grouped actions*), and for the blank row ending a list
-  of children, which shows a pop-up instead of a window (below). Still windows of their own: the default sub-tree's
-  per-object windows (its tree is not the account's), the calendar block editors, a period draft, the reminder tag and
-  constraint pickers, the default alarm / timer / reminder windows, and the lateral windows History, Sleep, Alarms, Task
-  relations, Categories, Default sub-tree, Keyboard shortcuts, Online and Time simulation.
+  of children, which shows a pop-up instead of a window (below). **The left-side menu's History, Sleep, Alarms, Task
+  relations, Categories, Keyboard shortcuts and Online are Search windows** (`App.lateralAsSearch`): asked for by any path
+  (a button, a calendar choice, a window left open before), the Search window set for what they showed opens or is
+  brought back — the history units; the alarms, timers, chronos and reminders; the task relations (their "keep" and
+  "strike off the list" are actions, `AddedAction.TaskRelationKeep` / `TaskRelationDrop`); the task categories; the
+  keyboard shortcuts; the Sleep period with its "Sleep schedule" pinned; the Online setting with its action pinned, which
+  draws what the Online window showed (`OnlineContent`, `LocalOnlineContent`). **The default alarm / timer / reminder
+  window** is the Search window of that kind's creation row, its group pinned (`openDefaultsSearch`,
+  `SearchDomain.groupIdOf`). **The reminder "constrained in" picker** is a drop-down's Search pop-up stuck to its button
+  (`ReminderConstraintPicker`). Still windows of their own: the default sub-tree's window and its per-object windows (its
+  tree is not the account's), the editors a double-click on a calendar block opens (a block, a period draft, a reminder
+  tag — drafts saved by their Save, the one place a derived block is materialized), and the debug time-simulation panel,
+  which is no window of the app.
 - **The blank row ending a list of children shows a POP-UP, never a window** (user rule 2026-11-25: *"instead of opening a
   new window with a tab in the system tray, open a pop-up window. Add the arrow indicating that a pop-up window will appear
   when hovered over."*; `ChildSearchPopup`, `HoverPopupRow`'s `ask`). Hovered it shows the Search window of what can be

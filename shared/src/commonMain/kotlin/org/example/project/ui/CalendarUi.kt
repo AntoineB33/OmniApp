@@ -2290,7 +2290,6 @@ fun ChoresManagerWindow(
     LaunchedEffect(subjectId) { if (subjectId != subject) latestSubjectChange(subjectId) }
     val focusManager = LocalFocusManager.current
     // PRD §14 "constrained in": the constraint pickers open, by the index of their row.
-    val constraintWindows = remember { ObjectWindows<Int>() }
     // PRD §14: which row's title field currently holds focus — drives the edit-mode menus shown beneath it.
     var focusedIndex by remember { mutableStateOf<Int?>(null) }
     // PRD §14: the focused row's edit mode (Change vs Rename), reset to Change whenever focus moves to a
@@ -2478,10 +2477,15 @@ fun ChoresManagerWindow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    TextButton(onClick = {
-                        val edit = onEditConstraint
-                        if (edit != null) edit(resolvedRowIds().getOrNull(index) ?: row.id) else constraintWindows.open(index)
-                    }) { Text("constrained in") }
+                    // User rule 2026-11-25 (*"the search window is the only window of the app"*): a drop-down's Search
+                    // pop-up stuck to the button, never the picker window it opened.
+                    ReminderConstraintPicker(
+                        label = "constrained in",
+                        entries = reminderMenuEntries("").filter { it.id != (resolvedRowIds().getOrNull(index) ?: row.id) },
+                    ) { picked ->
+                        rows[index] = row.copy(constrainedToReminderId = picked)
+                        push()
+                    }
                     val constrainedName =
                         row.constrainedToReminderId.takeIf { it.isNotBlank() }?.let(titleForReminderId)
                     if (constrainedName != null) {
@@ -2619,31 +2623,40 @@ fun ChoresManagerWindow(
         }
     }
 
-    // PRD §14 "constrained in": the constraint picker, shown over the manager when a row's button is tapped.
-    // Duplicable (the head's ⧉), each copy on the row it was made from.
-    ObjectWindowsHost(constraintWindows) { w ->
-        val idx = w.subject
-        val close = w::close
-        val constrainingRow = rows.getOrNull(idx)
-        if (constrainingRow != null) {
-            ReminderConstraintEditWindow(
-                initialReminderId = constrainingRow.constrainedToReminderId,
-                // A reminder can't be constrained to itself, so hide its own identity from the picker.
-                excludeReminderId = resolvedRowIds().getOrNull(idx) ?: constrainingRow.id,
-                reminderMenuEntries = reminderMenuEntries,
-                titleSuggestions = titleSuggestions,
-                reminderIdForTitle = reminderIdForTitle,
-                titleForReminderId = titleForReminderId,
-                onDismiss = close,
-                onSave = { reminderId ->
-                    rows[idx] = constrainingRow.copy(constrainedToReminderId = reminderId)
-                    push()
-                    close()
+}
+
+/**
+ * User rule 2026-11-25: **the "constrained in" picker** — a button whose drop-down is a Search window of the reminders
+ * ([entries]) under "No constraint", stuck to it ([OptionSearchMenu]). A pick gives its id ("" for none) to [onPick].
+ */
+@Composable
+internal fun ReminderConstraintPicker(
+    label: String,
+    entries: List<SchedulerDomain.ReminderMenuEntry>,
+    enabled: Boolean = true,
+    onPick: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = !open }, enabled = enabled) { Text(label) }
+        OptionSearchMenu(
+            "constrained in",
+            open = open,
+            onDismiss = { open = false },
+            options = SearchOptions(
+                options = listOf(NO_CONSTRAINT_OPTION to "No constraint") + entries.map { it.id to it.title },
+                checked = null,
+                onClick = { id ->
+                    onPick(if (id == NO_CONSTRAINT_OPTION) "" else id)
+                    open = false
                 },
-            )
-        }
+            ),
+        )
     }
 }
+
+/** The id of the picker's "No constraint" row ([ReminderConstraintPicker]). */
+private const val NO_CONSTRAINT_OPTION: String = "no constraint"
 
 /** The frame id of the default reminder's window, before its number — see [ObjectWindowKey.Kind.frameBase]. */
 const val REMINDER_DEFAULTS_FRAME_ID: String = "ReminderDefaults"

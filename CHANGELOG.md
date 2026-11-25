@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The left-side menu's windows are Search windows — 2026-11-26
+
+- History, Sleep, Alarms, Task relations, Categories, Keyboard shortcuts and Online open a Search window set for what
+  they showed (Sleep and Online with their action pinned; the Online window's content is the Online setting's action).
+  Task relations' keep / strike off are actions. The default alarm / timer / reminder windows are the creation row's
+  Search window; the reminder "constrained in" picker is a drop-down pop-up.
+- Still windows: the default sub-tree and its per-object windows, the calendar block / period / reminder-tag editors a
+  double-click opens, the debug time-simulation panel (`popups.md`).
+- Not checked on screen.
+- Client rebuild only.
+
 ### Deep copy as Search rows, pinned action rows, md link and blank-row pop-ups — 2026-11-25
 
 - The deep copy window is a "Deep copy" group of action rows (each control a row); a row's "deep copy" opens a Search

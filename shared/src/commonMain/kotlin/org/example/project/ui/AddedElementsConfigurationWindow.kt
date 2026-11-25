@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.delay
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.datetime.atStartOfDayIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.key
 import org.example.project.scheduler.domain.CalendarLockDomain
@@ -562,6 +563,9 @@ internal class ActionSectionHost(
     val parent: ActionSectionHost? = null,
 )
 
+/** User rule 2026-11-25: what the Online window showed ([org.example.project.scheduler.ui.OnlineContent]), given by `App`. */
+internal val LocalOnlineContent = androidx.compose.runtime.compositionLocalOf<(@Composable () -> Unit)?> { null }
+
 /** The actions section the composition stands in ([ActionSectionHost]); null outside one. */
 internal val LocalActionSectionHost = androidx.compose.runtime.compositionLocalOf<ActionSectionHost?> { null }
 
@@ -813,7 +817,7 @@ private fun AddedActionBlocks(
     when (action) {
         // User rule 2026-11-04: a control of the lateral menu, as its setting's action — drawn by the menu's own code.
         SearchDomain.AddedAction.LookAwayNowControl, SearchDomain.AddedAction.SwitchTaskControl,
-        SearchDomain.AddedAction.SleepWorkControl, SearchDomain.AddedAction.AwayControl, SearchDomain.AddedAction.OnlineControl,
+        SearchDomain.AddedAction.SleepWorkControl, SearchDomain.AddedAction.AwayControl,
         SearchDomain.AddedAction.AutoScheduleControl, SearchDomain.AddedAction.RemindersControl,
         SearchDomain.AddedAction.ScreenBreaksControl, SearchDomain.AddedAction.CalendarDisplayControl,
         SearchDomain.AddedAction.PlanTimeLimitControl, SearchDomain.AddedAction.MinimumTimeWeightControl,
@@ -823,6 +827,9 @@ private fun AddedActionBlocks(
             ACTION_MENU_CONTROLS[action]?.let { control ->
                 LocalMenuControlHost.current?.let { host -> MenuControlItem(control, null, host) }
             }
+        // User rule 2026-11-25: the Online window is no more — what it showed is this action ([LocalOnlineContent]); the
+        // menu's item opens the Search window holding it.
+        SearchDomain.AddedAction.OnlineControl -> LocalOnlineContent.current?.invoke()
         // User rule 2026-11-12: the calendar element — the calendar and its view, drawn by `App` for this window; and the
         // account's switches the calendar window held, by the menu's code.
         SearchDomain.AddedAction.CalendarGrid, SearchDomain.AddedAction.CalendarDay, SearchDomain.AddedAction.CalendarDisplay,
@@ -957,6 +964,25 @@ private fun AddedActionBlocks(
             }
         }
         // The entries that act on a CELL act on each task's first live one; a task no cell holds has none.
+        // User rule 2026-11-25: the Task relations window's buttons, over the added pairs.
+        SearchDomain.AddedAction.TaskRelationKeep, SearchDomain.AddedAction.TaskRelationDrop -> {
+            val keys = added.filterIsInstance<SearchDomain.ItemResult>().filter { it.kind == SearchDomain.Kind.TaskRelation }.mapNotNull { SearchDomain.relationKeyOf(it.id) }
+            val kept = remember(state.taskRelations, keys) {
+                org.example.project.scheduler.domain.TaskRelationsDomain.rows(state).filter { it.kept }.mapTo(HashSet()) { it.key }
+            }
+            val keep = action == SearchDomain.AddedAction.TaskRelationKeep
+            val acted = keys.filter { (it in kept) != keep }
+            FrameButton(if (keep) "Keep" else "Strike off", enabled = acted.isNotEmpty()) {
+                acted.forEach { key ->
+                    run(
+                        SearchDomain.AddedCommand.Raw(
+                            if (keep) SchedulerIntent.KeepTaskRelation(key.taskId, key.relativeTo)
+                            else SchedulerIntent.DropTaskRelation(key.taskId, key.relativeTo),
+                        ),
+                    )
+                }
+            }
+        }
         // User rule 2026-11-25: the deep copy window's controls, each a row of the "Deep copy" group.
         SearchDomain.AddedAction.TaskDeepCopy, SearchDomain.AddedAction.DeepCopyMaxDepth, SearchDomain.AddedAction.DeepCopyWholeSubtree,
         SearchDomain.AddedAction.DeepCopyIds, SearchDomain.AddedAction.DeepCopyWeightTables, SearchDomain.AddedAction.DeepCopyPercentages,
@@ -1530,8 +1556,19 @@ private fun AddedActionBlocks(
             val reminders = SearchDomain.addedReminders(state, added)
             val shared = SearchDomain.sharedValue(reminders) { it.constrainedToReminderId }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FrameButton("Choose…", enabled = reminders.isNotEmpty()) {
-                    handlers.onEditReminderConstraint(reminders.map { it.id })
+                // User rule 2026-11-25: a drop-down pop-up stuck to the button, not the picker window it opened.
+                val ids = reminders.mapTo(HashSet()) { it.id }
+                ReminderConstraintPicker(
+                    label = "Choose…",
+                    enabled = reminders.isNotEmpty(),
+                    entries = org.example.project.scheduler.domain.SchedulerDomain.reminderMenuEntries(state, "")
+                        .filter { !(ids.size == 1 && it.id in ids) },
+                ) { picked ->
+                    val tz = kotlinx.datetime.TimeZone.currentSystemDefault()
+                    val now = nowMillis()
+                    val todayStart = kotlin.time.Instant.fromEpochMilliseconds(now).toLocalDateTime(tz).date.atStartOfDayIn(tz).toEpochMilliseconds()
+                    val next = state.chores.map { if (it.id in ids && it.id != picked) it.copy(constrainedToReminderId = picked) else it }
+                    if (next != state.chores) run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetChores(next, todayStart, now)))
                 }
                 Text(
                     text = when {

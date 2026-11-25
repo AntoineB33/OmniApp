@@ -4656,6 +4656,13 @@ object SearchDomain {
     /** The id of a task relation's row: its two task ids. */
     fun relationId(key: TaskRelationKey): String = key.taskId.value + "|" + key.relativeTo.value
 
+    /** The pair a [Kind.TaskRelation] row's id names ([relationId]); null for an id of no pair. */
+    fun relationKeyOf(id: String): TaskRelationKey? {
+        val task = id.substringBefore('|', "").ifEmpty { return null }
+        val target = id.substringAfter('|', "").ifEmpty { return null }
+        return TaskRelationKey(TaskId(task), TaskId(target))
+    }
+
     /**
      * A [Kind.HistoryUnit] row's id: its stack, its device and its number among that device's units of the stack
      * (`Main#<device>#<seq>`) — the unit's identity across devices, which never moves. It was the unit's INDEX in its
@@ -5326,6 +5333,13 @@ object SearchDomain {
         ReminderDelete(Kind.Reminder, "Delete"),
         // User rule 2026-10-12: a keyboard shortcut's actions. "New" makes a chord for a window; the chord of every
         // shortcut is set here; a window's shortcut also says which window, and can be deleted.
+        /**
+         * User rule 2026-11-25 (*"the search window is the only window of the app"*): the Task relations window's two
+         * buttons, over the added pairs — "keep" files a pair in the first section, "strike off" takes a kept one off the
+         * list (and the weight-table row it was made of) ([SchedulerIntent.KeepTaskRelation], [SchedulerIntent.DropTaskRelation]).
+         */
+        TaskRelationKeep(Kind.TaskRelation, "Keep"),
+        TaskRelationDrop(Kind.TaskRelation, "Strike off the list"),
         ShortcutNew(Kind.Shortcut, "New"),
         ShortcutChord(Kind.Shortcut, "Chord"),
         ShortcutWindow(Kind.Shortcut, "Window"),
@@ -5874,7 +5888,7 @@ object SearchDomain {
                 AddedAction.TaskCopyIds, AddedAction.TaskCollapseSubtrees,
                 AddedAction.TaskAddDefaultSubtree, AddedAction.AlarmTimeNow, AddedAction.ReminderTimeNow,
                 AddedAction.PeriodReset, AddedAction.TimerLowestCountdown, AddedAction.ChronoHighestCount,
-                AddedAction.NotificationCalendar,
+                AddedAction.NotificationCalendar, AddedAction.TaskRelationKeep, AddedAction.TaskRelationDrop,
             ) + DEEP_COPY_ACTIONS
     }
 
@@ -5920,6 +5934,10 @@ object SearchDomain {
             if (action in group.actions) microGroupId(group, action) else group.inner.firstNotNullOfOrNull(::find)
         return addedActionGroups(added).firstNotNullOfOrNull(::find)
     }
+
+    /** User rule 2026-11-25: the id of the first group of the actions section that holds the added element [key]. */
+    fun groupIdOf(added: List<Result>, key: String): String? =
+        addedActionGroups(added).firstOrNull { group -> group.members.any { keyOf(it) == key } }?.id
 
     /** The groups the actions section lists for [added], nothing filtered or sorted ([actionGroups]). */
     private fun addedActionGroups(added: List<Result>): List<ActionGroup> =
@@ -6109,6 +6127,8 @@ object SearchDomain {
             AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar -> "go"
             AddedAction.TaskCopyIds -> "copy"
             AddedAction.TaskDeepCopy -> "deep copy clipboard"
+            AddedAction.TaskRelationKeep -> "keep file first section"
+            AddedAction.TaskRelationDrop -> "strike off remove weight table row"
             AddedAction.DeepCopyMaxDepth -> "deep copy maximum depth levels"
             AddedAction.DeepCopyWholeSubtree -> "deep copy entire sub-tree unlimited"
             AddedAction.DeepCopyIds, AddedAction.DeepCopyWeightTables, AddedAction.DeepCopyPercentages,

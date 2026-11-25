@@ -134,4 +134,24 @@ class SearchWindowEverywhereTest {
         }
         assertEquals(SearchDomain.CREATION_FIRST_SORTS, SearchDomain.defaultSortsOf(excluded))
     }
+
+    /** User rule 2026-11-25: the Task relations window's two buttons are actions over the added pairs. */
+    @Test
+    fun the_task_relations_window_s_buttons_are_actions() {
+        val pair = SearchDomain.ItemResult(Kind.TaskRelation, "a|b", "a in b", "")
+        val actions = groupsOf(listOf(pair)).flatMap { it.actions }
+        assertTrue(AddedAction.TaskRelationKeep in actions && AddedAction.TaskRelationDrop in actions, actions.toString())
+        val key = assertNotNull(SearchDomain.relationKeyOf("a|b"))
+        assertEquals("a|b", SearchDomain.relationId(key))
+        assertNull(SearchDomain.relationKeyOf("nopair"))
+    }
+
+    /** User rule 2026-11-25: the default alarm's window is the Search window of the alarm's creation row, its group pinned. */
+    @Test
+    fun a_default_configuration_is_its_creation_row_s_group() {
+        val creation = SearchDomain.ItemResult(Kind.Creation, Kind.Alarm.name, "New alarm", "")
+        val id = assertNotNull(SearchDomain.groupIdOf(listOf(creation), SearchDomain.keyOf(creation)))
+        val group = groupsOf(listOf(creation)).single { it.id == id }
+        assertTrue(group.actions.isNotEmpty() && group.actions.any { it in SearchDomain.DEFAULT_CONFIGURATION_ACTIONS }, group.actions.toString())
+    }
 }

@@ -104,8 +104,28 @@ fun OnlineWindow(
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().weight(1f).verticalScrollWithBar(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            OnlineContent(state, account, offline, onSetOffline, onSignIn, onCreateAccount, onSignOut, onFetch)
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-25 (*"the search window is the only window of the app"*): **what the Online window showed**, drawn
+ * where it is asked — the Online app setting's action in a Search window ([org.example.project.scheduler.domain.SearchDomain.AddedAction.OnlineControl]).
+ */
+@Composable
+fun OnlineContent(
+    state: SyncState?,
+    account: AccountInfo?,
+    offline: Boolean?,
+    onSetOffline: (Boolean) -> Unit,
+    onSignIn: (email: String, password: String) -> Unit,
+    onCreateAccount: (email: String, password: String) -> Unit,
+    onSignOut: () -> Unit,
+    onFetch: () -> Unit,
+) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (state == null) {
                 Text(
                     "Cross-device sync is not part of this build: everything is kept on this device.",
@@ -159,7 +179,6 @@ fun OnlineWindow(
                 onFetch = onFetch,
             )
         }
-    }
 }
 
 @Composable
