@@ -4773,14 +4773,15 @@ private fun ElementChildren(
     // User rule 2026-11-19: double-clicked, it is the search bar of the window it opens, its ✕ and ▾ beside it in the row,
     // until that window is closed.
     // User rule 2026-11-25: selected, walked and right-clicked as its siblings are — a task's sub-tree's placeholder is.
-    // User rule 2026-11-25 (*"instead of opening a new window with a tab in the system tray, open a pop-up window. Add the
-    // arrow indicating that a pop-up window will appear when hovered over."*): hovered, it shows the Search window of what
-    // can be made its parent's child ([ChildSearchPopup]), stuck to it; a click, a double-click or Enter pins it open.
+    // User rule 2026-11-25 (*"instead of opening a new window with a tab in the system tray, open a pop-up window"*): it
+    // shows the Search window of what can be made its parent's child ([ChildSearchPopup]), stuck to it. User rule 2026-11-26
+    // (*"remove the arrow in the empty rows at the end of children list. The pop-up window must appear only when the row is
+    // clicked."*): a click, a double-click or Enter shows it — never a hover — and the row wears no arrow.
     val blankKey = blankChildRowKey(surface, parent)
     run {
         var menuOpen by remember(blankKey) { mutableStateOf(false) }
         val isMain = blankKey == selection.main
-        HoverPopupRow(popup = { ChildSearchPopup(parent) }, ask = selection.popupAsks[blankKey] ?: 0) {
+        HoverPopupRow(popup = { ChildSearchPopup(parent) }, ask = selection.popupAsks[blankKey] ?: 0, opensOnHover = false) {
         Box(Modifier.outsidePressPart(selection.editor)) {
             Box(
                 modifier = indent.then(
@@ -4800,9 +4801,7 @@ private fun ElementChildren(
                             menuOpen = true
                         },
                     ),
-            ) {
-                HoverPopupArrow(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp))
-            }
+            )
             // Standing for no element: its ancestors' path alone.
             ActionMenu("ElementChildren blank",
                 open = menuOpen,

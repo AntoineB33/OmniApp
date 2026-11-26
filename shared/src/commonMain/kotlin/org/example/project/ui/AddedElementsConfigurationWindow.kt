@@ -418,16 +418,26 @@ private fun AddedActionList(
     var asks by remember { mutableStateOf(0) }
     var shownReveal by remember { mutableStateOf<Pair<String, Int>?>(null) }
     LaunchedEffect(reveal) { reveal?.let { shownReveal = it.first to ++asks } }
-    // User rule 2026-11-25: **the pinned row** ([SearchDomain.Config.pinnedActionRow]) — whenever the added elements change
-    // (and as it is pinned, and as the window opens), it and its ancestors are opened where it can be reached, and the list
-    // scrolls it to its top.
+    // User rule 2026-11-25: **the pinned row** ([SearchDomain.Config.pinnedActionRow]) — whenever the added elements change,
+    // and as the window opens, it and its ancestors are opened where it can be reached, and the list scrolls it to its top.
+    // Pinned from its menu it is opened, never scrolled (anomaly 2026-11-26: *"I click 'pin this row', and the row gets
+    // selected then unselected and the 'add' row gets selected"* — the scroll took the row from under its open menu, which
+    // was placed afresh on its first entry, and the row lost its selection).
+    // User rule 2026-11-26: the rows a pin opened that no pin needs any more are closed at the change ([withPinOpeningsUndone]).
     val latestGroups by rememberUpdatedState(groups)
     val latestRows by rememberUpdatedState(rows)
     val addedKeys = remember(added) { added.map(SearchDomain::keyOf) }
+    var seenAdded by remember { mutableStateOf<List<String>?>(null) }
     LaunchedEffect(addedKeys, config.pinnedActionRow) {
-        val pinned = latestConfig.pinnedActionRow ?: return@LaunchedEffect
-        val opened = SearchDomain.withPinnedActionRowOpen(latestConfig, latestGroups) ?: return@LaunchedEffect
-        if (opened != latestConfig) onConfigChange(opened)
+        val opening = seenAdded == null
+        val addedChanged = !opening && seenAdded != addedKeys
+        seenAdded = addedKeys
+        var next = latestConfig
+        if (addedChanged) next = SearchDomain.withPinOpeningsUndone(next, latestGroups)
+        next = SearchDomain.withPinnedActionRowOpen(next, latestGroups) ?: next
+        if (next != latestConfig) onConfigChange(next)
+        val pinned = next.pinnedActionRow ?: return@LaunchedEffect
+        if (!opening && !addedChanged) return@LaunchedEffect
         // The rows it opened are listed a frame or two later.
         repeat(3) { androidx.compose.runtime.withFrameNanos { } }
         val key = latestRows.firstOrNull { it.id == pinned }?.key ?: return@LaunchedEffect

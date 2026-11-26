@@ -63,8 +63,10 @@ window, a period's, a category's, a notice — is the same thing with the same m
 - **The blank row ending a list of children shows a POP-UP, never a window** (user rule 2026-11-25: *"instead of opening a
   new window with a tab in the system tray, open a pop-up window. Add the arrow indicating that a pop-up window will appear
   when hovered over."*; `ChildSearchPopup`, `HoverPopupRow`'s `ask`). Hovered it shows the Search window of what can be
-  made its parent's child (`ElementTree.childSearchConfig`), stuck to the row on `MenuSide.SUBMENU`'s sides, the row
-  wearing `HoverPopupArrow` at its end; a click, a double-click or Enter shows it pinned.
+  made its parent's child (`ElementTree.childSearchConfig`), stuck to the row on `MenuSide.SUBMENU`'s sides. **Only a
+  click shows it** (user rule 2026-11-26: *"remove the arrow in the empty rows at the end of children list. The pop-up
+  window must appear only when the row is clicked."*; `HoverPopupRow`'s `opensOnHover` false): a click, a double-click or
+  Enter, never a hover, and the row wears no arrow.
 - **A pop-up's creation row is at the top** (user rule 2026-11-25: *"In the pop-up window, the creation element must
   appear at the top. So fix the default searching configuration of this pop-up window, and fix it as well for other
   contexts."*): `childSearchConfig` sorts by `CREATION_FIRST_SORTS`; `defaultSortsOf` no longer counts the element a

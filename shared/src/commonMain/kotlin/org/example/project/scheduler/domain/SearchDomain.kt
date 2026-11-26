@@ -669,7 +669,7 @@ object SearchDomain {
         val since = config.filters.notificationsSinceMillis ?: return false
         // What the app writes itself (the calendar's view of the notifications) and what the hand opens or picks in the
         // actions section are no change of the window's search; an element added beside the calendar is.
-        val search = config.copy(added = emptyList(), calendarView = "", calendarDay = null, calendarDayMode = null, toggledActionRows = emptySet(), pinnedActionRow = null)
+        val search = config.copy(added = emptyList(), calendarView = "", calendarDay = null, calendarDayMode = null, toggledActionRows = emptySet(), pinnedActionRow = null, pinOpenedRows = emptySet())
         return search == notificationsConfig(since) && config.added.all { it == CALENDAR_KEY }
     }
 
@@ -944,6 +944,12 @@ object SearchDomain {
          */
         val pinnedActionRow: String? = null,
         /**
+         * User rule 2026-11-26 (anomaly: *"I unpinned the row, but it is still open when the added elements is different
+         * but the row still exists"*): **the rows a pin opened** ([withPinnedActionRowOpen]) — closed again at the next
+         * change of the added elements once no pin needs them ([withPinOpeningsUndone]).
+         */
+        val pinOpenedRows: Set<String> = emptySet(),
+        /**
          * User rule 2026-11-12, a search configuration ([Setting.GroupByAddedElements]): **the actions grouped by the
          * added elements they act on**, from the largest set of them to the smallest — each group a row whose children
          * are its actions ([actionGroups]). Off: one flat list of action rows, each naming the elements it acts on.
@@ -1162,6 +1168,7 @@ object SearchDomain {
                     actionQuery = actionQuery,
                     toggledActionRows = toggledActionRows.sorted(),
                     pinnedActionRow = pinnedActionRow,
+                    pinOpenedRows = pinOpenedRows.sorted(),
                     actionsGrouped = actionsGrouped,
                     actionsExpanded = actionsExpanded,
                     actionSearchSortsOnly = actionSearchSortsOnly,
@@ -1315,6 +1322,7 @@ object SearchDomain {
                     // read as rows toggled from today's default (closed), they would open what was closed. Dropped.
                     toggledActionRows = stored.toggledActionRows.toSet(),
                     pinnedActionRow = stored.pinnedActionRow,
+                    pinOpenedRows = stored.pinOpenedRows.toSet(),
                     actionsGrouped = stored.actionsGrouped,
                     actionsExpanded = stored.actionsExpanded,
                     actionSearchSortsOnly = stored.actionSearchSortsOnly,
@@ -1991,6 +1999,7 @@ object SearchDomain {
             actionQuery = "",
             toggledActionRows = emptySet(),
             pinnedActionRow = null,
+            pinOpenedRows = emptySet(),
             actionSearch = "",
             pickedBlocks = emptySet(),
             pickedTimers = emptySet(),
@@ -3189,6 +3198,8 @@ object SearchDomain {
         val toggledActionRows: List<String> = emptyList(),
         /** New 2026-11-25: absent = no row pinned ([Config.pinnedActionRow]). */
         val pinnedActionRow: String? = null,
+        /** New 2026-11-26: absent = no row a pin opened ([Config.pinOpenedRows]). */
+        val pinOpenedRows: List<String> = emptyList(),
         /** New 2026-11-12: absent = the actions grouped, closed, the bar sorting ([Config.actionsGrouped]…). */
         val actionsGrouped: Boolean = true,
         val actionsExpanded: Boolean = false,
@@ -6084,12 +6095,29 @@ object SearchDomain {
         val id = pinned.takeIf { actionRowPath(groups, config, it) != null } ?: followedActionRow(groups, pinned) ?: return null
         val path = actionRowPath(groups, config, id) ?: return null
         var toggled = config.toggledActionRows
+        val opened = HashSet<String>()
         for ((row, top) in path) {
             if (!isActionRowOpen(config.copy(toggledActionRows = toggled), row, top)) {
                 toggled = if (row in toggled) toggled - row else toggled + row
+                opened += row
             }
         }
-        return config.copy(toggledActionRows = toggled, pinnedActionRow = id)
+        return config.copy(toggledActionRows = toggled, pinnedActionRow = id, pinOpenedRows = config.pinOpenedRows + opened)
+    }
+
+    /**
+     * User rule 2026-11-26 (anomaly: an unpinned row stayed open once the added elements changed): [config] with **the rows
+     * a pin opened closed again** ([Config.pinOpenedRows]) — but those on the path to the row pinned now, which it still
+     * needs. What the added elements' change is, the rows the user opened by hand never are.
+     */
+    fun withPinOpeningsUndone(config: Config, groups: List<ActionGroup>): Config {
+        if (config.pinOpenedRows.isEmpty()) return config
+        val kept = config.pinnedActionRow
+            ?.let { pinned -> actionRowPath(groups, config, pinned) ?: followedActionRow(groups, pinned)?.let { actionRowPath(groups, config, it) } }
+            ?.mapTo(HashSet()) { it.first }
+            .orEmpty()
+        val undone = config.pinOpenedRows - kept
+        return config.copy(toggledActionRows = config.toggledActionRows - undone, pinOpenedRows = config.pinOpenedRows - undone)
     }
 
     /**

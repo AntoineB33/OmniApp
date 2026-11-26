@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Blank child row on click; pinning fixes — 2026-11-26
+
+- The blank row ending a list of children has no arrow and shows its pop-up on a click only.
+- Pinning a row from its menu opens it without scrolling (the scroll moved the row from under its menu, which reopened
+  on "add" and the row lost its selection). Scrolled to: a change of the added elements, the window opening.
+- The rows a pin opened close at the next change of the added elements once unpinned (`Config.pinOpenedRows`, new stored
+  field, absent = none).
+- Not checked on screen. Client rebuild only.
+
 ### Second desktop check — 2026-11-26
 
 - Seen working: the Default sub-tree's Search window (a template row typed, its switch shown), Alarms, Categories, Task

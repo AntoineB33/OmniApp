@@ -172,4 +172,31 @@ class SearchWindowEverywhereTest {
         // A group of elements pinned is about them: it does not move to another.
         assertNull(SearchDomain.followedActionRow(groups, "element/Task/c"))
     }
+
+    /**
+     * Anomaly 2026-11-26 (*"I unpinned the row, but it is still open when the added elements is different but the row still
+     * exists"*): the rows a pin opened close again at the next change of the added elements once no pin needs them — never a
+     * row the user opened by hand, and not those on the path to the row pinned now.
+     */
+    @Test
+    fun the_rows_a_pin_opened_close_once_it_is_unpinned_and_the_list_changes() {
+        val added = listOf(task("a"), task("b"))
+        val groups = groupsOf(added)
+        val open = assertNotNull(SearchDomain.actionRowId(added, AddedAction.TaskCopyIds))
+        val byHand = SearchDomain.withActionGroupToggled(SearchDomain.Config(), groups.last().id, SearchDomain.listedGroupIds(groups))
+        val pinned = assertNotNull(SearchDomain.withPinnedActionRowOpen(SearchDomain.withActionRowPinned(byHand, open), groups))
+        assertTrue(pinned.pinOpenedRows.isNotEmpty())
+        assertTrue(groups.last().id !in pinned.pinOpenedRows, "opened by hand, not by the pin")
+        // Still pinned: the change keeps what the pin needs.
+        assertEquals(pinned, SearchDomain.withPinOpeningsUndone(pinned, groups))
+        // Unpinned: still open until the list changes, then closed; the row opened by hand stays.
+        val unpinned = SearchDomain.withActionRowPinned(pinned, null)
+        val changed = SearchDomain.withPinOpeningsUndone(unpinned, groups)
+        assertTrue(changed.pinOpenedRows.isEmpty())
+        assertTrue(SearchDomain.actionListRows(groups, changed).none { it.id == open })
+        assertEquals(byHand.toggledActionRows, changed.toggledActionRows)
+        // Kept with the window; an older one has none.
+        assertEquals(pinned, SearchDomain.Config.decode(pinned.encode()))
+        assertTrue(SearchDomain.Config.decode(SearchDomain.Config().encode())!!.pinOpenedRows.isEmpty())
+    }
 }

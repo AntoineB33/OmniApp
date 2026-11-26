@@ -1475,7 +1475,12 @@ suggestions before it was ever entered.
     second task added, the "Deep copy" rows moved from the task's group to the group of both, and the pin opened
     nothing; `SearchDomain.followedActionRow`): the same action, or the same tagged group, in a group of the same sort,
     pinned from then on under its new id. A group of elements pinned is about them and follows nowhere. Where nothing
-    lists it, nothing moves. The scroll is the section's reveal (the
+    lists it, nothing moves. **Pinned from its menu, the row is opened, never scrolled** (anomaly 2026-11-26: the scroll
+    took the row from under its open menu, which was placed afresh on its first entry, "add", and the row lost its
+    selection): the scroll is for a change of the added elements and the window opening. **The rows a pin opened close
+    again at the next change of the added elements once no pin needs them** (anomaly 2026-11-26: *"I unpinned the row,
+    but it is still open when the added elements is different"*; `Config.pinOpenedRows`, `withPinOpeningsUndone`) — never
+    a row opened by hand. The scroll is the section's reveal (the
     row at the very top, its parent just out of view). Kept with the window's configuration, so with its id.
   - **The deep copy window is a group of rows** (user rule 2026-11-25: *"Transform the deep copy window into a search
     window where every action is a row"*; `SearchDomain.DEEP_COPY_ACTIONS`, `ActionGroup.tag`, `DeepCopyActionEditor`).

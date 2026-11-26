@@ -44,6 +44,11 @@ internal fun HoverPopupRow(
     popup: @Composable () -> Unit,
     /** User rule 2026-11-25: raised, the pop-up is shown pinned — a blank child row's double-click or Enter. */
     ask: Int = 0,
+    /**
+     * False: a hover shows nothing, only a click does (user rule 2026-11-26: *"The pop-up window must appear only when the
+     * row is clicked"* — the blank row ending a list of children, which then wears no [HoverPopupArrow]).
+     */
+    opensOnHover: Boolean = true,
     row: @Composable () -> Unit,
 ) {
     // The list of rows the row is in (the menu's result list gives it), which the pop-up must not hide.
@@ -63,7 +68,7 @@ internal fun HoverPopupRow(
         Modifier
             .reportsHover(branch)
             .popupOpener(opener, open)
-            .onHoverEnter { if (MenuHoverTracker.hoverActs(around)) open = true }
+            .onHoverEnter { if (opensOnHover && MenuHoverTracker.hoverActs(around)) open = true }
             // The row's own press handling (it picks the option) is left alone: the release is read, never consumed.
             .pointerInput(branch, opener) {
                 awaitPointerEventScope {
