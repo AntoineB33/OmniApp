@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Second desktop check — 2026-11-26
+
+- Seen working: the Default sub-tree's Search window (a template row typed, its switch shown), Alarms, Categories, Task
+  relations, Keyboard shortcuts, Sleep (its schedule pinned), History, a creation row's default-configuration group, the
+  "Checked blocks" group's rows.
+- Fixed: asking for the Default sub-tree brought back the Online window — two app settings' Search windows share their
+  search; a left-side window holding an element is matched by it. History opens newest first.
+- Known, unchanged: a tree drawn in a Search window (the template, a task's "Children") takes typing once its field is
+  clicked — the Search window holds the keyboard.
+- Not exercised: the "Checked blocks" rows on a checked block (the account had none placed by hand).
+- Client rebuild only.
+
 ### The Default sub-tree is a Search window — 2026-11-26
 
 - A "Default sub-tree" app setting holds "Applied to new tasks" and "Template tree" (the template drawn as the task tree);

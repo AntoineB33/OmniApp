@@ -2416,7 +2416,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 return SearchDomain.Config(kinds = setOf(searched), added = listOf(key), pinnedActionRow = SearchDomain.actionRowId(rows, action))
             }
             val config = when (kind) {
-                FloatingWindow.History -> SearchDomain.Config(kinds = setOf(SearchDomain.Kind.HistoryUnit))
+                // Newest first, as the History window listed them (checked on the desktop 2026-11-26: by name otherwise).
+                FloatingWindow.History -> SearchDomain.Config(
+                    kinds = setOf(SearchDomain.Kind.HistoryUnit),
+                    sorts = listOf(SearchDomain.SortMethod(SearchDomain.Kind.HistoryUnit, SearchDomain.SortKey.HistoryDate, descending = true)),
+                    sortFollowsDefault = false,
+                )
                 FloatingWindow.Alarms -> SearchDomain.Config(
                     kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Chrono, SearchDomain.Kind.Reminder),
                 )
@@ -2442,7 +2447,22 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         ): String {
             // User rule 2026-11-25 (*"the search window is the only window of the app"*): these windows are Search windows
             // set for what they showed ([lateralAsSearch]) — the one open is brought back, else one opens.
-            lateralAsSearch(kind)?.let { search -> return openWindowOnItsPage(FloatingWindow.Search, search.encode(), atBack = atBack) }
+            lateralAsSearch(kind)?.let { search ->
+                if (search.added.isEmpty()) return openWindowOnItsPage(FloatingWindow.Search, search.encode(), atBack = atBack)
+                // One holding an element (the Sleep period, the Online setting, the Default sub-tree) is matched by it — two
+                // app settings' windows share their search (checked on the desktop 2026-11-26: Default sub-tree brought
+                // back Online's) — and told the row it pins.
+                val wanted = search.added.toSet()
+                val id = openWindowOnItsPage(
+                    FloatingWindow.Search, search.encode(), atBack = atBack,
+                    matches = { open -> searchConfigOf(open).let { it.kinds == search.kinds && it.added.toSet() == wanted } },
+                )
+                val held = searchConfigOf(id)
+                if (search.pinnedActionRow != null && held.pinnedActionRow != search.pinnedActionRow) {
+                    setSearchConfig(id, held.copy(pinnedActionRow = search.pinnedActionRow))
+                }
+                return id
+            }
             // User rule 2026-11-12: "the calendar" is a Search window holding the calendar element — asked for with no
             // configuration, the one open (the focused one first) is brought back, else one opens; asked for with a
             // view ([config]: what a calendar window held, the notifications it shows), the one showing that view.
