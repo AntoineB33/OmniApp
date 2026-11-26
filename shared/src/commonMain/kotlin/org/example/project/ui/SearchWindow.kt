@@ -898,8 +898,12 @@ fun SearchWindow(
         // would be that old composition's — the reducer answers it against the live state instead.
         onIntent(SchedulerIntent.SelectInWindow(HistoryWindow.Search, instance, key, shouldRecord))
     }
-    // A new question starts at its best answer.
-    LaunchedEffect(kinds, query, filters, sorts) {
+    // A new question starts at its best answer. Not the rows its caller gives being renamed (anomaly 2026-11-26: *"I click
+    // 'pin this row', and the row gets selected then unselected and the 'add' row gets selected"* — the entry turned to
+    // "unpin this row", the "Listed from" holding the entries' names changed, and the menu started over on its first): where
+    // the rows come from is the question, not what they are called now.
+    val questionFilters = remember(filters) { filters.copy(listedFrom = filters.listedFrom?.let { SearchDomain.ListedFrom(it.source) }) }
+    LaunchedEffect(kinds, query, questionFilters, sorts) {
         select(0, record = false)
         // Never the surface the added elements list SHARES with its window (anomaly 2026-11-19: *"It blinks when I select
         // a row"* — a cell selected in a sub-tree gave the empty list a row; drawn for it, the list's first question

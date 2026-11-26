@@ -1477,7 +1477,10 @@ suggestions before it was ever entered.
     pinned from then on under its new id. A group of elements pinned is about them and follows nowhere. Where nothing
     lists it, nothing moves. **Pinned from its menu, the row is opened, never scrolled** (anomaly 2026-11-26: the scroll
     took the row from under its open menu, which was placed afresh on its first entry, "add", and the row lost its
-    selection): the scroll is for a change of the added elements and the window opening. **The rows a pin opened close
+    selection): the scroll is for a change of the added elements and the window opening. **A menu's entry renamed is no
+    new question** (same anomaly, its root, checked on the desktop: "pin this row" turned to "unpin this row", the "Listed
+    from" holding the entries' names changed, and the menu started over on "add"; `SearchWindow`'s `questionFilters`): where
+    the rows come from is what restarts a window's selection, not what they are called. **The rows a pin opened close
     again at the next change of the added elements once no pin needs them** (anomaly 2026-11-26: *"I unpinned the row,
     but it is still open when the added elements is different"*; `Config.pinOpenedRows`, `withPinOpeningsUndone`) — never
     a row opened by hand. The scroll is the section's reveal (the

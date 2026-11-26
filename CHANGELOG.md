@@ -18,7 +18,11 @@ Check here before assuming the code matches the docs.
   on "add" and the row lost its selection). Scrolled to: a change of the added elements, the window opening.
 - The rows a pin opened close at the next change of the added elements once unpinned (`Config.pinOpenedRows`, new stored
   field, absent = none).
-- Not checked on screen. Client rebuild only.
+- Checked on the desktop: the scroll was not the whole cause — a menu entry renamed ("pin" → "unpin") reset the menu's
+  selection to its first entry, since "Listed from" holds the entries' names. Fixed in `SearchWindow` for every menu.
+  Seen after the fix: the entry and the row stay selected, nothing scrolls; an unpinned row closes at the next change of
+  the added elements; the blank row has no arrow, nothing on hover, its pop-up on a click.
+- Client rebuild only.
 
 ### Second desktop check — 2026-11-26
 
