@@ -534,6 +534,8 @@ private fun AddedActionList(
                 noneListed = noneListed,
                 pinned = config.pinnedActionRow,
                 onPin = { id -> onConfigChange(SearchDomain.withActionRowPinned(latestConfig, id)) },
+                // Anomaly 2026-11-26: its head, shown, drags a copy — the window it is the actions section of.
+                copyOf = { latestConfig },
             ),
             modifier = modifier,
         )
@@ -583,10 +585,13 @@ internal val LocalOnlineContent = androidx.compose.runtime.compositionLocalOf<(@
 internal val LocalActionSectionHost = androidx.compose.runtime.compositionLocalOf<ActionSectionHost?> { null }
 
 /**
- * User rule 2026-11-13: **the contexts and states of an added action** ([SearchDomain.AddedAction.ActionContexts]) — for
- * each action row added to the actions section's own list, its contexts ([SearchDomain.actionContexts]): the elements
- * that share one state, named, and under them that state — *"the exact … element the user would find in the action
- * section of A, B or C"*, the action's own editor over those elements, so a change there changes it for them all.
+ * User rule 2026-11-13, anomaly 2026-11-26: **the contexts and states of an added action**
+ * ([SearchDomain.AddedAction.ActionContexts]) — for each action row added to the actions section's own list, its pairs
+ * ([SearchDomain.actionContextPairs]): every element of the action's kind gathered by the state it has for them, the
+ * "no state" pair over every other element, a new pair. Each pair is a **context** field — a click opens pop-up window B,
+ * every context in its results and the pair's in its added elements — and a **states** field: the action's own editor over
+ * the pair's contexts (*"the exact … element the user would find in the action section of A, B or C"*), so a change there
+ * changes it for them all; "no state" for the pair the action is about none of.
  */
 @Composable
 private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
@@ -601,41 +606,88 @@ private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
             continue
         }
         val members = row.group.members
-        val contexts = SearchDomain.actionContexts(host.state, action, members)
-        val contextKeys = contexts.map { context -> context.map(SearchDomain::keyOf) }
-        // Anomaly 2026-11-26 (*"I don't see the field named context and the field named states"*): each pair is a
-        // "context" field — a click opens pop-up window B, every value a context can hold in its results and this
-        // context's in its added elements, what B adds or removes being the context's — and a "states" field, the
-        // action's own editor over the context's values. The last pair is a new one, empty. The pairs follow the
-        // contexts again as a state set changes them; what B changed is kept until then (view state).
-        var pairs by remember(row.id) { mutableStateOf(SearchDomain.contextPairs(contexts)) }
-        androidx.compose.runtime.LaunchedEffect(contextKeys) { pairs = SearchDomain.contextPairs(contexts) }
-        pairs.forEachIndexed { index, keys ->
-            val values = remember(keys, host.state) { SearchDomain.resolve(host.state, keys, { emptyMap() }) }
+        val kind = action.section.takeUnless { SearchDomain.isSetAction(action) }
+        // Every element of the action's kind — the account's, not this window's added ones (anomaly 2026-11-26: *"I must
+        // find the minimum time of all task elements"*); an action about a set as such, its group's.
+        val elements = remember(host.state, kind, members) {
+            if (kind == null) members
+            else SearchDomain.results(host.state, setOf(kind), "").filter { it.kind == kind }
+        }
+        val byKey = remember(elements) { elements.associateBy(SearchDomain::keyOf) }
+        val derived = remember(host.state, action, elements) { SearchDomain.actionContextPairs(host.state, action, elements) }
+        // Every other element: the "no state" pair's contexts, listed as its window B opens with them added.
+        val others = remember(host.state, action) {
+            SearchDomain.results(host.state, SearchDomain.otherContextKinds(action), "")
+                .filter { it.kind in SearchDomain.CONTEXT_KINDS }
+                .map(SearchDomain::keyOf)
+        }
+        // The pairs B changed are view state, set back to the derived ones whenever a state set changes them.
+        var pairs by remember(row.id) { mutableStateOf(derived) }
+        LaunchedEffect(derived) { pairs = derived }
+        // The pairs are drawn a page at a time: an action whose every element holds a state of its own (its parents) has
+        // as many pairs as elements, each with its editor.
+        var shown by remember(row.id) { mutableStateOf(CONTEXT_PAIRS_PAGE) }
+        pairs.take(shown).forEachIndexed { index, pair ->
+            val keys = pair.keys ?: others
+            val values = remember(keys, host.state) {
+                val missing = keys.filter { it !in byKey }
+                val resolved = if (missing.isEmpty()) emptyMap() else SearchDomain.resolve(host.state, missing).associateBy(SearchDomain::keyOf)
+                keys.mapNotNull { byKey[it] ?: resolved[it] }
+            }
             val fieldId = row.id + "/context/" + index
-            var fieldConfig by remember(fieldId) { mutableStateOf(SearchDomain.contextFieldConfig(members, keys)) }
+            var fieldConfig by remember(fieldId) { mutableStateOf(SearchDomain.contextFieldConfig(keys)) }
             Column(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 PopupSearchField(
-                    placeholder = "context" + if (values.isEmpty()) " · new: choose its elements" else " · " + values.joinToString(", ") { it.name },
+                    placeholder = "context · " + contextsSaid(pair, values, action),
                     state = host.state,
                     config = fieldConfig.copy(added = keys),
                     onConfigChange = { next ->
                         fieldConfig = next
                         if (next.added != keys) pairs = SearchDomain.withPairValues(pairs, index, next.added)
                     },
-                    openedConfig = SearchDomain.contextFieldConfig(members, keys),
+                    openedConfig = SearchDomain.contextFieldConfig(keys),
                     fieldId = fieldId,
                     modifier = Modifier.fillMaxWidth(),
                     openedParts = EMBEDDED_SEARCH_SPLITS.copy(addedRemoved = false),
                     caller = "",
                 )
                 Text("states", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (values.isEmpty()) NoteText("Choose the elements of the context first.")
-                else host.draw(row, values, fieldId)
+                // The editor acts on the contexts it is about: those of the action's kind.
+                val acted = if (kind == null) values else values.filter { it.kind == kind }
+                when {
+                    !pair.stated -> NoteText("no state")
+                    values.isEmpty() -> NoteText("Choose the contexts first.")
+                    acted.isEmpty() -> NoteText("no state: none of these contexts is a ${kind?.label}")
+                    else -> host.draw(row, acted, fieldId)
+                }
             }
+        }
+        if (pairs.size > shown) {
+            Text(
+                "show ${minOf(CONTEXT_PAIRS_PAGE, pairs.size - shown)} more of the ${pairs.size - shown} other pairs",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = NESTED_ACTION_INDENT).clickable { shown += CONTEXT_PAIRS_PAGE },
+            )
         }
     }
 }
+
+/** How many pairs of "Contexts and states" are drawn at once ([ActionContextsEditor]). */
+private const val CONTEXT_PAIRS_PAGE = 20
+
+/**
+ * What a context field says of its pair's [values]: their names while few, else how many of each kind — a pair can hold
+ * every task of the account, which no field shows by name. The "no state" pair untouched: every element the action is not
+ * about.
+ */
+private fun contextsSaid(pair: SearchDomain.ContextPair, values: List<SearchDomain.Result>, action: SearchDomain.AddedAction): String =
+    when {
+        pair.keys == null -> "every element that is not a " + (action.section?.label ?: "context of it")
+        values.isEmpty() -> "new: choose its contexts"
+        values.size <= 5 -> values.joinToString(", ") { it.name }
+        else -> values.groupingBy { it.kind }.eachCount().entries.joinToString(", ") { (k, n) -> "$n " + if (n == 1) k.label else k.plural }
+    }
 
 /** How far right the actions inside a micro group stand of it (user rule 2026-10-18: "set them a little to the right"). */
 private val NESTED_ACTION_INDENT = 16.dp

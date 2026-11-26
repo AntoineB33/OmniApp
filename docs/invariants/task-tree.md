@@ -1450,11 +1450,20 @@ suggestions before it was ever entered.
     made for them all. **Each pair is two fields, "context" and "states"** (anomalies 2026-11-26, *"I don't see the field
     named context and the field named states … it doesn't open a little pop-up window B listing all the contexts in the
     search result section of B and all the selected contexts in added elements list section of B"*): the context field,
-    clicked, opens pop-up window B (`PopupSearchField`, `SearchDomain.contextFieldConfig`) — every element of the kinds
-    the action acts on in its results, the context's values in its added elements; what B adds or removes is the
-    context's. The states field is the action's editor over those values. The last pair is new and empty
-    (`contextPairs`, `withPairValues`); the pairs are view state, set back to the contexts whenever a state set changes
-    them. What tells two elements apart is read per action: "Parents" by the element's parents; an action
+    clicked, opens pop-up window B (`PopupSearchField`, `SearchDomain.contextFieldConfig`) — every context in its results
+    (`CONTEXT_KINDS`), the pair's contexts in its added elements; what B adds or removes is the pair's. The states field
+    is the action's editor over the pair's contexts of the action's kind. **The contexts are EVERY element of the action's
+    kind, the account's** (anomaly 2026-11-26, *"in 'Contexts and states' for the element 'Minimum Time', I must find the
+    minimum time of all task elements. If the user never changed minimum time, then there will only be two pairs"*;
+    `SearchDomain.actionContextPairs`, `ActionContextPairsTest`), never only the window's added ones: the largest group
+    first, then **"no state"** over every element of the other kinds (`ContextPair.keys` null, `otherContextKinds`: *"useful
+    for when the user changes the search configuration of an action section to make 'Minimum Time' appear even though no
+    task element is in the added elements list"*), then the other groups — a task whose minimum time changed is a third
+    pair, B of the first one task less — then a new pair, empty (`withPairValues`). An action about a set as such keeps
+    its group's elements and has no "no state" pair. A context field names its pair's contexts while few, else counts them
+    by kind; the pairs are drawn twenty at a time (an action whose every element holds a state of its own has a pair per
+    element). The pairs are view state, set back to the derived ones whenever a state set changes them. (A same-day
+    attempt made the contexts the app's places and the state whether the action is listed there; rejected.) What tells two elements apart is read per action: "Parents" by the element's parents; an action
     about a set has one context; **an element's own configuration is read off the element** (anomaly 2026-11-14, *"groups
     elements only for 'Parents'"*; `ownActionState`): a title, an alarm's time, days, state, ring and alert, a timer's
     duration, a quota's amount, loop, restarts and resilience, a reminder's cadence, a category's name, rules and kind, a

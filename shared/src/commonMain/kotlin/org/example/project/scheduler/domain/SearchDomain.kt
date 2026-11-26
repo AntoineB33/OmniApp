@@ -5051,28 +5051,51 @@ object SearchDomain {
         Config(kinds = setOf(Kind.Context), added = contextIds.map(ContextDomain::keyOf))
 
     /**
-     * Anomaly 2026-11-26 (*"I don't see the field named context and the field named states … clicking … doesn't open a
-     * little pop-up window B listing all the contexts in the search result section of B and all the selected contexts in
-     * added elements list section of B"*): **the pairs a "Contexts and states" shows** — each derived context's elements
-     * ([actionContexts]), then an empty pair, the new one: a context field's values, by key.
+     * **A pair of "Contexts and states"**: its contexts — the elements whose actions section it is about, by key — and its
+     * state ([stated]: the action's, which the states field edits over those contexts; false: "no state", the action being
+     * about none of them). [keys] null: every element of the kinds the action is not about ([otherContextKinds]), read only
+     * when its pop-up window B opens — the account's every element is not listed for a pair nobody opens.
      */
-    fun contextPairs(contexts: List<List<Result>>): List<List<String>> = contexts.map { it.map(::keyOf) } + listOf(emptyList())
+    data class ContextPair(val keys: List<String>?, val stated: Boolean)
 
     /**
-     * **[pairs] once pop-up window B set the values of the pair at [index] to [keys]** — an empty new pair still last: the
-     * new pair given values, another follows it.
+     * Anomaly 2026-11-26 (*"in 'Contexts and states' for the element 'Minimum Time', I must find the minimum time of all
+     * task elements. If the user never changed minimum time, then there will only be two pairs"*): **the pairs a "Contexts
+     * and states" shows for [action]** — EVERY element of its kind ([elements], the account's, not the window's added ones)
+     * gathered by the state it has for them ([actionContexts]); the largest group first, then the "no state" pair over every
+     * other element (*"useful for when the user changes the search configuration of an action section to make 'Minimum
+     * Time' appear even though no task element is in the added elements list section"*), then the other groups (a task
+     * whose minimum time was changed), then a new pair, empty. An action about a set as such ([isSetAction]) is about no
+     * kind: its [elements] are its group's, one state for them all, and it has no "no state" pair.
      */
-    fun withPairValues(pairs: List<List<String>>, index: Int, keys: List<String>): List<List<String>> {
-        val next = pairs.toMutableList().also { it[index] = keys }
-        return if (next.lastOrNull()?.isEmpty() == false) next + listOf(emptyList()) else next
+    fun actionContextPairs(state: SchedulerState, action: AddedAction, elements: List<Result>): List<ContextPair> {
+        val groups = actionContexts(state, action, elements)
+            .sortedByDescending { it.size }
+            .map { group -> ContextPair(group.map(::keyOf), stated = true) }
+        val none = if (isSetAction(action)) emptyList() else listOf(ContextPair(null, stated = false))
+        return groups.take(1) + none + groups.drop(1) + ContextPair(emptyList(), stated = true)
+    }
+
+    /** The kinds whose elements [action] is not about: the "no state" pair's ([ContextPair.keys] null). */
+    fun otherContextKinds(action: AddedAction): Set<Kind> = CONTEXT_KINDS - setOfNotNull(action.section)
+
+    /** The kinds an element of which is a context — what pop-up window B of a context field searches. */
+    val CONTEXT_KINDS: Set<Kind> by lazy { Kind.entries.toSet() - Kind.Creation - Kind.Option }
+
+    /**
+     * **[pairs] once pop-up window B set the contexts of the pair at [index] to [keys]** — an empty new pair still last: the
+     * new pair given contexts, another follows it.
+     */
+    fun withPairValues(pairs: List<ContextPair>, index: Int, keys: List<String>): List<ContextPair> {
+        val next = pairs.toMutableList().also { it[index] = it[index].copy(keys = keys) }
+        return if (next.lastOrNull()?.keys?.isEmpty() == false) next + ContextPair(emptyList(), stated = true) else next
     }
 
     /**
-     * **Pop-up window B of a context field**: every element of the kinds the action acts on ([members]') in its results —
-     * every value a context can hold — and the context's own values ([keys]) in its added elements.
+     * **Pop-up window B of a context field**: every context in its results ([CONTEXT_KINDS]) and the pair's own ([keys])
+     * in its added elements — the tasks of "45 minutes" for "Minimum time", one less once one of them is changed.
      */
-    fun contextFieldConfig(members: List<Result>, keys: List<String>): Config =
-        Config(kinds = members.mapTo(LinkedHashSet()) { it.kind }.ifEmpty { setOf(Kind.Task) }, added = keys)
+    fun contextFieldConfig(keys: List<String>): Config = Config(kinds = CONTEXT_KINDS, added = keys)
 
     /** The calendar element's id ([Kind.Calendar]): there is one. */
     const val CALENDAR_ID: String = "calendar"

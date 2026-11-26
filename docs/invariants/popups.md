@@ -646,7 +646,11 @@ means.
     actions — becoming a Search window of the app on its configuration (`PopupDetacher.detachSearch`), a menu's carrying
     the entries it was given (`detachGiven`: the window lists them while the app runs). Its own OS window
     (`LocalPopupWindowControl`) is carried by the screen's pointer; one drawn in the app's window by the drag, hidden
-    meanwhile. A window's SECTIONS (its actions, its added elements) are that window and never become one. `SearchPopupHead` hands it its window part, given by whatever hosts the pop-up (`LocalSearchPopupWindow`; the
+    meanwhile. A window's SECTIONS (its actions, its added elements) are that window and never become one — **but an
+    actions section whose head is shown drags a COPY** (anomaly 2026-11-26, *"must actually drag an exact copy of B, and
+    the real B stays embedded in A"*; `ActionSearchRows.copyOf`): a Search window of the configuration of the window it is
+    the section of (its `inside` carrying the section's own), that section alone shown with a head; the section stays
+    drawn, nothing closes, and the pop-up it may stand in is not moved. `SearchPopupHead` hands it its window part, given by whatever hosts the pop-up (`LocalSearchPopupWindow`; the
     Search window drawn in no frame reads it and gives its own sections null). `FieldSearchPopupLayer` gives it: the
     drag moves the pop-up in the layer, the pop-ups over it closing; let go, or asked by a window button, it is a
     Search window of the app (`PopupDetacher.detachSearch`, a copy beside the user's) with the pop-up's configuration.
@@ -1181,7 +1185,11 @@ The account's data is shared, of course — an alarm edited in one copy shows in
 - **A section's background options join its window's** (user rule 2026-11-25): the actions section and the added
   elements list have no background menu of their own; a secondary press on their background leaves their own options
   (`SectionBackground`, `recordsSectionPress`, read before the window's handler as an inner node's), which the window's
-  menu shows after its own, a separator between (`SearchPartsMenu`'s `after`, `SectionBackgroundMenuTest`). The separator
+  menu shows after its own, a separator between (`SearchPartsMenu`'s `after`, `SectionBackgroundMenuTest`). **A section
+  inside a section is a group of its own** (anomaly 2026-11-26, *"Right-clicking in the background of an action section
+  of an action section should at least show 2 horizontal separators"*): one press leaves each section's options in turn
+  (keyed by its uptime), the outermost's shown first, each group after its separator, its entries' ids told apart
+  (`sectionGroups`) — before, the outer section's overwrote the inner one's. The separator
   is a menu entry (`MenuAction.separator()`), drawn while the list's search configuration "Separators between groups"
   (`Config.separators`, on in a menu's list, `OPTION_SEARCH`) is on; never at an end, never doubled.
 - **The one exception is a menu that holds text fields** (the quota's resilience values, `QuotaResilienceEditor`): a

@@ -1393,7 +1393,7 @@ fun SearchWindow(
     // The window's background menu: open, and what a section of it left there ([SectionBackground]). Here, so the whole
     // of a pop-up's surface — its padding, its edges — opens it, as the whole of a framed window's content does.
     var backgroundMenu by remember { mutableStateOf(false) }
-    var sectionEntries by remember { mutableStateOf<List<MenuAction>>(emptyList()) }
+    var sectionEntries by remember { mutableStateOf<List<List<MenuAction>>>(emptyList()) }
     val windowBody: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
       // Three sections: the search on the left; on the right, the actions on the added elements above the list
       // of the added elements. Both separators are dragged to share the room (Compose-only, like the zoom):
@@ -2585,11 +2585,19 @@ fun SearchWindow(
     var detachDrag by remember { mutableStateOf<DetachedDrag?>(null) }
     val latestClose by rememberUpdatedState(picker?.onCancel ?: onDismiss)
     val latestOptions by rememberUpdatedState(options)
+    // Anomaly 2026-11-26: an actions section's head drags a COPY of it ([ActionSearchRows.copyOf]); the section stays.
+    val sectionCopy by rememberUpdatedState(actionRows?.copyOf)
+    val copies = actionRows?.copyOf != null
     val ownPopupHead: PopupWindowHead? =
-        if (frame != null || isSearchSection(actionRows, addedList) || detacher == null) null
-        else remember(detacher, popupControl) {
+        if (frame != null || (isSearchSection(actionRows, addedList) && !copies) || detacher == null) null
+        else remember(detacher, popupControl, copies) {
             // What it becomes: a Search window of the app on this one's configuration, listing what it was given.
             fun becomes(at: androidx.compose.ui.geometry.Rect, how: DetachedAs, name: String?): DetachedDrag {
+                // An actions section: the window it is the section of, that section alone shown, with a head.
+                sectionCopy?.let { copyOf ->
+                    val parts = SearchSplits(headerRemoved = false, barRemoved = barRemoved, searchRemoved = true, actionsRemoved = false, addedRemoved = true)
+                    return detacher.detachSearch(copyOf(), at, how, name, parts)
+                }
                 val given = latestOptions
                 val kept = latestConfig
                 // Anomaly 2026-11-25 (*"the action section and the added elements section are open in B, but I didn't
@@ -2603,25 +2611,30 @@ fun SearchWindow(
                 return if (given != null) detacher.detachGiven(kept, given.asGiven ?: mutableStateOf(given), at, how, name, parts)
                 else detacher.detachSearch(kept, at, how, name, parts)
             }
+            // Where it stands in the app: a pop-up in an OS window of its own is that window; a section copied is where it is
+            // drawn in the window it stands in, never that window's own place ([PopupWindowControl] moves the pop-up it is in).
+            fun shownAt(): androidx.compose.ui.geometry.Rect? =
+                if (!copies) popupControl?.boundsInApp() ?: shownBounds[0]
+                else shownBounds[0]?.let { shown -> popupControl?.boundsInApp()?.let { shown.translate(it.topLeft) } ?: shown }
             PopupWindowHead(
                 windowId = "Search",
                 onDragStart = { name, travelled ->
-                    val at = popupControl?.boundsInApp() ?: shownBounds[0]
-                    val made = at?.let { becomes(it, DetachedAs.Moved, name) }?.also { it.moveBy(travelled) }
+                    val made = shownAt()?.let { becomes(it, DetachedAs.Moved, name) }?.also { it.moveBy(travelled) }
                     detachDrag = made
-                    popupControl?.startDrag()
+                    if (!copies) popupControl?.startDrag()
                 },
                 // Its own window is carried by the screen's pointer ([PopupWindowControl.pointerMoved]); one drawn in the
-                // app's window by the drag's own move.
-                onDrag = { delta -> detachDrag?.moveBy?.invoke(popupControl?.pointerMoved() ?: delta) },
+                // app's window by the drag's own move — a copy too, the pop-up it stands in staying where it is.
+                onDrag = { delta -> detachDrag?.moveBy?.invoke((if (copies) null else popupControl?.pointerMoved()) ?: delta) },
                 onDragEnd = {
                     detachDrag?.done?.invoke()
                     detachDrag = null
-                    latestClose()
+                    // A copy was dragged: what it is a copy of stays.
+                    if (!copies) latestClose()
                 },
                 detach = { how, name ->
-                    val at = popupControl?.boundsInApp() ?: shownBounds[0]
-                    latestClose()
+                    val at = shownAt()
+                    if (!copies) latestClose()
                     if (at != null) becomes(at, how, name)
                 },
             )
@@ -2630,7 +2643,7 @@ fun SearchWindow(
     // Where it stands, for the window it becomes; hidden while its head's drag carries that window.
     val placed = Modifier
         .onGloballyPositioned { shownBounds[0] = it.boundsInWindow() }
-        .then(if (detachDrag != null && popupControl == null) Modifier.alpha(0f) else Modifier)
+        .then(if (detachDrag != null && popupControl == null && !copies) Modifier.alpha(0f) else Modifier)
     if (frame == null && popupChrome != null) {
         // A pop-up: the window's surface, its head at the top edge (anomaly 2026-11-15, 5). What is inside is not it.
         androidx.compose.runtime.CompositionLocalProvider(LocalSearchPopupWindow provides null, LocalPopupChrome provides null) {
@@ -2871,6 +2884,13 @@ class ActionSearchRows(
     val pinned: String? = null,
     /** Pins the row of that id (the one before unpinned), or unpins with null; null where rows cannot be pinned. */
     val onPin: ((String?) -> Unit)? = null,
+    /**
+     * Anomaly 2026-11-26 (*"Selecting 'show header' for a search window B embedded in a search window A as its action
+     * section then dragging it away, must actually drag an exact copy of B, and the real B stays embedded in A"*): the
+     * configuration of the window this is the actions section of, as it stands — what its head's drag makes a window of,
+     * showing that section alone. Null: its head does not drag.
+     */
+    val copyOf: (() -> SearchDomain.Config)? = null,
 ) {
     val byKey: Map<String, SearchDomain.ActionListRow> = rows.associateBy { it.key }
 }
@@ -3179,19 +3199,37 @@ internal fun SearchPartsMenu(
     parts: List<SearchPart> = SearchPart.entries,
     /**
      * User rule 2026-11-25: the options of the section right-clicked (the actions section, the added elements list — Search
-     * windows of their own), after the window's, a separator between.
+     * windows of their own), after the window's, a separator between. Anomaly 2026-11-26 (*"Right-clicking in the
+     * background of an action section of an action section should at least show 2 horizontal separators"*): one group per
+     * section the press is in, the outermost first, each after its separator.
      */
-    after: List<MenuAction> = emptyList(),
+    after: List<List<MenuAction>> = emptyList(),
     onToggle: (SearchPart) -> Unit,
 ) {
     // User rule 2026-11-12: the menu is a Search window of its entries.
     ActionMenu("SearchPartsMenu",
         open = open,
         onDismiss = onDismiss,
-        actions = partsMenuActions(removed, more, parts, onToggle = onToggle) + (if (after.isEmpty()) emptyList() else listOf(MenuAction.separator()) + after),
+        actions = partsMenuActions(removed, more, parts, onToggle = onToggle) +
+            sectionGroups(after),
         atPointer = true,
     )
 }
+
+/**
+ * Anomaly 2026-11-26: **the options of the sections a background press is in** ([SectionBackground.take]), each group after
+ * its separator — a section inside a section is a second group, its entries' ids telling them from the first's.
+ */
+internal fun sectionGroups(groups: List<List<MenuAction>>): List<MenuAction> =
+    groups.filter { it.isNotEmpty() }.flatMapIndexed { index, group ->
+        listOf(MenuAction.separator()) + group.map { entry ->
+            if (index == 0) entry
+            else MenuAction(
+                entry.label, entry.enabled, entry.keepsOpen, entry.mark, entry.hoverPopup, entry.separator,
+                id = entry.id.replaceFirst(SECTION_ENTRY_PREFIX, SECTION_ENTRY_PREFIX + (index + 1) + " "), onClick = entry.onClick,
+            )
+        }
+    }
 
 /**
  * A Search window's background options: [more], then one per part — anomaly 2026-11-15 (*"the right-click menu of the
@@ -3217,9 +3255,17 @@ internal fun partsMenuActions(
  * it opens: the section's press is read first (an inner node's), the window's after.
  */
 internal class SectionBackground {
-    private var pending: List<MenuAction>? = null
-    fun leave(entries: List<MenuAction>) { pending = entries }
-    fun take(): List<MenuAction>? = pending.also { pending = null }
+    // Anomaly 2026-11-26: a section inside a section leaves its options too — one group per section, the press's own
+    // (its uptime) only: a press no menu took leaves nothing for the next.
+    private val pending = mutableListOf<List<MenuAction>>()
+    private var press = -1L
+    /** The options of a section the press at [uptime] is in — the innermost section's first, as the press reaches them. */
+    fun leave(uptime: Long, entries: List<MenuAction>) {
+        if (uptime != press) { pending.clear(); press = uptime }
+        pending += entries
+    }
+    /** The groups the press left, the outermost section's first; none left after. */
+    fun take(): List<List<MenuAction>> = pending.reversed().also { pending.clear(); press = -1L }
 }
 
 /** User rule 2026-11-25: the contexts' defaults the user changed, which every menu and drop-down opens with; given by `App`. */
@@ -3236,7 +3282,7 @@ private fun Modifier.recordsSectionPress(holder: SectionBackground?, entries: ()
             while (true) {
                 val press = awaitPointerEvent()
                 if (press.type == PointerEventType.Press && press.buttons.isSecondaryPressed && press.changes.none { it.isConsumed }) {
-                    holder.leave(entries())
+                    holder.leave(press.changes.first().uptimeMillis, entries())
                 }
             }
         }

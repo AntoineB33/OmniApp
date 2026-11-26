@@ -111,4 +111,28 @@ class SectionBackgroundMenuTest {
             onEdt { scene.close() }
         }
     }
+    /**
+     * Anomaly 2026-11-26: *"Right-clicking in the background of an action section of an action section should at least
+     * show 2 horizontal separators"* — the inner section's options were overwritten by the outer one's as the press reached
+     * it: each section's are a group now, the outermost first, each after its separator.
+     */
+    @Test
+    fun a_section_inside_a_section_adds_a_second_group_after_a_second_separator() {
+        val holder = org.example.project.ui.SectionBackground()
+        val inner = listOf(org.example.project.ui.MenuAction("Show the header", id = org.example.project.ui.SECTION_ENTRY_PREFIX + "header") {})
+        val outer = listOf(org.example.project.ui.MenuAction("Show the header", id = org.example.project.ui.SECTION_ENTRY_PREFIX + "header") {})
+        // One press reaches the inner section first, then the outer one.
+        holder.leave(7L, inner)
+        holder.leave(7L, outer)
+        val groups = holder.take()
+        assertEquals(listOf(outer, inner), groups)
+        val entries = org.example.project.ui.sectionGroups(groups)
+        assertEquals(2, entries.count { it.separator })
+        assertEquals(2, entries.map { it.id }.filter { !it.startsWith("separator") }.distinct().size, "the two groups' entries are told apart")
+        assertTrue(holder.take().isEmpty())
+        // A press no menu took leaves nothing for the next one.
+        holder.leave(8L, inner)
+        holder.leave(9L, outer)
+        assertEquals(listOf(outer), holder.take())
+    }
 }

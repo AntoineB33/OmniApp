@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Contexts and states" covers every element; nested section menus; a section's head drags a copy — 2026-11-26
+
+- Anomaly: *"in 'Contexts and states' for the element 'Minimum Time', I must find the minimum time of all task
+  elements. If the user never changed minimum time, then there will only be two pairs"* — the tasks at 45 minutes, then
+  "no state" over every other context; a changed task is a third pair. The pairs were grouped over the window's added
+  elements only: they now group every element of the action's kind (`SearchDomain.actionContextPairs`, `ContextPair`),
+  with the "no state" pair, and pop-up window B searches every context. An uncommitted same-day attempt (contexts = the
+  app's places, state = "Hidden actions" on/off) was set aside unshipped. `ActionContextPairsTest`.
+- Anomaly: *"Right-clicking in the background of an action section of an action section should at least show 2
+  horizontal separators"* — the outer section's options overwrote the inner one's in `SectionBackground`; each section is
+  now a group after its own separator (`sectionGroups`, `SectionBackgroundMenuTest`).
+- Anomaly: *"Selecting 'show header' for a search window B embedded in a search window A as its action section then
+  dragging it away, must actually drag an exact copy of B, and the real B stays embedded in A"* — a section's head had
+  no drag; it now detaches a copy (`ActionSearchRows.copyOf`) and the section stays. Client rebuild only.
+
 ### A search's patience no longer runs out before the search starts — 2026-11-26
 
 - Anomaly: `SchedulerRunLogTest.a_re_plan_given_the_time_reaches_and_reports_the_certified_best` failed in the full
