@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Checked on the desktop; a pinned row follows its group — 2026-11-26
+
+- Seen working on a throwaway account: "deep copy" opens the task's Search window with "Deep copy" pinned and open; "pin
+  this row" opens and scrolls; the pin is kept across a restart; the `[[` / `[[>` pop-up (creation row first, the
+  current md left out) completes the link; the blank child row's ◂ pop-up (creation row first, its parent left out);
+  Online opens its Search window with its action; the calendar's "edit…" lists a period whose actions hold "Checked
+  blocks".
+- Fixed: a pinned row did not follow when the added elements moved it to another group (one task → two).
+- Found: a double-click on a calendar block is a held drag — the block editors were already unreachable on the desktop
+  (the stale comment is corrected); editing goes through "edit…".
+- Client rebuild only.
+
 ### Calendar block editors are action rows — 2026-11-26
 
 - A double-click on a block opens its element's Search window with the block checked and the "Checked blocks" group

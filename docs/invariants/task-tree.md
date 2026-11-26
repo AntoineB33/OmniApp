@@ -1471,7 +1471,11 @@ suggestions before it was ever entered.
     with the id of the window."*; `Config.pinnedActionRow`, `SearchDomain.actionRowPath`, `withPinnedActionRowOpen`,
     `withActionRowPinned`, `ActionSearchRows.onPin`, `SearchWindowEverywhereTest`). The row menu's "pin this row" /
     "unpin this row" (entry id `pin`, after "show only its actions"). The pinned row is an id ([ActionGroup.id] or
-    `microGroupId`); where the added elements no longer list it, nothing moves. The scroll is the section's reveal (the
+    `microGroupId`). **It follows its row into the group it moves to** (anomaly 2026-11-26, checked on the desktop: a
+    second task added, the "Deep copy" rows moved from the task's group to the group of both, and the pin opened
+    nothing; `SearchDomain.followedActionRow`): the same action, or the same tagged group, in a group of the same sort,
+    pinned from then on under its new id. A group of elements pinned is about them and follows nowhere. Where nothing
+    lists it, nothing moves. The scroll is the section's reveal (the
     row at the very top, its parent just out of view). Kept with the window's configuration, so with its id.
   - **The deep copy window is a group of rows** (user rule 2026-11-25: *"Transform the deep copy window into a search
     window where every action is a row"*; `SearchDomain.DEEP_COPY_ACTIONS`, `ActionGroup.tag`, `DeepCopyActionEditor`).

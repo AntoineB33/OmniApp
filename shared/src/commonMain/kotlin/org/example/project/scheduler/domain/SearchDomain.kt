@@ -6066,14 +6066,40 @@ object SearchDomain {
      */
     fun withPinnedActionRowOpen(config: Config, groups: List<ActionGroup>): Config? {
         val pinned = config.pinnedActionRow ?: return null
-        val path = actionRowPath(groups, config, pinned) ?: return null
+        // The row as pinned, else the same row in the group it moved to (it follows, and is pinned under its new id).
+        val id = pinned.takeIf { actionRowPath(groups, config, it) != null } ?: followedActionRow(groups, pinned) ?: return null
+        val path = actionRowPath(groups, config, id) ?: return null
         var toggled = config.toggledActionRows
         for ((row, top) in path) {
             if (!isActionRowOpen(config.copy(toggledActionRows = toggled), row, top)) {
                 toggled = if (row in toggled) toggled - row else toggled + row
             }
         }
-        return config.copy(toggledActionRows = toggled)
+        return config.copy(toggledActionRows = toggled, pinnedActionRow = id)
+    }
+
+    /**
+     * User rule 2026-11-25 (anomaly, same day: the "Deep copy" row pinned in one task's window was not opened once a second
+     * task was added — the group it stood in became the group of both, under another id): **the row [pinned] names, in
+     * the group it is in now** — the same action, or the same tagged group ([ActionGroup.tag]), in the first group of the
+     * same sort that lists it; null where none does. A group of elements of the same sort ("element", "kind", "all") is the
+     * same place for an action listed once, in the widest group it applies to.
+     */
+    fun followedActionRow(groups: List<ActionGroup>, pinned: String): String? {
+        fun sortOf(groupId: String): String = groupId.substringBefore('/').let { if (it == "element" || it == "kind" || it == "all") "elements" else it }
+        val action = pinned.takeIf { it.startsWith("action/") }?.substringAfterLast('/')
+        val groupId = if (action != null) pinned.removePrefix("action/").substringBeforeLast('/') else pinned
+        val sort = sortOf(groupId)
+        // A group of elements itself is about those elements: another is no move of it.
+        if (action == null && sort == "elements") return null
+        fun find(group: ActionGroup): String? {
+            if (sortOf(group.id) == sort) {
+                if (action == null && group.id != pinned) return group.id
+                if (action != null && group.actions.any { it.name == action }) return microGroupId(group, group.actions.first { it.name == action })
+            }
+            return group.inner.firstNotNullOfOrNull(::find)
+        }
+        return groups.firstNotNullOfOrNull(::find)
     }
 
     /** User rule 2026-11-25: [config] with [id] the pinned row of its actions section (the one before unpinned), or none. */

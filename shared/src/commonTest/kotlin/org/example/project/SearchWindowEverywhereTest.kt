@@ -154,4 +154,22 @@ class SearchWindowEverywhereTest {
         val group = groupsOf(listOf(creation)).single { it.id == id }
         assertTrue(group.actions.isNotEmpty() && group.actions.any { it in SearchDomain.DEFAULT_CONFIGURATION_ACTIONS }, group.actions.toString())
     }
+
+    /**
+     * Anomaly 2026-11-26 (checked on the desktop): the row pinned in one task's window was not opened once a second task
+     * was added — its group became the group of both. The pin follows the row there, under its new id.
+     */
+    @Test
+    fun a_pinned_row_follows_its_action_into_the_group_it_moves_to() {
+        val one = listOf(task("a"))
+        val ids = assertNotNull(SearchDomain.actionRowId(one, AddedAction.DeepCopyIds))
+        val two = listOf(task("a"), task("b"))
+        val groups = groupsOf(two)
+        val opened = assertNotNull(SearchDomain.withPinnedActionRowOpen(SearchDomain.Config(pinnedActionRow = ids), groups))
+        val moved = assertNotNull(opened.pinnedActionRow)
+        assertTrue(moved != ids && moved.endsWith("/" + AddedAction.DeepCopyIds.name), moved)
+        assertTrue(SearchDomain.actionListRows(groups, opened).single { it.id == moved }.open)
+        // A group of elements pinned is about them: it does not move to another.
+        assertNull(SearchDomain.followedActionRow(groups, "element/Task/c"))
+    }
 }

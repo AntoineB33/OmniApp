@@ -7313,7 +7313,7 @@ private fun DayColumn(
                     } else {
                         // PRD §8, user rule 2026-10-11: ONE entry, "edit…", whatever is under the cursor — one thing or
                         // several (the LAYER bands included, user rule 2026-10-01), it opens the Search window of what is
-                        // there. A double-click on a block still opens the block's own editor.
+                        // there. A double-click on a block is a held drag (checked 2026-11-26), not an editor.
                         val layerHits = anchor.let { a -> layerBands.filter { pressSpans(it, a.y, currentHourHeightPx) } }
                         if (calendarThingsAt(hits, layerHits).isNotEmpty()) {
                             add(editEntry(exactMillisAt(anchor.y), hits))
