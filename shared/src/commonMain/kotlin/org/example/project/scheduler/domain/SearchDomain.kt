@@ -5095,6 +5095,15 @@ object SearchDomain {
             else -> state
         }
 
+    /**
+     * **The "no state" pair's contexts** ([ContextPair.keys] null): every element of the kinds [action] is not about, by key —
+     * read off the UI thread (anomaly 2026-11-26).
+     */
+    fun otherContextKeys(state: SchedulerState, action: AddedAction): List<String> =
+        results(state, otherContextKinds(action), "", allPaths = { emptyMap() })
+            .filter { it.kind in CONTEXT_KINDS }
+            .map(::keyOf)
+
     /** The kinds whose elements [action] is not about: the "no state" pair's ([ContextPair.keys] null). */
     fun otherContextKinds(action: AddedAction): Set<Kind> = CONTEXT_KINDS - setOfNotNull(action.section)
 

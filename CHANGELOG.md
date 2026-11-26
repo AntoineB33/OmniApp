@@ -34,6 +34,12 @@ Check here before assuming the code matches the docs.
   kind (the "no state" pair's contexts) on every state change — 33 s of CPU in the first 77. The "no state" pair is no
   longer listed (its B searches the other kinds, empty), and the kind's elements are listed again only when their source
   changes (`SearchDomain.contextSourceOf`). Client rebuild only.
+- User rule, same day: *"A search window with every search configuration off is supposed to list every single element
+  of the app. If there is a performance issue, load only the first ones"*. The "no state" pair lists every other element
+  again (`SearchDomain.otherContextKeys`). Measured on a copy of the release DB: 1,729 elements, 25 ms to list, 25 ms to
+  resolve — the freeze was its being redone on the UI thread at every state change, not its size. Now listed on
+  `Dispatchers.Default` once the state has settled (500 ms without a change), and its rows never built in the editor; no
+  paging needed at that size. Client rebuild only.
 - Still broken after that redeploy: the background menu's "Entries, in order" named "separator" three times, and each
   name took every separator row — the same row twice in the list. The menu then scrolled a few pixels, a press outside
   no longer closed it and no other menu opened. Reproduced headlessly, absent on the commit before the day's work even

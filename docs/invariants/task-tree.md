@@ -1456,8 +1456,10 @@ suggestions before it was ever entered.
     kind, the account's** (anomaly 2026-11-26, *"in 'Contexts and states' for the element 'Minimum Time', I must find the
     minimum time of all task elements. If the user never changed minimum time, then there will only be two pairs"*;
     `SearchDomain.actionContextPairs`, `ActionContextPairsTest`), never only the window's added ones: the largest group
-    first, then **"no state"** over every element of the other kinds (`ContextPair.keys` null, `otherContextKinds` — never
-    listed: its B searches those kinds, its added elements empty until B puts some in; *"useful
+    first, then **"no state"** over every element of the other kinds (`ContextPair.keys` null, `otherContextKeys` — user
+    rule 2026-11-26, *"A search window with every search configuration off is supposed to list every single element of
+    the app"*: its B holds them all added, ~1,700 on the release account, listed in 25 ms **off the UI thread once the
+    state has settled** (500 ms without a change), its rows never built in the editor; *"useful
     for when the user changes the search configuration of an action section to make 'Minimum Time' appear even though no
     task element is in the added elements list"*), then the other groups — a task whose minimum time changed is a third
     pair, B of the first one task less — then a new pair, empty (`withPairValues`). An action about a set as such keeps

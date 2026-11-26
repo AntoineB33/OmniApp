@@ -75,4 +75,18 @@ class ActionContextPairsTest {
         assertEquals(SearchDomain.CONTEXT_KINDS, config.kinds)
         assertEquals(listOf("Task/a"), config.added)
     }
+    /**
+     * User rule 2026-11-26 (*"A search window with every search configuration off is supposed to list every single element
+     * of the app"*): the "no state" pair holds every element of the other kinds — an alarm, a chrono — and no task.
+     */
+    @Test
+    fun the_no_state_pair_lists_every_element_of_the_other_kinds() {
+        val state = account("a" to 45).copy(
+            alarms = listOf(org.example.project.scheduler.model.AlarmEntry(id = "x", label = "wake", timeOfDayMinutes = 420)),
+            chronos = listOf(org.example.project.scheduler.model.ChronoEntry(id = "c", label = "c")),
+        )
+        val keys = SearchDomain.otherContextKeys(state, AddedAction.TaskMinimumTime)
+        assertEquals(true, "Alarm/x" in keys && "Chrono/c" in keys, keys.toString())
+        assertEquals(false, keys.any { it.startsWith("Task/") }, keys.toString())
+    }
 }

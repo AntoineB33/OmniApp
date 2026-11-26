@@ -17,6 +17,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.onPlaced
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.coroutineScope
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.graphics.graphicsLayer
@@ -619,9 +620,21 @@ private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
         }
         val byKey = remember(elements) { elements.associateBy(SearchDomain::keyOf) }
         val derived = remember(host.state, action, elements) { SearchDomain.actionContextPairs(host.state, action, elements) }
-        // The "no state" pair's contexts — every other element of the account — are never listed: its window B searches
-        // their kinds, its added elements empty until B puts some in it.
-        val others = emptyList<String>()
+        // The "no state" pair's contexts: every other element of the account (user rule 2026-11-26: *"A search window with
+        // every search configuration off is supposed to list every single element of the app"*) — about 1,700 on the
+        // release account, 25 ms to list. Listed OFF the UI thread, once the state has settled ([CONTEXTS_SETTLE_MILLIS]
+        // without a change: a newer state cancels the wait), never on every state change as the first build did.
+        val latestState by rememberUpdatedState(host.state)
+        var listedOthers by remember(action) { mutableStateOf<List<String>?>(null) }
+        LaunchedEffect(action) {
+            androidx.compose.runtime.snapshotFlow { latestState }.collectLatest { settled ->
+                delay(CONTEXTS_SETTLE_MILLIS)
+                listedOthers = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    SearchDomain.otherContextKeys(settled, action)
+                }
+            }
+        }
+        val others = listedOthers.orEmpty()
         // The pairs B changed are view state, set back to the derived ones whenever a state set changes them.
         var pairs by remember(row.id) { mutableStateOf(derived) }
         LaunchedEffect(derived) { pairs = derived }
@@ -630,18 +643,20 @@ private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
         var shown by remember(row.id) { mutableStateOf(CONTEXT_PAIRS_PAGE) }
         pairs.take(shown).forEachIndexed { index, pair ->
             val keys = pair.keys ?: others
-            val missingAny = keys.any { it !in byKey }
+            // The "no state" pair's rows are never built: it has no state to edit, and its field says how many it holds.
+            val missingAny = pair.keys != null && keys.any { it !in byKey }
             val values = remember(keys, byKey, if (missingAny) host.state else null) {
+                if (pair.keys == null) return@remember emptyList()
                 val missing = keys.filter { it !in byKey }
                 val resolved = if (missing.isEmpty()) emptyMap() else SearchDomain.resolve(host.state, missing).associateBy(SearchDomain::keyOf)
                 keys.mapNotNull { byKey[it] ?: resolved[it] }
             }
             val fieldId = row.id + "/context/" + index
-            val opened = if (pair.keys == null) SearchDomain.contextFieldConfig(emptyList()).copy(kinds = SearchDomain.otherContextKinds(action)) else SearchDomain.contextFieldConfig(keys)
+            val opened = SearchDomain.contextFieldConfig(keys)
             var fieldConfig by remember(fieldId) { mutableStateOf(opened) }
             Column(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 PopupSearchField(
-                    placeholder = "context · " + contextsSaid(pair, values, action),
+                    placeholder = "context · " + contextsSaid(pair, values, action, keys.size),
                     state = host.state,
                     config = fieldConfig.copy(added = keys),
                     onConfigChange = { next ->
@@ -676,6 +691,9 @@ private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
     }
 }
 
+/** How long the state must stay unchanged before "Contexts and states" lists the "no state" pair's contexts again. */
+private const val CONTEXTS_SETTLE_MILLIS = 500L
+
 /** How many pairs of "Contexts and states" are drawn at once ([ActionContextsEditor]). */
 private const val CONTEXT_PAIRS_PAGE = 20
 
@@ -684,9 +702,10 @@ private const val CONTEXT_PAIRS_PAGE = 20
  * every task of the account, which no field shows by name. The "no state" pair untouched: every element the action is not
  * about.
  */
-private fun contextsSaid(pair: SearchDomain.ContextPair, values: List<SearchDomain.Result>, action: SearchDomain.AddedAction): String =
+private fun contextsSaid(pair: SearchDomain.ContextPair, values: List<SearchDomain.Result>, action: SearchDomain.AddedAction, count: Int): String =
     when {
-        pair.keys == null -> "every element that is not a " + (action.section?.label ?: "context of it")
+        pair.keys == null -> "every element that is not a " + (action.section?.label ?: "context of it") +
+            if (count == 0) "" else " ($count)"
         values.isEmpty() -> "new: choose its contexts"
         values.size <= 5 -> values.joinToString(", ") { it.name }
         else -> values.groupingBy { it.kind }.eachCount().entries.joinToString(", ") { (k, n) -> "$n " + if (n == 1) k.label else k.plural }
