@@ -430,6 +430,8 @@ private fun AddedActionList(
     val subSpecs = HashMap<String, List<SubRowSpec>>()
     // User rule 2026-11-26: a "Contexts and states" with elements in no pair is drawn red, saying so.
     val warnings = HashMap<String, String>()
+    // Anomaly 2026-11-27: a "Contexts and states" row's menu creates a pair — no pair without contexts is listed.
+    val rowMenus = HashMap<String, List<MenuAction>>()
     val rawIntent = { members: List<SearchDomain.Result> ->
         { intent: SchedulerIntent -> SearchDomain.addedIntents(state, members, SearchDomain.AddedCommand.Raw(intent), nowMillis()).forEach(onIntent) }
     }
@@ -448,6 +450,10 @@ private fun AddedActionList(
                         model.warning()?.let { said ->
                             warnings[row.id] = listOfNotNull(warnings[row.id], if (members.size > 1) item.name + ": " + said else said).joinToString("; ")
                         }
+                        rowMenus[row.id] = rowMenus[row.id].orEmpty() + MenuAction(
+                            if (members.size > 1) SearchDomain.NEW_PAIR_MENU_LABEL + " of " + item.name else SearchDomain.NEW_PAIR_MENU_LABEL,
+                            id = NEW_PAIR_MENU_ID,
+                        ) { model.setPairs(SearchDomain.withNewPair(model.pairs)) }
                         headed(item.name, members.size, contextPairSpecs(model))
                     }
                 }
@@ -460,6 +466,10 @@ private fun AddedActionList(
         }
     }
     val rows = baseRows.flatMap { row -> listOf(warnings[row.id]?.let { row.copy(warning = it) } ?: row) + subSpecs[row.id]?.let { subRowsOf(row, it, closedParts, subContents) }.orEmpty() }
+    // Anomaly 2026-11-27 (*"right-clicking … 'Contexts and states' doesn't show available deep copy"*): a row with rows under
+    // it copies its sub-tree, closed rows included ([subRowsCopyText]), to the account's deep copy depth.
+    val deepCopies = HashMap<String, () -> String>()
+    for (row in baseRows) subSpecs[row.id]?.takeIf { it.isNotEmpty() }?.let { specs -> subRowCopies(row, specs, deepCopies) }
     // User rule 2026-11-26: the section's title counts the rows at the root of its list, not those an open row shows.
     val rootCount = rows.count { it.depth == 0 }
     if (onListed != null) LaunchedEffect(rootCount) { onListed(rootCount) }
@@ -602,6 +612,15 @@ private fun AddedActionList(
                 // Anomaly 2026-11-26: its head, shown, drags a copy — the window it is the actions section of.
                 copyOf = { latestConfig },
                 onClose = close,
+                menuOf = { row -> rowMenus[row.id].orEmpty() },
+                deepCopyOf = { row ->
+                    deepCopies[row.id]?.let { text ->
+                        {
+                            val st = state
+                            writeSystemClipboardText(text().let { all -> if (st.deepCopyUnlimited) all else subRowsCut(all, st.deepCopyMaxDepth) })
+                        }
+                    }
+                },
             ),
             modifier = modifier,
         )
@@ -779,6 +798,49 @@ internal fun subRowsOf(
     }
     walk(parent.id + "/sub", specs, parent.depth + 1)
     return out
+}
+
+/** The id of the "Contexts and states" row menu's "create a context-state": the row menus' "create" entry. */
+internal const val NEW_PAIR_MENU_ID: String = "create"
+
+/**
+ * Anomaly 2026-11-27: **the deep copy of a row with rows under it** — its [title] (and [detail] after " — "), then each of
+ * [specs] a tab further in, closed or open, as [SearchDomain.elementsCopyText] lays out an element's sub-tree.
+ */
+internal fun subRowsCopyText(title: String, detail: String, specs: List<SubRowSpec>): String {
+    val sb = StringBuilder()
+    fun line(depth: Int, t: String, d: String) {
+        repeat(depth) { sb.append('\t') }
+        sb.append(t)
+        if (d.isNotEmpty()) sb.append(" — ").append(d)
+        sb.append('\n')
+    }
+    fun walk(list: List<SubRowSpec>, depth: Int) {
+        for (spec in list) {
+            line(depth, spec.title, spec.detail)
+            walk(spec.children, depth + 1)
+        }
+    }
+    line(0, title, detail)
+    walk(specs, 1)
+    return sb.toString()
+}
+
+/** [text] ([subRowsCopyText]) down to [maxDepth] levels, the row itself the first. */
+internal fun subRowsCut(text: String, maxDepth: Int): String =
+    text.lineSequence().filter { it.isNotEmpty() && it.takeWhile { c -> c == '\t' }.length < maxDepth }.joinToString("") { it + "\n" }
+
+/** Each row of [specs] under [parent] that has rows under it — and [parent] — given its deep copy in [into], by row id. */
+private fun subRowCopies(parent: SearchDomain.ActionListRow, specs: List<SubRowSpec>, into: MutableMap<String, () -> String>) {
+    into[parent.id] = { subRowsCopyText(parent.title, parent.detail, specs) }
+    fun walk(prefix: String, list: List<SubRowSpec>) {
+        for (spec in list) {
+            val id = prefix + "/" + spec.key
+            if (spec.children.isNotEmpty()) into[id] = { subRowsCopyText(spec.title, spec.detail, spec.children) }
+            walk(id, spec.children)
+        }
+    }
+    walk(parent.id + "/sub", specs)
 }
 
 /** [specs] under a row naming [item] when the action is about [count] of them ([ElementHeading]'s rule), else as they are. */

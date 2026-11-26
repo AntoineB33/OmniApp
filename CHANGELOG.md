@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Contexts and states": no empty pair; its rows deep copy — 2026-11-27
+
+- Anomaly: *"In 'Action: Minimum time / Contexts and states', the third contexts-states pair hasn't any context, so why is
+  it appearing?"* — it was the new pair, always listed last (2026-11-26's way to add a pair). No pair without contexts is
+  listed now; the row's right-click "create a context-state" (id "create") adds one, and giving it contexts adds no other
+  (`SearchDomain.withNewPair`, `withPairValues`). `ActionContextPairsTest`, `each_pair_is_a_row_with_its_context_and_states_rows`.
+- Anomaly: *"right-clicking 'Action: Minimum time / Contexts and states' doesn't show available deep copy"* — every row
+  of an actions section passed none. A row with rows under it ("Contexts and states", a pair) copies them to the
+  clipboard, closed ones included, cut at the account's deep copy depth (`subRowsCopyText`, `ActionSearchRows.deepCopyOf`);
+  greyed on the others, and while "Contexts and states" is closed (its pairs are only built open).
+  `a_row_with_rows_under_it_deep_copies_them`. Client rebuild only.
+
 ### Deep copy of every element; "collapse" with a level; pair titles list their contexts; inline fields; scrollbar — 2026-11-26
 
 - User: *"deep copy … Why would it be only for tasks?"* Every element's menu has it: a Search window on the element,

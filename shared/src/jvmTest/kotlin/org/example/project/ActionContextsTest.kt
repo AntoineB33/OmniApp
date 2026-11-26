@@ -32,6 +32,9 @@ import org.example.project.ui.LocalArrowSearches
 import org.example.project.ui.SearchRowOpeners
 import org.example.project.ui.SearchSplits
 import org.example.project.ui.SearchWindow
+import org.example.project.ui.SubRowSpec
+import org.example.project.ui.subRowsCopyText
+import org.example.project.ui.subRowsCut
 
 /**
  * User rule 2026-11-13: a row of the actions section is added to the section's own list, and its action there shows its
@@ -134,7 +137,7 @@ class ActionContextsTest {
      * User rule 2026-11-26 (*"In 'Contexts and states', it doesn't really seem to be real rows … there should be three rows,
      * each with two children"*): each pair is a row of the section, with its "context" and "states" rows under it. "Parents"
      * is about every kind, so its contexts are the elements it acts on and it has no "no state" pair: a, b, c under p; d
-     * under q; e under nothing — three pairs, then a new one: four pair rows, each with its two.
+     * under q; e under nothing — three pair rows, each with its two, and no empty one (anomaly 2026-11-27).
      */
     @Test
     fun each_pair_is_a_row_with_its_context_and_states_rows() {
@@ -145,10 +148,11 @@ class ActionContextsTest {
         val contextsRow = actionRows(ownAdded, window).first { it.action == AddedAction.ActionContexts }
         val own = ACTIONS_SECTION_OWN.copy(added = listOf(Kind.Action.name + "/" + parents.key), toggledActionRows = setOf(contextsRow.id))
         val texts = drawnTexts(window.copy(inside = mapOf("/actions" to own.encode())), height = 2400)
-        assertEquals(4, texts.count { it == "context" }, texts.toString())
-        assertEquals(4, texts.count { it == "states" }, texts.toString())
+        assertEquals(3, texts.count { it == "context" }, texts.toString())
+        assertEquals(3, texts.count { it == "states" }, texts.toString())
         // User 2026-11-26: a pair's row is titled by every one of its contexts.
-        for (title in listOf("a, b, c", "d", "e", SearchDomain.NEW_PAIR_TITLE)) assertTrue(title in texts, "$title: $texts")
+        for (title in listOf("a, b, c", "d", "e")) assertTrue(title in texts, "$title: $texts")
+        assertFalse(SearchDomain.NEW_PAIR_TITLE in texts, texts.toString())
         assertFalse(texts.any { it.startsWith("context-state") }, texts.toString())
         assertFalse(texts.any { it.startsWith("not complete") }, "the derived pairs hold every element: $texts")
     }
@@ -160,20 +164,35 @@ class ActionContextsTest {
     @Test
     fun an_element_in_no_pair_makes_the_pairs_incomplete() {
         val kind = listOf("Task/a", "Task/b", "Task/c")
-        val pairs = listOf(SearchDomain.ContextPair(kind, true), SearchDomain.ContextPair(null, false), SearchDomain.ContextPair(emptyList(), true))
+        val pairs = SearchDomain.withNewPair(listOf(SearchDomain.ContextPair(kind, true), SearchDomain.ContextPair(null, false)))
         assertEquals(emptyList(), SearchDomain.contextsInNoPair(pairs, kind, listOf("Alarm/x")))
         assertEquals(emptyList(), SearchDomain.contextsInNoPair(pairs, kind, null), "the others not listed yet: the whole \"no state\" pair holds them")
         // "b" removed from the first pair: in no pair.
         val removed = SearchDomain.withPairValues(pairs, 0, listOf("Task/a", "Task/c"))
         assertEquals(listOf("Task/b"), SearchDomain.contextsInNoPair(removed, kind, listOf("Alarm/x")))
         assertEquals("not complete: b is in no context-state", SearchDomain.contextsIncompleteWarning(listOf("Task/b")) { it.substringAfter('/') })
-        // The new pair given "b": complete again, and a new pair follows.
+        // A created pair given "b": complete again, and no other pair follows.
         val readded = SearchDomain.withPairValues(removed, 2, listOf("Task/b"))
         assertEquals(emptyList(), SearchDomain.contextsInNoPair(readded, kind, listOf("Alarm/x")))
-        assertEquals(4, readded.size)
+        assertEquals(3, readded.size)
         // An element of the "no state" pair removed from it: in no pair.
         val noState = SearchDomain.withPairValues(pairs, 1, emptyList())
         assertEquals(listOf("Alarm/x"), SearchDomain.contextsInNoPair(noState, kind, listOf("Alarm/x")))
+    }
+
+    /**
+     * Anomaly 2026-11-27 (*"right-clicking 'Action: Minimum time / Contexts and states' doesn't show available deep copy"*):
+     * a row with rows under it copies them, closed ones included, a tab further in per level; cut at the deep copy depth.
+     */
+    @Test
+    fun a_row_with_rows_under_it_deep_copies_them() {
+        val specs = listOf(
+            SubRowSpec("p0", "a, b", "45", listOf(SubRowSpec("context", "context", content = {}), SubRowSpec("states", "states", content = {}))),
+            SubRowSpec("p1", "x, y", "no state", listOf(SubRowSpec("context", "context", content = {}))),
+        )
+        val text = subRowsCopyText("Contexts and states", "", specs)
+        assertEquals("Contexts and states\n\ta, b \u2014 45\n\t\tcontext\n\t\tstates\n\tx, y \u2014 no state\n\t\tcontext\n", text)
+        assertEquals("Contexts and states\n\ta, b \u2014 45\n\tx, y \u2014 no state\n", subRowsCut(text, 2))
     }
 
     /** Anomaly 2026-11-26: an action row's "copy path" and "collapse sub-trees" were greyed. */

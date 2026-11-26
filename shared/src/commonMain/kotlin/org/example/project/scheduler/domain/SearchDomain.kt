@@ -5066,16 +5066,25 @@ object SearchDomain {
      * gathered by the state it has for them ([actionContexts]); the largest group first, then the "no state" pair over every
      * other element (*"useful for when the user changes the search configuration of an action section to make 'Minimum
      * Time' appear even though no task element is in the added elements list section"*), then the other groups (a task
-     * whose minimum time was changed), then a new pair, empty. An action about a set as such ([isSetAction]) is about no
-     * kind: its [elements] are its group's, one state for them all, and it has no "no state" pair.
+     * whose minimum time was changed). An action about a set as such ([isSetAction]) is about no kind: its [elements] are
+     * its group's, one state for them all, and it has no "no state" pair.
+     *
+     * Anomaly 2026-11-27 (*"the third contexts-states pair hasn't any context, so why is it appearing?"*): no pair without
+     * contexts is listed — a new one is made by the row's menu ([withNewPair]), never offered as a row of its own.
      */
     fun actionContextPairs(state: SchedulerState, action: AddedAction, elements: List<Result>): List<ContextPair> {
         val groups = actionContexts(state, action, elements)
             .sortedByDescending { it.size }
             .map { group -> ContextPair(group.map(::keyOf), stated = true) }
         val none = if (isSetAction(action)) emptyList() else listOf(ContextPair(null, stated = false))
-        return groups.take(1) + none + groups.drop(1) + ContextPair(emptyList(), stated = true)
+        return groups.take(1) + none + groups.drop(1)
     }
+
+    /** The "Contexts and states" row menu's entry making a pair ([withNewPair]); its id is the menu's "create". */
+    const val NEW_PAIR_MENU_LABEL: String = "create a context-state"
+
+    /** [pairs] and a new pair, empty, last: what "create a context-state" makes — its contexts chosen in its "context" row. */
+    fun withNewPair(pairs: List<ContextPair>): List<ContextPair> = pairs + ContextPair(emptyList(), stated = true)
 
     /**
      * **What the elements of [kind] are read from** in [state] — a "Contexts and states" lists them again only when it
@@ -5113,14 +5122,9 @@ object SearchDomain {
     /** The kinds an element of which is a context — what pop-up window B of a context field searches. */
     val CONTEXT_KINDS: Set<Kind> by lazy { Kind.entries.toSet() - Kind.Creation - Kind.Option }
 
-    /**
-     * **[pairs] once pop-up window B set the contexts of the pair at [index] to [keys]** — an empty new pair still last: the
-     * new pair given contexts, another follows it.
-     */
-    fun withPairValues(pairs: List<ContextPair>, index: Int, keys: List<String>): List<ContextPair> {
-        val next = pairs.toMutableList().also { it[index] = it[index].copy(keys = keys) }
-        return if (next.lastOrNull()?.keys?.isEmpty() == false) next + ContextPair(emptyList(), stated = true) else next
-    }
+    /** **[pairs] once pop-up window B set the contexts of the pair at [index] to [keys]**; no pair is added. */
+    fun withPairValues(pairs: List<ContextPair>, index: Int, keys: List<String>): List<ContextPair> =
+        pairs.toMutableList().also { it[index] = it[index].copy(keys = keys) }
 
     /**
      * User 2026-11-26 (*"Instead of 'context-state 1', give the list of all the contexts as the title"*; the same day,

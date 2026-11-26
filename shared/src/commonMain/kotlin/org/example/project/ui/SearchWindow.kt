@@ -2102,7 +2102,7 @@ fun SearchWindow(
                                             hasMenu = true,
                                             // An action is open on its controls, not on children: retracting closes it.
                                             // Anomaly 2026-11-26: "copy path" and "collapse sub-trees" act on the section's
-                                            // rows; "deep copy" stays a task cell's (it copies a sub-tree of tasks).
+                                            // rows; anomaly 2026-11-27: "deep copy" copies the rows under one ([deepCopyOf]).
                                             rowMenu = RowMenuCommon(
                                                 onCopyId = { copyIds(listOf(resultKey(result))) },
                                                 onCopyPath = { copyPathOf(actionRows.pathOf(actionRow)) },
@@ -2118,7 +2118,8 @@ fun SearchWindow(
                                                         if (actionRows.pinned == actionRow.id) MenuAction(UNPIN_ROW_LABEL, id = PIN_ROW_ID) { pin(null) }
                                                         else MenuAction(PIN_ROW_LABEL, id = PIN_ROW_ID) { pin(actionRow.id) }
                                                     },
-                                                ),
+                                                ) + actionRows.menuOf(actionRow),
+                                                onDeepCopy = actionRows.deepCopyOf(actionRow),
                                             ),
                                             depth = actionRow.depth,
                                             warning = actionRow.warning,
@@ -2940,6 +2941,10 @@ class ActionSearchRows(
      * ids at once — the row menu's "collapse sub-trees". Null: [onToggle] each.
      */
     val onClose: ((List<String>) -> Unit)? = null,
+    /** Anomaly 2026-11-27: the entries only that row's menu has — a "Contexts and states" row's "create a context-state". */
+    val menuOf: (SearchDomain.ActionListRow) -> List<MenuAction> = { emptyList() },
+    /** Anomaly 2026-11-27: that row's "deep copy" — of a row with rows under it; null: greyed. */
+    val deepCopyOf: (SearchDomain.ActionListRow) -> (() -> Unit)? = { null },
 ) {
     val byKey: Map<String, SearchDomain.ActionListRow> = rows.associateBy { it.key }
     private val indexById: Map<String, Int> = rows.withIndex().associate { (i, row) -> row.id to i }
