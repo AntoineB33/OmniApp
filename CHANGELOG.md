@@ -34,6 +34,11 @@ Check here before assuming the code matches the docs.
   kind (the "no state" pair's contexts) on every state change — 33 s of CPU in the first 77. The "no state" pair is no
   longer listed (its B searches the other kinds, empty), and the kind's elements are listed again only when their source
   changes (`SearchDomain.contextSourceOf`). Client rebuild only.
+- Still broken after that redeploy: the background menu's "Entries, in order" named "separator" three times, and each
+  name took every separator row — the same row twice in the list. The menu then scrolled a few pixels, a press outside
+  no longer closed it and no other menu opened. Reproduced headlessly, absent on the commit before the day's work even
+  with a scrolling menu; `orderedByEntries` lists each row once. `NestedSectionMenuTest` (wheel to the inner group,
+  press outside, a row's menu), `SectionBackgroundMenuTest`. Client rebuild only.
 
 ### A search's patience no longer runs out before the search starts — 2026-11-26
 

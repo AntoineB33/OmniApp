@@ -1194,7 +1194,10 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   (keyed by its uptime), the outermost's shown first, each group after its separator, its entries' ids told apart
   (`sectionGroups`) — before, the outer section's overwrote the inner one's. The menu's default "Entries, in order"
   (`ContextDomain.MENU_ENTRIES`' "SearchPartsMenu") names each level's group after its separator ("section 2 …",
-  "section 3 …"): an entry it does not name is not listed, which first hid the inner group (`NestedSectionMenuTest`). The separator
+  "section 3 …"): an entry it does not name is not listed, which first hid the inner group (`NestedSectionMenuTest`).
+  **Each row is listed once** (`orderedByEntries`): a name matching several rows (the separators) takes the next one not
+  taken — "separator" named three times once put the same row twice in the list, which then barely scrolled and lost
+  every later press, no menu of the app opening (anomaly 2026-11-26). The separator
   is a menu entry (`MenuAction.separator()`), drawn while the list's search configuration "Separators between groups"
   (`Config.separators`, on in a menu's list, `OPTION_SEARCH`) is on; never at an end, never doubled.
 - **The one exception is a menu that holds text fields** (the quota's resilience values, `QuotaResilienceEditor`): a

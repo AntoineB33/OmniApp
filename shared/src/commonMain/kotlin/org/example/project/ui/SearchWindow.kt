@@ -778,7 +778,7 @@ fun SearchWindow(
                 // User rule 2026-11-25: the entries its "Entries, in order" names, in that order; none set, all of them.
                 val ordered =
                     if (config.entries.isEmpty()) kept
-                    else config.entries.flatMap { entry -> kept.filter { (id, name) -> (options.elementIds[id] ?: name) == entry } }
+                    else orderedByEntries(kept, config.entries, options.separators) { (id, name) -> options.elementIds[id] ?: name }
                 // A separator stands BETWEEN entries: none at an end, none doubled.
                 val shown = ordered.filterIndexed { i, (id, _) ->
                     id !in options.separators || (i > 0 && i < ordered.lastIndex && ordered[i + 1].first !in options.separators)
@@ -3214,6 +3214,27 @@ internal fun SearchPartsMenu(
             sectionGroups(after),
         atPointer = true,
     )
+}
+
+/**
+ * User rule 2026-11-25: **a menu's entries in the order its "Entries, in order" names them** ([entries], by what each entry
+ * is: [elementIdOf]) — each entry ONCE. Anomaly 2026-11-26 (*"It works first by scrolling a few pixel, then no right-click
+ * menu works anymore"*): "separator" named three times took every separator row each time, the same row twice in the list
+ * — two rows of one key, and the list stopped scrolling and the next presses were lost. A name matching several rows (the
+ * separators) takes the next one not taken yet.
+ */
+internal fun orderedByEntries(
+    kept: List<Pair<String, String>>,
+    entries: List<String>,
+    separators: Set<String>,
+    elementIdOf: (Pair<String, String>) -> String,
+): List<Pair<String, String>> {
+    val taken = HashSet<String>()
+    return entries.flatMap { entry ->
+        val matching = kept.filter { it.first !in taken && elementIdOf(it) == entry }
+        val picked = if (matching.any { it.first in separators }) matching.take(1) else matching
+        picked.onEach { taken += it.first }
+    }
 }
 
 /**

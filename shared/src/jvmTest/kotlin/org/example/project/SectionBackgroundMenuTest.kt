@@ -135,4 +135,16 @@ class SectionBackgroundMenuTest {
         holder.leave(9L, outer)
         assertEquals(listOf(outer), holder.take())
     }
+    /**
+     * Anomaly 2026-11-26 (*"It works first by scrolling a few pixel, then no right-click menu works anymore"*): "Entries, in
+     * order" naming "separator" three times put the same separator row twice in the menu. Each row is listed once, the
+     * separators in their order.
+     */
+    @Test
+    fun entries_named_twice_list_each_row_once() {
+        val kept = listOf("0" to "Copy id", "1" to "a", "2" to "———", "3" to "b", "4" to "———", "5" to "c")
+        val ids = mapOf("0" to "Copy id", "1" to "a", "2" to "separator", "3" to "b", "4" to "separator", "5" to "c")
+        val ordered = org.example.project.ui.orderedByEntries(kept, listOf("Copy id", "a", "separator", "b", "separator", "c", "separator", "d"), setOf("2", "4")) { ids.getValue(it.first) }
+        assertEquals(listOf("0", "1", "2", "3", "4", "5"), ordered.map { it.first })
+    }
 }

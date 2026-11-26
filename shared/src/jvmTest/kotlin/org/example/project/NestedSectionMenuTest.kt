@@ -105,26 +105,40 @@ class NestedSectionMenuTest {
             // The inner section's one row: "Action: Parents".
             val row = nodes().first { n -> n.config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text }?.startsWith("Action:") == true }
             val at = Offset(row.boundsInRoot.center.x, row.boundsInRoot.bottom + 200f)
-            onEdt {
+            fun press(where: Offset, secondary: Boolean) = onEdt {
                 time += 1_000L
-                scene.sendPointerEvent(PointerEventType.Move, at, timeMillis = time)
-                scene.sendPointerEvent(PointerEventType.Press, at, timeMillis = time, buttons = PointerButtons(isSecondaryPressed = true), button = PointerButton.Secondary)
-                scene.sendPointerEvent(PointerEventType.Release, at, timeMillis = time + 30, button = PointerButton.Secondary)
+                val buttons = if (secondary) PointerButtons(isSecondaryPressed = true) else PointerButtons(isPrimaryPressed = true)
+                val button = if (secondary) PointerButton.Secondary else PointerButton.Primary
+                scene.sendPointerEvent(PointerEventType.Move, where, timeMillis = time)
+                scene.sendPointerEvent(PointerEventType.Press, where, timeMillis = time, buttons = buttons, button = button)
+                scene.sendPointerEvent(PointerEventType.Release, where, timeMillis = time + 30, button = button)
             }
+            press(at, secondary = true)
             frames(8)
             // The window's options and the outer section's, its actions shown ("Hide the actions").
             assertEquals(2, texts().count { it == "Hide the actions" }, texts().toString())
-            // Its end, scrolled to: the inner section's own, its actions not shown — the one "Show the actions".
+            // The menu holds more than its height shows: the wheel takes it to its end, the inner section's own options —
+            // its actions not shown, the one "Show the actions".
             val menu = nodes().first { n -> n.config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text } == "Copy id" }.boundsInRoot.center
-            // The menu's own bar narrowed to it (the menu shows what its height holds): only the inner section's own
-            // actions are not shown, so it alone offers "Show the actions".
-            onEdt {
-                val bar = nodes().filter { it.config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.SetText) != null }
-                    .minBy { (it.boundsInRoot.center - menu).getDistance() }
-                bar.config[androidx.compose.ui.semantics.SemanticsActions.SetText].action?.invoke(androidx.compose.ui.text.AnnotatedString("Show the actions"))
+            val over = menu + Offset(0f, 100f)
+            onEdt { scene.sendPointerEvent(PointerEventType.Move, over, timeMillis = time) }
+            repeat(10) {
+                onEdt {
+                    time += 50L
+                    scene.sendPointerEvent(PointerEventType.Scroll, over, scrollDelta = Offset(0f, 1f), timeMillis = time)
+                }
+                frames(10)
             }
-            frames(8)
-            assertTrue("Show the actions" in texts(), "the inner actions section's options, after a separator of their own: ${texts()}")
+            assertTrue("Show the actions" in texts(), "the inner section's options, after a separator of their own: ${texts().takeLast(16)}")
+            // Anomaly 2026-11-26 (*"It works first by scrolling a few pixel, then no right-click menu works anymore"*): a
+            // press outside still closes it, and a row's right-click opens the row's own menu.
+            press(Offset(1350f, 60f), secondary = false)
+            frames(10)
+            assertEquals(0, texts().count { it == "Copy id" }, "closed by a press outside: ${texts().takeLast(16)}")
+            val parentsRow = nodes().first { n -> n.config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text } == "Parents" }.boundsInRoot.center
+            press(parentsRow, secondary = true)
+            frames(10)
+            assertTrue("pin this row" in texts(), "the row's own menu: ${texts().takeLast(16)}")
         } finally {
             onEdt { scene.close() }
         }
