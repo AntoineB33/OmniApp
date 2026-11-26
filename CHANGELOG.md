@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Clicks and keys": what each press does, in each context — 2026-11-26
+
+- User: *"Make sure each element has in the action section the behavior of when [it] is clicked, when it is
+  double-clicked etc…"* and *"each element with a state has in the action section the state for all contexts"*. New
+  action **"Clicks and keys"** on any added row: the contexts grouped by what the presses do on a row of its kind (one
+  group where it is the same everywhere; a context with "Arrange by dragging" on stands apart; a menu's entry runs, a
+  drop-down's option is picked), each group a context row and one line per press (`PressDomain`, `PressDomainTest`).
+- Already there and unchanged: a search configuration's "State in each context" (context row + state row, on before
+  off) and a menu entry's "Default presences".
+- Not checked on screen. Client rebuild only.
+
 ### Blank child row on click; pinning fixes — 2026-11-26
 
 - The blank row ending a list of children has no arrow and shows its pop-up on a click only.

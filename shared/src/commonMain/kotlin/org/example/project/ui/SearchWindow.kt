@@ -375,9 +375,9 @@ data class SearchRowOpeners(
     val linkedWindow: (windowId: String) -> LinkedSearchWindow? = { null },
 ) {
     companion object {
-        /** The kinds a double-click on a result row opens: commands. Every other is added ([doubleClickOpens] false). */
+        /** The kinds a double-click on a result row opens: commands — [org.example.project.scheduler.domain.PressDomain]'s rule. */
         fun doubleClickOpens(kind: SearchDomain.Kind): Boolean =
-            kind == SearchDomain.Kind.Creation || kind == SearchDomain.Kind.WorkplaceSetup
+            org.example.project.scheduler.domain.PressDomain.doubleClickOpens(kind)
     }
 
     /**

@@ -1170,6 +1170,14 @@ suggestions before it was ever entered.
   everywhere is one group — each group a **context row**, opening a Search window whose added elements are those
   contexts (`contextsSearchConfig`), and a **state row**, "on"/"off" and the configuration's own control, a change made
   in every context of the group (`ContextDomain.withChange`, field by field), one History Unit.
+- **Every element says what each press on its row does, in each context** (user rule 2026-11-26, *"each element has in
+  the action section the behavior of when [it] is clicked, when it is double-clicked etc…"*): the action **"Clicks and
+  keys"** (`AddedAction.ElementPresses`, offered for any added row) groups the contexts by what click, click on the
+  arrow, Ctrl/Shift+click, double-click, right-click, Enter, a held press and hover do on a row of the kind
+  (`PressDomain.groups`) — the same everywhere is one group — each group its context row (opening those contexts, added)
+  and one line per press. What a press does is said in `PressDomain` alone: the double-click's commands
+  (`PressDomain.doubleClickOpens`, which `SearchRowOpeners` reads) and what opening does (`PressDomain.opening`, matched to
+  `SearchRowOpeners.open` by `PressDomainTest`). A context's "Arrange by dragging" changes it there. Read-only.
 - **A menu's entries are one search configuration** (user rule 2026-11-25, *"one search configuration that basically just
   set the elements in the right place"*): **"Entries, in order"** (`Config.entries`, entry ids) — on in every row menu's
   context (`ContextDomain.ROW_MENUS`, default `ROW_MENU_ENTRIES`), whose list names what the menu lists and where; the

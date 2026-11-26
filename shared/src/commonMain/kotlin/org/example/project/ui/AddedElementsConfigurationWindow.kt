@@ -1132,6 +1132,7 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.ConfigurationStates -> ConfigurationStatesAction(state, added, handlers.searchWindows(), handlers.claudeLogs())
         SearchDomain.AddedAction.OptionPresences ->
             OptionPresencesAction(state, added, { run(SearchDomain.AddedCommand.Raw(it)) }, handlers.onOpenSearch)
+        SearchDomain.AddedAction.ElementPresses -> ElementPressesAction(state, added, handlers.onOpenSearch)
         SearchDomain.AddedAction.ConfigurationContextStates -> ConfigurationContextStatesAction(state, added, { run(SearchDomain.AddedCommand.Raw(it)) }, handlers.onOpenSearch, handlers.claudeLogs())
         // User rule 2026-11-13: an action added to the actions section's own list — its contexts, and its state in each.
         SearchDomain.AddedAction.ActionContexts -> ActionContextsEditor(added)
@@ -2653,6 +2654,43 @@ private fun ConfigurationContextStatesAction(
                             }
                             if (defaults != state.contextDefaults) onIntent(SchedulerIntent.SetContextDefaults(defaults))
                         }, claudeLogs = claudeLogs)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * User rule 2026-11-26: **what each press does on a row of the added elements' kinds, in each context**
+ * ([org.example.project.scheduler.domain.PressDomain.groups]) — per kind, per group of contexts the presses do the same
+ * in: the context row (a click opens a Search window whose added elements are the group's contexts), then one line per
+ * press. Read-only: what changes it is the contexts' own configuration ("Arrange by dragging").
+ */
+@Composable
+private fun ElementPressesAction(
+    state: SchedulerState,
+    added: List<SearchDomain.Result>,
+    onOpenSearch: (SearchDomain.Config) -> Unit,
+) {
+    val presses = org.example.project.scheduler.domain.PressDomain
+    val contexts = org.example.project.scheduler.domain.ContextDomain
+    val kinds = added.map { it.kind }.distinct()
+    for (kind in kinds) {
+        ElementHeading(kind.label, kinds.size)
+        val groups = remember(state.contextDefaults, kind) { presses.groups(state.contextDefaults, kind) }
+        for (group in groups) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    if (group.contexts.size == contexts.CONTEXTS.size) "every context" else group.contexts.joinToString(", ") { it.title },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onOpenSearch(SearchDomain.contextsSearchConfig(group.contexts.map { it.id })) },
+                )
+                for (behaviour in group.behaviours) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(behaviour.press.label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(120.dp))
+                        Text(behaviour.does, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     }
                 }
             }

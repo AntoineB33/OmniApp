@@ -5162,6 +5162,12 @@ object SearchDomain {
          * button adding a new one associated with them all ([MdDomain]). No parent and no child: an association.
          */
         ElementMd(null, "Md elements"),
+        /**
+         * User rule 2026-11-26 (*"each element has in the action section the behavior of when [it] is clicked, when it is
+         * double-clicked etc…"*): **what each press does on a row of the added elements' kinds, in each context**
+         * ([PressDomain.groups]) — each group a context row (opening a window of those contexts, added) and its presses.
+         */
+        ElementPresses(null, "Clicks and keys"),
         ElementAddParent(null, "Add a parent"),
         ElementRemoveParent(null, "Remove a parent"),
         ElementAddCategory(null, "Add a category"),
@@ -6321,6 +6327,7 @@ object SearchDomain {
             AddedAction.ConfigurationStates -> "window id open saved value filter sort"
             AddedAction.ConfigurationContextStates -> "context default menu drop-down on off state value"
             AddedAction.OptionPresences -> "default presences contexts menus where found listed entries"
+            AddedAction.ElementPresses -> "click double-click right-click ctrl shift enter press hold drag hover behaviour behavior context"
             AddedAction.ActionContexts -> "context state elements same value group"
             AddedAction.MuteSwitch -> "silence quiet sound voice ring alarm notification off on"
             else -> ""
