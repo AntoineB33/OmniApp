@@ -1491,9 +1491,11 @@ suggestions before it was ever entered.
     (`ActionListRow.warning`, `SearchDomain.contextsInNoPair`), until a pair holds them again — the action's kind, and,
     once listed and where the action has a "no state" pair, every other element. **Its rows' menus**: "copy path" (the
     titles of the rows it hangs from) and "collapse" (the open rows under it; greyed where none is) act on the section's
-    rows; "deep copy" copies the rows under a row that has some — "Contexts and states" and its pairs, closed rows
-    included, a tab further in per level, title " — " what stands beside, cut at the account's deep copy depth
-    (anomaly 2026-11-27; `subRowsCopyText`) — and is greyed on every other row of the section. **A list cut by a narrow section keeps its
+    rows; "deep copy" of a row that has rows under it — "Contexts and states" and its pairs — shows, while hovered, the
+    "Deep copy" rows an element's has but what only a task carries (user 2026-11-27, *"Shouldn't the deep copy open a
+    window to select what kind of deep copy I want?"*; `SubRowDeepCopy`, the account's settings), and copies those rows,
+    closed ones included, a tab further in per level, title " — " what stands beside, a pair's contexts' keys as its ids
+    (`subRowsCopyText`); it is greyed on every other row of the section. **A list cut by a narrow section keeps its
     scrollbar at the shown right edge** (user 2026-11-26; `SideCut`, the result list's bar moved by the cut; the tree
     window's configuration column scrolls on its shown width). **The kind's
     elements are listed again only when what they are read from changes** (`SearchDomain.contextSourceOf`, their paths

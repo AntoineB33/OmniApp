@@ -3425,7 +3425,10 @@ internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.exampl
         // User rule 2026-11-25: Ctrl+C on any row copies its id; the entry names the chord.
         add(org.example.project.ui.MenuAction(COPY_ID_LABEL, enabled = cellMenu.onCopyId != null) { cellMenu.onCopyId?.invoke() })
         add(org.example.project.ui.MenuAction(COPY_PATH_LABEL, enabled = cellMenu.onCopyPath != null) { cellMenu.onCopyPath?.invoke() })
-        add(org.example.project.ui.MenuAction(DEEP_COPY_LABEL, enabled = cellMenu.onDeepCopy != null) { cellMenu.onDeepCopy?.invoke() })
+        // User 2026-11-27: a row of an actions section shows its deep copy's rows while the entry is hovered, pinned by a click.
+        val deepCopyPopup = cellMenu.deepCopyPopup
+        if (deepCopyPopup != null) add(org.example.project.ui.MenuAction(DEEP_COPY_LABEL, hoverPopup = deepCopyPopup) {})
+        else add(org.example.project.ui.MenuAction(DEEP_COPY_LABEL, enabled = cellMenu.onDeepCopy != null) { cellMenu.onDeepCopy?.invoke() })
         // User 2026-11-26: "collapse", its row holding the level from which the children stay as they are.
         add(
             org.example.project.ui.MenuAction(
@@ -3502,6 +3505,12 @@ internal class TaskCellMenuActions(
      * 2026-11-13), a row a lateral window still owns its "open in …".
      */
     val extra: List<org.example.project.ui.MenuAction> = emptyList(),
+    /**
+     * User 2026-11-27 (*"Shouldn't the deep copy open a window to select what kind of deep copy I want?"*): what "deep copy"
+     * shows while hovered — the "Deep copy" rows of a row of an actions section ([org.example.project.ui.SubRowDeepCopy]).
+     * Null: [onDeepCopy] runs on a click.
+     */
+    val deepCopyPopup: (@Composable () -> Unit)? = null,
 )
 
 

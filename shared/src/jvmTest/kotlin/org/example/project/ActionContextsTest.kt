@@ -34,7 +34,7 @@ import org.example.project.ui.SearchSplits
 import org.example.project.ui.SearchWindow
 import org.example.project.ui.SubRowSpec
 import org.example.project.ui.subRowsCopyText
-import org.example.project.ui.subRowsCut
+import org.example.project.ui.subRowsDeepestPath
 
 /**
  * User rule 2026-11-13: a row of the actions section is added to the section's own list, and its action there shows its
@@ -187,12 +187,23 @@ class ActionContextsTest {
     @Test
     fun a_row_with_rows_under_it_deep_copies_them() {
         val specs = listOf(
-            SubRowSpec("p0", "a, b", "45", listOf(SubRowSpec("context", "context", content = {}), SubRowSpec("states", "states", content = {}))),
-            SubRowSpec("p1", "x, y", "no state", listOf(SubRowSpec("context", "context", content = {}))),
+            SubRowSpec("p0", "a, b", "45", listOf(SubRowSpec("context", "context", content = {}), SubRowSpec("states", "states", content = {})), ids = listOf("Alarm/a", "Alarm/b")),
+            SubRowSpec("p1", "x, y", "no state", listOf(SubRowSpec("context", "context", content = {})), ids = listOf("Chrono/x", "Chrono/y")),
         )
-        val text = subRowsCopyText("Contexts and states", "", specs)
+        val root = SubRowSpec("root", "Contexts and states", children = specs)
+        val all = Int.MAX_VALUE
+        val text = subRowsCopyText(root, all, includeIds = false, excludeTitle = "")
         assertEquals("Contexts and states\n\ta, b \u2014 45\n\t\tcontext\n\t\tstates\n\tx, y \u2014 no state\n\t\tcontext\n", text)
-        assertEquals("Contexts and states\n\ta, b \u2014 45\n\tx, y \u2014 no state\n", subRowsCut(text, 2))
+        assertEquals("Contexts and states\n\ta, b \u2014 45\n\tx, y \u2014 no state\n", subRowsCopyText(root, 2, includeIds = false, excludeTitle = ""))
+        // User 2026-11-27: the deep copy's rows choose the kind of copy \u2014 the ids under each row standing for elements \u2026
+        assertEquals(
+            "Contexts and states\n\ta, b \u2014 45\n\t\t- id: Alarm/a\n\t\t- id: Alarm/b\n\tx, y \u2014 no state\n\t\t- id: Chrono/x\n\t\t- id: Chrono/y\n",
+            subRowsCopyText(root, 2, includeIds = true, excludeTitle = ""),
+        )
+        // \u2026 a title left out with what is under it, and the deepest path copied.
+        assertEquals("Contexts and states\n\tx, y \u2014 no state\n\t\tcontext\n", subRowsCopyText(root, all, includeIds = false, excludeTitle = "a, b"))
+        assertEquals(listOf("Contexts and states", "a, b", "context"), subRowsDeepestPath(root, all, ""))
+        assertEquals(listOf("Contexts and states", "a, b"), subRowsDeepestPath(root, 2, ""))
     }
 
     /** Anomaly 2026-11-26: an action row's "copy path" and "collapse sub-trees" were greyed. */

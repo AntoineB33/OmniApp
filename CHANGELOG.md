@@ -19,9 +19,12 @@ Check here before assuming the code matches the docs.
   (`SearchDomain.withNewPair`, `withPairValues`). `ActionContextPairsTest`, `each_pair_is_a_row_with_its_context_and_states_rows`.
 - Anomaly: *"right-clicking 'Action: Minimum time / Contexts and states' doesn't show available deep copy"* — every row
   of an actions section passed none. A row with rows under it ("Contexts and states", a pair) copies them to the
-  clipboard, closed ones included, cut at the account's deep copy depth (`subRowsCopyText`, `ActionSearchRows.deepCopyOf`);
-  greyed on the others, and while "Contexts and states" is closed (its pairs are only built open).
-  `a_row_with_rows_under_it_deep_copies_them`. Client rebuild only.
+  clipboard, closed ones included (`subRowsCopyText`, `ActionSearchRows.deepCopyOf`); greyed on the others, and while
+  "Contexts and states" is closed (its pairs are only built open). Then, same day: *"Shouldn't the deep copy open a window
+  to select what kind of deep copy I want? For example all the tree with only the id for each node?"* — hovering its
+  "deep copy" shows the "Deep copy" rows an element's has, but what only a task carries (`SubRowDeepCopy`: maximum
+  depth, entire sub-tree, ids, exclude title, "Copied down to", copy, reset; the account's settings): a pair's ids are
+  its contexts' keys. `a_row_with_rows_under_it_deep_copies_them`. Client rebuild only.
 
 ### Deep copy of every element; "collapse" with a level; pair titles list their contexts; inline fields; scrollbar — 2026-11-26
 

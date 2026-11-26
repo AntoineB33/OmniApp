@@ -2119,7 +2119,7 @@ fun SearchWindow(
                                                         else MenuAction(PIN_ROW_LABEL, id = PIN_ROW_ID) { pin(actionRow.id) }
                                                     },
                                                 ) + actionRows.menuOf(actionRow),
-                                                onDeepCopy = actionRows.deepCopyOf(actionRow),
+                                                deepCopyPopup = actionRows.deepCopyOf(actionRow),
                                             ),
                                             depth = actionRow.depth,
                                             warning = actionRow.warning,
@@ -2842,6 +2842,8 @@ internal class RowMenuCommon(
     val extra: List<MenuAction> = emptyList(),
     /** User 2026-11-26: "deep copy" — every element's, not a task's alone. */
     val onDeepCopy: (() -> Unit)? = null,
+    /** User 2026-11-27: "deep copy" showing its rows while hovered ([TaskCellMenuActions.deepCopyPopup]) — an action row's. */
+    val deepCopyPopup: (@Composable () -> Unit)? = null,
 ) {
     fun menu(onAdd: (() -> Unit)?, onAddReplacing: (() -> Unit)?, extra: List<MenuAction>): TaskCellMenuActions =
         TaskCellMenuActions(
@@ -2854,6 +2856,7 @@ internal class RowMenuCommon(
             onAdd = onAdd,
             onAddReplacing = onAddReplacing,
             extra = extra + this.extra,
+            deepCopyPopup = deepCopyPopup,
         )
 
     companion object {
@@ -2944,7 +2947,7 @@ class ActionSearchRows(
     /** Anomaly 2026-11-27: the entries only that row's menu has — a "Contexts and states" row's "create a context-state". */
     val menuOf: (SearchDomain.ActionListRow) -> List<MenuAction> = { emptyList() },
     /** Anomaly 2026-11-27: that row's "deep copy" — of a row with rows under it; null: greyed. */
-    val deepCopyOf: (SearchDomain.ActionListRow) -> (() -> Unit)? = { null },
+    val deepCopyOf: (SearchDomain.ActionListRow) -> (@Composable () -> Unit)? = { null },
 ) {
     val byKey: Map<String, SearchDomain.ActionListRow> = rows.associateBy { it.key }
     private val indexById: Map<String, Int> = rows.withIndex().associate { (i, row) -> row.id to i }

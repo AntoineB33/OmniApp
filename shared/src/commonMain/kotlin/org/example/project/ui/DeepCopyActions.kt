@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -115,6 +116,44 @@ internal fun DeepCopyActionEditor(
         else -> Unit
     }
 }
+
+/**
+ * User 2026-11-27 (*"Shouldn't the deep copy open a window to select what kind of deep copy I want? For example all the tree
+ * with only the id for each node?"*): **the deep copy of a row of an actions section with rows under it** ([root], e.g.
+ * "Contexts and states") — the pop-up its menu's "deep copy" shows: the "Deep copy" group's rows an element's deep copy has
+ * ([SearchDomain.DEEP_COPY_ACTIONS] but what only a task carries), the same account settings, its own sub-tree copied
+ * ([subRowsCopyText]) and its deepest path said ([subRowsDeepestPath]).
+ */
+@Composable
+internal fun SubRowDeepCopy(state: SchedulerState, root: SubRowSpec, onIntent: (SchedulerIntent) -> Unit) {
+    val options = SchedulerDomain.CopyOptions.from(state)
+    val depth = if (state.deepCopyUnlimited) SchedulerDomain.FULL_SUBTREE_DEPTH else state.deepCopyMaxDepth
+    androidx.compose.material3.Surface(
+        color = androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.width(360.dp).padding(12.dp),verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (action in SUB_ROW_DEEP_COPY_ACTIONS) {
+                Text(action.label, style = androidx.compose.material3.MaterialTheme.typography.labelLarge)
+                when (action) {
+                    SearchDomain.AddedAction.DeepCopyPath ->
+                        org.example.project.scheduler.ui.DeepCopyPathRow(remember(root, depth, options.excludeTitle) { subRowsDeepestPath(root, depth, options.excludeTitle) })
+                    SearchDomain.AddedAction.TaskDeepCopy ->
+                        FrameButton("Copy", enabled = depth >= 1) {
+                            val text = subRowsCopyText(root, depth, options.includeIds, options.excludeTitle)
+                            if (text.isNotEmpty()) writeSystemClipboardText(text)
+                        }
+                    else -> DeepCopyActionEditor(state, action, emptyList(), onIntent)
+                }
+            }
+        }
+    }
+}
+
+/** The "Deep copy" rows a row of an actions section has ([SubRowDeepCopy]): an element's, but what only a task carries. */
+internal val SUB_ROW_DEEP_COPY_ACTIONS: List<SearchDomain.AddedAction> =
+    SearchDomain.DEEP_COPY_ACTIONS.filter { it !in SearchDomain.DEEP_COPY_TASK_ACTIONS }
 
 /** The added elements a deep copy copies by their children ([SearchDomain.elementsCopyText]): every one but a task. */
 private fun copiedElements(added: List<SearchDomain.Result>): List<String> =

@@ -467,8 +467,9 @@ private fun AddedActionList(
     }
     val rows = baseRows.flatMap { row -> listOf(warnings[row.id]?.let { row.copy(warning = it) } ?: row) + subSpecs[row.id]?.let { subRowsOf(row, it, closedParts, subContents) }.orEmpty() }
     // Anomaly 2026-11-27 (*"right-clicking … 'Contexts and states' doesn't show available deep copy"*): a row with rows under
-    // it copies its sub-tree, closed rows included ([subRowsCopyText]), to the account's deep copy depth.
-    val deepCopies = HashMap<String, () -> String>()
+    // it copies its sub-tree, closed rows included ([subRowsCopyText]). Then (*"Shouldn't the deep copy open a window to select
+    // what kind of deep copy I want?"*): its "deep copy" shows the "Deep copy" group's rows first ([SubRowDeepCopy]).
+    val deepCopies = HashMap<String, SubRowSpec>()
     for (row in baseRows) subSpecs[row.id]?.takeIf { it.isNotEmpty() }?.let { specs -> subRowCopies(row, specs, deepCopies) }
     // User rule 2026-11-26: the section's title counts the rows at the root of its list, not those an open row shows.
     val rootCount = rows.count { it.depth == 0 }
@@ -614,12 +615,7 @@ private fun AddedActionList(
                 onClose = close,
                 menuOf = { row -> rowMenus[row.id].orEmpty() },
                 deepCopyOf = { row ->
-                    deepCopies[row.id]?.let { text ->
-                        {
-                            val st = state
-                            writeSystemClipboardText(text().let { all -> if (st.deepCopyUnlimited) all else subRowsCut(all, st.deepCopyMaxDepth) })
-                        }
-                    }
+                    deepCopies[row.id]?.let { root -> { SubRowDeepCopy(state, root, onIntent) } }
                 },
             ),
             modifier = modifier,
@@ -760,6 +756,8 @@ internal class SubRowSpec(
     val detail: String = "",
     val children: List<SubRowSpec> = emptyList(),
     val content: (@Composable () -> Unit)? = null,
+    /** The elements the row stands for, by key — a pair's contexts: what its deep copy's "Copy the ids" writes under it. */
+    val ids: List<String> = emptyList(),
 ) {
     /** User 2026-11-26: its controls on the row itself, after its title ([SearchDomain.SubRow.inline]) — none under it. */
     val inline: Boolean get() = content != null && children.isEmpty()
@@ -804,39 +802,47 @@ internal fun subRowsOf(
 internal const val NEW_PAIR_MENU_ID: String = "create"
 
 /**
- * Anomaly 2026-11-27: **the deep copy of a row with rows under it** — its [title] (and [detail] after " — "), then each of
- * [specs] a tab further in, closed or open, as [SearchDomain.elementsCopyText] lays out an element's sub-tree.
+ * Anomaly 2026-11-27: **the deep copy of a row with rows under it** ([root]) — its title (and what stands beside it after
+ * " — "), then each row under it a tab further in, closed or open, as [SearchDomain.elementsCopyText] lays out an element's
+ * sub-tree: down to [maxDepth] levels (the row itself the first); the keys it stands for ([SubRowSpec.ids]) as "- id:" lines
+ * under it where [includeIds]; a row titled [excludeTitle] left out with what is under it. The settings are the "Deep copy"
+ * group's ([SubRowDeepCopy]).
  */
-internal fun subRowsCopyText(title: String, detail: String, specs: List<SubRowSpec>): String {
+internal fun subRowsCopyText(root: SubRowSpec, maxDepth: Int, includeIds: Boolean, excludeTitle: String): String {
     val sb = StringBuilder()
-    fun line(depth: Int, t: String, d: String) {
+    fun walk(spec: SubRowSpec, depth: Int) {
+        if (depth >= maxDepth || (excludeTitle.isNotEmpty() && spec.title == excludeTitle)) return
         repeat(depth) { sb.append('\t') }
-        sb.append(t)
-        if (d.isNotEmpty()) sb.append(" — ").append(d)
+        sb.append(spec.title)
+        if (spec.detail.isNotEmpty()) sb.append(" — ").append(spec.detail)
         sb.append('\n')
-    }
-    fun walk(list: List<SubRowSpec>, depth: Int) {
-        for (spec in list) {
-            line(depth, spec.title, spec.detail)
-            walk(spec.children, depth + 1)
+        if (includeIds) for (key in spec.ids) {
+            repeat(depth + 1) { sb.append('\t') }
+            sb.append("- id: ").append(SearchDomain.copiedId(key)).append('\n')
         }
+        for (child in spec.children) walk(child, depth + 1)
     }
-    line(0, title, detail)
-    walk(specs, 1)
+    walk(root, 0)
     return sb.toString()
 }
 
-/** [text] ([subRowsCopyText]) down to [maxDepth] levels, the row itself the first. */
-internal fun subRowsCut(text: String, maxDepth: Int): String =
-    text.lineSequence().filter { it.isNotEmpty() && it.takeWhile { c -> c == '\t' }.length < maxDepth }.joinToString("") { it + "\n" }
+/** The deep copy's "Copied down to" of [root] ([subRowsCopyText]): the titles along its deepest copied branch, its own first. */
+internal fun subRowsDeepestPath(root: SubRowSpec, maxDepth: Int, excludeTitle: String): List<String> {
+    fun deepest(spec: SubRowSpec, depth: Int): List<String>? {
+        if (depth >= maxDepth || (excludeTitle.isNotEmpty() && spec.title == excludeTitle)) return null
+        val below = spec.children.mapNotNull { deepest(it, depth + 1) }.maxByOrNull { it.size }.orEmpty()
+        return listOf(spec.title) + below
+    }
+    return deepest(root, 0).orEmpty()
+}
 
-/** Each row of [specs] under [parent] that has rows under it — and [parent] — given its deep copy in [into], by row id. */
-private fun subRowCopies(parent: SearchDomain.ActionListRow, specs: List<SubRowSpec>, into: MutableMap<String, () -> String>) {
-    into[parent.id] = { subRowsCopyText(parent.title, parent.detail, specs) }
+/** Each row of [specs] under [parent] that has rows under it — and [parent] — as the root of its deep copy, by row id. */
+private fun subRowCopies(parent: SearchDomain.ActionListRow, specs: List<SubRowSpec>, into: MutableMap<String, SubRowSpec>) {
+    into[parent.id] = SubRowSpec(parent.id, parent.title, parent.detail, specs)
     fun walk(prefix: String, list: List<SubRowSpec>) {
         for (spec in list) {
             val id = prefix + "/" + spec.key
-            if (spec.children.isNotEmpty()) into[id] = { subRowsCopyText(spec.title, spec.detail, spec.children) }
+            if (spec.children.isNotEmpty()) into[id] = spec
             walk(id, spec.children)
         }
     }
@@ -876,6 +882,7 @@ private fun contextPairSpecs(model: ContextPairs): List<SubRowSpec> =
                 SubRowSpec("context", "context", content = { ContextPairContext(model, index) }),
                 SubRowSpec("states", "states", content = { ContextPairStates(model, index) }),
             ),
+            ids = model.keysOf(pair),
         )
     }
 
