@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "context-state N"; incomplete pairs warn; action rows' copy path and collapse — 2026-11-26
+
+- User question: why "copy path", "deep copy" and "collapse sub-tree" are greyed on a "context" row. Every row of an
+  actions section passed null for the first and third: wired now (`ActionSearchRows.pathOf`, `openUnder`, `onClose`);
+  "collapse sub-trees" stays greyed on a row with nothing open under it (a "context" row). "Deep copy" copies a
+  sub-tree of task cells and stays greyed on every other row. `an_action_rows_path_and_the_open_rows_under_it`.
+- User rule: a pair's row is "context-state N", not "every element that is not a task (4863)" — no program naming
+  them (`SearchDomain.contextPairTitle`).
+- User rule: an element removed from a pair's contexts is in no pair; the "Contexts and states" row turns red with
+  "not complete: … in no context-state" until a pair holds it again (`ActionListRow.warning`,
+  `SearchDomain.contextsInNoPair`). `an_element_in_no_pair_makes_the_pairs_incomplete`.
+
 ### "Contexts and states" pairs are rows; section counts are of root rows — 2026-11-26
 
 - User rule: *"The three sections must show the number of rows in the root of the list, not all the rows from row

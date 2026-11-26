@@ -5121,6 +5121,70 @@ object SearchDomain {
     }
 
     /**
+     * User rule 2026-11-26 (*"'every element that is not a task (4863)' should rather be called 'context-state 2'. I doubt
+     * having a program just to give names that reflect what are the current contexts and states"*): **a pair's row is named
+     * by its place**, never by what it holds — its context field says that.
+     */
+    fun contextPairTitle(index: Int): String = "context-state ${index + 1}"
+
+    /**
+     * User rule 2026-11-26 (*"If the user … removes an element from the added elements list, then the 'Contexts and states'
+     * row becomes red with a warning message saying that it is not complete"*): **the elements in no pair** — of the action's
+     * kind ([elements]) and, once listed, every other ([others], for the "no state" pair: null while not listed yet, when a
+     * "no state" pair still holding them all is taken as holding them). Empty: the pairs are complete.
+     */
+    fun contextsInNoPair(pairs: List<ContextPair>, elements: List<String>, others: List<String>?): List<String> {
+        val held = HashSet<String>()
+        var holdsOthers = false
+        for (pair in pairs) {
+            if (pair.keys == null) holdsOthers = true else held += pair.keys
+        }
+        // A "no state" pair left whole holds every other element by definition: only the action's own kind is asked.
+        val all = if (others == null || holdsOthers) elements else elements + others
+        return all.filter { it !in held }.distinct()
+    }
+
+    /** What a "Contexts and states" row says while [missing] are in no pair ([contextsInNoPair]); null when none is. */
+    fun contextsIncompleteWarning(missing: List<String>, names: (String) -> String): String? {
+        if (missing.isEmpty()) return null
+        val shown = missing.take(3).joinToString(", ") { names(it) }
+        val more = if (missing.size > 3) " and ${missing.size - 3} more" else ""
+        return "not complete: $shown$more " + (if (missing.size == 1) "is" else "are") + " in no context-state"
+    }
+
+    /**
+     * The row menu's "copy path" of the actions section's row at [index] of [rows]: the titles of the rows it hangs from,
+     * outermost first, and its own (anomaly 2026-11-26: it was greyed on every action row).
+     */
+    fun actionRowPath(rows: List<ActionListRow>, index: Int): List<String> {
+        val row = rows.getOrNull(index) ?: return emptyList()
+        val out = ArrayList<String>()
+        var depth = row.depth
+        for (i in index - 1 downTo 0) {
+            if (depth == 0) break
+            if (rows[i].depth < depth) {
+                out += rows[i].title
+                depth = rows[i].depth
+            }
+        }
+        return out.reversed() + row.title
+    }
+
+    /**
+     * The row menu's "collapse sub-trees" of the row at [index] of [rows]: the ids of the open rows under it, the row
+     * itself kept open (anomaly 2026-11-26: it was greyed on every action row). Empty: nothing to collapse.
+     */
+    fun openActionRowsUnder(rows: List<ActionListRow>, index: Int): List<String> {
+        val row = rows.getOrNull(index) ?: return emptyList()
+        val out = ArrayList<String>()
+        for (i in index + 1 until rows.size) {
+            if (rows[i].depth <= row.depth) break
+            if (rows[i].open) out += rows[i].id
+        }
+        return out
+    }
+
+    /**
      * **Pop-up window B of a context field**: every context in its results ([CONTEXT_KINDS]) and the pair's own ([keys])
      * in its added elements — the tasks of "45 minutes" for "Minimum time", one less once one of them is changed.
      */
@@ -6471,6 +6535,11 @@ object SearchDomain {
          * ([SubRow]). Null: a group or an action.
          */
         val sub: SubRow? = null,
+        /**
+         * User rule 2026-11-26: what is wrong with what the row holds — a "Contexts and states" with elements in no pair
+         * ([contextsIncompleteWarning]). The row is drawn red, this said beside it. Null: nothing is.
+         */
+        val warning: String? = null,
     )
 
     /**

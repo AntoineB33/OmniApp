@@ -2088,10 +2088,14 @@ fun SearchWindow(
                                             onAddReplacing = { addSelected(replacing = true) },
                                             hasMenu = true,
                                             // An action is open on its controls, not on children: retracting closes it.
+                                            // Anomaly 2026-11-26: "copy path" and "collapse sub-trees" act on the section's
+                                            // rows; "deep copy" stays a task cell's (it copies a sub-tree of tasks).
                                             rowMenu = RowMenuCommon(
                                                 onCopyId = { copyIds(listOf(resultKey(result))) },
-                                                onCopyPath = null,
-                                                onCollapseSubtrees = null,
+                                                onCopyPath = { copyPathOf(actionRows.pathOf(actionRow)) },
+                                                onCollapseSubtrees = actionRows.openUnder(actionRow).takeIf { it.isNotEmpty() }?.let { under ->
+                                                    { actionRows.onClose?.invoke(under) ?: under.forEach(actionRows.onToggle) }
+                                                },
                                                 onRetractAll = if (actionRow.open) { { actionRows.onToggle(actionRow.id) } } else null,
                                                 // User rule 2026-11-25: a row of an actions section can be pinned.
                                                 extra = listOfNotNull(
@@ -2102,6 +2106,7 @@ fun SearchWindow(
                                                 ),
                                             ),
                                             depth = actionRow.depth,
+                                            warning = actionRow.warning,
                                         )
                                         // An open action's controls — and a row's under an action that draws some (user rule 2026-11-26).
                                         val hasContent = actionRow.action != null || actionRow.sub?.hasContent == true
@@ -2896,8 +2901,20 @@ class ActionSearchRows(
      * showing that section alone. Null: its head does not drag.
      */
     val copyOf: (() -> SearchDomain.Config)? = null,
+    /**
+     * Anomaly 2026-11-26 (*"'copy path', 'deep copy' and 'collapse sub-tree' are grayed, why?"*): closes the rows of these
+     * ids at once — the row menu's "collapse sub-trees". Null: [onToggle] each.
+     */
+    val onClose: ((List<String>) -> Unit)? = null,
 ) {
     val byKey: Map<String, SearchDomain.ActionListRow> = rows.associateBy { it.key }
+    private val indexById: Map<String, Int> = rows.withIndex().associate { (i, row) -> row.id to i }
+
+    /** The row menu's "copy path" of [row]: the titles of the rows it hangs from, then its own. */
+    fun pathOf(row: SearchDomain.ActionListRow): List<String> = SearchDomain.actionRowPath(rows, indexById[row.id] ?: -1)
+
+    /** The open rows under [row] ([SearchDomain.openActionRowsUnder]): what its "collapse sub-trees" closes. */
+    fun openUnder(row: SearchDomain.ActionListRow): List<String> = SearchDomain.openActionRowsUnder(rows, indexById[row.id] ?: -1)
 }
 
 /** User rule 2026-11-25: the right-click entries pinning an action row ([ActionSearchRows.onPin]). */
@@ -4649,6 +4666,8 @@ private fun ItemResultRow(
     enabled: Boolean = true,
     /** How many levels in the row stands: an action under its group in the actions section ([NESTING_STEP]). */
     depth: Int = 0,
+    /** User rule 2026-11-26: what is wrong with what the row holds ([SearchDomain.ActionListRow.warning]): drawn red, said. */
+    warning: String? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val workplaceRuns = LocalWorkplaceRuns.current
@@ -4663,6 +4682,7 @@ private fun ItemResultRow(
         modifier = Modifier.nestingGuideLines(depth, NESTING_STEP, itemArrowCenter(item.kind, kindWidth))
             .padding(start = NESTING_STEP * depth).then(resultRowModifier(selected, inSelection))
             .then(if (outlined) Modifier.addedOutline() else Modifier)
+            .then(if (warning != null) Modifier.background(MaterialTheme.colorScheme.errorContainer) else Modifier)
             .then(if (enabled) Modifier else Modifier.alpha(0.38f))
             .then(
                 if (onPrimaryRelease == null && onSecondaryRelease == null) Modifier
@@ -4709,6 +4729,14 @@ private fun ItemResultRow(
                     color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f, fill = false),
                 )
+                if (warning != null) {
+                    Text(
+                        text = warning,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
         }
         // User rule 2026-11-12: the menu is a Search window of its entries.

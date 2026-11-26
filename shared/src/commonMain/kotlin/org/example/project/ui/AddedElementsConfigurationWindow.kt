@@ -428,6 +428,8 @@ private fun AddedActionList(
     var closedParts by remember { mutableStateOf(emptySet<String>()) }
     val subContents = HashMap<String, @Composable () -> Unit>()
     val subSpecs = HashMap<String, List<SubRowSpec>>()
+    // User rule 2026-11-26: a "Contexts and states" with elements in no pair is drawn red, saying so.
+    val warnings = HashMap<String, String>()
     val rawIntent = { members: List<SearchDomain.Result> ->
         { intent: SchedulerIntent -> SearchDomain.addedIntents(state, members, SearchDomain.AddedCommand.Raw(intent), nowMillis()).forEach(onIntent) }
     }
@@ -442,7 +444,11 @@ private fun AddedActionList(
                     val outerAction = outerRow?.action
                     if (outerHost == null || outerRow == null || outerAction == null) emptyList()
                     else androidx.compose.runtime.key(item.name) {
-                        headed(item.name, members.size, contextPairSpecs(rememberContextPairs(outerHost, outerRow, outerAction)))
+                        val model = rememberContextPairs(outerHost, outerRow, outerAction)
+                        model.warning()?.let { said ->
+                            warnings[row.id] = listOfNotNull(warnings[row.id], if (members.size > 1) item.name + ": " + said else said).joinToString("; ")
+                        }
+                        headed(item.name, members.size, contextPairSpecs(model))
                     }
                 }
                 SearchDomain.AddedAction.ConfigurationContextStates ->
@@ -453,7 +459,7 @@ private fun AddedActionList(
             }
         }
     }
-    val rows = baseRows.flatMap { row -> listOf(row) + subSpecs[row.id]?.let { subRowsOf(row, it, closedParts, subContents) }.orEmpty() }
+    val rows = baseRows.flatMap { row -> listOf(warnings[row.id]?.let { row.copy(warning = it) } ?: row) + subSpecs[row.id]?.let { subRowsOf(row, it, closedParts, subContents) }.orEmpty() }
     // User rule 2026-11-26: the section's title counts the rows at the root of its list, not those an open row shows.
     val rootCount = rows.count { it.depth == 0 }
     if (onListed != null) LaunchedEffect(rootCount) { onListed(rootCount) }
@@ -463,6 +469,12 @@ private fun AddedActionList(
     val toggle = { id: String ->
         if (latestRowsById[id]?.sub != null) closedParts = if (id in closedParts) closedParts - id else closedParts + id
         else onConfigChange(SearchDomain.withActionGroupToggled(latestConfig, id, listed))
+    }
+    // The row menu's "collapse sub-trees": every open row under one closed at once — the configuration's in one change.
+    val close = { ids: List<String> ->
+        val (sub, own) = ids.partition { latestRowsById[it]?.sub != null }
+        if (sub.isNotEmpty()) closedParts = closedParts + sub
+        if (own.isNotEmpty()) onConfigChange(own.fold(latestConfig) { c, id -> SearchDomain.withActionGroupToggled(c, id, listed) })
     }
     // User rule 2026-11-25: the row to start at — what the window asks ([reveal]) or the pinned row, the later ask winning.
     var asks by remember { mutableStateOf(0) }
@@ -589,6 +601,7 @@ private fun AddedActionList(
                 onPin = { id -> onConfigChange(SearchDomain.withActionRowPinned(latestConfig, id)) },
                 // Anomaly 2026-11-26: its head, shown, drags a copy — the window it is the actions section of.
                 copyOf = { latestConfig },
+                onClose = close,
             ),
             modifier = modifier,
         )
@@ -654,10 +667,23 @@ private class ContextPairs(
     val kind: SearchDomain.Kind?,
     val pairs: List<SearchDomain.ContextPair>,
     val byKey: Map<String, SearchDomain.Result>,
-    val others: List<String>,
+    /** Every other element of the account, the "no state" pair's; null while not listed yet. */
+    val listedOthers: List<String>?,
     val setPairs: (List<SearchDomain.ContextPair>) -> Unit,
 ) {
+    val others: List<String> get() = listedOthers.orEmpty()
+
     fun keysOf(pair: SearchDomain.ContextPair): List<String> = pair.keys ?: others
+
+    /** What its "Contexts and states" row warns of: the elements in no pair ([SearchDomain.contextsInNoPair]), or null. */
+    fun warning(): String? {
+        // An action about a set as such ([kind] null) has no "no state" pair: the account's other elements are none of its.
+        val missing = SearchDomain.contextsInNoPair(pairs, byKey.keys.toList(), if (kind == null) null else listedOthers)
+        if (missing.isEmpty()) return null
+        val unknown = missing.take(3).filter { it !in byKey }
+        val resolved = if (unknown.isEmpty()) emptyMap() else SearchDomain.resolve(host.state, unknown, { emptyMap() }).associateBy(SearchDomain::keyOf)
+        return SearchDomain.contextsIncompleteWarning(missing) { k -> (byKey[k] ?: resolved[k])?.name ?: k.substringAfter('/') }
+    }
 
     /** The pair's contexts, as rows: never the "no state" pair's (it has no state to edit; its title says how many). */
     fun valuesOf(pair: SearchDomain.ContextPair): List<SearchDomain.Result> =
@@ -695,7 +721,7 @@ private fun rememberContextPairs(host: ActionSectionHost, row: SearchDomain.Acti
     // The pairs B changed are view state, set back to the derived ones whenever a state set changes them.
     var pairs by remember(row.id) { mutableStateOf(derived) }
     LaunchedEffect(derived) { pairs = derived }
-    return ContextPairs(host, row, action, kind, pairs, byKey, listedOthers.orEmpty()) { pairs = it }
+    return ContextPairs(host, row, action, kind, pairs, byKey, listedOthers) { pairs = it }
 }
 
 /**
@@ -768,17 +794,15 @@ private fun contextsNamed(contexts: List<org.example.project.scheduler.domain.Co
     if (contexts.size == org.example.project.scheduler.domain.ContextDomain.CONTEXTS.size) "every context" else contexts.joinToString(", ") { it.title }
 
 /**
- * **The rows of an open "Contexts and states"** ([ContextPairs]): per added action, each pair a row — named by its contexts,
+ * **The rows of an open "Contexts and states"** ([ContextPairs]): per added action, each pair a row — named by its place ("context-state 2"),
  * its state beside — with its "context" row (the field opening pop-up window B) and its "states" row (the action's editor).
  */
 private fun contextPairSpecs(model: ContextPairs): List<SubRowSpec> =
     model.pairs.mapIndexed { index, pair ->
-        val keys = model.keysOf(pair)
-        val values = model.valuesOf(pair)
-        val more = if (pair.keys != null && values.isNotEmpty() && values.size < keys.size) " and ${keys.size - values.size} more" else ""
+        // User rule 2026-11-26: named by its place ("context-state 2"); what it holds its context field says.
         SubRowSpec(
             "pair$index",
-            contextsSaid(pair, values, model.action, keys.size) + more,
+            SearchDomain.contextPairTitle(index),
             stateSaid(pair, model),
             listOf(
                 SubRowSpec("context", "context", content = { ContextPairContext(model, index) }),

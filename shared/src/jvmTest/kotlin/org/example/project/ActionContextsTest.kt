@@ -147,8 +147,43 @@ class ActionContextsTest {
         val texts = drawnTexts(window.copy(inside = mapOf("/actions" to own.encode())), height = 2400)
         assertEquals(4, texts.count { it == "context" }, texts.toString())
         assertEquals(4, texts.count { it == "states" }, texts.toString())
-        assertTrue("a, b, c" in texts, "a pair's row names its contexts: $texts")
-        assertTrue("new: choose its contexts" in texts, texts.toString())
+        // User rule 2026-11-26: a pair's row is named by its place; its context field says what it holds.
+        assertTrue((1..4).all { SearchDomain.contextPairTitle(it - 1) in texts }, "context-state 1 to 4: $texts")
+        assertFalse(texts.any { it.startsWith("not complete") }, "the derived pairs hold every element: $texts")
+    }
+
+    /**
+     * User rule 2026-11-26: an element taken out of its pair's contexts is in no pair — the "Contexts and states" row warns
+     * until another pair holds it again.
+     */
+    @Test
+    fun an_element_in_no_pair_makes_the_pairs_incomplete() {
+        val kind = listOf("Task/a", "Task/b", "Task/c")
+        val pairs = listOf(SearchDomain.ContextPair(kind, true), SearchDomain.ContextPair(null, false), SearchDomain.ContextPair(emptyList(), true))
+        assertEquals(emptyList(), SearchDomain.contextsInNoPair(pairs, kind, listOf("Alarm/x")))
+        assertEquals(emptyList(), SearchDomain.contextsInNoPair(pairs, kind, null), "the others not listed yet: the whole \"no state\" pair holds them")
+        // "b" removed from the first pair: in no pair.
+        val removed = SearchDomain.withPairValues(pairs, 0, listOf("Task/a", "Task/c"))
+        assertEquals(listOf("Task/b"), SearchDomain.contextsInNoPair(removed, kind, listOf("Alarm/x")))
+        assertEquals("not complete: b is in no context-state", SearchDomain.contextsIncompleteWarning(listOf("Task/b")) { it.substringAfter('/') })
+        // The new pair given "b": complete again, and a new pair follows.
+        val readded = SearchDomain.withPairValues(removed, 2, listOf("Task/b"))
+        assertEquals(emptyList(), SearchDomain.contextsInNoPair(readded, kind, listOf("Alarm/x")))
+        assertEquals(4, readded.size)
+        // An element of the "no state" pair removed from it: in no pair.
+        val noState = SearchDomain.withPairValues(pairs, 1, emptyList())
+        assertEquals(listOf("Alarm/x"), SearchDomain.contextsInNoPair(noState, kind, listOf("Alarm/x")))
+    }
+
+    /** Anomaly 2026-11-26: an action row's "copy path" and "collapse sub-trees" were greyed. */
+    @Test
+    fun an_action_rows_path_and_the_open_rows_under_it() {
+        val group = actionRows(rows("a"), SearchDomain.Config(kinds = setOf(Kind.Chrono), added = listOf(key("a")))).first().group
+        fun row(id: String, depth: Int, open: Boolean = true) = SearchDomain.ActionListRow(id, id, id.uppercase(), "", depth, open, group, null)
+        val list = listOf(row("g", 0), row("act", 1), row("pair", 2), row("ctx", 3), row("st", 3, open = false), row("pair2", 2), row("h", 0))
+        assertEquals(listOf("G", "ACT", "PAIR", "CTX"), SearchDomain.actionRowPath(list, 3))
+        assertEquals(listOf("pair", "ctx", "pair2"), SearchDomain.openActionRowsUnder(list, 1))
+        assertEquals(emptyList(), SearchDomain.openActionRowsUnder(list, 3), "a leaf has nothing to collapse")
     }
 
     /**

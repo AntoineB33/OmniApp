@@ -1466,13 +1466,18 @@ suggestions before it was ever entered.
     its group's elements and has no "no state" pair. A context field names its pair's contexts while few, else counts them
     by kind. **Each pair is a row of the actions section** (user rule 2026-11-26, *"it doesn't really seem to be real rows
     … there should be three rows, each with two children … when it can be rows it must be rows"*; `ActionListRow.sub`,
-    `SubRowSpec`, `contextPairSpecs`): under the open "Contexts and states" row, a row per pair named by its contexts, its state beside,
+    `SubRowSpec`, `contextPairSpecs`): under the open "Contexts and states" row, a row per pair named by its place — "context-state 2", never by what it holds (user rule 2026-11-26: no program to name them; its context field says what it holds, `SearchDomain.contextPairTitle`) — its state beside,
     and under it a **"context"** row (the field opening B) and a **"states"** row (the action's editor) — open by default,
     opened and closed as view state; the list scrolls them (no page of twenty any more). **So are "State in each
     context", "Clicks and keys" and "Default presences"** (`SUB_ROW_ACTIONS`): a row per group of contexts, its state or
     nothing beside, with its "context" row (a link opening a Search window of them) and its "state" row (the control) or,
     for the presses, a row per press with what it does beside — none draws text of its own under its action row. The pairs are view state, set back
-    to the derived ones whenever a state set changes them. **The kind's
+    to the derived ones whenever a state set changes them. **Elements in no pair** (user rule 2026-11-26: one taken out of a pair's
+    contexts in B): the "Contexts and states" row is drawn red, *"not complete: … in no context-state"* beside it
+    (`ActionListRow.warning`, `SearchDomain.contextsInNoPair`), until a pair holds them again — the action's kind, and,
+    once listed and where the action has a "no state" pair, every other element. **Its rows' menus**: "copy path" (the
+    titles of the rows it hangs from) and "collapse sub-trees" (the open rows under it; greyed where none is) act on the
+    section's rows; "deep copy" stays a task cell's and is greyed on any other row. **The kind's
     elements are listed again only when what they are read from changes** (`SearchDomain.contextSourceOf`, their paths
     unread): listed on every state change with every other element besides, the editor held the UI thread 33 s of the
     release app's first 77 and no menu could be scrolled or opened (anomaly 2026-11-26). (A same-day
