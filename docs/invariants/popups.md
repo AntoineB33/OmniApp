@@ -53,9 +53,13 @@ window, a period's, a category's, a notice — is the same thing with the same m
   through the panel's intent (`SearchDomain.blockPanelIntent`, `CheckedBlocksActionEditor`). A band the app derives
   (a past stretch of inactivity) is no block: its double-click opens the period's Search window with "Add to the
   calendar" pinned at the band's start. The block, period, reminder-tag and "add… / edit…" editor windows are gone from
-  `App`. A pinned Search window is matched by its added elements, not its search alone (`openPinnedSearch`). Still windows
-  of their own: the default sub-tree's window and its per-object windows (its tree is not the account's), and the debug
-  time-simulation panel, which is no window of the app.
+  `App`. A pinned Search window is matched by its added elements, not its search alone (`openPinnedSearch`). **The Default
+  sub-tree** is an app setting (`AppSettingEntry.DefaultSubtree`) whose two actions are what its window held: "Applied
+  to new tasks" (the switch) and "Template tree" (`DefaultSubtreeTree`, the template drawn as the task tree, its keyboard
+  while it holds the focus); its button and a task's "Default sub-tree" open that Search window, the tree pinned.
+  Still windows of their own: the per-object windows a template row opens (its weights, relative priority, edit task,
+  category, deep copy — a Search window acts on the account's tree, not the template's), and the debug time-simulation
+  panel, which is no window of the app.
 - **The blank row ending a list of children shows a POP-UP, never a window** (user rule 2026-11-25: *"instead of opening a
   new window with a tab in the system tray, open a pop-up window. Add the arrow indicating that a pop-up window will appear
   when hovered over."*; `ChildSearchPopup`, `HoverPopupRow`'s `ask`). Hovered it shows the Search window of what can be

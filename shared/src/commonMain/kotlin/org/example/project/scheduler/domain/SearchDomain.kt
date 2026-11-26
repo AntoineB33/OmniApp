@@ -4499,6 +4499,13 @@ object SearchDomain {
         SupabaseUsage("Supabase free tier"),
         MemoryLimits("Memory limits"),
         Server("Server"),
+        /**
+         * User rule 2026-11-25 (*"the search window is the only window of the app"*): the default sub-tree — the
+         * template every new task is given ([SchedulerState.defaultSubtree]) — whose window is its two actions now:
+         * whether it is applied ([AddedAction.DefaultSubtreeApplied]) and the template tree itself
+         * ([AddedAction.DefaultSubtreeTree]).
+         */
+        DefaultSubtree("Default sub-tree"),
     }
 
     /**
@@ -4521,6 +4528,8 @@ object SearchDomain {
             AddedAction.SupabaseUsageControl to AppSettingEntry.SupabaseUsage,
             AddedAction.MemoryLimitsControl to AppSettingEntry.MemoryLimits,
             AddedAction.ServerControl to AppSettingEntry.Server,
+            AddedAction.DefaultSubtreeApplied to AppSettingEntry.DefaultSubtree,
+            AddedAction.DefaultSubtreeTree to AppSettingEntry.DefaultSubtree,
         )
     }
 
@@ -4541,6 +4550,7 @@ object SearchDomain {
             AppSettingEntry.SupabaseUsage -> "the server's usage, read on Refresh"
             AppSettingEntry.MemoryLimits -> "the project database's and this device's"
             AppSettingEntry.Server -> "the Supabase project this device syncs with"
+            AppSettingEntry.DefaultSubtree -> if (state.defaultSubtreeEnabled) "applied to every new task" else "not applied"
             AppSettingEntry.ClaudeLogs -> claudeLogs.directory.ifBlank { "no directory" }
             AppSettingEntry.Mute -> if (state.soundMuted) "muted on this device" else "sound on"
             AppSettingEntry.ClaudeSounds -> "how loud Claude Code is on this device"
@@ -5482,6 +5492,10 @@ object SearchDomain {
         SupabaseUsageControl(Kind.AppSetting, "Supabase free tier"),
         MemoryLimitsControl(Kind.AppSetting, "Memory limits"),
         ServerControl(Kind.AppSetting, "Server"),
+        /** User rule 2026-11-25: the default sub-tree's switch — applied to every new task or not. */
+        DefaultSubtreeApplied(Kind.AppSetting, "Applied to new tasks"),
+        /** User rule 2026-11-25: the default sub-tree's template, drawn as the task tree is (its window until that day). */
+        DefaultSubtreeTree(Kind.AppSetting, "Template tree"),
 
         /**
          * User rule 2026-11-13: an added search configuration with no search configuration children ([settingOf]) shows
@@ -6191,6 +6205,8 @@ object SearchDomain {
             AddedAction.TaskCopyIds -> "copy"
             AddedAction.TaskDeepCopy -> "deep copy clipboard"
             AddedAction.TaskRelationKeep -> "keep file first section"
+            AddedAction.DefaultSubtreeApplied -> "default sub-tree applied switch on off new task"
+            AddedAction.DefaultSubtreeTree -> "default sub-tree template tree rows switch new task id mirror"
             AddedAction.BlockTask -> "task of the checked blocks change new task"
             AddedAction.BlockPins -> "pins existence position spanning distance"
             AddedAction.BlockRepeat -> "repeat every days pattern recurs"

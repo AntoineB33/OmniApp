@@ -94,23 +94,6 @@ fun DefaultSubtreeWindow(
 ) {
     val frame = rememberWindowFrameState("DefaultSubtree", initialOffset, initialSize)
 
-    // The template as a tree the task-tree component can draw, and the percentages its rows show — the
-    // shares WITHIN the template, which is why they do not come from the projection (see
-    // DefaultSubtreeProjection.kt). Keyed on what they actually read rather than on the whole state, which
-    // is replaced by every engine tick.
-    val projected =
-        remember(
-            state.cells,
-            state.lists,
-            state.tasks,
-            state.defaultSubtree,
-            state.defaultSubtreeSelection,
-            state.defaultSubtreeEditSession,
-            state.focusedWindow,
-        ) { state.projectDefaultSubtree() }
-    val priorities =
-        remember(state.tasks, state.defaultSubtree) { state.defaultSubtreePriorities() }
-
     AppWindowFrame(
         title = "Default sub-tree",
         state = frame,
@@ -146,10 +129,9 @@ fun DefaultSubtreeWindow(
         )
         Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
 
-        TaskTreeView(
-            state = projected,
-            priorities = priorities,
-            onIntent = { intent -> onIntent(intent.forDefaultSubtree()) },
+        DefaultSubtreeTree(
+            state = state,
+            onIntent = onIntent,
             keyboardActive = focused,
             modifier = Modifier
                 .fillMaxWidth()
@@ -162,37 +144,86 @@ fun DefaultSubtreeWindow(
             onSetEditTask = onSetEditTask,
             onSetEditCategory = onSetEditCategory,
             onSetDeepCopyCell = onSetDeepCopyCell,
-            // The window's own raise-on-press is what focuses it, so the tree claims no app-wide focus.
-            refocusWindow = null,
-            // A Change Task row is NAMED from the live tree: the path says which of the account's tasks of
-            // that title the row points at, and the projection roots at the template, where a live task has
-            // no path at all (or the template's own, which says nothing about where it lives).
-            namingSource = state,
-            // The template is its OWN tree, so it gets its own colour solution: sharing the account's
-            // memo would make each of the two trees the "previous answer" the other's ties are settled
-            // against, and the cached answer would be thrown away on every recomposition of either.
-            hueMemo = remember { TaskHueMemo() },
-            rowTrailing = { cellId ->
-                // PRD §4: every titled row OF THE TEMPLATE carries the switch. Not the rows drawn under a
-                // bound one — those are the live tree's, and a switch is a fact about a template cell — and
-                // not an empty row, which keeps pointing at its blank task once emptying it took the list's
-                // trailing placeholder with it ([isTitledDefaultSubtreeRow]).
-                if (state.isTitledDefaultSubtreeRow(cellId)) {
-                    DefaultSubtreeRowSwitch(
-                        checked = cellId !in state.defaultSubtree.boundCells,
-                        onToggle = {
-                            onIntent(
-                                SchedulerIntent.SetDefaultSubtreeCellBound(
-                                    cellId = cellId,
-                                    bound = cellId !in state.defaultSubtree.boundCells,
-                                ),
-                            )
-                        },
-                    )
-                }
-            },
         )
     }
+}
+
+/**
+ * User rule 2026-11-25 (*"the search window is the only window of the app"*): **the template drawn as the task tree** —
+ * what the Default sub-tree window showed, drawn by it and by the Default sub-tree setting's action in a Search window
+ * ([org.example.project.scheduler.domain.SearchDomain.AddedAction.DefaultSubtreeTree]).
+ */
+@Composable
+internal fun DefaultSubtreeTree(
+    state: SchedulerState,
+    onIntent: (SchedulerIntent) -> Unit,
+    /** Whether its tree owns the keyboard. */
+    keyboardActive: Boolean,
+    modifier: Modifier = Modifier,
+    onSetWeightWindow: (CellListId?) -> Unit = {},
+    onSetRelativeWindow: (CellId?) -> Unit = {},
+    onSetEditTask: (TaskId?) -> Unit = {},
+    onSetEditCategory: (org.example.project.scheduler.model.CategoryId?) -> Unit = {},
+    onSetDeepCopyCell: (CellId?) -> Unit = {},
+) {
+    // The template as a tree the task-tree component can draw, and the percentages its rows show — the
+    // shares WITHIN the template, which is why they do not come from the projection (see
+    // DefaultSubtreeProjection.kt). Keyed on what they actually read rather than on the whole state, which
+    // is replaced by every engine tick.
+    val projected =
+        remember(
+            state.cells,
+            state.lists,
+            state.tasks,
+            state.defaultSubtree,
+            state.defaultSubtreeSelection,
+            state.defaultSubtreeEditSession,
+            state.focusedWindow,
+        ) { state.projectDefaultSubtree() }
+    val priorities =
+        remember(state.tasks, state.defaultSubtree) { state.defaultSubtreePriorities() }
+
+    TaskTreeView(
+        state = projected,
+        priorities = priorities,
+        onIntent = { intent -> onIntent(intent.forDefaultSubtree()) },
+        keyboardActive = keyboardActive,
+        modifier = modifier,
+        onSetWeightWindow = onSetWeightWindow,
+        onSetRelativeWindow = onSetRelativeWindow,
+        onSetEditTask = onSetEditTask,
+        onSetEditCategory = onSetEditCategory,
+        onSetDeepCopyCell = onSetDeepCopyCell,
+        // The window's own raise-on-press is what focuses it, so the tree claims no app-wide focus.
+        refocusWindow = null,
+        // A Change Task row is NAMED from the live tree: the path says which of the account's tasks of
+        // that title the row points at, and the projection roots at the template, where a live task has
+        // no path at all (or the template's own, which says nothing about where it lives).
+        namingSource = state,
+        // The template is its OWN tree, so it gets its own colour solution: sharing the account's
+        // memo would make each of the two trees the "previous answer" the other's ties are settled
+        // against, and the cached answer would be thrown away on every recomposition of either.
+        hueMemo = remember { TaskHueMemo() },
+        rowTrailing = { cellId ->
+            // PRD §4: every titled row OF THE TEMPLATE carries the switch. Not the rows drawn under a
+            // bound one — those are the live tree's, and a switch is a fact about a template cell — and
+            // not an empty row, which keeps pointing at its blank task once emptying it took the list's
+            // trailing placeholder with it ([isTitledDefaultSubtreeRow]).
+            if (state.isTitledDefaultSubtreeRow(cellId)) {
+                DefaultSubtreeRowSwitch(
+                    checked = cellId !in state.defaultSubtree.boundCells,
+                    onToggle = {
+                        onIntent(
+                            SchedulerIntent.SetDefaultSubtreeCellBound(
+                                cellId = cellId,
+                                bound = cellId !in state.defaultSubtree.boundCells,
+                            ),
+                        )
+                    },
+                )
+            }
+        },
+    )
 }
 
 /**

@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The Default sub-tree is a Search window — 2026-11-26
+
+- A "Default sub-tree" app setting holds "Applied to new tasks" and "Template tree" (the template drawn as the task tree);
+  its button and a task's "Default sub-tree" open its Search window with the tree pinned. The window is gone from `App`.
+- Still windows: the template rows' own per-object windows, the debug time-simulation panel.
+- Not checked on screen. Client rebuild only.
+
 ### Checked on the desktop; a pinned row follows its group — 2026-11-26
 
 - Seen working on a throwaway account: "deep copy" opens the task's Search window with "Deep copy" pinned and open; "pin

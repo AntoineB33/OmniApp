@@ -105,6 +105,8 @@ import org.example.project.ui.CustomMenuButtons
 import org.example.project.ui.LocalMenuButtonHost
 import org.example.project.ui.MenuButtonHost
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -2425,6 +2427,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     pinnedOn(SearchDomain.Kind.RestrictivePeriod.name + "/" + PeriodKinds.SLEEP, SearchDomain.AddedAction.PeriodSleepSchedule)
                 FloatingWindow.Online ->
                     pinnedOn(SearchDomain.Kind.AppSetting.name + "/" + SearchDomain.AppSettingEntry.Online.name, SearchDomain.AddedAction.OnlineControl)
+                FloatingWindow.DefaultSubtree ->
+                    pinnedOn(SearchDomain.Kind.AppSetting.name + "/" + SearchDomain.AppSettingEntry.DefaultSubtree.name, SearchDomain.AddedAction.DefaultSubtreeTree)
                 else -> null
             }
             return config?.let { SearchDomain.withDefaultSort(it.copy(pageTypesOnly = false)) }
@@ -2915,7 +2919,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // User rule 2026-11-25: a left-side menu window that became a Search window ([lateralAsSearch]), asked open by any
         // path — a flag set by a menu entry, a window left open before the update — opens that Search window instead.
         val searchLaterals = FloatingWindow.entries.filter { lateralAsSearch(it) != null }
-        LaunchedEffect(historyManagerOpen, sleepWindowOpen, alarmWindowOpen, taskRelationsWindowOpen, categoriesWindowOpen, shortcutsWindowOpen, onlineWindowOpen) {
+        LaunchedEffect(historyManagerOpen, sleepWindowOpen, alarmWindowOpen, taskRelationsWindowOpen, categoriesWindowOpen, shortcutsWindowOpen, onlineWindowOpen, defaultSubtreeWindowOpen) {
             for (kind in searchLaterals) {
                 if (!isWindowOpen(kind)) continue
                 setWindowOpen(kind, false)
@@ -4914,6 +4918,25 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // ([org.example.project.ui.LocalMenuControlHost]) — so every window can draw them.
                 CompositionLocalProvider(
                     org.example.project.ui.LocalMenuControlHost provides menuControlHost,
+                    // User rule 2026-11-25: what the Default sub-tree window showed, the Default sub-tree setting's action now.
+                    org.example.project.ui.LocalDefaultSubtreeContent provides {
+                        var treeFocused by remember { mutableStateOf(false) }
+                        org.example.project.ui.DefaultSubtreeTree(
+                            state = schedulerState,
+                            onIntent = { vm.dispatch(it) },
+                            keyboardActive = treeFocused,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 480.dp)
+                                .onFocusChanged { treeFocused = it.hasFocus },
+                            // PRD §5/§13: the template's own per-object windows, as its window opened them.
+                            onSetWeightWindow = { weightWindows.setFrom(template = true, it) },
+                            onSetRelativeWindow = { relativeWindows.setFrom(template = true, it) },
+                            onSetEditTask = { taskEditWindows.setFrom(template = true, it) },
+                            onSetEditCategory = { categoryWindows.setFrom(template = true, it) },
+                            onSetDeepCopyCell = { deepCopyWindows.setFrom(template = true, it) },
+                        )
+                    },
                     // User rule 2026-11-25: what the Online window showed, the Online app setting's action now.
                     org.example.project.ui.LocalOnlineContent provides {
                         org.example.project.scheduler.ui.OnlineContent(
@@ -5626,10 +5649,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             },
                             onDeepCopyCell = { openDeepCopySearch(it) },
                             // User rule 2026-11-11: the default sub-tree's window, from a task element's actions.
-                            onOpenDefaultSubtree = {
-                                if (!defaultSubtreeWindowOpen) defaultSubtreeWindowOpen = true
-                                presentWindow(FloatingWindow.DefaultSubtree, FloatingWindow.DefaultSubtree.name)
-                            },
+                            // User rule 2026-11-25: the Search window of the Default sub-tree setting, its tree pinned.
+                            onOpenDefaultSubtree = { openWindowOnItsPage(FloatingWindow.DefaultSubtree) },
                             onOpenWeightWindow = { openWeightSearch(it) },
                             onOpenRelativePriority = { openRelativeSearch(it) },
                             onOpenResilienceSearch = { kind -> openLinkedSearch(SearchDomain.resilienceSearchConfig(kind)) },
@@ -5957,40 +5978,6 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         }
                     }
 
-                    // PRD §4 Default sub-tree: the template grafted under every task the user creates. It
-                    // draws the SAME task-tree component the account's own tree does, over the state
-                    // projectDefaultSubtree() makes of the template — so it has the §13 contextual menu and
-                    // every tree gesture, with one switch per row added. The template and the switch beside
-                    // its menu button are authoritative synced state.
-                    LateralWindow(FloatingWindow.DefaultSubtree, defaultSubtreeWindowOpen) {
-                        Perf.measure("compose.DefaultSubtreeWindow") {
-                        DefaultSubtreeWindow(
-                            state = schedulerState,
-                            enabled = schedulerState.defaultSubtreeEnabled,
-                            onIntent = { vm.dispatch(it) },
-                            // The tree inside owns the keyboard only while this window is the front one.
-                            focused = windowFrames.frontId == windowInstanceId(FloatingWindow.DefaultSubtree.name),
-                            // PRD §5/§13: the same four per-object windows the account's tree opens, drawn by
-                            // the app on the top layer — a template row's "edit task" is the ordinary §13 window.
-                            onSetWeightWindow = { weightWindows.setFrom(template = true, it) },
-                            onSetRelativeWindow = { relativeWindows.setFrom(template = true, it) },
-                            onSetEditTask = { taskEditWindows.setFrom(template = true, it) },
-                            onSetEditCategory = { categoryWindows.setFrom(template = true, it) },
-                            onSetDeepCopyCell = { deepCopyWindows.setFrom(template = true, it) },
-                            onDismiss = { defaultSubtreeWindowOpen = false },
-                            initialOffset = defaultSubtreeOffset,
-                            initialSize = defaultSubtreeSize,
-                            onGeometryChange = { windowOffset, windowSize ->
-                                defaultSubtreeOffset = windowOffset
-                                defaultSubtreeSize = windowSize
-                                persistPlacement(FloatingWindow.DefaultSubtree, windowOffset, windowSize, true)
-                            },
-                            onRaise = { focusWindow(FloatingWindow.DefaultSubtree) },
-                            modifier = Modifier
-                                .align(Alignment.Center),
-                        )
-                        }
-                    }
 
 
                     // Debug-only time-acceleration control (gated by DebugFlags.TIME_SIMULATION).

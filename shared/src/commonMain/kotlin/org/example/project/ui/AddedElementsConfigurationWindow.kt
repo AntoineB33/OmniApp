@@ -563,6 +563,9 @@ internal class ActionSectionHost(
     val parent: ActionSectionHost? = null,
 )
 
+/** User rule 2026-11-25: what the Default sub-tree window showed ([DefaultSubtreeTree]), given by `App`. */
+internal val LocalDefaultSubtreeContent = androidx.compose.runtime.compositionLocalOf<(@Composable () -> Unit)?> { null }
+
 /** User rule 2026-11-25: what the Online window showed ([org.example.project.scheduler.ui.OnlineContent]), given by `App`. */
 internal val LocalOnlineContent = androidx.compose.runtime.compositionLocalOf<(@Composable () -> Unit)?> { null }
 
@@ -830,6 +833,13 @@ private fun AddedActionBlocks(
         // User rule 2026-11-25: the Online window is no more — what it showed is this action ([LocalOnlineContent]); the
         // menu's item opens the Search window holding it.
         SearchDomain.AddedAction.OnlineControl -> LocalOnlineContent.current?.invoke()
+        // User rule 2026-11-25: the Default sub-tree window is no more — its switch and its tree are these two actions.
+        SearchDomain.AddedAction.DefaultSubtreeApplied ->
+            CompactSwitch(
+                checked = state.defaultSubtreeEnabled,
+                onCheckedChange = { run(SearchDomain.AddedCommand.Raw(SchedulerIntent.SetDefaultSubtreeEnabled(it))) },
+            )
+        SearchDomain.AddedAction.DefaultSubtreeTree -> LocalDefaultSubtreeContent.current?.invoke()
         // User rule 2026-11-12: the calendar element — the calendar and its view, drawn by `App` for this window; and the
         // account's switches the calendar window held, by the menu's code.
         SearchDomain.AddedAction.CalendarGrid, SearchDomain.AddedAction.CalendarDay, SearchDomain.AddedAction.CalendarDisplay,
