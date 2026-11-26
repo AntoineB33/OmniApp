@@ -25,6 +25,10 @@ Check here before assuming the code matches the docs.
 - Anomaly: *"Selecting 'show header' for a search window B embedded in a search window A as its action section then
   dragging it away, must actually drag an exact copy of B, and the real B stays embedded in A"* — a section's head had
   no drag; it now detaches a copy (`ActionSearchRows.copyOf`) and the section stays. Client rebuild only.
+- Same day, checked on the desktop: the inner section's group was still missing — the menu's default "Entries, in
+  order" did not name it, and an entry it does not name is not listed (`MENU_ENTRIES` now names "section 2 …" and
+  "section 3 …", `NestedSectionMenuTest`); and the copy was the window itself, moved — `openWindowOnItsPage` brings back
+  an open window of the same configuration, so a pop-up made a window now never matches one (`matches = { false }`).
 
 ### A search's patience no longer runs out before the search starts — 2026-11-26
 

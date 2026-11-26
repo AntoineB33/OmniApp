@@ -650,7 +650,10 @@ means.
     actions section whose head is shown drags a COPY** (anomaly 2026-11-26, *"must actually drag an exact copy of B, and
     the real B stays embedded in A"*; `ActionSearchRows.copyOf`): a Search window of the configuration of the window it is
     the section of (its `inside` carrying the section's own), that section alone shown with a head; the section stays
-    drawn, nothing closes, and the pop-up it may stand in is not moved. `SearchPopupHead` hands it its window part, given by whatever hosts the pop-up (`LocalSearchPopupWindow`; the
+    drawn, nothing closes, and the pop-up it may stand in is not moved. **A pop-up made a window is always a NEW window**
+    (`detachSearchPopup`: `matches = { false }`): `openWindowOnItsPage` brings back an open window of the same
+    configuration, and the section's copy, its window's configuration, brought back and moved the window itself (seen on
+    the desktop 2026-11-26). `SearchPopupHead` hands it its window part, given by whatever hosts the pop-up (`LocalSearchPopupWindow`; the
     Search window drawn in no frame reads it and gives its own sections null). `FieldSearchPopupLayer` gives it: the
     drag moves the pop-up in the layer, the pop-ups over it closing; let go, or asked by a window button, it is a
     Search window of the app (`PopupDetacher.detachSearch`, a copy beside the user's) with the pop-up's configuration.
@@ -1189,7 +1192,9 @@ The account's data is shared, of course — an alarm edited in one copy shows in
   inside a section is a group of its own** (anomaly 2026-11-26, *"Right-clicking in the background of an action section
   of an action section should at least show 2 horizontal separators"*): one press leaves each section's options in turn
   (keyed by its uptime), the outermost's shown first, each group after its separator, its entries' ids told apart
-  (`sectionGroups`) — before, the outer section's overwrote the inner one's. The separator
+  (`sectionGroups`) — before, the outer section's overwrote the inner one's. The menu's default "Entries, in order"
+  (`ContextDomain.MENU_ENTRIES`' "SearchPartsMenu") names each level's group after its separator ("section 2 …",
+  "section 3 …"): an entry it does not name is not listed, which first hid the inner group (`NestedSectionMenuTest`). The separator
   is a menu entry (`MenuAction.separator()`), drawn while the list's search configuration "Separators between groups"
   (`Config.separators`, on in a menu's list, `OPTION_SEARCH`) is on; never at an end, never doubled.
 - **The one exception is a menu that holds text fields** (the quota's resilience values, `QuotaResilienceEditor`): a

@@ -79,6 +79,9 @@ object ContextDomain {
         "TaskIdentityRow", "EditMenuRow",
     )
 
+    /** How many sections deep a background menu names its sections' groups ([MENU_ENTRIES]' "SearchPartsMenu"). */
+    private const val NESTED_SECTION_GROUPS: Int = 3
+
     /** A Search window's background entries ("Show / Hide the header"…), by id, the window's or a section's. */
     private val SEARCH_PARTS: List<String> = listOf("the header", "the search bar", "the search", "the actions", "the added elements")
 
@@ -90,7 +93,10 @@ object ContextDomain {
     val MENU_ENTRIES: Map<String, List<String>> by lazy {
         ROW_MENUS.associateWith { ROW_MENU_ENTRIES } + mapOf(
             "TaskPathBox#2" to listOf("paths"),
-            "SearchPartsMenu" to listOf("Reset", "Copy id") + SEARCH_PARTS + "separator" + SEARCH_PARTS.map { "section $it" },
+            // Anomaly 2026-11-26: a section inside a section is a group of its own, after its separator — "section 2 …", a
+            // third level "section 3 …" (`sectionGroups`); unnamed here, its entries were dropped from the menu.
+            "SearchPartsMenu" to listOf("Reset", "Copy id") + SEARCH_PARTS + "separator" + SEARCH_PARTS.map { "section $it" } +
+                (2..NESTED_SECTION_GROUPS).flatMap { depth -> listOf("separator") + SEARCH_PARTS.map { "section $depth $it" } },
             "calendar grid menu" to listOf("element here", "choices", "edit…", "move", "add…", "day…", "display…", "lock…"),
             "calendar held drag menu" to listOf("cancel", "resume drag"),
             "LateralMenu" to listOf("Reset"),

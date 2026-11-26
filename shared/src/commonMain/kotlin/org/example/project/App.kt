@@ -2674,7 +2674,10 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // A Search pop-up (a field's: the "List of parents") becomes a Search window of its own, beside the user's.
         val detachSearchPopup = rememberUpdatedState { config: SearchDomain.Config, bounds: Rect, how: org.example.project.ui.DetachedAs, name: String?, given: androidx.compose.runtime.State<org.example.project.ui.SearchOptions>?, parts: org.example.project.ui.SearchSplits? ->
-            val id = openNewWindow(FloatingWindow.Search, config.encode(), asCopy = true)
+            // Anomaly 2026-11-26 (*"must actually drag an exact copy of B, and the real B stays"*): always a NEW window —
+            // never one already open with the same configuration, which was brought back and carried by the drag (an
+            // actions section's copy is its window's configuration: the window itself was moved).
+            val id = openNewWindow(FloatingWindow.Search, config.encode(), asCopy = true, matches = { false })
             // Anomaly 2026-11-25: a menu become a window lists the entries it was given, while the app runs.
             if (given != null) givenSearchRows[id] = given
             // User rule 2026-11-15: *"if the search bar was not in the window because taken care by the caller that was a
