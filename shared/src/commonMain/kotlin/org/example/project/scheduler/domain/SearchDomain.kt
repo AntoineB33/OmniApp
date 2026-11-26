@@ -464,17 +464,10 @@ object SearchDomain {
 
     /**
      * What a Search window opens with on [page] when nothing says otherwise — the global Search button's, user rule
-     * 2026-10-18. **The one difference between the pages' Search windows** (user rule 2026-10-31): what this button
-     * checks. The window itself is the same on both — every kind, every configuration, every sorting method.
+     * 2026-10-18: **every search configuration off on every page** (user rule 2026-11-26, [clearedConfig]) — every kind of
+     * the app, the default sorting; the page is only where the window stands.
      */
-    fun pageDefaultConfig(page: String): Config =
-        when (page) {
-            CLAUDE_LOGS_PAGE -> claudeLogsConfig()
-            SETTINGS_PAGE -> Config(kinds = SETTINGS_KINDS.toSet(), page = SETTINGS_PAGE, pageTypesOnly = true)
-            // User rule 2026-11-04: each page's button opens on its own types alone ([Config.pageTypesOnly]).
-            // User rule 2026-11-11: the default Search window has every type of its selector checked ([clearedConfig]).
-            else -> clearedConfig(page)
-        }
+    fun pageDefaultConfig(page: String): Config = clearedConfig(page)
 
     /** The configuration a Search window of the Claude Code logs page opens with: every kind of the logs, newest first. */
     fun claudeLogsConfig(): Config = Config(kinds = CLAUDE_KINDS.toSet(), page = CLAUDE_LOGS_PAGE, sorts = CLAUDE_SORTS, pageTypesOnly = true)
@@ -766,10 +759,14 @@ object SearchDomain {
         get() = clearedConfig("")
 
     /**
-     * [CLEARED_CONFIG] of a window on the page [page]: every kind checked, and nothing else — but the page's types alone
-     * offered (user rule 2026-11-04, [Config.pageTypesOnly]), as its Search button opens.
+     * [CLEARED_CONFIG] of a window on the page [page]: every kind checked and offered, and nothing else — what its Search
+     * button opens (user rule 2026-11-26: *"I want every search configuration off for the default 'Search button' in all
+     * feature pages"*; until then each page's offered its own types alone, the logs' newest first).
      */
-    fun clearedConfig(page: String): Config = Config(kinds = Kind.entries.toSet(), page = page, pageTypesOnly = true)
+    fun clearedConfig(page: String): Config = Config(kinds = Kind.entries.toSet(), page = page)
+
+    /** The Task Scheduler's page id. */
+    const val TASK_SCHEDULER_PAGE: String = ""
 
     /**
      * What the Search window's **Reset** puts in the place of [current]: the configuration the window [opened] with
@@ -1093,7 +1090,7 @@ object SearchDomain {
          * User rule 2026-11-04: **only this page's types** — while on, the type selector offers the kinds of the window's
          * [page] alone ([FeaturePage.kinds]: the logs page's prompts, answers and reasoning chains) and the window searches
          * the checked ones among them ([searchedKinds]); [kinds] keeps what it holds of the others, back when it is off.
-         * On in what each page's Search button opens ([pageDefaultConfig], [clearedConfig]); off in a configuration the
+         * Off in what each page's Search button opens since 2026-11-26 ([pageDefaultConfig]); off in a configuration the
          * app builds for one element or kind, and in one stored before it existed, which then search as they did.
          */
         val pageTypesOnly: Boolean = false,
@@ -2381,7 +2378,11 @@ object SearchDomain {
         listOfNotNull(
             // User rule 2026-11-16 (*"If nothing is on … what is shown in down arrow is random, right?"*): what orders the
             // list and what it lists are on wherever they are not a plain Search window's ([Config]'s defaults).
-            Setting.Types.takeIf { config.kinds != Config().kinds },
+            // User rule 2026-11-26 (*"A search window with every search configuration off is supposed to list every single
+            // element of the app"*): the types are on while one the selector offers is unchecked — every type checked is
+            // none set. Before, they were on wherever they differed from a plain [Config]'s, the tasks alone.
+            Setting.Types.takeIf { !config.kinds.containsAll(config.offeredKinds) },
+            Setting.PageTypes.takeIf { config.pageTypesOnly && config.offeredKinds.size < Kind.entries.size },
             // Anomaly 2026-11-20 (*"in 'Currently on', I don't understand 'sort by [relevance]'"*): "Sort results" draws
             // the methods about every row alone, so it is on for those; a kind's own methods are its own "Sort by", on
             // when one is in the sorting (the evolutions' "involvement" was in none of "Currently on").

@@ -102,6 +102,8 @@ class NestedSectionMenuTest {
         fun texts(): List<String> = nodes().mapNotNull { n -> n.config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text } }
         try {
             frames(8)
+            // User rule 2026-11-26: the actions section's title says how many actions it lists.
+            assertTrue(texts().any { it.startsWith("Actions on the added elements  ·  ") }, "the actions section's count: ${texts()}")
             // The inner section's one row: "Action: Parents".
             val row = nodes().first { n -> n.config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text }?.startsWith("Action:") == true }
             val at = Offset(row.boundsInRoot.center.x, row.boundsInRoot.bottom + 200f)

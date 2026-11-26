@@ -32,22 +32,19 @@ class FeaturePagesTest {
      */
     @Test
     fun each_pages_search_button_offers_that_pages_types_alone() {
+        // User rule 2026-11-26 (*"I want every search configuration off for the default 'Search button' in all feature
+        // pages"*): every page's opens on every type, offered and checked — nothing on — and its Reset goes back there.
         for (page in SearchDomain.FEATURE_PAGES) {
             val config = SearchDomain.pageDefaultConfig(page.id)
-            assertTrue(config.pageTypesOnly, page.label)
-            assertEquals(Kind.entries.filter { it in page.kinds }, config.offeredKinds, page.label)
-            assertTrue(config.searchedKinds.all { it in page.kinds }, page.label)
-            // The whole configuration cancelled (Reset twice) keeps it on, every type of the page checked.
-            val cleared = SearchDomain.resetConfig(config.copy(query = "x"), null)
-            assertTrue(cleared.pageTypesOnly && cleared.searchedKinds == page.kinds.toSet(), page.label)
+            assertFalse(config.pageTypesOnly, page.label)
+            assertEquals(Kind.entries, config.offeredKinds, page.label)
+            assertEquals(Kind.entries.toSet(), config.searchedKinds, page.label)
+            assertEquals(page.id, config.page, page.label)
+            assertEquals(emptyList(), SearchDomain.activeSettings(config), page.label)
+            assertEquals(config, SearchDomain.resetConfig(config.copy(query = "x"), null).copy(query = config.query), page.label)
         }
-        // User rule 2026-11-11: the default Search window (the Task Scheduler's) has every type of its selector checked.
-        val default = SearchDomain.pageDefaultConfig("")
-        assertEquals(default.offeredKinds.toSet(), default.searchedKinds)
-        val logs = SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE)
-        assertEquals(listOf(Kind.ClaudePrompt, Kind.ClaudeAnswer, Kind.ClaudeReasoning), logs.offeredKinds)
         // Off: every type is offered, and what the window held of the others is searched again.
-        val scheduler = SearchDomain.pageDefaultConfig("").copy(kinds = setOf(Kind.Task, Kind.ClaudePrompt))
+        val scheduler = SearchDomain.pageDefaultConfig("").copy(kinds = setOf(Kind.Task, Kind.ClaudePrompt), pageTypesOnly = true)
         assertEquals(setOf(Kind.Task), scheduler.searchedKinds)
         assertEquals(setOf(Kind.Task, Kind.ClaudePrompt), scheduler.copy(pageTypesOnly = false).searchedKinds)
         assertEquals(Kind.entries, scheduler.copy(pageTypesOnly = false).offeredKinds)
@@ -64,8 +61,8 @@ class FeaturePagesTest {
         for (kind in SearchDomain.SETTINGS_KINDS) {
             assertEquals(listOf(SearchDomain.SETTINGS_PAGE), SearchDomain.FEATURE_PAGES.filter { kind in it.kinds }.map { it.id }, kind.label)
         }
-        assertFalse(Kind.AppSetting in SearchDomain.pageDefaultConfig("").offeredKinds)
-        assertFalse(Kind.AppSetting in SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).offeredKinds)
+        assertFalse(Kind.AppSetting in SearchDomain.pageDefaultConfig("").copy(pageTypesOnly = true).offeredKinds)
+        assertFalse(Kind.AppSetting in SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).copy(pageTypesOnly = true).offeredKinds)
         assertTrue(Kind.AppSetting in SearchDomain.pageDefaultConfig(SearchDomain.SETTINGS_PAGE).offeredKinds)
         // Every kind is some page's, and one page's only.
         assertEquals(Kind.entries, Kind.entries.filter { k -> SearchDomain.FEATURE_PAGES.count { k in it.kinds } == 1 })
@@ -167,7 +164,7 @@ class FeaturePagesTest {
         // A search of its own is another window.
         assertFalse(SearchDomain.sameSearchConfigurations(button.encode(), button.copy(query = "work").encode()))
         assertFalse(SearchDomain.sameSearchConfigurations(button.encode(), button.copy(kinds = setOf(Kind.Alarm)).encode()))
-        assertFalse(SearchDomain.sameSearchConfigurations(button.encode(), button.copy(pageTypesOnly = false).encode()))
+        assertFalse(SearchDomain.sameSearchConfigurations(button.encode(), button.copy(pageTypesOnly = true).encode()))
     }
 
     @Test
@@ -196,8 +193,9 @@ class FeaturePagesTest {
 
     @Test
     fun the_settings_page_opens_on_the_settings_with_its_own_menu() {
+        // User rule 2026-11-26: its Search button has nothing on, as every page's — every kind, the settings among them.
         val config = SearchDomain.pageDefaultConfig(SearchDomain.SETTINGS_PAGE)
-        assertEquals(setOf(Kind.AppSetting, Kind.WorkplaceSetup), config.kinds)
+        assertEquals(Kind.entries.toSet(), config.searchedKinds)
         assertEquals(SearchDomain.SETTINGS_PAGE, config.page)
         assertEquals(config, SearchDomain.Config.decode(config.encode()))
         val menu = CustomMenuButtons.defaultsOf(SearchDomain.SETTINGS_PAGE)

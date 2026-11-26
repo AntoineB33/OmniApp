@@ -151,7 +151,8 @@ class ConfigurationTreeTest {
     /** User rule 2026-11-16: what is on now is "Currently on", after "Recent", each saying the way to its place. */
     @Test
     fun what_is_on_now_is_currently_on() {
-        val config = SearchDomain.Config(filters = SearchDomain.Filters(taskTreeRoot = SearchDomain.Tri.Yes))
+        // Every type checked: none set (user rule 2026-11-26), the filter alone on.
+        val config = SearchDomain.Config(kinds = SearchDomain.Kind.entries.toSet(), filters = SearchDomain.Filters(taskTreeRoot = SearchDomain.Tri.Yes))
         val tree = SearchDomain.configurationTree(config)
         assertEquals(listOf("recent", "on"), tree.take(2).map { (it as ConfigurationCategory).id })
         val on = tree[1] as ConfigurationCategory
@@ -159,7 +160,7 @@ class ConfigurationTreeTest {
         assertEquals(listOf("tasks › Root of a tree"), on.children.map { it.label })
         assertEquals(listOf(listOf("tasks")), on.children.map { (it as ConfigurationLeaf).path })
         // Nothing on: no such node.
-        assertTrue(SearchDomain.configurationTree(SearchDomain.Config()).none { it is ConfigurationCategory && it.id == "on" })
+        assertTrue(SearchDomain.configurationTree(SearchDomain.Config(kinds = SearchDomain.Kind.entries.toSet())).none { it is ConfigurationCategory && it.id == "on" })
     }
 
     /** The pop-up of "General" is gone with its node (2026-11-14): what a window kept under it is dropped on load. */
@@ -199,7 +200,7 @@ class ConfigurationTreeTest {
      */
     @Test
     fun what_is_on_by_default_is_found_in_default_for_this() {
-        val opened = SearchDomain.Config(filters = SearchDomain.Filters(matchCase = true), menuCustomizing = true)
+        val opened = SearchDomain.Config(kinds = SearchDomain.Kind.entries.toSet(), filters = SearchDomain.Filters(matchCase = true), menuCustomizing = true)
         val tree = SearchDomain.configurationTree(opened.copy(menuCustomizing = false), opened)
         val byDefault = tree.filterIsInstance<ConfigurationCategory>().single { it.id == "default" }
         assertEquals(SearchDomain.DEFAULT_NODE_LABEL, byDefault.label)

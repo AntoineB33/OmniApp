@@ -131,13 +131,15 @@ class CalendarButtonWindowTest {
             // Only the actions section: the search's and the added elements' heads are not there at all.
             assertTrue(shown.none { it.first.startsWith("Added elements") }, "no added elements section")
             // …nor the search section: the actions' head starts at the window's left edge, not right of a search column.
-            val actions = shown.first { it.first == "Actions on the added elements" }
+            // A section's title may end with how many it lists (user rule 2026-11-26).
+            fun titled(title: String, text: String) = text == title || text.startsWith("$title  ·  ")
+            val actions = shown.first { titled("Actions on the added elements", it.first) }
             assertTrue(actions.second.left < 100f, "the actions take the whole width: $actions")
             // The "Calendar" row at the top of the list, its group ("Calendar" too, one level out) not drawn at all — nor
             // pinned over it: one "Calendar" shown, and no row between the bar and it.
             val calendarRows = shown.filter { it.first == "Calendar" }
             assertTrue(calendarRows.size == 1, "the Calendar row alone, not its group: $calendarRows")
-            val bar = shown.first { it.first == "Search" }
+            val bar = shown.first { titled("Search", it.first) }
             val calendarRow = calendarRows.single()
             assertTrue(
                 shown.none { (t, b) -> t.isNotBlank() && b.top > bar.second.bottom && b.bottom < calendarRow.second.top - 1f },

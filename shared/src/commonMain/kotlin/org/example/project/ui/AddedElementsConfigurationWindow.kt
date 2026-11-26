@@ -321,13 +321,16 @@ internal fun AddedActionsSection(
     /** The room between the section's edges and what it shows — inside the area whose scroll it takes. */
     contentPadding: androidx.compose.foundation.layout.PaddingValues = androidx.compose.foundation.layout.PaddingValues(),
 ) {
+    // User rule 2026-11-26: how many actions it lists, as the added elements' title says theirs ([AddedActionList] counts
+    // them; a group of elements is no action).
+    var listedActions by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     CompactFields {
     Column(modifier.padding(contentPadding), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // No "All configurations" button (removed 2026-10-04): every action is listed right here.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             SectionArrow(collapsed, onToggleCollapsed)
             Text(
-                text = "Actions on the added elements",
+                text = "Actions on the added elements" + if (added.isEmpty() || listedActions == 0) "" else "  ·  $listedActions",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,
@@ -365,6 +368,7 @@ internal fun AddedActionsSection(
             highlighted = config.actionSearch,
             noneListed = "No action matches.",
             reveal = reveal,
+            onListed = { listedActions = it },
             // Anomaly 2026-11-15 (*"shift+scrolls, so it horizontally scrolls, but not enough to show the scrollbar"*): no
             // cut of its own around the list. The Search window it is cuts its list itself, and scrolls that cut
             // sideways ([SideCut]); a second cut here hid the rest, the scrollbar included, out of the scroll's reach.
@@ -406,6 +410,8 @@ private fun AddedActionList(
     modifier: Modifier = Modifier,
     /** The group the list is to start at ([AddedActionsSection]'s). */
     reveal: Pair<String, Int>? = null,
+    /** Told how many actions the list holds (user rule 2026-11-26: the section's title says it). */
+    onListed: ((Int) -> Unit)? = null,
 ) {
     // User rule 2026-10-10: the groups from the widest reach to the narrowest — every element, each kind holding
     // several, then each element's own ([SearchDomain.actionGroups]). A group's actions act on ITS elements.
@@ -413,6 +419,8 @@ private fun AddedActionList(
     val groups = SearchDomain.shownActionGroups(sections, added, config, handlers.claudeLogs())
     val listed = SearchDomain.listedGroupIds(groups)
     val rows = SearchDomain.actionListRows(groups, config)
+    val actionCount = rows.count { it.action != null }
+    if (onListed != null) LaunchedEffect(actionCount) { onListed(actionCount) }
     val latestConfig by rememberUpdatedState(config)
     val toggle = { id: String -> onConfigChange(SearchDomain.withActionGroupToggled(latestConfig, id, listed)) }
     // User rule 2026-11-25: the row to start at — what the window asks ([reveal]) or the pinned row, the later ask winning.

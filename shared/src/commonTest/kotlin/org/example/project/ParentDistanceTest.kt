@@ -165,9 +165,11 @@ class ParentDistanceTest {
     @Test
     fun aWindowOpenedOnNothingHasNoContextNode() {
         assertEquals(emptyList(), SearchDomain.contextSettings(null))
-        assertEquals(emptyList(), SearchDomain.contextSettings(SearchDomain.Config()))
+        // Nothing on: every type checked (user rule 2026-11-26).
+        assertEquals(emptyList(), SearchDomain.contextSettings(SearchDomain.Config(kinds = SearchDomain.Kind.entries.toSet())))
         assertEquals("recent", (SearchDomain.configurationTree(SearchDomain.Config(), SearchDomain.Config()).first() as SearchDomain.ConfigurationCategory).id)
         // Opened on a filter: that filter.
-        assertEquals(listOf(Setting.TaskSchedulable), SearchDomain.contextSettings(SearchDomain.resilienceSearchConfig("sleep")))
+        // ...and its types, the tasks alone (user rule 2026-11-26: a type unchecked is a type set).
+        assertEquals(listOf(Setting.TaskSchedulable, Setting.Types), SearchDomain.contextSettings(SearchDomain.resilienceSearchConfig("sleep")))
     }
 }

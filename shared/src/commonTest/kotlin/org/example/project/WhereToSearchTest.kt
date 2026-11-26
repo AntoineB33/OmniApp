@@ -92,7 +92,7 @@ class WhereToSearchTest {
         assertEquals(emptyList(), SearchDomain.whereSettingsOn(SearchDomain.Filters()))
         val filters = SearchDomain.Filters().withSearches(Setting.SearchInId, true).withSearches(Setting.SearchInChildren, true).copy(childDistance = 2)
         assertEquals(listOf(Setting.SearchInId, Setting.SearchInChildren, Setting.ChildDistance), SearchDomain.whereSettingsOn(filters))
-        val on = SearchDomain.configurationTree(SearchDomain.Config(filters = filters)).filterIsInstance<ConfigurationCategory>().single { it.id == SearchDomain.ON_NODE }
+        val on = SearchDomain.configurationTree(SearchDomain.Config(kinds = SearchDomain.Kind.entries.toSet(), filters = filters)).filterIsInstance<ConfigurationCategory>().single { it.id == SearchDomain.ON_NODE }
         assertEquals(listOf(Setting.SearchInId, Setting.SearchInChildren, Setting.ChildDistance), on.children.map { (it as ConfigurationLeaf).setting })
     }
 

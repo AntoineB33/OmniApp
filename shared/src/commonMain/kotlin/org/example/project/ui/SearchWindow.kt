@@ -1590,8 +1590,11 @@ fun SearchWindow(
             if (picker == null && !embedded) Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionArrow(collapsed = false, onToggle = { searchCollapsed = true })
                 // One line, never wrapped: a section narrowed to an edge cuts its title, it does not squeeze it.
+                // User rule 2026-11-26: how many elements it lists, as the added elements' title says theirs — its creation
+                // rows ("New task") are no element; a tree draws what it finds itself, uncounted.
+                val listedCount = if (treeList != null) 0 else results.count { it.kind != SearchDomain.Kind.Creation }
                 Text(
-                    "Search",
+                    "Search" + if (listedCount == 0) "" else "  ·  $listedCount",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,

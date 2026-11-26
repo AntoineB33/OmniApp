@@ -1844,7 +1844,15 @@ suggestions before it was ever entered.
   Since 2026-11-16 (*"The search of a search configuration from the down arrow must be a very intuitive and easy tree
   navigation"*, a sketch), in order: **"Recent"** — "Here", what was changed in this window, the last first (none
   while nothing was), then every configuration, the last changed first (`Config.settingsChangedAt`, local-only, no
-  part of the search); **"Currently on"** (`activeSettings`); **"Relevant here"**, what the window is about whatever
+  part of the search); **"Currently on"** (`activeSettings`) — **"Types" in it while one type the selector offers is
+  unchecked, "Only this page's types" while it narrows them** (user rule 2026-11-26, *"A search window with every search
+  configuration off is supposed to list every single element of the app"*: every type checked is no type set; before,
+  "Types" was on wherever the kinds were not a plain `Config`'s, the tasks alone). **Every feature page's Search button
+  opens with nothing on** (*"I want every search configuration off for the default 'Search button' in all feature
+  pages"*): every kind checked and offered, the default sorting, the page only where it stands (`pageDefaultConfig` =
+  `clearedConfig`, its Reset too); until then each page offered its own types alone, the logs newest first. **Each of the three sections' titles counts what it lists** (user rule 2026-11-26):
+  "Search · n" its elements (no creation row; a tree's list uncounted), "Actions on the added elements · n" its actions
+  (no group of elements), "Added elements · n"; **"Relevant here"**, what the window is about whatever
   it holds (the code's `relevant`); **"Default for this"**, what the window was opened on (`contextSettings`; a
   window opened on nothing, its page's default) — **every setting "Currently on" would list for that configuration**, the
   two reading one list of the window's own settings (`ownSettingsOn`, anomaly 2026-11-19) — and **each group ends with its own "Default for this"**, the part of

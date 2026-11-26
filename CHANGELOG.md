@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Section counts; every page's Search window has nothing on — 2026-11-26
+
+- User rule: *"Why the number of elements only shown for the added elements list section? Add it to the two other
+  sections."* "Search · n" (the elements listed, no creation row) and "Actions on the added elements · n" (its actions,
+  no group of elements), as "Added elements · n".
+- User rule: *"the window of the default 'Search' button in the left-side menu of 'task scheduler' must have no search
+  configuration on"*. Its configuration checked every kind but "Only this page's types" narrowed them (no app settings,
+  no Claude Code logs), and "Types" counted as on wherever the kinds were not a plain `Config`'s (the tasks alone). Now
+  "Types" is on while an offered type is unchecked, "Only this page's types" shows when it narrows them, and the Task
+  Scheduler's default (and its Reset) offer and check every kind. Then: *"I want every search configuration off for the
+  default 'Search button' in all feature pages"* — the logs' and the settings' too (no page types, no newest-first
+  sorting). Ten tests restated for the rule. Client rebuild only.
+
 ### "Contexts and states" covers every element; nested section menus; a section's head drags a copy — 2026-11-26
 
 - Anomaly: *"in 'Contexts and states' for the element 'Minimum Time', I must find the minimum time of all task

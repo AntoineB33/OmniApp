@@ -32,8 +32,9 @@ class ArrowSearchSameLogicTest {
         assertTrue(onSettings.containsAll(listOf(Setting.Types, Setting.SortResults, Setting.SearchInChildren, Setting.ChildDistance)), onSettings.toString())
         val byDefault = tree.filterIsInstance<ConfigurationCategory>().single { it.id == "default" }
         assertTrue(byDefault.children.map { (it as ConfigurationLeaf).setting }.containsAll(listOf(Setting.Types, Setting.SortResults)))
-        // A plain Search window's are no news: its types and its order are the defaults of every window.
-        val plain = SearchDomain.configurationTree(SearchDomain.Config())
+        // A plain Search window's are no news: its types and its order are the defaults of every window. User rule
+        // 2026-11-26: a window with nothing on lists every element — every type checked.
+        val plain = SearchDomain.configurationTree(SearchDomain.Config(kinds = SearchDomain.Kind.entries.toSet()))
         assertTrue(plain.none { it is ConfigurationCategory && it.id == SearchDomain.ON_NODE })
     }
 

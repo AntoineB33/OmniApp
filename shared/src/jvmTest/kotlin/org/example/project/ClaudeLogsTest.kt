@@ -302,8 +302,9 @@ class ClaudeLogsTest {
 
     @Test
     fun thePagesDifferOnlyByWhatTheirSearchButtonChecks() {
-        assertEquals(SearchDomain.FEATURE_PAGES.first { it.id == "" }.kinds.toSet(), SearchDomain.pageDefaultConfig("").searchedKinds)
-        assertEquals(SearchDomain.CLAUDE_KINDS.toSet(), SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).kinds)
+        // User rule 2026-11-26: every page's searches every kind of the app, nothing on; the page is where it stands.
+        assertEquals(SearchDomain.Kind.entries.toSet(), SearchDomain.pageDefaultConfig("").searchedKinds)
+        assertEquals(SearchDomain.Kind.entries.toSet(), SearchDomain.pageDefaultConfig(SearchDomain.CLAUDE_LOGS_PAGE).searchedKinds)
         // The logs' directory is an app setting.
         val settings = SearchDomain.results(SchedulerState.empty(), setOf(SearchDomain.Kind.AppSetting), "Claude", claudeLogs = catalog)
         assertEquals(listOf("C:\\logs"), settings.filter { it.name == "Claude Code logs" }.map { (it as SearchDomain.ItemResult).detail })
@@ -331,10 +332,9 @@ class ClaudeLogsTest {
         // A logs window reset to nothing is still the logs page's: a window never changes page.
         val reset = SearchDomain.resetConfig(config, opened = null)
         assertEquals(SearchDomain.CLAUDE_LOGS_PAGE, reset.page)
-        // …and every kind is checked, as on the scheduler's page: it is the same window — but only the page's types are
-        // offered and searched (user rule 2026-11-04, `Config.pageTypesOnly`), and the title names them.
-        assertEquals(SearchDomain.Kind.entries.toSet(), reset.kinds)
-        assertEquals("all prompts, answers and reasoning chains", SearchDomain.windowTitle(reset))
+        // …and every kind is checked and searched, as on the scheduler's page: nothing on (user rule 2026-11-26).
+        assertEquals(SearchDomain.Kind.entries.toSet(), reset.searchedKinds)
+        assertEquals("everything", SearchDomain.windowTitle(reset))
         assertEquals("all prompts, answers and reasoning chains", SearchDomain.windowTitle(SearchDomain.claudeLogsConfig()))
         assertEquals("everything", SearchDomain.windowTitle(SearchDomain.CLEARED_CONFIG))
     }

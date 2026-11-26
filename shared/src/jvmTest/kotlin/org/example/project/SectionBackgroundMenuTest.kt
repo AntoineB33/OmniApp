@@ -99,6 +99,9 @@ class SectionBackgroundMenuTest {
         }
         try {
             frames(6)
+            // User rule 2026-11-26: the search section's title says how many elements it lists, as the added elements' does.
+            assertTrue(texts().any { it.startsWith("Search  ·  ") }, "the search section's count: ${texts()}")
+            assertTrue("Added elements  ·  1" in texts(), texts().toString())
             val headerLabel = "Hide the search"
             // The search section's background, far under its rows: the window's own options, once.
             rightClick(Offset(300f, 880f))
