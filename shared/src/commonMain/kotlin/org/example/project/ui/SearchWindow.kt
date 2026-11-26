@@ -2689,6 +2689,8 @@ fun SearchWindow(
             ) {
                 Column(
                     Modifier.fillMaxSize()
+                        // Anomaly 2026-11-26: the click that opened it is not one of its own ([deafToTheOpeningClick]).
+                        .deafToTheOpeningClick()
                         // Anomaly 2026-11-25 (*"some parts of the background of B doesn't open a window at right-click"*):
                         // the pop-up's padding is its background too.
                         .then(
@@ -3342,6 +3344,30 @@ internal class SectionBackground {
     }
     /** The groups the press left, the outermost section's first; none left after. */
     fun take(): List<List<MenuAction>> = pending.reversed().also { pending.clear(); press = -1L }
+}
+
+/**
+ * Anomaly 2026-11-26 (*"Right-clicking the row Action: Minimum time / Contexts and states opens two windows"*): **a pop-up
+ * answers no press until the click that opened it is over** — until it has seen the pointer with no button down. A row's
+ * menu is a pop-up Search window opening under the pointer while the right button is still held; on the desktop, Compose
+ * turns that held button into a press in the new window (no press of AWT's: the trace showed none), and the pop-up's
+ * background answered it with its own menu ("Show the header", …) beside the row's. Its presses are consumed on the
+ * Initial pass, before anything inside sees them. Event-driven: no delay decides it. A mouse's only: a finger has no
+ * hover, its first press is its own.
+ */
+internal fun Modifier.deafToTheOpeningClick(): Modifier = composed {
+    val over = remember { BooleanArray(1) }
+    pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (!over[0]) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                // A finger has no hover: its first event in the pop-up is a press of its own (docs/PLATFORMS.md).
+                val mouse = event.changes.all { it.type == androidx.compose.ui.input.pointer.PointerType.Mouse }
+                if (!mouse || event.changes.none { it.pressed }) over[0] = true
+                else event.changes.forEach { it.consume() }
+            }
+        }
+    }
 }
 
 /** User rule 2026-11-25: the contexts' defaults the user changed, which every menu and drop-down opens with; given by `App`. */

@@ -710,6 +710,14 @@ means.
     `MenuActsOnReleaseTest`): acting on the press, the menu window vanished under a held button and the rest of the
     click reached what was under it — the "add a parent" pop-up's row, which picked and closed it. The 2026-10-15 fix
     had taken the right button alone.
+  - **A pop-up answers no press until the click that opened it is over** (anomaly 2026-11-26: *"Right-clicking the row
+    Action: Minimum time / Contexts and states opens two windows"*; `deafToTheOpeningClick`, `PopupOpeningClickTest`):
+    until it has seen the mouse with no button down, its presses are consumed on the Initial pass. A row's menu is a
+    pop-up Search window opening under the pointer while the right button is still held; Compose Desktop turned that held
+    button into a press in the new window — no press of AWT's (`RightPresses` heard none; a `[popup]` trace showed the
+    pop-up's `SearchPartsMenu` opening 90 ms after the row's menu with no right-click logged) — and the pop-up's
+    background opened "Show the header", … beside the row's menu. Not reproducible headlessly: a scene keeps a held
+    pointer with the owner it went down in. A finger has no hover: its first press in a pop-up is its own.
   - **The keyboard settling as a menu opens never closes it** (anomaly 2026-11-15, 8: *"Sometimes, even when there is no
     right-click menu open it needs a second right-click to open the menu"*; `MenuSession.settling`): for 600 ms after
     it opens, the menu losing the keyboard or the active window to a window of the app, with no press since, leaves it
