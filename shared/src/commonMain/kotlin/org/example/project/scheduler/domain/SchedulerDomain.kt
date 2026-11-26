@@ -396,16 +396,15 @@ object SchedulerDomain {
      * Every cell drawn under the list [listId], at any depth — each list walked once (a mirrored sub-tree is ONE list).
      * What "collapse sub-trees" and "retract with every sub-child" close, in the tree and in a Search window's sub-trees.
      */
-    fun cellsUnder(state: SchedulerState, listId: CellListId, maxLevel: Int? = null): Set<CellId> {
+    fun cellsUnder(state: SchedulerState, listId: CellListId, fromLevel: Int = 1): Set<CellId> {
         val found = LinkedHashSet<CellId>()
         val visitedLists = HashSet<CellListId>()
-        // [maxLevel]: the cells of [listId] are level 1, theirs 2 — none deeper is listed (the menu's "collapse" level).
+        // [fromLevel]: the cells of [listId] are level 1, theirs 2 — none above it is listed (the menu's "collapse" level).
         fun walk(id: CellListId, level: Int) {
-            if (maxLevel != null && level > maxLevel) return
             if (!visitedLists.add(id)) return
             val list = state.lists[id] ?: return
             for (childId in list.cellIds) {
-                found += childId
+                if (level >= fromLevel) found += childId
                 val next = state.cells[childId]?.taskId?.let { state.tasks[it]?.childListId } ?: continue
                 walk(next, level + 1)
             }

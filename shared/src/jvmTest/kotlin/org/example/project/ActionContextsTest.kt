@@ -183,8 +183,10 @@ class ActionContextsTest {
         fun row(id: String, depth: Int, open: Boolean = true) = SearchDomain.ActionListRow(id, id, id.uppercase(), "", depth, open, group, null)
         val list = listOf(row("g", 0), row("act", 1), row("pair", 2), row("ctx", 3), row("st", 3, open = false), row("pair2", 2), row("h", 0))
         assertEquals(listOf("G", "ACT", "PAIR", "CTX"), SearchDomain.actionRowPath(list, 3))
-        assertEquals(listOf("pair", "ctx", "pair2"), SearchDomain.openActionRowsUnder(list, 1))
-        assertEquals(emptyList(), SearchDomain.openActionRowsUnder(list, 3), "a leaf has nothing to collapse")
+        assertEquals(listOf("pair", "ctx", "pair2"), SearchDomain.openActionRowsUnder(list, 1, keepLevels = 1))
+        assertEquals(listOf("act", "pair", "ctx", "pair2"), SearchDomain.openActionRowsUnder(list, 1, keepLevels = 0))
+        assertEquals(listOf("ctx"), SearchDomain.openActionRowsUnder(list, 1, keepLevels = 2))
+        assertEquals(emptyList(), SearchDomain.openActionRowsUnder(list, 3, keepLevels = 1), "a leaf keeping itself has nothing to close")
     }
 
     /**

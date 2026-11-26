@@ -36,6 +36,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -1296,10 +1297,10 @@ fun SearchWindow(
     /** A path already named, segment by segment. */
     fun copyPathOf(segments: List<String>) = writeSystemClipboardText(SearchDomain.pathLabel(segments))
     /** The cells under the list [listId] closed in this window's sub-trees ([SchedulerState.searchExpanded]). */
-    fun closeSubtreeCells(listId: CellListId, keepFromLevel: Int? = null) {
+    fun closeSubtreeCells(listId: CellListId, keepLevels: Int = 1) {
         val key = subtreeCellsKey
         val open = currentState.searchExpanded[key].orEmpty()
-        val under = SchedulerDomain.cellsUnder(currentState, listId, keepFromLevel?.let { it - 1 })
+        val under = SchedulerDomain.cellsUnder(currentState, listId, fromLevel = keepLevels)
         if (open.any { it in under }) onIntent(SchedulerIntent.SetSearchExpanded(key, open - under))
     }
     /**
@@ -1347,7 +1348,12 @@ fun SearchWindow(
             onCopyPath = { writeSystemClipboardText(SearchDomain.pathLabel(shownPath + SearchDomain.pathSegment(live?.title ?: result.title, taskId.value))) },
             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
             // The row's sub-tree is this window's ([SchedulerState.searchExpanded]), never the tree's: closed here.
-            onCollapse = childListId?.let { listId -> { level -> closeSubtreeCells(listId, level) } },
+            onCollapse = childListId?.let { listId ->
+                { level ->
+                    closeSubtreeCells(listId, level)
+                    if (SearchDomain.collapses(0, level)) expandedTasks = expandedTasks - taskId
+                }
+            },
         )
     }
 
@@ -1358,10 +1364,11 @@ fun SearchWindow(
             onCopyPath = { copyElementPath(key, ancestors, selfName) },
             // The rows open under it: drawn on surfaces whose keys start with its own ([childSurface]), a level a ">"
             // further ([elementLevelUnder]). Greyed with none open.
-            onCollapse = if (expandedElements.none { it.startsWith("$rowKey>") }) null else {
+            onCollapse = if (expandedElements.none { it == rowKey || it.startsWith("$rowKey>") }) null else {
                 { level ->
                     expandedElements = expandedElements.filterNot { k ->
-                        k.startsWith("$rowKey>") && SearchDomain.collapses(elementLevelUnder(rowKey, k), level)
+                        (k == rowKey && SearchDomain.collapses(0, level)) ||
+                            (k.startsWith("$rowKey>") && SearchDomain.collapses(elementLevelUnder(rowKey, k), level))
                     }.toSet()
                 }
             },
@@ -2099,7 +2106,7 @@ fun SearchWindow(
                                             rowMenu = RowMenuCommon(
                                                 onCopyId = { copyIds(listOf(resultKey(result))) },
                                                 onCopyPath = { copyPathOf(actionRows.pathOf(actionRow)) },
-                                                onCollapse = actionRows.openUnder(actionRow, null).takeIf { it.isNotEmpty() }?.let {
+                                                onCollapse = actionRows.openUnder(actionRow, 0).takeIf { it.isNotEmpty() }?.let {
                                                     { level ->
                                                         val under = actionRows.openUnder(actionRow, level)
                                                         actionRows.onClose?.invoke(under) ?: under.forEach(actionRows.onToggle)
@@ -2826,8 +2833,8 @@ internal const val CHECK_ONLY_LABEL: String = "check only this"
 internal class RowMenuCommon(
     val onCopyId: (() -> Unit)?,
     val onCopyPath: (() -> Unit)?,
-    /** The menu's "collapse" ([TaskCellMenuActions.onCollapse]): given the level from which the children stay as they are. */
-    val onCollapse: ((Int?) -> Unit)?,
+    /** The menu's "collapse" ([TaskCellMenuActions.onCollapse]): given how many levels stay as they are. */
+    val onCollapse: ((Int) -> Unit)?,
     /** Entries only this row has, after "add" (user rule 2026-11-25: an action row's "pin this row"). */
     val extra: List<MenuAction> = emptyList(),
     /** User 2026-11-26: "deep copy" — every element's, not a task's alone. */
@@ -2939,8 +2946,8 @@ class ActionSearchRows(
     fun pathOf(row: SearchDomain.ActionListRow): List<String> = SearchDomain.actionRowPath(rows, indexById[row.id] ?: -1)
 
     /** The open rows under [row] ([SearchDomain.openActionRowsUnder]): what its "collapse sub-trees" closes. */
-    fun openUnder(row: SearchDomain.ActionListRow, keepFromLevel: Int?): List<String> =
-        SearchDomain.openActionRowsUnder(rows, indexById[row.id] ?: -1, keepFromLevel)
+    fun openUnder(row: SearchDomain.ActionListRow, keepLevels: Int): List<String> =
+        SearchDomain.openActionRowsUnder(rows, indexById[row.id] ?: -1, keepLevels)
 }
 
 /** User rule 2026-11-25: the right-click entries pinning an action row ([ActionSearchRows.onPin]). */
@@ -3869,15 +3876,26 @@ private fun Modifier.resultRowGestures(
  * rest of it reached the "add a parent" pop-up under the menu, whose row picked a parent and closed it. One rule for
  * both buttons: [onPrimary] on a click's release, [onSecondary] on a right-click's.
  */
-private fun Modifier.pickOnRelease(key: Any, onPrimary: (() -> Unit)?, onSecondary: (() -> Unit)?): Modifier =
+private fun Modifier.pickOnRelease(
+    key: Any,
+    onPrimary: (() -> Unit)?,
+    onSecondary: (() -> Unit)?,
+    /**
+     * Anomaly 2026-11-26 (*"Clicking on the input field shouldn't activate collapse"*): where a press is the row's control's
+     * own (its [ItemResultRow] trailing field), in this modifier's space — left to the control, never a pick.
+     */
+    skip: (androidx.compose.ui.geometry.Offset) -> Boolean = { false },
+): Modifier =
     composed {
         val primary by rememberUpdatedState(onPrimary)
         val secondary by rememberUpdatedState(onSecondary)
+        val skipped by rememberUpdatedState(skip)
         pointerInput(key) {
             awaitPointerEventScope {
                 while (true) {
                     val press = awaitPointerEvent(PointerEventPass.Initial)
                     if (press.type != PointerEventType.Press) continue
+                    if (press.changes.any { skipped(it.position) }) continue
                     val act = when {
                         press.buttons.isSecondaryPressed -> secondary
                         press.buttons.isPrimaryPressed -> primary
@@ -4570,9 +4588,9 @@ internal fun TaskIdentityRow(
                 val occurrence = SchedulerDomain.firstTaskOccurrence(latest, taskId)
                 val shownPath = paths.firstOrNull()
                 val cellsKey = subtreeWindowKey()
-                val closeCells = { level: Int? ->
+                val closeCells = { level: Int ->
                     val open = latest.searchExpanded[cellsKey].orEmpty()
-                    val under = childListId?.let { SchedulerDomain.cellsUnder(latest, it, level?.let { l -> l - 1 }) }.orEmpty()
+                    val under = childListId?.let { SchedulerDomain.cellsUnder(latest, it, fromLevel = level) }.orEmpty()
                     if (open.any { it in under }) onIntent(SchedulerIntent.SetSearchExpanded(cellsKey, open - under))
                 }
                 ActionMenu("TaskIdentityRow",
@@ -4589,7 +4607,10 @@ internal fun TaskIdentityRow(
                                 writeSystemClipboardText(SearchDomain.pathLabel(shownPath.orEmpty() + SearchDomain.pathSegment(latest.tasks[taskId]?.title, taskId.value)))
                             },
                             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
-                            onCollapse = if (hasChildren) closeCells else null,
+                            onCollapse = if (hasChildren) { level ->
+                                closeCells(level)
+                                if (SearchDomain.collapses(0, level)) expanded = false
+                            } else null,
                         ),
                     ),
                 )
@@ -4703,6 +4724,9 @@ internal fun ItemResultRow(
     trailingFills: Boolean = true,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    // Where the row and its control are laid out: a press on the control is the control's ([pickOnRelease]'s skip).
+    val rowCoords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+    val trailingCoords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
     val workplaceRuns = LocalWorkplaceRuns.current
     // The gestures are keyed by the row and started once: they call the handlers of the LATEST composition.
     val currentOnSelect by rememberUpdatedState(onSelect)
@@ -4719,7 +4743,12 @@ internal fun ItemResultRow(
             .then(if (enabled) Modifier else Modifier.alpha(0.38f))
             .then(
                 if (onPrimaryRelease == null && onSecondaryRelease == null) Modifier
-                else Modifier.pickOnRelease(item.id, onPrimaryRelease, onSecondaryRelease),
+                else Modifier.onPlaced { rowCoords[0] = it }.pickOnRelease(item.id, onPrimaryRelease, onSecondaryRelease) { at ->
+                    val row = rowCoords[0]
+                    val control = trailingCoords[0]
+                    row != null && control != null && control.isAttached && row.isAttached &&
+                        row.localBoundingBoxOf(control).contains(at)
+                },
             )
             .resultRowGestures(
                 key = item.kind.name + "/" + item.id,
@@ -4770,7 +4799,9 @@ internal fun ItemResultRow(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
-                if (trailing != null) Box(if (trailingFills) Modifier.weight(1f) else Modifier) { trailing() }
+                if (trailing != null) {
+                    Box((if (trailingFills) Modifier.weight(1f) else Modifier).onPlaced { trailingCoords[0] = it }) { trailing() }
+                }
             }
         }
         // User rule 2026-11-12: the menu is a Search window of its entries.

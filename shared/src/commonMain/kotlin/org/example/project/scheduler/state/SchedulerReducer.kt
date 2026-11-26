@@ -324,7 +324,7 @@ object SchedulerReducer {
             SchedulerIntent.EmptySelectedCells -> reduceEmptySelected(state)
             is SchedulerIntent.ExitEdit -> reduceExitEdit(state, intent.navigation)
             is SchedulerIntent.ToggleExpand -> reduceToggleExpand(state, intent.cellId)
-            is SchedulerIntent.CollapseSubtrees -> reduceCollapseSubtrees(state, intent.cellId, intent.keepFromLevel)
+            is SchedulerIntent.CollapseSubtrees -> reduceCollapseSubtrees(state, intent.cellId, intent.keepLevels)
             is SchedulerIntent.RevealCell -> reduceRevealCell(state, intent.cellId, intent.ancestors)
             is SchedulerIntent.ReplaceTaskTitles -> reduceReplaceTaskTitles(state, intent.titles)
             is SchedulerIntent.SetCellTitle -> commitDelta(state, setCellTitleDelta(state, intent.cellId, intent.title))
@@ -2307,10 +2307,10 @@ object SchedulerReducer {
      * dropped from the expansion set, [cellId] itself is NOT — the gesture trims the branch back to the
      * cell the user right-clicked, leaving its own children on screen.
      */
-    private fun reduceCollapseSubtrees(state: SchedulerState, cellId: CellId, keepFromLevel: Int?): SchedulerState {
+    private fun reduceCollapseSubtrees(state: SchedulerState, cellId: CellId, keepLevels: Int): SchedulerState {
         val childListId = state.cells[cellId]?.taskId?.let { state.tasks[it]?.childListId } ?: return state
-        val subtree = SchedulerDomain.cellsUnder(state, childListId, keepFromLevel?.let { it - 1 })
-        val collapsed = state.expanded - subtree
+        val subtree = SchedulerDomain.cellsUnder(state, childListId, fromLevel = maxOf(1, keepLevels))
+        val collapsed = state.expanded - subtree - (if (keepLevels <= 0) setOf(cellId) else emptySet())
         if (collapsed == state.expanded) return state
         return commitDelta(state, SetExpandedDelta(before = state.expanded, after = collapsed))
     }

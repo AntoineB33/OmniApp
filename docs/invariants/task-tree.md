@@ -1140,10 +1140,11 @@ suggestions before it was ever entered.
   element's, not a task's alone — a Search window on it, its "Deep copy" group pinned, whose rows say what the copy
   carries; an element that is no task copies with its children, `ElementTree.childrenOf`, `SearchDomain.elementsCopyText`;
   what only a task carries is listed where a task is added, `DEEP_COPY_TASK_ACTIONS`) and **"collapse"** (user 2026-11-26,
-  was "collapse sub-trees"; "retract with every sub-child" is gone): the row stays open on its children and the rows
-  under it close — but from the level its row's field holds (its children are level 1), which stay as they are
-  (`SearchDomain.collapses`, `SchedulerIntent.CollapseSubtrees.keepFromLevel`, one value for the app while it runs,
-  blank: every one closes). A saved "Entries, in order" naming the old entries is healed on load
+  was "collapse sub-trees"; "retract with every sub-child" is gone): its row's field holds how many levels from the row
+  stay as they are (the row is level 0, its children 1), every open row from there down closing — **0 by default**:
+  the row and all under it; 1: the row stays open on its children, whose children are retracted
+  (`SearchDomain.collapses`, `SchedulerIntent.CollapseSubtrees.keepLevels`, one value for the app while it runs). **A
+  click in the field is the field's**, never the entry's (`pickOnRelease`'s skip over the row's control). A saved "Entries, in order" naming the old entries is healed on load
   (`SearchDomain.healedEntries`). A
   Search window's rows retract in that window's open rows (`SchedulerState.searchExpanded`, its element rows' keys),
   never the tree's. **"go to calendar", "go to task tree" and "add default sub-tree" are not on the menu**: they are

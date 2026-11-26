@@ -20,6 +20,10 @@ Check here before assuming the code matches the docs.
 - Anomaly, same day (*"I don't see the input field at the right of 'collapse'"*): the field shared the 290 dp menu row
   by weight with the entry's texts and its own caption took it all — 0 px wide. A menu entry's control keeps its own
   width (`ItemResultRow.trailingFills`), captioned "keep from level". `CollapseLevelFieldTest` draws the real menu.
+- User, same day: *"Clicking on the input field shouldn't activate collapse. The field must be 0 by default. If the user
+  set it to 1, then the direct children don't disappear but their children get retracted."* The field counts the
+  levels kept from the row (0 = the row and all under it; `CollapseSubtrees.keepLevels`, `SearchDomain.collapses`);
+  a menu entry's click skips its control (`pickOnRelease`). `CollapseLevelFieldTest` clicks both.
 - User: "collapse sub-trees" is "collapse", its row holding the level from which the children stay as they are
   (`SchedulerIntent.CollapseSubtrees.keepFromLevel`, replacing `includingSelf`; `SearchDomain.collapses`); "retract
   with every sub-child" is gone. Saved menu entry orders are healed (`SearchDomain.healedEntries`). `RowMenuTest`.

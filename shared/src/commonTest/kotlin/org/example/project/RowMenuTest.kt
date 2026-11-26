@@ -59,22 +59,25 @@ class RowMenuTest {
     }
 
     @Test
-    fun collapse_keeps_the_row_open_and_its_level_keeps_the_deeper_rows() {
+    fun collapse_keeps_as_many_levels_as_asked_and_closes_the_rest() {
         var s = tree()
         val apple = cell(s, "Apple")
         val pie = cell(s, "Pie")
         s = s.copy(expanded = s.expanded + apple + pie)
-        val collapsed = r(s, SchedulerIntent.CollapseSubtrees(apple))
+        // User 2026-11-26: "If the user set it to 1, then the direct children don't disappear but their children get
+        // retracted": Apple stays open on Pie, which closes.
+        val collapsed = r(s, SchedulerIntent.CollapseSubtrees(apple, keepLevels = 1))
         assertTrue(apple in collapsed.expanded)
         assertFalse(pie in collapsed.expanded)
-        // From level 2 the rows stay as they are: Pie (level 1) closes, Crust (level 2) keeps its state.
+        // 0, the default: Apple and all under it.
+        val all = r(s, SchedulerIntent.CollapseSubtrees(apple, keepLevels = 0))
+        assertFalse(apple in all.expanded || pie in all.expanded)
+        // 2: Apple and Pie stay open, Crust (Pie's child) closes.
         val crust = cell(s, "Crust")
         val deep = s.copy(expanded = s.expanded + crust)
-        val kept = r(deep, SchedulerIntent.CollapseSubtrees(apple, keepFromLevel = 2))
-        assertTrue(apple in kept.expanded && crust in kept.expanded)
-        assertFalse(pie in kept.expanded)
-        // From level 1: nothing under it closes.
-        assertEquals(deep.expanded, r(deep, SchedulerIntent.CollapseSubtrees(apple, keepFromLevel = 1)).expanded)
+        val kept = r(deep, SchedulerIntent.CollapseSubtrees(apple, keepLevels = 2))
+        assertTrue(apple in kept.expanded && pie in kept.expanded)
+        assertFalse(crust in kept.expanded)
         // One undoable unit, back to both open.
         val undone = r(collapsed, SchedulerIntent.Undo)
         assertTrue(apple in undone.expanded && pie in undone.expanded)
@@ -177,14 +180,15 @@ class RowMenuTest {
         assertTrue(SearchDomain.deepCopyGroupId(rows) != null, "its \"Deep copy\" group, which the menu pins")
     }
 
-    /** User 2026-11-26: "collapse" closes the rows under the row above the level asked; the row itself stays open. */
+    /** User 2026-11-26: "collapse" keeps the levels asked as they are and closes every one from there, the row being 0. */
     @Test
     fun collapse_closes_the_levels_above_the_one_asked() {
-        assertTrue(SearchDomain.collapses(1, null) && SearchDomain.collapses(5, null))
-        assertFalse(SearchDomain.collapses(0, null), "the row itself")
-        assertTrue(SearchDomain.collapses(1, 2))
-        assertFalse(SearchDomain.collapses(2, 2))
-        assertFalse(SearchDomain.collapses(1, 1))
+        assertEquals(0, SearchDomain.COLLAPSE_DEFAULT_LEVEL)
+        assertTrue(SearchDomain.collapses(0, 0) && SearchDomain.collapses(5, 0), "0: the row and all under it")
+        assertFalse(SearchDomain.collapses(0, 1), "1: the row stays open")
+        assertTrue(SearchDomain.collapses(1, 1), "1: its children close")
+        assertFalse(SearchDomain.collapses(1, 2))
+        assertTrue(SearchDomain.collapses(2, 2))
     }
 
     /** User 2026-11-26: a saved "Entries, in order" naming the old entries keeps "collapse" and drops "retract". */

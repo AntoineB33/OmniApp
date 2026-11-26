@@ -5180,26 +5180,32 @@ object SearchDomain {
     }
 
     /**
-     * The row menu's "collapse" of the row at [index] of [rows]: the ids of the open rows under it it closes ([collapses]),
-     * the row itself kept open (anomaly 2026-11-26: it was greyed on every action row). Empty: nothing to collapse.
+     * The row menu's "collapse" of the row at [index] of [rows]: the ids of the open rows it closes ([collapses]) — the
+     * row itself where [keepLevels] is 0 (anomaly 2026-11-26: it was greyed on every action row). Empty: nothing to collapse.
      */
-    fun openActionRowsUnder(rows: List<ActionListRow>, index: Int, keepFromLevel: Int? = null): List<String> {
+    fun openActionRowsUnder(rows: List<ActionListRow>, index: Int, keepLevels: Int = 1): List<String> {
         val row = rows.getOrNull(index) ?: return emptyList()
         val out = ArrayList<String>()
+        if (row.open && collapses(0, keepLevels)) out += row.id
         for (i in index + 1 until rows.size) {
             if (rows[i].depth <= row.depth) break
-            if (rows[i].open && collapses(rows[i].depth - row.depth, keepFromLevel)) out += rows[i].id
+            if (rows[i].open && collapses(rows[i].depth - row.depth, keepLevels)) out += rows[i].id
         }
         return out
     }
 
     /**
      * User 2026-11-26 (*"Rename Collapse sub-trees to Collapse. On this row, add a field to define the level from there where
-     * the children can stay expanded"*): **whether the menu's "collapse" closes a row [level] levels under the row it was
-     * opened on** (its children 1) — every one under it where [keepFromLevel] is null, else those above that level; from
-     * it down, a row stays as it is. The row itself stays open.
+     * the children can stay expanded"*; then *"The field must be 0 by default. If the user set it to 1, then the direct
+     * children don't disappear but their children get retracted"*): **whether the menu's "collapse" closes a row [level]
+     * levels under the row it was opened on** (the row itself 0, its children 1). The [keepLevels] first levels stay as
+     * they are, every one from there closes: 0 closes the row and all under it, 1 keeps the row open on its children and
+     * closes them, 2 keeps its children open too.
      */
-    fun collapses(level: Int, keepFromLevel: Int?): Boolean = level >= 1 && (keepFromLevel == null || level < keepFromLevel)
+    fun collapses(level: Int, keepLevels: Int): Boolean = level >= keepLevels
+
+    /** The menu's "collapse" level a fresh app starts at ([collapses]): the row and everything under it close. */
+    const val COLLAPSE_DEFAULT_LEVEL: Int = 0
 
     /**
      * **Pop-up window B of a context field**: every context in its results ([CONTEXT_KINDS]) and the pair's own ([keys])

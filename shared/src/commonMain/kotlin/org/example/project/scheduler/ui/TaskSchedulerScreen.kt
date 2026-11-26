@@ -3430,29 +3430,30 @@ internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.exampl
         add(
             org.example.project.ui.MenuAction(
                 COLLAPSE_LABEL, enabled = cellMenu.onCollapse != null, trailing = { CollapseLevelField() },
-            ) { cellMenu.onCollapse?.invoke(collapseKeepFromLevel.value) },
+            ) { cellMenu.onCollapse?.invoke(collapseKeepLevels.value) },
         )
     }
 
 /**
- * User 2026-11-26: **the level of the menu's "collapse"** — from it down (the row's children are level 1), the rows stay as
- * they are; blank: every row under it closes. One for the app, kept while it runs.
+ * User 2026-11-26: **the level of the menu's "collapse"** ([SearchDomain.collapses]) — how many levels from the row stay as
+ * they are: 0 (the default) closes the row and all under it, 1 keeps the row open on its children and closes them. One
+ * for the app, kept while it runs.
  */
-internal val collapseKeepFromLevel = androidx.compose.runtime.mutableStateOf<Int?>(null)
+internal val collapseKeepLevels = androidx.compose.runtime.mutableStateOf(SearchDomain.COLLAPSE_DEFAULT_LEVEL)
 
-/** The field on the "collapse" row ([collapseKeepFromLevel]): a level, or blank for every one. */
+/** The field on the "collapse" row ([collapseKeepLevels]); a press in it is the field's, never the entry's. */
 @Composable
 private fun CollapseLevelField() {
-    var text by remember { mutableStateOf(collapseKeepFromLevel.value?.toString().orEmpty()) }
+    var text by remember { mutableStateOf(collapseKeepLevels.value.toString()) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("keep from level", style = MaterialTheme.typography.labelSmall)
+        Text("level", style = MaterialTheme.typography.labelSmall)
         org.example.project.ui.OutlinedTextField(
             value = text,
             onValueChange = { raw ->
                 text = raw.filter { it.isDigit() }.take(3)
-                collapseKeepFromLevel.value = text.toIntOrNull()?.takeIf { it >= 1 }
+                // Emptied while typing: the default until a number is typed.
+                collapseKeepLevels.value = text.toIntOrNull() ?: SearchDomain.COLLAPSE_DEFAULT_LEVEL
             },
-            placeholder = { Text("all") },
             singleLine = true,
             modifier = Modifier.width(56.dp),
         )
@@ -3488,11 +3489,10 @@ internal class TaskCellMenuActions(
     /** Null (greyed) for a Search row whose task no live cell holds, and for an element that is no task. */
     val onDeepCopy: (() -> Unit)?,
     /**
-     * User 2026-11-26 **"collapse"**: the sub-trees under the row closed, the row itself left open on its children — given
-     * the level from which they stay as they are ([SearchDomain.collapses]; null: every one closes). Null when nothing is
-     * under it.
+     * User 2026-11-26 **"collapse"**: given how many levels from the row stay as they are ([SearchDomain.collapses]: 0, the
+     * row and all under it close; 1, the row stays open on its children, which close). Null when nothing is under it.
      */
-    val onCollapse: ((Int?) -> Unit)?,
+    val onCollapse: ((Int) -> Unit)?,
     /** PRD §7 Search: "add" — the element into the Search window's added elements; null everywhere else. */
     val onAdd: (() -> Unit)? = null,
     /** PRD §7 Search: [onAdd] with every element added before removed from the added elements; null elsewhere. */
