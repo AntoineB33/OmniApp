@@ -1548,6 +1548,11 @@ fun SearchWindow(
                   // options too, after a separator ([SectionBackground]).
                   sectionEntries = ownSectionBackground?.take().orEmpty()
                   backgroundMenu = true
+                  // TEMPORARY trace (anomaly 2026-11-26: a right-click on an action row opened two windows).
+                  org.example.project.scheduler.platform.Diagnostics.log(
+                      "[popup] background right-click: window " + (frame?.id ?: "(none)") + ", embedded " + embedded +
+                          ", section groups " + sectionEntries.size + ", actionRows " + (actionRows != null),
+                  )
               })
               .then(if (isSearchSection(actionRows, addedList)) Modifier.recordsSectionPress(enclosingSectionBackground) { sectionPartsEntries() } else Modifier),
       ) {
@@ -2873,6 +2878,10 @@ internal fun ActionMenu(name: String,
     offset: androidx.compose.ui.unit.DpOffset = androidx.compose.ui.unit.DpOffset(0.dp, 0.dp),
 ) {
     val latest by rememberUpdatedState(actions)
+    // TEMPORARY trace (anomaly 2026-11-26: a right-click on an action row opened two windows): which menus open, in order.
+    if (open) androidx.compose.runtime.LaunchedEffect(Unit) {
+        org.example.project.scheduler.platform.Diagnostics.log("[popup] menu opened: " + name + " — " + latest.filter { !it.separator }.take(4).joinToString(" | ") { it.label })
+    }
     OptionSearchMenu(name,
         open = open,
         onDismiss = onDismiss,
@@ -4757,7 +4766,11 @@ internal fun ItemResultRow(
                 onOpen = { currentOnDoubleClick() },
                 // Every row's right-click opens its menu — a "creation" row's too (anomaly 2026-10-03: it made its
                 // element straight away, so the row could not be ADDED, which is how a default configuration is edited).
-                onOpenMenu = { if (hasMenu) menuOpen = true },
+                onOpenMenu = {
+                    // TEMPORARY trace (anomaly 2026-11-26: a right-click on an action row opened two windows).
+                    org.example.project.scheduler.platform.Diagnostics.log("[popup] row right-click: " + item.kind.name + "/" + item.name + ", menu " + hasMenu)
+                    if (hasMenu) menuOpen = true
+                },
             ),
         contentAlignment = Alignment.CenterStart,
     ) {
