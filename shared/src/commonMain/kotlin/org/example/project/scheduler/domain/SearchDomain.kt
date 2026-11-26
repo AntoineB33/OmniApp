@@ -5050,6 +5050,33 @@ object SearchDomain {
     fun contextsSearchConfig(contextIds: List<String>): Config =
         Config(kinds = setOf(Kind.Context), added = contextIds.map(ContextDomain::keyOf))
 
+    /**
+     * Anomaly 2026-11-26 (*"in 'Contexts and states', I can't select the context"*): **the Search window of [keys], added**
+     * — a "Contexts and states" context row's, as a "State in each context" one's ([contextsSearchConfig]): their kinds
+     * checked, so the window lists them.
+     */
+    fun elementsSearchConfig(keys: List<String>): Config =
+        Config(
+            kinds = keys.mapNotNullTo(LinkedHashSet()) { key -> Kind.entries.firstOrNull { it.name == key.substringBefore('/') } }
+                .ifEmpty { setOf(Kind.Task) },
+            added = keys,
+        )
+
+    /**
+     * Anomaly 2026-11-26 (*"I can't … add a new pair of contexts - states fields"*): **the elements of the new pair a
+     * "Contexts and states" shows**, [picked] by the user among [members], in [members]' order.
+     */
+    fun newContextMembers(members: List<Result>, picked: Set<String>): List<Result> = members.filter { keyOf(it) in picked }
+
+    /**
+     * Whether the new pair's [chosen] elements have become one of the [contexts] — what a state change on them alone
+     * does: the pair is then that context, and an empty new pair follows it.
+     */
+    fun isOneOfContexts(chosen: List<Result>, contexts: List<List<Result>>): Boolean {
+        val keys = chosen.mapTo(HashSet(), ::keyOf)
+        return keys.isNotEmpty() && contexts.any { context -> context.mapTo(HashSet(), ::keyOf) == keys }
+    }
+
     /** The calendar element's id ([Kind.Calendar]): there is one. */
     const val CALENDAR_ID: String = "calendar"
 

@@ -11,6 +11,14 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Contexts and states": a context row opens its elements; a new pair — 2026-11-26
+
+- Anomaly: *"in the action section of the element 'Minimum Time', in 'Contexts and states', I can't select the context
+  or add a new pair of contexts - states fields"*. A context was plain text. Now its row opens a Search window with its
+  elements added, and a last "new context" pair picks its elements (▾, check boxes, among those the action acts on) with
+  the action's editor under it; once a state set makes them a context of their own, an empty pair follows.
+  `ActionContextPairsTest` (the domain half). Client rebuild only.
+
 ### "Clicks and keys": what each press does, in each context — 2026-11-26
 
 - User: *"Make sure each element has in the action section the behavior of when [it] is clicked, when it is
