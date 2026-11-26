@@ -1464,8 +1464,12 @@ suggestions before it was ever entered.
     task element is in the added elements list"*), then the other groups — a task whose minimum time changed is a third
     pair, B of the first one task less — then a new pair, empty (`withPairValues`). An action about a set as such keeps
     its group's elements and has no "no state" pair. A context field names its pair's contexts while few, else counts them
-    by kind; the pairs are drawn twenty at a time (an action whose every element holds a state of its own has a pair per
-    element). The pairs are view state, set back to the derived ones whenever a state set changes them. **The kind's
+    by kind. **Each pair is a row of the actions section** (user rule 2026-11-26, *"it doesn't really seem to be real rows
+    … there should be three rows, each with two children … when it can be rows it must be rows"*; `ActionListRow.part`,
+    `contextPairRows`): under the open "Contexts and states" row, a row per pair named by its contexts, its state beside,
+    and under it a **"context"** row (the field opening B) and a **"states"** row (the action's editor) — open by default,
+    opened and closed as view state; the list scrolls them (no page of twenty any more). The pairs are view state, set back
+    to the derived ones whenever a state set changes them. **The kind's
     elements are listed again only when what they are read from changes** (`SearchDomain.contextSourceOf`, their paths
     unread): listed on every state change with every other element besides, the editor held the UI thread 33 s of the
     release app's first 77 and no menu could be scrolled or opened (anomaly 2026-11-26). (A same-day
@@ -1850,9 +1854,9 @@ suggestions before it was ever entered.
   "Types" was on wherever the kinds were not a plain `Config`'s, the tasks alone). **Every feature page's Search button
   opens with nothing on** (*"I want every search configuration off for the default 'Search button' in all feature
   pages"*): every kind checked and offered, the default sorting, the page only where it stands (`pageDefaultConfig` =
-  `clearedConfig`, its Reset too); until then each page offered its own types alone, the logs newest first. **Each of the three sections' titles counts what it lists** (user rule 2026-11-26):
-  "Search · n" its elements (no creation row; a tree's list uncounted), "Actions on the added elements · n" its actions
-  (no group of elements), "Added elements · n"; **"Relevant here"**, what the window is about whatever
+  `clearedConfig`, its Reset too); until then each page offered its own types alone, the logs newest first. **Each of the three sections' titles counts the rows at the root of its list** (user rule 2026-11-26, *"not all the
+  rows from row expansion"*): "Search · n" (no creation row; a tree's list uncounted), "Actions on the added elements ·
+  n" (its top rows: the groups, or the actions where ungrouped), "Added elements · n"; **"Relevant here"**, what the window is about whatever
   it holds (the code's `relevant`); **"Default for this"**, what the window was opened on (`contextSettings`; a
   window opened on nothing, its page's default) — **every setting "Currently on" would list for that configuration**, the
   two reading one list of the window's own settings (`ownSettingsOn`, anomaly 2026-11-19) — and **each group ends with its own "Default for this"**, the part of

@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Contexts and states" pairs are rows; section counts are of root rows — 2026-11-26
+
+- User rule: *"The three sections must show the number of rows in the root of the list, not all the rows from row
+  expansion. Right now, it is not what the action section does."* It counted every action, those inside open groups
+  included; it counts its depth-0 rows now.
+- User rule: *"In 'Contexts and states', it doesn't really seem to be real rows … there should be three rows, each with
+  two children … when it can be rows it must be rows."* Each pair is a row of the actions section under the open
+  "Contexts and states" row (`ActionListRow.part`, `contextPairRows`), its children a "context" row (the field opening
+  B) and a "states" row (the action's editor); the page of twenty pairs is gone. Selected, opened and closed as rows.
+  `ActionContextsTest.each_pair_is_a_row_with_its_context_and_states_rows`. Client rebuild only.
+
 ### Section counts; every page's Search window has nothing on — 2026-11-26
 
 - User rule: *"Why the number of elements only shown for the added elements list section? Add it to the two other

@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -126,6 +128,71 @@ class ActionContextsTest {
         val plain = draw(window)
         val shown = draw(window.copy(inside = mapOf("/actions" to own.encode())))
         assertTrue(!plain.contentEquals(shown), "the section's own actions are drawn")
+    }
+
+    /**
+     * User rule 2026-11-26 (*"In 'Contexts and states', it doesn't really seem to be real rows … there should be three rows,
+     * each with two children"*): each pair is a row of the section, with its "context" and "states" rows under it. "Parents"
+     * is about every kind, so its contexts are the elements it acts on and it has no "no state" pair: a, b, c under p; d
+     * under q; e under nothing — three pairs, then a new one: four pair rows, each with its two.
+     */
+    @Test
+    fun each_pair_is_a_row_with_its_context_and_states_rows() {
+        val elements = listOf("a", "b", "c", "d", "e").map(::key)
+        val window = SearchDomain.Config(kinds = setOf(Kind.Chrono), added = elements, actionsExpanded = true)
+        val parents = actionRows(rows("a", "b", "c", "d", "e"), window).first { it.action == AddedAction.ElementParents && it.group.members.size == 5 }
+        val ownAdded = listOf(SearchDomain.ItemResult(Kind.Action, parents.key, parents.title, parents.detail))
+        val contextsRow = actionRows(ownAdded, window).first { it.action == AddedAction.ActionContexts }
+        val own = ACTIONS_SECTION_OWN.copy(added = listOf(Kind.Action.name + "/" + parents.key), toggledActionRows = setOf(contextsRow.id))
+        val texts = drawnTexts(window.copy(inside = mapOf("/actions" to own.encode())), height = 2400)
+        assertEquals(4, texts.count { it == "context" }, texts.toString())
+        assertEquals(4, texts.count { it == "states" }, texts.toString())
+        assertTrue("a, b, c" in texts, "a pair's row names its contexts: $texts")
+        assertTrue("new: choose its contexts" in texts, texts.toString())
+    }
+
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
+    private fun drawnTexts(initial: SearchDomain.Config, width: Int = 1300, height: Int = 800): List<String> {
+        val scene = onEdt {
+            ImageComposeScene(width, height, density = Density(1f)) {
+                var config by remember { mutableStateOf(initial) }
+                val inside = remember { ArrowSearches(read = { config.inside }, write = { _, next -> config = config.copy(inside = next) }) }
+                var splits by remember { mutableStateOf(SearchSplits(left = 0.3f, topRight = 0.8f)) }
+                CompositionLocalProvider(LocalArrowSearches provides inside, LocalArrowOwner provides "Search", LocalArrowRoot provides "Search") {
+                    SearchWindow(
+                        state = account,
+                        openers = SearchRowOpeners(
+                            onOpenTaskEdit = {}, onOpenCategory = {}, onOpenPeriodKind = {}, onEditAlarmOrTimer = {}, onEditReminder = {},
+                        ),
+                        onStartTaskNow = {},
+                        onGoToTaskTree = { _, _ -> },
+                        onDeepCopyCell = {},
+                        actionHandlers = AddedActionHandlers(
+                            onStartNow = {}, onEdit = {}, onGoToTaskTree = {}, onDeepCopyCell = {}, onOpenResilienceSearch = {},
+                            onOpenKindSearch = {}, timerRun = { _, _ -> }, reminderEditor = {}, onCreate = {},
+                            onDuplicate = { _, _ -> emptyList() }, onPlaceOnCalendar = {},
+                        ),
+                        onIntent = {},
+                        onDismiss = {},
+                        config = config,
+                        onConfigChange = { config = it },
+                        splits = splits,
+                        onSplitsChange = { splits = it },
+                        initialSize = Size(width.toFloat(), height.toFloat()),
+                    )
+                }
+            }
+        }
+        try {
+            var time = 0L
+            repeat(8) { onEdt { time += 16L; scene.render(time * 1_000_000L) } }
+            return onEdt {
+                scene.semanticsOwners.flatMap { it.getAllSemanticsNodes(mergingEnabled = false) }
+                    .mapNotNull { n -> n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString { it.text } }
+            }
+        } finally {
+            onEdt { scene.close() }
+        }
     }
 
     private fun draw(initial: SearchDomain.Config, width: Int = 1300, height: Int = 800): ByteArray {
