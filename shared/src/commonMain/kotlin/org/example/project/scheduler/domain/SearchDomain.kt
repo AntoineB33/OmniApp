@@ -1328,7 +1328,7 @@ object SearchDomain {
                     dropButtons = stored.dropButtons,
                     buttonFollowsExpansion = stored.buttonFollowsExpansion,
                     separators = stored.separators,
-                    entries = stored.entries,
+                    entries = healedEntries(stored.entries),
                     taskRowLayout = TaskRowPart.decode(stored.taskRowLayout),
                     actionSearch = stored.actionSearch,
                     pickedBlocks = stored.pickedBlocks.toSet(),
@@ -5100,10 +5100,12 @@ object SearchDomain {
      * **The "no state" pair's contexts** ([ContextPair.keys] null): every element of the kinds [action] is not about, by key —
      * read off the UI thread (anomaly 2026-11-26).
      */
-    fun otherContextKeys(state: SchedulerState, action: AddedAction): List<String> =
+    fun otherContextKeys(state: SchedulerState, action: AddedAction): List<String> = otherContexts(state, action).map(::keyOf)
+
+    /** [otherContextKeys] as rows: what the "no state" pair's title names ([contextPairTitle]). */
+    fun otherContexts(state: SchedulerState, action: AddedAction): List<Result> =
         results(state, otherContextKinds(action), "", allPaths = { emptyMap() })
             .filter { it.kind in CONTEXT_KINDS }
-            .map(::keyOf)
 
     /** The kinds whose elements [action] is not about: the "no state" pair's ([ContextPair.keys] null). */
     fun otherContextKinds(action: AddedAction): Set<Kind> = CONTEXT_KINDS - setOfNotNull(action.section)
@@ -5121,11 +5123,18 @@ object SearchDomain {
     }
 
     /**
-     * User rule 2026-11-26 (*"'every element that is not a task (4863)' should rather be called 'context-state 2'. I doubt
-     * having a program just to give names that reflect what are the current contexts and states"*): **a pair's row is named
-     * by its place**, never by what it holds — its context field says that.
+     * User 2026-11-26 (*"Instead of 'context-state 1', give the list of all the contexts as the title"*; the same day,
+     * *"I doubt having a program just to give names that reflect what are the current contexts"*): **a pair's row is
+     * titled by every one of its contexts' names**, none summarised — "every element that is not a task (4863)" is
+     * those 4863 names. Wrapped where too long, never cut. A new pair holds none yet.
      */
-    fun contextPairTitle(index: Int): String = "context-state ${index + 1}"
+    fun contextPairTitle(names: List<String>): String = if (names.isEmpty()) NEW_PAIR_TITLE else names.joinToString(", ")
+
+    /** The title of the new pair, which holds no context yet. */
+    const val NEW_PAIR_TITLE: String = "new: choose its contexts"
+
+    /** The "no state" pair's title while its contexts are still being listed ([otherContexts]). */
+    const val LISTING_OTHERS_TITLE: String = "listing the other elements"
 
     /**
      * User rule 2026-11-26 (*"If the user … removes an element from the added elements list, then the 'Contexts and states'
@@ -5171,18 +5180,26 @@ object SearchDomain {
     }
 
     /**
-     * The row menu's "collapse sub-trees" of the row at [index] of [rows]: the ids of the open rows under it, the row
-     * itself kept open (anomaly 2026-11-26: it was greyed on every action row). Empty: nothing to collapse.
+     * The row menu's "collapse" of the row at [index] of [rows]: the ids of the open rows under it it closes ([collapses]),
+     * the row itself kept open (anomaly 2026-11-26: it was greyed on every action row). Empty: nothing to collapse.
      */
-    fun openActionRowsUnder(rows: List<ActionListRow>, index: Int): List<String> {
+    fun openActionRowsUnder(rows: List<ActionListRow>, index: Int, keepFromLevel: Int? = null): List<String> {
         val row = rows.getOrNull(index) ?: return emptyList()
         val out = ArrayList<String>()
         for (i in index + 1 until rows.size) {
             if (rows[i].depth <= row.depth) break
-            if (rows[i].open) out += rows[i].id
+            if (rows[i].open && collapses(rows[i].depth - row.depth, keepFromLevel)) out += rows[i].id
         }
         return out
     }
+
+    /**
+     * User 2026-11-26 (*"Rename Collapse sub-trees to Collapse. On this row, add a field to define the level from there where
+     * the children can stay expanded"*): **whether the menu's "collapse" closes a row [level] levels under the row it was
+     * opened on** (its children 1) — every one under it where [keepFromLevel] is null, else those above that level; from
+     * it down, a row stays as it is. The row itself stays open.
+     */
+    fun collapses(level: Int, keepFromLevel: Int?): Boolean = level >= 1 && (keepFromLevel == null || level < keepFromLevel)
 
     /**
      * **Pop-up window B of a context field**: every context in its results ([CONTEXT_KINDS]) and the pair's own ([keys])
@@ -5397,17 +5414,20 @@ object SearchDomain {
          * with what the rows above it say, which are the account's settings ([SchedulerState.deepCopyMaxDepth], the
          * `copy*` flags), written as they are changed.
          */
-        TaskDeepCopy(Kind.Task, "Copy to the clipboard"),
-        DeepCopyMaxDepth(Kind.Task, "Maximum depth"),
-        DeepCopyWholeSubtree(Kind.Task, "Copy the entire sub-tree"),
-        DeepCopyIds(Kind.Task, "Copy the task ids"),
-        DeepCopyWeightTables(Kind.Task, "Copy the priority weight tables"),
-        DeepCopyPercentages(Kind.Task, "Copy priority percentages"),
-        DeepCopyMinimumTime(Kind.Task, "Copy minimum time"),
-        DeepCopyText(Kind.Task, "Copy the task text"),
-        DeepCopyExcludeTitle(Kind.Task, "Exclude tasks with title"),
-        DeepCopyPath(Kind.Task, "Copied down to"),
-        DeepCopyReset(Kind.Task, "Reset the deep copy settings"),
+        // User 2026-11-26 (*"deep copy is supposed to open a pop-up window with rows to select what kind of deep copy the
+        // user wants. Why would it be only for tasks?"*): about every element, its children its sub-tree
+        // ([ElementTree.childrenOf]); what only a task carries is offered where a task is added ([DEEP_COPY_TASK_ACTIONS]).
+        TaskDeepCopy(null, "Copy to the clipboard"),
+        DeepCopyMaxDepth(null, "Maximum depth"),
+        DeepCopyWholeSubtree(null, "Copy the entire sub-tree"),
+        DeepCopyIds(null, "Copy the ids"),
+        DeepCopyWeightTables(null, "Copy the priority weight tables"),
+        DeepCopyPercentages(null, "Copy priority percentages"),
+        DeepCopyMinimumTime(null, "Copy minimum time"),
+        DeepCopyText(null, "Copy the task text"),
+        DeepCopyExcludeTitle(null, "Exclude elements with title"),
+        DeepCopyPath(null, "Copied down to"),
+        DeepCopyReset(null, "Reset the deep copy settings"),
         TaskCollapseSubtrees(Kind.Task, "Collapse sub-trees"),
         TaskAddDefaultSubtree(Kind.Task, "Add default sub-tree"),
         /**
@@ -5878,9 +5898,13 @@ object SearchDomain {
                 // ...nor is a row of the actions section, added to that section's own list (user rule 2026-11-13).
                 val elements = added.any { ElementTree.isElement(it.kind) && it.kind != Kind.Action }
                 val onlyTasks = added.all { it.kind == Kind.Task }
+                // Deep copy: of elements that have a sub-tree to copy; what only a task carries, where a task is added.
+                val copied = added.any { deepCopyable(it.kind) }
+                val anyTask = added.any { it.kind == Kind.Task }
                 actions.filter {
                     (onCalendar || it !in CALENDAR_ACTIONS) && !(onlyTimers && (it == AddedAction.CalendarBlocks || it in BLOCK_EDIT_ACTIONS)) &&
-                        (elements || it !in ELEMENT_ACTIONS) && !(onlyTasks && it in ELEMENT_CATEGORY_ACTIONS)
+                        (elements || it !in ELEMENT_ACTIONS) && !(onlyTasks && it in ELEMENT_CATEGORY_ACTIONS) &&
+                        (copied || it !in DEEP_COPY_ACTIONS) && (anyTask || it !in DEEP_COPY_TASK_ACTIONS)
                 }.takeIf { it.isNotEmpty() }?.let { kind to it }
             } else if (added.any { it.kind == kind } || !defaultConfigurationAdded(added, kind)) {
                 // The lowest countdown is of SEVERAL timers, the highest count of several chronos: one alone has its own run.
@@ -6085,6 +6109,88 @@ object SearchDomain {
             AddedAction.DeepCopyPercentages, AddedAction.DeepCopyMinimumTime, AddedAction.DeepCopyText, AddedAction.DeepCopyExcludeTitle,
             AddedAction.DeepCopyPath, AddedAction.TaskDeepCopy, AddedAction.DeepCopyReset,
         )
+
+    /**
+     * User 2026-11-26: a menu's "Entries, in order" an older build wrote — "collapse sub-trees" is "collapse", "retract with
+     * every sub-child" is gone. Healed on load, so a saved order keeps the entry.
+     */
+    fun healedEntries(entries: List<String>): List<String> =
+        entries.mapNotNull { id ->
+            when (id) {
+                "collapse sub-trees" -> "collapse"
+                "retract with every sub-child" -> null
+                else -> id
+            }
+        }.distinct()
+
+    /** The rows of the "Deep copy" group about what a task alone carries: listed where a task is added. */
+    val DEEP_COPY_TASK_ACTIONS: Set<AddedAction> =
+        setOf(AddedAction.DeepCopyWeightTables, AddedAction.DeepCopyPercentages, AddedAction.DeepCopyMinimumTime, AddedAction.DeepCopyText)
+
+    /**
+     * Whether an element of [kind] has a deep copy (user 2026-11-26: not only a task): every element of the account — not
+     * a creation row, an option, a row of an actions section, the calendar or a window, which hold no sub-tree.
+     */
+    fun deepCopyable(kind: Kind): Boolean =
+        ElementTree.isElement(kind) && kind !in setOf(Kind.Option, Kind.Action, Kind.Calendar, Kind.Window)
+
+    /**
+     * User 2026-11-26: **the deep copy of elements that are no task** ([keys]) — each a line, its children ([ElementTree.childrenOf])
+     * a tab further in, down to [maxDepth] levels (the element itself the first); its id an attribute line under it where
+     * [includeIds]; an element titled [excludeTitle] left out with its sub-tree. Each element once along a branch (a loop
+     * two devices made is cut). A task copies with its cells ([SchedulerDomain.copyCellsText]).
+     */
+    fun elementsCopyText(
+        state: SchedulerState,
+        keys: List<String>,
+        maxDepth: Int,
+        includeIds: Boolean,
+        excludeTitle: String,
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+    ): String {
+        if (maxDepth < 1) return ""
+        val names = HashMap<String, String>()
+        fun nameOf(key: String): String =
+            names.getOrPut(key) { resolve(state, listOf(key), { emptyMap() }, claudeLogs = claudeLogs).firstOrNull()?.name ?: key.substringAfter('/') }
+        val sb = StringBuilder()
+        fun walk(key: String, depth: Int, path: Set<String>) {
+            val name = nameOf(key)
+            if (excludeTitle.isNotEmpty() && name == excludeTitle) return
+            repeat(depth) { sb.append(TAB) }
+            sb.append(name).append(NEWLINE)
+            if (includeIds) {
+                repeat(depth + 1) { sb.append(TAB) }
+                sb.append("- id: ").append(copiedId(key)).append(NEWLINE)
+            }
+            if (depth + 1 >= maxDepth) return
+            for (child in ElementTree.childrenOf(state, key, claudeLogs)) if (child !in path) walk(child, depth + 1, path + child)
+        }
+        for (key in keys) walk(key, 0, setOf(key))
+        return sb.toString()
+    }
+
+    private const val TAB: Char = '\t'
+    private const val NEWLINE: Char = '\n'
+
+    /** What "Copied down to" shows of elements that are no task: one path to the deepest level [maxDepth] reaches. */
+    fun elementsDeepestPath(state: SchedulerState, keys: List<String>, maxDepth: Int, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): List<String> {
+        if (maxDepth < 1) return emptyList()
+        // Each element measured once ([memo], by the levels still left), a loop cut where it comes back ([walking]).
+        val memo = HashMap<Pair<String, Int>, List<String>>()
+        val walking = HashSet<String>()
+        fun deepest(key: String, left: Int): List<String> {
+            if (left <= 1) return listOf(key)
+            memo[key to left]?.let { return it }
+            walking += key
+            val below = ElementTree.childrenOf(state, key, claudeLogs).filter { it !in walking }
+                .map { deepest(it, left - 1) }.maxByOrNull { it.size }.orEmpty()
+            walking -= key
+            return (listOf(key) + below).also { memo[key to left] = it }
+        }
+        val best = keys.map { deepest(it, maxDepth.coerceAtMost(256)) }.maxByOrNull { it.size }.orEmpty()
+        val names = resolve(state, best, { emptyMap() }, claudeLogs = claudeLogs).associate { keyOf(it) to it.name }
+        return best.map { names[it] ?: it.substringAfter('/') }
+    }
 
     /** The tag of the group of [DEEP_COPY_ACTIONS] inside a group of elements ([ActionGroup.tag]), and its title. */
     const val DEEP_COPY_GROUP: String = "deepcopy"
@@ -6546,7 +6652,15 @@ object SearchDomain {
      * A row an open action lists under it (user rule 2026-11-26: *"when it can be rows it must be rows"*) — "Contexts and
      * states", "State in each context", "Clicks and keys", "Default presences": [hasContent] while it draws controls under it.
      */
-    data class SubRow(val hasContent: Boolean)
+    data class SubRow(
+        val hasContent: Boolean,
+        /**
+         * User 2026-11-26 (*"Put the contexts selector field after 'contexts', instead of having to expand 'Contexts' to get
+         * to the field. Same thing for 'states' and elsewhere in the app that is adequate"*): its controls are drawn on the
+         * row itself, after its title — a row with controls and no rows under it. It has no arrow.
+         */
+        val inline: Boolean = false,
+    )
 
     /**
      * User rule 2026-11-12: **the rows of the actions section, in order**, as its Search window lists them — what it drew

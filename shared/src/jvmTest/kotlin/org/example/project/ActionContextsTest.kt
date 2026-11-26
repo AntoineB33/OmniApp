@@ -147,8 +147,9 @@ class ActionContextsTest {
         val texts = drawnTexts(window.copy(inside = mapOf("/actions" to own.encode())), height = 2400)
         assertEquals(4, texts.count { it == "context" }, texts.toString())
         assertEquals(4, texts.count { it == "states" }, texts.toString())
-        // User rule 2026-11-26: a pair's row is named by its place; its context field says what it holds.
-        assertTrue((1..4).all { SearchDomain.contextPairTitle(it - 1) in texts }, "context-state 1 to 4: $texts")
+        // User 2026-11-26: a pair's row is titled by every one of its contexts.
+        for (title in listOf("a, b, c", "d", "e", SearchDomain.NEW_PAIR_TITLE)) assertTrue(title in texts, "$title: $texts")
+        assertFalse(texts.any { it.startsWith("context-state") }, texts.toString())
         assertFalse(texts.any { it.startsWith("not complete") }, "the derived pairs hold every element: $texts")
     }
 

@@ -1296,10 +1296,10 @@ fun SearchWindow(
     /** A path already named, segment by segment. */
     fun copyPathOf(segments: List<String>) = writeSystemClipboardText(SearchDomain.pathLabel(segments))
     /** The cells under the list [listId] closed in this window's sub-trees ([SchedulerState.searchExpanded]). */
-    fun closeSubtreeCells(listId: CellListId) {
+    fun closeSubtreeCells(listId: CellListId, keepFromLevel: Int? = null) {
         val key = subtreeCellsKey
         val open = currentState.searchExpanded[key].orEmpty()
-        val under = SchedulerDomain.cellsUnder(currentState, listId)
+        val under = SchedulerDomain.cellsUnder(currentState, listId, keepFromLevel?.let { it - 1 })
         if (open.any { it in under }) onIntent(SchedulerIntent.SetSearchExpanded(key, open - under))
     }
     /**
@@ -1347,13 +1347,7 @@ fun SearchWindow(
             onCopyPath = { writeSystemClipboardText(SearchDomain.pathLabel(shownPath + SearchDomain.pathSegment(live?.title ?: result.title, taskId.value))) },
             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
             // The row's sub-tree is this window's ([SchedulerState.searchExpanded]), never the tree's: closed here.
-            onCollapseSubtrees = childListId?.let { listId -> { closeSubtreeCells(listId) } },
-            onRetractAll = childListId?.let { listId ->
-                {
-                    closeSubtreeCells(listId)
-                    expandedTasks = expandedTasks - taskId
-                }
-            },
+            onCollapse = childListId?.let { listId -> { level -> closeSubtreeCells(listId, level) } },
         )
     }
 
@@ -1362,12 +1356,23 @@ fun SearchWindow(
         RowMenuCommon(
             onCopyId = { copyIds(listOf(key)) },
             onCopyPath = { copyElementPath(key, ancestors, selfName) },
-            // The rows open under it: drawn on surfaces whose keys start with its own ([childSurface]). Greyed with none open.
-            onCollapseSubtrees = if (expandedElements.none { it.startsWith("$rowKey>") }) null else {
-                { expandedElements = expandedElements.filterNot { it.startsWith("$rowKey>") }.toSet() }
+            // The rows open under it: drawn on surfaces whose keys start with its own ([childSurface]), a level a ">"
+            // further ([elementLevelUnder]). Greyed with none open.
+            onCollapse = if (expandedElements.none { it.startsWith("$rowKey>") }) null else {
+                { level ->
+                    expandedElements = expandedElements.filterNot { k ->
+                        k.startsWith("$rowKey>") && SearchDomain.collapses(elementLevelUnder(rowKey, k), level)
+                    }.toSet()
+                }
             },
-            onRetractAll = if (rowKey !in expandedElements) null else {
-                { expandedElements = expandedElements.filterNot { it == rowKey || it.startsWith("$rowKey>") }.toSet() }
+            // User 2026-11-26: every element has its deep copy — a Search window on it, its "Deep copy" group pinned.
+            onDeepCopy = ElementTree.kindOf(key)?.takeIf(SearchDomain::deepCopyable)?.let {
+                {
+                    val rows = SearchDomain.resolve(currentState, listOf(key), { emptyMap() }, windows, schedulerRuns, claudeLogs)
+                    actionHandlers.onOpenSearch(
+                        SearchDomain.Config(kinds = rows.mapTo(HashSet()) { it.kind }, added = listOf(key), pinnedActionRow = SearchDomain.deepCopyGroupId(rows)),
+                    )
+                }
             },
         )
 
@@ -2064,6 +2069,7 @@ fun SearchWindow(
                             // opening it, an open action's controls under it.
                             val actionRow = actionRows?.let { given -> (result as? SearchDomain.ItemResult)?.let { given.byKey[it.id] } }
                             if (actionRows != null && actionRow != null && result is SearchDomain.ItemResult) {
+                                val inlineRow = actionRow.sub?.inline == true
                                 actionRows.wrap(actionRow) {
                                     Column(Modifier.fillMaxWidth().outsidePressPart(resultRows)) {
                                         ItemResultRow(
@@ -2093,10 +2099,12 @@ fun SearchWindow(
                                             rowMenu = RowMenuCommon(
                                                 onCopyId = { copyIds(listOf(resultKey(result))) },
                                                 onCopyPath = { copyPathOf(actionRows.pathOf(actionRow)) },
-                                                onCollapseSubtrees = actionRows.openUnder(actionRow).takeIf { it.isNotEmpty() }?.let { under ->
-                                                    { actionRows.onClose?.invoke(under) ?: under.forEach(actionRows.onToggle) }
+                                                onCollapse = actionRows.openUnder(actionRow, null).takeIf { it.isNotEmpty() }?.let {
+                                                    { level ->
+                                                        val under = actionRows.openUnder(actionRow, level)
+                                                        actionRows.onClose?.invoke(under) ?: under.forEach(actionRows.onToggle)
+                                                    }
                                                 },
-                                                onRetractAll = if (actionRow.open) { { actionRows.onToggle(actionRow.id) } } else null,
                                                 // User rule 2026-11-25: a row of an actions section can be pinned.
                                                 extra = listOfNotNull(
                                                     actionRows.onPin?.let { pin ->
@@ -2107,10 +2115,13 @@ fun SearchWindow(
                                             ),
                                             depth = actionRow.depth,
                                             warning = actionRow.warning,
+                                            // User 2026-11-26: a row that is its field ("context", "states") draws it on itself.
+                                            trailing = if (inlineRow) { { actionRows.content(actionRow) } } else null,
+                                            showArrow = !inlineRow,
                                         )
                                         // An open action's controls — and a row's under an action that draws some (user rule 2026-11-26).
                                         val hasContent = actionRow.action != null || actionRow.sub?.hasContent == true
-                                        if (actionRow.open && hasContent) {
+                                        if (actionRow.open && hasContent && !inlineRow) {
                                             // Hanging under the open action: its line, and its groups' (anomaly 2026-11-19).
                                             Box(
                                                 Modifier.fillMaxWidth()
@@ -2189,6 +2200,7 @@ fun SearchWindow(
                                         checkBox = option?.checked?.takeIf { !selectAll && result.id != SearchDomain.CREATE_OPTION }?.let { result.id in it },
                                         // User rule 2026-11-21: a row that shows a window when hovered says so by its arrow,
                                         // before its name: at the row's far end it stood past the menu's edge, out of view.
+                                        trailing = option?.trailing?.takeIf { !selectAll }?.invoke(result.id),
                                         leading = run {
                                             val mark = option?.leading?.takeIf { !selectAll }
                                             if (hoverPopup == null) mark?.let { draw -> { draw(result.id) } }
@@ -2206,8 +2218,7 @@ fun SearchWindow(
                                             RowMenuCommon(
                                                 onCopyId = { copyIds(listOf(resultKey(result))) },
                                                 onCopyPath = { copyPathOf(listOfNotNull(option.listName) + result.name) },
-                                                onCollapseSubtrees = null,
-                                                onRetractAll = null,
+                                                onCollapse = null,
                                             )
                                         } else elementMenu(resultKey(result), elementKey, null),
                                         timerRun = if (result.kind == SearchDomain.Kind.Timer) {
@@ -2334,7 +2345,14 @@ fun SearchWindow(
                     }
                 }
                 // A list of integers has no end: its thumb is sized by the highest one that means something.
-                if (count > 0) ListScrollbar(listState, Modifier.align(Alignment.CenterEnd), openEnd = options?.integers?.let { it.highest + 1 })
+                // User 2026-11-26 (*"The vertical scrollbar on the right of a list must not be hidden when the list is too
+                // wide for its window"*): a list cut by a narrow section ([listCut]) has its bar at the SHOWN right edge,
+                // not at the edge of the width it was laid out at.
+                if (count > 0) ListScrollbar(
+                    listState,
+                    Modifier.align(Alignment.CenterEnd).offset { androidx.compose.ui.unit.IntOffset(-(listCut.max - listCut.offset), 0) },
+                    openEnd = options?.integers?.let { it.highest + 1 },
+                )
                 // User rule 2026-11-22, "Row layout": the rows' sideways scroll, under the list.
                 if (count > 0 && config.taskRowLayout.isNotEmpty() && treeList == null) {
                     Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(end = SCROLLBAR_ROOM)) {
@@ -2744,6 +2762,8 @@ class SearchOptions(
      * as the menu's do ("Hide the search" turning to "Show the search"). Null: these are.
      */
     val asGiven: androidx.compose.runtime.State<SearchOptions>? = null,
+    /** User 2026-11-26: a control drawn after an option's name, on its row (the menu's "collapse" level field). */
+    val trailing: ((String) -> (@Composable () -> Unit)?)? = null,
 )
 
 /**
@@ -2775,6 +2795,8 @@ class MenuAction(
      * "Entries, in order" names it by ([SearchDomain.Config.entries]), and its key as an element.
      */
     val id: String = label,
+    /** User 2026-11-26: a control on the entry's row, after its label (the "collapse" level field). */
+    val trailing: (@Composable () -> Unit)? = null,
     val onClick: () -> Unit,
 ) {
     companion object {
@@ -2803,10 +2825,12 @@ internal const val CHECK_ONLY_LABEL: String = "check only this"
 internal class RowMenuCommon(
     val onCopyId: (() -> Unit)?,
     val onCopyPath: (() -> Unit)?,
-    val onCollapseSubtrees: (() -> Unit)?,
-    val onRetractAll: (() -> Unit)?,
+    /** The menu's "collapse" ([TaskCellMenuActions.onCollapse]): given the level from which the children stay as they are. */
+    val onCollapse: ((Int?) -> Unit)?,
     /** Entries only this row has, after "add" (user rule 2026-11-25: an action row's "pin this row"). */
     val extra: List<MenuAction> = emptyList(),
+    /** User 2026-11-26: "deep copy" — every element's, not a task's alone. */
+    val onDeepCopy: (() -> Unit)? = null,
 ) {
     fun menu(onAdd: (() -> Unit)?, onAddReplacing: (() -> Unit)?, extra: List<MenuAction>): TaskCellMenuActions =
         TaskCellMenuActions(
@@ -2814,16 +2838,15 @@ internal class RowMenuCommon(
             onEdit = null,
             onCopyId = onCopyId,
             onCopyPath = onCopyPath,
-            onDeepCopy = null,
-            onCollapseSubtrees = onCollapseSubtrees,
-            onRetractAll = onRetractAll,
+            onDeepCopy = onDeepCopy,
+            onCollapse = onCollapse,
             onAdd = onAdd,
             onAddReplacing = onAddReplacing,
             extra = extra + this.extra,
         )
 
     companion object {
-        val NONE = RowMenuCommon(null, null, null, null)
+        val NONE = RowMenuCommon(null, null, null)
     }
 }
 
@@ -2862,6 +2885,7 @@ internal fun ActionMenu(name: String,
             hoverPopup = if (actions.any { it.hoverPopup != null }) { id -> id.toIntOrNull()?.let(latest::getOrNull)?.hoverPopup } else null,
             separators = actions.indices.filter { actions[it].separator }.mapTo(HashSet()) { it.toString() },
             elementIds = actions.withIndex().associate { (i, action) -> i.toString() to action.id },
+            trailing = if (actions.any { it.trailing != null }) { id -> id.toIntOrNull()?.let(latest::getOrNull)?.trailing } else null,
         ),
     )
 }
@@ -2914,7 +2938,8 @@ class ActionSearchRows(
     fun pathOf(row: SearchDomain.ActionListRow): List<String> = SearchDomain.actionRowPath(rows, indexById[row.id] ?: -1)
 
     /** The open rows under [row] ([SearchDomain.openActionRowsUnder]): what its "collapse sub-trees" closes. */
-    fun openUnder(row: SearchDomain.ActionListRow): List<String> = SearchDomain.openActionRowsUnder(rows, indexById[row.id] ?: -1)
+    fun openUnder(row: SearchDomain.ActionListRow, keepFromLevel: Int?): List<String> =
+        SearchDomain.openActionRowsUnder(rows, indexById[row.id] ?: -1, keepFromLevel)
 }
 
 /** User rule 2026-11-25: the right-click entries pinning an action row ([ActionSearchRows.onPin]). */
@@ -3019,7 +3044,7 @@ internal fun OptionSearchMenu(
         leading = options.leading, onNearEnd = options.onNearEnd, onDrop = options.onDrop, canDrop = options.canDrop,
         disabled = options.disabled, onCreate = options.onCreate?.let(::holding), integers = options.integers,
         hoverPopup = options.hoverPopup, listName = name, separators = options.separators, elementIds = options.elementIds,
-        asGiven = givenNow,
+        asGiven = givenNow, trailing = options.trailing,
     )
     // Anomaly 2026-11-21 (*"The right-click doesn't work..."*): the ONE registration of this menu with the host that closes
     // menus on a press outside them. A caller registering the same menu again was closed by this one opening — the host
@@ -4544,9 +4569,9 @@ internal fun TaskIdentityRow(
                 val occurrence = SchedulerDomain.firstTaskOccurrence(latest, taskId)
                 val shownPath = paths.firstOrNull()
                 val cellsKey = subtreeWindowKey()
-                val closeCells = {
+                val closeCells = { level: Int? ->
                     val open = latest.searchExpanded[cellsKey].orEmpty()
-                    val under = childListId?.let { SchedulerDomain.cellsUnder(latest, it) }.orEmpty()
+                    val under = childListId?.let { SchedulerDomain.cellsUnder(latest, it, level?.let { l -> l - 1 }) }.orEmpty()
                     if (open.any { it in under }) onIntent(SchedulerIntent.SetSearchExpanded(cellsKey, open - under))
                 }
                 ActionMenu("TaskIdentityRow",
@@ -4563,13 +4588,7 @@ internal fun TaskIdentityRow(
                                 writeSystemClipboardText(SearchDomain.pathLabel(shownPath.orEmpty() + SearchDomain.pathSegment(latest.tasks[taskId]?.title, taskId.value)))
                             },
                             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
-                            onCollapseSubtrees = if (hasChildren) closeCells else null,
-                            onRetractAll = if (hasChildren && expanded) {
-                                {
-                                    closeCells()
-                                    expanded = false
-                                }
-                            } else null,
+                            onCollapse = if (hasChildren) closeCells else null,
                         ),
                     ),
                 )
@@ -4668,6 +4687,13 @@ private fun ItemResultRow(
     depth: Int = 0,
     /** User rule 2026-11-26: what is wrong with what the row holds ([SearchDomain.ActionListRow.warning]): drawn red, said. */
     warning: String? = null,
+    /**
+     * User 2026-11-26 (*"Put the contexts selector field after 'context', instead of having to expand"*): a control drawn on
+     * the row after its name, taking the rest of its width — a row that is its field has no arrow.
+     */
+    trailing: (@Composable () -> Unit)? = null,
+    /** False: no arrow (a row whose control is on it, [trailing], opens nothing). */
+    showArrow: Boolean = true,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val workplaceRuns = LocalWorkplaceRuns.current
@@ -4708,7 +4734,7 @@ private fun ItemResultRow(
             if (!SearchDomain.isPickedRow(item.kind) && item.kind != SearchDomain.Kind.Action) KindSection(item.kind, kindWidth)
             // User rule 2026-11-02: every element has its arrow. A "creation" row is a command, and an option a choice:
             // neither is an element.
-            if (item.kind != SearchDomain.Kind.Creation && !SearchDomain.isPickedRow(item.kind)) SectionArrow(!expanded, onToggleExpand)
+            if (showArrow && item.kind != SearchDomain.Kind.Creation && !SearchDomain.isPickedRow(item.kind)) SectionArrow(!expanded, onToggleExpand)
             if (checkBox != null) Checkbox(checked = checkBox, onCheckedChange = null)
             leading?.invoke()
             if (timerRun != null) {
@@ -4737,6 +4763,7 @@ private fun ItemResultRow(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
+                if (trailing != null) Box(Modifier.weight(1f)) { trailing() }
             }
         }
         // User rule 2026-11-12: the menu is a Search window of its entries.
@@ -4911,7 +4938,7 @@ private fun ElementChildren(
                 open = menuOpen,
                 onDismiss = { menuOpen = false },
                 actions = org.example.project.scheduler.ui.taskCellMenuActions(
-                    RowMenuCommon(null, selection.menuOf(parent, blankKey, path.toList()).onCopyPath, null, null)
+                    RowMenuCommon(null, selection.menuOf(parent, blankKey, path.toList()).onCopyPath, null)
                         .menu(onAdd = null, onAddReplacing = null, extra = emptyList()),
                 ),
                 atPointer = LocalRowMenusAtPointer.current,
@@ -5190,3 +5217,6 @@ private fun Modifier.recordPressModifiers(holder: PressModifiers): Modifier =
             }
         }
     }
+
+/** The level under the element row [rowKey] of the row drawn as [key] ([elementChildRows]): its children 1, theirs 2. */
+internal fun elementLevelUnder(rowKey: String, key: String): Int = key.removePrefix("$rowKey>").count { it == '>' } + 1

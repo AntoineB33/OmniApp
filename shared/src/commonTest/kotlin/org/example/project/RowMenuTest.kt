@@ -13,7 +13,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.COPY_ID_LABEL
 import org.example.project.scheduler.ui.COPY_PATH_LABEL
-import org.example.project.scheduler.ui.RETRACT_ALL_LABEL
+import org.example.project.scheduler.ui.COLLAPSE_LABEL
 import org.example.project.scheduler.ui.TaskCellMenuActions
 import org.example.project.scheduler.ui.taskCellMenuActions
 
@@ -46,11 +46,12 @@ class RowMenuTest {
 
     @Test
     fun every_row_offers_the_same_entries_and_none_of_the_removed_ones() {
-        val bare = TaskCellMenuActions(null, null, null, null, null, null, null)
-        val full = TaskCellMenuActions({}, {}, {}, {}, {}, {}, {})
+        val bare = TaskCellMenuActions(null, null, null, null, null, null)
+        val full = TaskCellMenuActions({}, {}, {}, {}, {}, {})
         val labels = taskCellMenuActions(bare).map { it.label }
         // A row with nothing to do still shows them, greyed: the menu reads the same on every row.
-        assertEquals(listOf(COPY_ID_LABEL, COPY_PATH_LABEL, "deep copy", "collapse sub-trees", RETRACT_ALL_LABEL), labels)
+        // User 2026-11-26: "collapse sub-trees" is "collapse", "retract with every sub-child" is gone.
+        assertEquals(listOf(COPY_ID_LABEL, COPY_PATH_LABEL, "deep copy", COLLAPSE_LABEL), labels)
         assertTrue(taskCellMenuActions(bare).none { it.enabled })
         val all = taskCellMenuActions(full).map { it.label }
         for (gone in listOf("go to task tree", "go to calendar", "add default sub-tree")) assertFalse(gone in all, gone)
@@ -58,7 +59,7 @@ class RowMenuTest {
     }
 
     @Test
-    fun retract_closes_the_row_and_every_sub_child_collapse_keeps_the_row_open() {
+    fun collapse_keeps_the_row_open_and_its_level_keeps_the_deeper_rows() {
         var s = tree()
         val apple = cell(s, "Apple")
         val pie = cell(s, "Pie")
@@ -66,11 +67,16 @@ class RowMenuTest {
         val collapsed = r(s, SchedulerIntent.CollapseSubtrees(apple))
         assertTrue(apple in collapsed.expanded)
         assertFalse(pie in collapsed.expanded)
-        val retracted = r(s, SchedulerIntent.CollapseSubtrees(apple, includingSelf = true))
-        assertFalse(apple in retracted.expanded)
-        assertFalse(pie in retracted.expanded)
+        // From level 2 the rows stay as they are: Pie (level 1) closes, Crust (level 2) keeps its state.
+        val crust = cell(s, "Crust")
+        val deep = s.copy(expanded = s.expanded + crust)
+        val kept = r(deep, SchedulerIntent.CollapseSubtrees(apple, keepFromLevel = 2))
+        assertTrue(apple in kept.expanded && crust in kept.expanded)
+        assertFalse(pie in kept.expanded)
+        // From level 1: nothing under it closes.
+        assertEquals(deep.expanded, r(deep, SchedulerIntent.CollapseSubtrees(apple, keepFromLevel = 1)).expanded)
         // One undoable unit, back to both open.
-        val undone = r(retracted, SchedulerIntent.Undo)
+        val undone = r(collapsed, SchedulerIntent.Undo)
         assertTrue(apple in undone.expanded && pie in undone.expanded)
         assertEquals(setOf(pie, cell(s, "Crust")), SchedulerDomain.cellsUnder(s, s.tasks[task(s, "Apple")]!!.childListId!!).filter { s.cells[it]?.taskId != null && s.tasks[s.cells[it]!!.taskId!!]!!.title.isNotEmpty() }.toSet())
     }
@@ -138,5 +144,53 @@ class RowMenuTest {
         assertEquals(SchedulerDomain.TASK_ID_REFERENCE_PREFIX + "abc", SearchDomain.copiedId("Task/abc"))
         assertEquals("Alarm/7", SearchDomain.copiedId("Alarm/7"))
         assertEquals("Option/beta", SearchDomain.copiedId(SearchDomain.optionKey("beta")))
+    }
+
+    /**
+     * User 2026-11-26 (*"deep copy … Why would it be only for tasks?"*): an element that is no task copies with its children
+     * ([org.example.project.scheduler.domain.ElementTree.childrenOf]) down to the depth asked, its ids where asked.
+     */
+    @Test
+    fun an_element_that_is_no_task_deep_copies_with_its_children() {
+        fun key(id: String) = "Chrono/$id"
+        val s = SchedulerState.empty().copy(
+            chronos = listOf("p", "a", "b").map { org.example.project.scheduler.model.ChronoEntry(id = it, label = it.uppercase()) },
+            elementLinks = listOf("p" to "a", "a" to "b").map { (parent, child) ->
+                org.example.project.scheduler.domain.ElementLink(
+                    org.example.project.scheduler.domain.ElementTree.linkId(key(parent), key(child)), key(parent), key(child),
+                )
+            },
+        )
+        val tab = 9.toChar()
+        val nl = 10.toChar()
+        assertEquals("P${nl}${tab}A${nl}", SearchDomain.elementsCopyText(s, listOf(key("p")), 2, includeIds = false, excludeTitle = ""))
+        assertEquals("P${nl}${tab}A${nl}${tab}${tab}B${nl}", SearchDomain.elementsCopyText(s, listOf(key("p")), 9, includeIds = false, excludeTitle = ""))
+        assertEquals("P${nl}${tab}- id: Chrono/p${nl}", SearchDomain.elementsCopyText(s, listOf(key("p")), 1, includeIds = true, excludeTitle = ""))
+        assertEquals("P${nl}", SearchDomain.elementsCopyText(s, listOf(key("p")), 9, includeIds = false, excludeTitle = "A"))
+        assertEquals(listOf("P", "A", "B"), SearchDomain.elementsDeepestPath(s, listOf(key("p")), 9))
+        // The deep copy rows are offered for it, those only a task carries not.
+        val rows = SearchDomain.resolve(s, listOf(key("p")), { emptyMap() })
+        val actions = SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(rows)), rows)
+            .flatMap { it.second }
+        assertTrue(SearchDomain.AddedAction.TaskDeepCopy in actions && SearchDomain.AddedAction.DeepCopyMaxDepth in actions)
+        assertFalse(SearchDomain.AddedAction.DeepCopyMinimumTime in actions)
+        assertTrue(SearchDomain.deepCopyGroupId(rows) != null, "its \"Deep copy\" group, which the menu pins")
+    }
+
+    /** User 2026-11-26: "collapse" closes the rows under the row above the level asked; the row itself stays open. */
+    @Test
+    fun collapse_closes_the_levels_above_the_one_asked() {
+        assertTrue(SearchDomain.collapses(1, null) && SearchDomain.collapses(5, null))
+        assertFalse(SearchDomain.collapses(0, null), "the row itself")
+        assertTrue(SearchDomain.collapses(1, 2))
+        assertFalse(SearchDomain.collapses(2, 2))
+        assertFalse(SearchDomain.collapses(1, 1))
+    }
+
+    /** User 2026-11-26: a saved "Entries, in order" naming the old entries keeps "collapse" and drops "retract". */
+    @Test
+    fun a_saved_entries_order_is_healed_on_load() {
+        val old = SearchDomain.Config(entries = listOf("copy path", "collapse sub-trees", "retract with every sub-child", "deep copy"))
+        assertEquals(listOf("copy path", "collapse", "deep copy"), SearchDomain.Config.decode(old.encode())!!.entries)
     }
 }

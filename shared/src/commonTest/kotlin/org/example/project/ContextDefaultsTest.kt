@@ -100,7 +100,7 @@ class ContextDefaultsTest {
         val task = ContextDomain.configOf(emptyList(), "menu:task cell menu")
         assertEquals(ContextDomain.ROW_MENU_ENTRIES, task.entries)
         assertTrue(Setting.Entries in SearchDomain.activeSettings(task), "on in that context")
-        val full = org.example.project.scheduler.ui.TaskCellMenuActions({}, {}, {}, {}, {}, {}, {}, onAdd = {}, onAddReplacing = {})
+        val full = org.example.project.scheduler.ui.TaskCellMenuActions({}, {}, {}, {}, {}, {}, onAdd = {}, onAddReplacing = {})
         val ids = org.example.project.scheduler.ui.taskCellMenuActions(full).map { it.id }
         assertEquals(emptyList(), ids - ContextDomain.ROW_MENU_ENTRIES.toSet(), "every entry is named")
         assertEquals(ids, ContextDomain.ROW_MENU_ENTRIES.filter { it in ids }, "in the builder's order")

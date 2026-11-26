@@ -64,11 +64,11 @@ sealed interface SchedulerIntent {
     data class ToggleExpand(val cellId: CellId) : SchedulerIntent
 
     /**
-     * Collapse the sub-trees UNDER [cellId] — every cell below it, but not [cellId] itself, which stays
-     * open on its own children — or, [includingSelf] (user rule 2026-11-25, the row menu's "retract with every
-     * sub-child"), [cellId] closed too. Recorded as one expansion-set delta.
+     * The row menu's "collapse" (user 2026-11-26): the sub-trees UNDER [cellId] closed — every cell below it, but not
+     * [cellId] itself, which stays open on its own children — or, with [keepFromLevel], only the cells above that level
+     * (its children are level 1), those from it down left as they are. Recorded as one expansion-set delta.
      */
-    data class CollapseSubtrees(val cellId: CellId, val includingSelf: Boolean = false) : SchedulerIntent
+    data class CollapseSubtrees(val cellId: CellId, val keepFromLevel: Int? = null) : SchedulerIntent
 
     data class SetCellTitle(
         val cellId: CellId,

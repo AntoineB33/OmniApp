@@ -11,6 +11,21 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Deep copy of every element; "collapse" with a level; pair titles list their contexts; inline fields; scrollbar — 2026-11-26
+
+- User: *"deep copy … Why would it be only for tasks?"* Every element's menu has it: a Search window on the element,
+  its "Deep copy" group pinned. An element that is no task copies with its children (`SearchDomain.elementsCopyText`,
+  `elementsDeepestPath`); the deep copy rows are about every element now (`AddedAction.section` null), those only a
+  task carries listed where a task is added (`DEEP_COPY_TASK_ACTIONS`). A row of an actions section has none.
+- User: "collapse sub-trees" is "collapse", its row holding the level from which the children stay as they are
+  (`SchedulerIntent.CollapseSubtrees.keepFromLevel`, replacing `includingSelf`; `SearchDomain.collapses`); "retract
+  with every sub-child" is gone. Saved menu entry orders are healed (`SearchDomain.healedEntries`). `RowMenuTest`.
+- User: a pair's title is every one of its contexts' names (was "context-state N").
+- User: a row whose controls are all it has ("context", "states", "state") carries them after its title, no arrow
+  (`SubRow.inline`).
+- User: a Search window's result list cut by a narrow section keeps its scrollbar at the shown edge; the tree window's
+  configuration column scrolls on its shown width.
+
 ### "context-state N"; incomplete pairs warn; action rows' copy path and collapse — 2026-11-26
 
 - User question: why "copy path", "deep copy" and "collapse sub-tree" are greyed on a "context" row. Every row of an

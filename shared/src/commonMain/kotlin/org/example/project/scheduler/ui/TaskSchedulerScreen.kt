@@ -448,8 +448,10 @@ fun TaskSchedulerScreen(
                 .then(if (treeCollapsed) Modifier.weight(1f) else Modifier.sectionWidth { configurationWidth })
                 .fillMaxHeight()
                 .onSizeChanged { configurationShownPx = it.width }
-                .keepsWidthAbove(TASK_TREE_CONFIGURATION_WIDTH)
+                // User 2026-11-26: the scrollbar on the shown width, the content cut under it — laid out wider than the
+                // section, its bar was in the part cut off.
                 .verticalScrollWithBar(rememberScrollState())
+                .keepsWidthAbove(TASK_TREE_CONFIGURATION_WIDTH)
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -697,7 +699,7 @@ internal fun CellListSection(
                 remember(copyPath) {
                     TaskCellMenuActions(
                         onStartNow = null, onEdit = null, onCopyId = null, onCopyPath = copyPath, onDeepCopy = null,
-                        onCollapseSubtrees = null, onRetractAll = null,
+                        onCollapse = null,
                     )
                 }
             } else {
@@ -728,15 +730,9 @@ internal fun CellListSection(
                         // sub-tree's) the live tree's.
                         onCopyPath = if (isRootRow) null else ({ copyPath() }),
                         onDeepCopy = { onDeepCopyCell(cellId) },
-                        onCollapseSubtrees =
+                        onCollapse =
                             if (hasChildren) {
-                                { onIntent(SchedulerIntent.CollapseSubtrees(cellId)) }
-                            } else {
-                                null
-                            },
-                        onRetractAll =
-                            if (hasChildren) {
-                                { onIntent(SchedulerIntent.CollapseSubtrees(cellId, includingSelf = true)) }
+                                { level -> onIntent(SchedulerIntent.CollapseSubtrees(cellId, level)) }
                             } else {
                                 null
                             },
@@ -3430,16 +3426,44 @@ internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.exampl
         add(org.example.project.ui.MenuAction(COPY_ID_LABEL, enabled = cellMenu.onCopyId != null) { cellMenu.onCopyId?.invoke() })
         add(org.example.project.ui.MenuAction(COPY_PATH_LABEL, enabled = cellMenu.onCopyPath != null) { cellMenu.onCopyPath?.invoke() })
         add(org.example.project.ui.MenuAction(DEEP_COPY_LABEL, enabled = cellMenu.onDeepCopy != null) { cellMenu.onDeepCopy?.invoke() })
-        add(org.example.project.ui.MenuAction(COLLAPSE_SUBTREES_LABEL, enabled = cellMenu.onCollapseSubtrees != null) { cellMenu.onCollapseSubtrees?.invoke() })
-        add(org.example.project.ui.MenuAction(RETRACT_ALL_LABEL, enabled = cellMenu.onRetractAll != null) { cellMenu.onRetractAll?.invoke() })
+        // User 2026-11-26: "collapse", its row holding the level from which the children stay as they are.
+        add(
+            org.example.project.ui.MenuAction(
+                COLLAPSE_LABEL, enabled = cellMenu.onCollapse != null, trailing = { CollapseLevelField() },
+            ) { cellMenu.onCollapse?.invoke(collapseKeepFromLevel.value) },
+        )
     }
+
+/**
+ * User 2026-11-26: **the level of the menu's "collapse"** — from it down (the row's children are level 1), the rows stay as
+ * they are; blank: every row under it closes. One for the app, kept while it runs.
+ */
+internal val collapseKeepFromLevel = androidx.compose.runtime.mutableStateOf<Int?>(null)
+
+/** The field on the "collapse" row ([collapseKeepFromLevel]): a level, or blank for every one. */
+@Composable
+private fun CollapseLevelField() {
+    var text by remember { mutableStateOf(collapseKeepFromLevel.value?.toString().orEmpty()) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("children stay as they are from level", style = MaterialTheme.typography.labelSmall)
+        org.example.project.ui.OutlinedTextField(
+            value = text,
+            onValueChange = { raw ->
+                text = raw.filter { it.isDigit() }.take(3)
+                collapseKeepFromLevel.value = text.toIntOrNull()?.takeIf { it >= 1 }
+            },
+            placeholder = { Text("all") },
+            singleLine = true,
+            modifier = Modifier.width(64.dp),
+        )
+    }
+}
 
 /** The row menu's entries every row shows ([taskCellMenuActions]), each greyed where the row has nothing to do. */
 const val COPY_ID_LABEL: String = "copy id (ctrl c)"
 const val COPY_PATH_LABEL: String = "copy path"
 const val DEEP_COPY_LABEL: String = "deep copy"
-const val COLLAPSE_SUBTREES_LABEL: String = "collapse sub-trees"
-const val RETRACT_ALL_LABEL: String = "retract with every sub-child"
+const val COLLAPSE_LABEL: String = "collapse"
 
 /**
  * PRD §13 the actions of a row's right-click contextual menu ([taskCellMenuActions]). Bundled so a row either has the
@@ -3463,10 +3487,12 @@ internal class TaskCellMenuActions(
     val onCopyPath: (() -> Unit)?,
     /** Null (greyed) for a Search row whose task no live cell holds, and for an element that is no task. */
     val onDeepCopy: (() -> Unit)?,
-    /** Every sub-tree under the row closed, the row itself left open on its children; null when nothing is under it. */
-    val onCollapseSubtrees: (() -> Unit)?,
-    /** User rule 2026-11-25: the row closed on its children, and every sub-child closed too; null when nothing is under it. */
-    val onRetractAll: (() -> Unit)?,
+    /**
+     * User 2026-11-26 **"collapse"**: the sub-trees under the row closed, the row itself left open on its children — given
+     * the level from which they stay as they are ([SearchDomain.collapses]; null: every one closes). Null when nothing is
+     * under it.
+     */
+    val onCollapse: ((Int?) -> Unit)?,
     /** PRD §7 Search: "add" — the element into the Search window's added elements; null everywhere else. */
     val onAdd: (() -> Unit)? = null,
     /** PRD §7 Search: [onAdd] with every element added before removed from the added elements; null elsewhere. */

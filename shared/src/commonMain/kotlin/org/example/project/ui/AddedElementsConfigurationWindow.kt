@@ -669,6 +669,8 @@ private class ContextPairs(
     val byKey: Map<String, SearchDomain.Result>,
     /** Every other element of the account, the "no state" pair's; null while not listed yet. */
     val listedOthers: List<String>?,
+    /** Their names, by key: what the "no state" pair's title lists. */
+    val otherNames: Map<String, String>,
     val setPairs: (List<SearchDomain.ContextPair>) -> Unit,
 ) {
     val others: List<String> get() = listedOthers.orEmpty()
@@ -709,19 +711,21 @@ private fun rememberContextPairs(host: ActionSectionHost, row: SearchDomain.Acti
     // The "no state" pair's contexts: every other element of the account (user rule 2026-11-26) — about 1,700 on the release
     // account, 25 ms to list: listed OFF the UI thread once the state has settled ([CONTEXTS_SETTLE_MILLIS]).
     val latestState by rememberUpdatedState(host.state)
-    var listedOthers by remember(action) { mutableStateOf<List<String>?>(null) }
+    var listedOthers by remember(action) { mutableStateOf<List<SearchDomain.Result>?>(null) }
     LaunchedEffect(action) {
         androidx.compose.runtime.snapshotFlow { latestState }.collectLatest { settled ->
             delay(CONTEXTS_SETTLE_MILLIS)
             listedOthers = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                SearchDomain.otherContextKeys(settled, action)
+                SearchDomain.otherContexts(settled, action)
             }
         }
     }
+    val othersKeys = remember(listedOthers) { listedOthers?.map(SearchDomain::keyOf) }
+    val otherNames = remember(listedOthers) { listedOthers.orEmpty().associate { SearchDomain.keyOf(it) to it.name } }
     // The pairs B changed are view state, set back to the derived ones whenever a state set changes them.
     var pairs by remember(row.id) { mutableStateOf(derived) }
     LaunchedEffect(derived) { pairs = derived }
-    return ContextPairs(host, row, action, kind, pairs, byKey, listedOthers) { pairs = it }
+    return ContextPairs(host, row, action, kind, pairs, byKey, othersKeys, otherNames) { pairs = it }
 }
 
 /**
@@ -737,7 +741,10 @@ internal class SubRowSpec(
     val detail: String = "",
     val children: List<SubRowSpec> = emptyList(),
     val content: (@Composable () -> Unit)? = null,
-)
+) {
+    /** User 2026-11-26: its controls on the row itself, after its title ([SearchDomain.SubRow.inline]) — none under it. */
+    val inline: Boolean get() = content != null && children.isEmpty()
+}
 
 /** The actions whose open row lists rows under it ([SubRowSpec]) and draws nothing of its own. */
 internal val SUB_ROW_ACTIONS: Set<SearchDomain.AddedAction> = setOf(
@@ -764,7 +771,7 @@ internal fun subRowsOf(
             val id = prefix + "/" + spec.key
             val open = id !in closed
             out += SearchDomain.ActionListRow(
-                id, id, spec.title, spec.detail, depth, open, parent.group, null, SearchDomain.SubRow(hasContent = spec.content != null),
+                id, id, spec.title, spec.detail, depth, open, parent.group, null, SearchDomain.SubRow(hasContent = spec.content != null, inline = spec.inline),
             )
             spec.content?.let { contents[id] = it }
             if (open) walk(id, spec.children, depth + 1)
@@ -794,15 +801,14 @@ private fun contextsNamed(contexts: List<org.example.project.scheduler.domain.Co
     if (contexts.size == org.example.project.scheduler.domain.ContextDomain.CONTEXTS.size) "every context" else contexts.joinToString(", ") { it.title }
 
 /**
- * **The rows of an open "Contexts and states"** ([ContextPairs]): per added action, each pair a row — named by its place ("context-state 2"),
+ * **The rows of an open "Contexts and states"** ([ContextPairs]): per added action, each pair a row — titled by every one of its contexts,
  * its state beside — with its "context" row (the field opening pop-up window B) and its "states" row (the action's editor).
  */
 private fun contextPairSpecs(model: ContextPairs): List<SubRowSpec> =
     model.pairs.mapIndexed { index, pair ->
-        // User rule 2026-11-26: named by its place ("context-state 2"); what it holds its context field says.
         SubRowSpec(
             "pair$index",
-            SearchDomain.contextPairTitle(index),
+            pairTitle(pair, model),
             stateSaid(pair, model),
             listOf(
                 SubRowSpec("context", "context", content = { ContextPairContext(model, index) }),
@@ -810,6 +816,19 @@ private fun contextPairSpecs(model: ContextPairs): List<SubRowSpec> =
             ),
         )
     }
+
+/**
+ * User 2026-11-26: a pair's title — every one of its contexts by name ([SearchDomain.contextPairTitle]); the "no state" pair's
+ * every other element of the account, once listed.
+ */
+private fun pairTitle(pair: SearchDomain.ContextPair, model: ContextPairs): String {
+    if (pair.keys == null && model.listedOthers == null) return SearchDomain.LISTING_OTHERS_TITLE
+    val keys = model.keysOf(pair)
+    val missing = keys.filter { it !in model.byKey && it !in model.otherNames }
+    val resolved = if (missing.isEmpty()) emptyMap()
+    else SearchDomain.resolve(model.host.state, missing, { emptyMap() }).associate { SearchDomain.keyOf(it) to it.name }
+    return SearchDomain.contextPairTitle(keys.map { k -> model.byKey[k]?.name ?: model.otherNames[k] ?: resolved[k] ?: k.substringAfter('/') })
+}
 
 /** What a pair's row says of its state: "no state", or the value the action holds for its contexts where it is a plain one. */
 private fun stateSaid(pair: SearchDomain.ContextPair, model: ContextPairs): String {

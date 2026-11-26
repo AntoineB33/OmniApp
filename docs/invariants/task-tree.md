@@ -1132,12 +1132,19 @@ suggestions before it was ever entered.
   its entries, for the tree's cells (its empty placeholders included), a Search window's task rows, element rows,
   action rows, the children under an element's arrow and the blank row ending them. In order: "start this task now"
   (a schedulable leaf), "add" / "add and remove the others" (or an added element's "remove" entries), the surface's
-  own ("open in …"), "edit task" (a tree cell), then the five every row shows, **greyed, never hidden**, where the row
+  own ("open in …"), "edit task" (a tree cell), then the four every row shows, **greyed, never hidden**, where the row
   has nothing to do: **"copy id (ctrl c)"** (`SearchDomain.copiedId`: a task's reference, any other element's key),
   **"copy path"** (the path down to the row clicked, the row included, the tree's label first — each segment its title,
   its id where it has none, `SearchDomain.pathSegment`; `SearchDomain.cellPathLabel` for a cell, the row's own path for
-  a task row, the elements it is drawn under for a child, the menu's name for a menu's entry), **"deep copy"** (a task's), **"collapse
-  sub-trees"** (the row stays open on its children) and **"retract with every sub-child"** (the row closed too). A
+  a task row, the elements it is drawn under for a child, the menu's name for a menu's entry), **"deep copy"** (user 2026-11-26: every
+  element's, not a task's alone — a Search window on it, its "Deep copy" group pinned, whose rows say what the copy
+  carries; an element that is no task copies with its children, `ElementTree.childrenOf`, `SearchDomain.elementsCopyText`;
+  what only a task carries is listed where a task is added, `DEEP_COPY_TASK_ACTIONS`) and **"collapse"** (user 2026-11-26,
+  was "collapse sub-trees"; "retract with every sub-child" is gone): the row stays open on its children and the rows
+  under it close — but from the level its row's field holds (its children are level 1), which stay as they are
+  (`SearchDomain.collapses`, `SchedulerIntent.CollapseSubtrees.keepFromLevel`, one value for the app while it runs,
+  blank: every one closes). A saved "Entries, in order" naming the old entries is healed on load
+  (`SearchDomain.healedEntries`). A
   Search window's rows retract in that window's open rows (`SchedulerState.searchExpanded`, its element rows' keys),
   never the tree's. **"go to calendar", "go to task tree" and "add default sub-tree" are not on the menu**: they are
   a task's actions in the actions section (`AddedAction.TaskGoToCalendar`, `TaskGoToTree`, `TaskAddDefaultSubtree`).
@@ -1466,9 +1473,12 @@ suggestions before it was ever entered.
     its group's elements and has no "no state" pair. A context field names its pair's contexts while few, else counts them
     by kind. **Each pair is a row of the actions section** (user rule 2026-11-26, *"it doesn't really seem to be real rows
     … there should be three rows, each with two children … when it can be rows it must be rows"*; `ActionListRow.sub`,
-    `SubRowSpec`, `contextPairSpecs`): under the open "Contexts and states" row, a row per pair named by its place — "context-state 2", never by what it holds (user rule 2026-11-26: no program to name them; its context field says what it holds, `SearchDomain.contextPairTitle`) — its state beside,
-    and under it a **"context"** row (the field opening B) and a **"states"** row (the action's editor) — open by default,
-    opened and closed as view state; the list scrolls them (no page of twenty any more). **So are "State in each
+    `SubRowSpec`, `contextPairSpecs`): under the open "Contexts and states" row, a row per pair titled by every one of its contexts' names, none summarised (user 2026-11-26: *"give the list of
+    all the contexts as the title"*, `SearchDomain.contextPairTitle`; the "no state" pair's once its contexts are listed),
+    its state beside, and under it a **"context"** row (the field opening B) and a **"states"** row (the action's
+    editor). **A row whose controls are all it has carries them on itself**, after its title, with no arrow (user
+    2026-11-26, *"Put the contexts selector field after 'contexts', instead of having to expand"*; `SubRow.inline`: a
+    `SubRowSpec` with controls and no rows under it) — "context", "states", "state" alike; the list scrolls them (no page of twenty any more). **So are "State in each
     context", "Clicks and keys" and "Default presences"** (`SUB_ROW_ACTIONS`): a row per group of contexts, its state or
     nothing beside, with its "context" row (a link opening a Search window of them) and its "state" row (the control) or,
     for the presses, a row per press with what it does beside — none draws text of its own under its action row. The pairs are view state, set back
@@ -1476,8 +1486,10 @@ suggestions before it was ever entered.
     contexts in B): the "Contexts and states" row is drawn red, *"not complete: … in no context-state"* beside it
     (`ActionListRow.warning`, `SearchDomain.contextsInNoPair`), until a pair holds them again — the action's kind, and,
     once listed and where the action has a "no state" pair, every other element. **Its rows' menus**: "copy path" (the
-    titles of the rows it hangs from) and "collapse sub-trees" (the open rows under it; greyed where none is) act on the
-    section's rows; "deep copy" stays a task cell's and is greyed on any other row. **The kind's
+    titles of the rows it hangs from) and "collapse" (the open rows under it; greyed where none is) act on the section's
+    rows; "deep copy" is an element's and is greyed on a row of the section. **A list cut by a narrow section keeps its
+    scrollbar at the shown right edge** (user 2026-11-26; `SideCut`, the result list's bar moved by the cut; the tree
+    window's configuration column scrolls on its shown width). **The kind's
     elements are listed again only when what they are read from changes** (`SearchDomain.contextSourceOf`, their paths
     unread): listed on every state change with every other element besides, the editor held the UI thread 33 s of the
     release app's first 77 and no menu could be scrolled or opened (anomaly 2026-11-26). (A same-day

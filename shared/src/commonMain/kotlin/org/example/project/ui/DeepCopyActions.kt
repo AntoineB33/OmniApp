@@ -84,15 +84,25 @@ internal fun DeepCopyActionEditor(
             )
         SearchDomain.AddedAction.DeepCopyPath -> {
             val cells = SearchDomain.addedTaskCells(state, added)
+            val others = copiedElements(added)
+            // The deepest of the tasks' paths and of the other elements'.
+            val path = remember(state, cells, others, depth) {
+                listOf(SchedulerDomain.deepCopyPathTitles(state, cells, depth), SearchDomain.elementsDeepestPath(state, others, depth))
+                    .maxByOrNull { it.size }.orEmpty()
+            }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (cells.size > 1) NoteText("The deepest of them")
-                org.example.project.scheduler.ui.DeepCopyPathRow(SchedulerDomain.deepCopyPathTitles(state, cells, depth))
+                if (cells.size + others.size > 1) NoteText("The deepest of them")
+                org.example.project.scheduler.ui.DeepCopyPathRow(path)
             }
         }
         SearchDomain.AddedAction.TaskDeepCopy -> {
             val cells = SearchDomain.addedTaskCells(state, added)
-            FrameButton(if (cells.size == 1) "Copy" else "Copy ${cells.size}", enabled = cells.isNotEmpty() && depth >= 1) {
-                val text = SchedulerDomain.copyCellsText(state, cells, depth, options)
+            // User 2026-11-26: every element copies, a task with its cells, any other with its children.
+            val others = copiedElements(added)
+            val count = cells.size + others.size
+            FrameButton(if (count == 1) "Copy" else "Copy $count", enabled = count > 0 && depth >= 1) {
+                val text = SchedulerDomain.copyCellsText(state, cells, depth, options) +
+                    SearchDomain.elementsCopyText(state, others, depth, options.includeIds, options.excludeTitle)
                 if (text.isNotEmpty()) writeSystemClipboardText(text)
             }
         }
@@ -105,3 +115,7 @@ internal fun DeepCopyActionEditor(
         else -> Unit
     }
 }
+
+/** The added elements a deep copy copies by their children ([SearchDomain.elementsCopyText]): every one but a task. */
+private fun copiedElements(added: List<SearchDomain.Result>): List<String> =
+    added.filter { it.kind != SearchDomain.Kind.Task && SearchDomain.deepCopyable(it.kind) }.map(SearchDomain::keyOf)

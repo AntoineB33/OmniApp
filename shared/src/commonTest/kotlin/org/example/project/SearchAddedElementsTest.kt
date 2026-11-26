@@ -399,14 +399,15 @@ class SearchAddedElementsTest {
         assertTrue(two[0].actions.none { it in SearchDomain.PER_ELEMENT_ACTIONS })
         assertTrue(two[0].actions.indexOf(SearchDomain.AddedAction.QuotaTitle) > two[0].actions.indexOf(SearchDomain.AddedAction.QuotaDelete))
         // "The first group should have the configurations for the default configurations of the quota elements".
-        val defaults = two[0].inner.single()
+        // User 2026-11-26: beside it, the "Deep copy" group every element has.
+        val defaults = two[0].inner.single { it.tag == null }
         assertEquals("Default configuration of a new quota", defaults.title)
         assertEquals(SearchDomain.Kind.Creation to SearchDomain.Kind.Quota.name, (defaults.members.single() as SearchDomain.ItemResult).let { it.kind to it.id })
         assertEquals(
             listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaRestarts, SearchDomain.AddedAction.QuotaResilience),
             defaults.actions,
         )
-        assertTrue(two.drop(1).all { it.inner.isEmpty() })
+        assertTrue(two.drop(1).all { g -> g.inner.all { it.tag == SearchDomain.DEEP_COPY_GROUP } })
         for (own in two.drop(1)) {
             assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaTitle), own.actions.take(3), "open / remove, where it stands, then what it is called")
             assertTrue(SearchDomain.AddedAction.QuotaAmount in own.actions && SearchDomain.AddedAction.QuotaLoop in own.actions)
@@ -416,7 +417,9 @@ class SearchAddedElementsTest {
         val listed =
             SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), setOf(SearchDomain.Kind.Quota)), listOf(a, b))
                 .flatMap { it.second }
-        assertEquals(listed.toSet(), (two[0].actions + two[1].actions).toSet())
+        // The "Deep copy" rows are in a group of their own inside the group (user 2026-11-26: every element has them).
+        val deepCopy = two[0].inner.filter { it.tag == SearchDomain.DEEP_COPY_GROUP }.flatMap { it.actions }
+        assertEquals(listed.toSet(), (two[0].actions + two[1].actions + deepCopy).toSet())
 
         // One quota: one group — "Open" and "Remove from list" (user rule 2026-10-13: the first micro group of EACH
         // macro group), its progression, its title, its other settings, then "New" and the rest.
@@ -883,7 +886,7 @@ class SearchAddedElementsTest {
         // User rule 2026-10-12: "The actions to define the default configurations of a timer are in the macro group
         // that gathers all timers, or in the group of the timer if there is only one timer in the added elements list."
         val settings = listOf(SearchDomain.AddedAction.TimerDuration, SearchDomain.AddedAction.TimerRingsFor, SearchDomain.AddedAction.TimerBelowZero, SearchDomain.AddedAction.TimerAlert)
-        fun defaultsOf(group: SearchDomain.ActionGroup) = group.inner.filter { it.kind == SearchDomain.Kind.Timer }
+        fun defaultsOf(group: SearchDomain.ActionGroup) = group.inner.filter { it.kind == SearchDomain.Kind.Timer && it.tag == null }
         assertEquals(listOf(settings), defaultsOf(four.first()).map { it.actions })
         assertEquals("Default configuration of a new timer", defaultsOf(four.first()).single().title)
         assertTrue(four.drop(1).all { defaultsOf(it).isEmpty() }, "several timers: in their group only")
@@ -1138,8 +1141,9 @@ class SearchAddedElementsTest {
             // …and the menu's "Minimum time weight", an app setting's action since 2026-11-04 and the calendar element's
             // since 2026-11-12 (the calendar window held it).
             listOf(
-                // User rule 2026-11-25: the deep copy's "Copy minimum time" is an action too.
-                SearchDomain.AddedAction.TaskMinimumTime, SearchDomain.AddedAction.DeepCopyMinimumTime,
+                // User rule 2026-11-25: the deep copy's "Copy minimum time" is an action too — about every element since
+                // 2026-11-26, so listed with the general ones, first.
+                SearchDomain.AddedAction.DeepCopyMinimumTime, SearchDomain.AddedAction.TaskMinimumTime,
                 SearchDomain.AddedAction.TaskMinimumFormula, SearchDomain.AddedAction.CalendarMinimumTimeWeight,
                 SearchDomain.AddedAction.MinimumTimeWeightControl,
             ),
