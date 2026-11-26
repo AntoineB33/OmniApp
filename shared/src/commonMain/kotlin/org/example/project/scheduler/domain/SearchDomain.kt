@@ -5076,6 +5076,25 @@ object SearchDomain {
         return groups.take(1) + none + groups.drop(1) + ContextPair(emptyList(), stated = true)
     }
 
+    /**
+     * **What the elements of [kind] are read from** in [state] — a "Contexts and states" lists them again only when it
+     * changes (anomaly 2026-11-26: listed on every state change, they held the UI thread). The state itself for a kind not
+     * named here.
+     */
+    fun contextSourceOf(state: SchedulerState, kind: Kind?): Any =
+        when (kind) {
+            null -> Unit
+            Kind.Task -> state.tasks
+            Kind.Category -> state.categories
+            Kind.Alarm -> state.alarms
+            Kind.Timer -> state.timers
+            Kind.Chrono -> state.chronos
+            Kind.Quota -> state.quotas
+            Kind.Reminder -> state.chores
+            Kind.Md -> state.mdElements
+            else -> state
+        }
+
     /** The kinds whose elements [action] is not about: the "no state" pair's ([ContextPair.keys] null). */
     fun otherContextKinds(action: AddedAction): Set<Kind> = CONTEXT_KINDS - setOfNotNull(action.section)
 

@@ -609,18 +609,19 @@ private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
         val kind = action.section.takeUnless { SearchDomain.isSetAction(action) }
         // Every element of the action's kind — the account's, not this window's added ones (anomaly 2026-11-26: *"I must
         // find the minimum time of all task elements"*); an action about a set as such, its group's.
-        val elements = remember(host.state, kind, members) {
+        // Anomaly 2026-11-26 (*"It works first by scrolling a few pixel, then no right-click menu works anymore"*): listed
+        // on every state change, on the UI thread, they held it most of the time (33 s of the app's first 77). Listed again
+        // only when what the kind's elements are read from changes ([SearchDomain.contextSourceOf]); their paths unread.
+        val source = SearchDomain.contextSourceOf(host.state, kind)
+        val elements = remember(source, kind, members) {
             if (kind == null) members
-            else SearchDomain.results(host.state, setOf(kind), "").filter { it.kind == kind }
+            else SearchDomain.results(host.state, setOf(kind), "", allPaths = { emptyMap() }).filter { it.kind == kind }
         }
         val byKey = remember(elements) { elements.associateBy(SearchDomain::keyOf) }
         val derived = remember(host.state, action, elements) { SearchDomain.actionContextPairs(host.state, action, elements) }
-        // Every other element: the "no state" pair's contexts, listed as its window B opens with them added.
-        val others = remember(host.state, action) {
-            SearchDomain.results(host.state, SearchDomain.otherContextKinds(action), "")
-                .filter { it.kind in SearchDomain.CONTEXT_KINDS }
-                .map(SearchDomain::keyOf)
-        }
+        // The "no state" pair's contexts — every other element of the account — are never listed: its window B searches
+        // their kinds, its added elements empty until B puts some in it.
+        val others = emptyList<String>()
         // The pairs B changed are view state, set back to the derived ones whenever a state set changes them.
         var pairs by remember(row.id) { mutableStateOf(derived) }
         LaunchedEffect(derived) { pairs = derived }
@@ -629,13 +630,15 @@ private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
         var shown by remember(row.id) { mutableStateOf(CONTEXT_PAIRS_PAGE) }
         pairs.take(shown).forEachIndexed { index, pair ->
             val keys = pair.keys ?: others
-            val values = remember(keys, host.state) {
+            val missingAny = keys.any { it !in byKey }
+            val values = remember(keys, byKey, if (missingAny) host.state else null) {
                 val missing = keys.filter { it !in byKey }
                 val resolved = if (missing.isEmpty()) emptyMap() else SearchDomain.resolve(host.state, missing).associateBy(SearchDomain::keyOf)
                 keys.mapNotNull { byKey[it] ?: resolved[it] }
             }
             val fieldId = row.id + "/context/" + index
-            var fieldConfig by remember(fieldId) { mutableStateOf(SearchDomain.contextFieldConfig(keys)) }
+            val opened = if (pair.keys == null) SearchDomain.contextFieldConfig(emptyList()).copy(kinds = SearchDomain.otherContextKinds(action)) else SearchDomain.contextFieldConfig(keys)
+            var fieldConfig by remember(fieldId) { mutableStateOf(opened) }
             Column(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 PopupSearchField(
                     placeholder = "context · " + contextsSaid(pair, values, action),
@@ -645,7 +648,7 @@ private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
                         fieldConfig = next
                         if (next.added != keys) pairs = SearchDomain.withPairValues(pairs, index, next.added)
                     },
-                    openedConfig = SearchDomain.contextFieldConfig(keys),
+                    openedConfig = opened,
                     fieldId = fieldId,
                     modifier = Modifier.fillMaxWidth(),
                     openedParts = EMBEDDED_SEARCH_SPLITS.copy(addedRemoved = false),

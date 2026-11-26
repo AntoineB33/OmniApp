@@ -1456,13 +1456,17 @@ suggestions before it was ever entered.
     kind, the account's** (anomaly 2026-11-26, *"in 'Contexts and states' for the element 'Minimum Time', I must find the
     minimum time of all task elements. If the user never changed minimum time, then there will only be two pairs"*;
     `SearchDomain.actionContextPairs`, `ActionContextPairsTest`), never only the window's added ones: the largest group
-    first, then **"no state"** over every element of the other kinds (`ContextPair.keys` null, `otherContextKinds`: *"useful
+    first, then **"no state"** over every element of the other kinds (`ContextPair.keys` null, `otherContextKinds` — never
+    listed: its B searches those kinds, its added elements empty until B puts some in; *"useful
     for when the user changes the search configuration of an action section to make 'Minimum Time' appear even though no
     task element is in the added elements list"*), then the other groups — a task whose minimum time changed is a third
     pair, B of the first one task less — then a new pair, empty (`withPairValues`). An action about a set as such keeps
     its group's elements and has no "no state" pair. A context field names its pair's contexts while few, else counts them
     by kind; the pairs are drawn twenty at a time (an action whose every element holds a state of its own has a pair per
-    element). The pairs are view state, set back to the derived ones whenever a state set changes them. (A same-day
+    element). The pairs are view state, set back to the derived ones whenever a state set changes them. **The kind's
+    elements are listed again only when what they are read from changes** (`SearchDomain.contextSourceOf`, their paths
+    unread): listed on every state change with every other element besides, the editor held the UI thread 33 s of the
+    release app's first 77 and no menu could be scrolled or opened (anomaly 2026-11-26). (A same-day
     attempt made the contexts the app's places and the state whether the action is listed there; rejected.) What tells two elements apart is read per action: "Parents" by the element's parents; an action
     about a set has one context; **an element's own configuration is read off the element** (anomaly 2026-11-14, *"groups
     elements only for 'Parents'"*; `ownActionState`): a title, an alarm's time, days, state, ring and alert, a timer's

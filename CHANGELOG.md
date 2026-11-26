@@ -29,6 +29,11 @@ Check here before assuming the code matches the docs.
   order" did not name it, and an entry it does not name is not listed (`MENU_ENTRIES` now names "section 2 …" and
   "section 3 …", `NestedSectionMenuTest`); and the copy was the window itself, moved — `openWindowOnItsPage` brings back
   an open window of the same configuration, so a pop-up made a window now never matches one (`matches = { false }`).
+- Anomaly after redeploying: *"It works first by scrolling a few pixel, then no right-click menu works anymore"*. A
+  thread dump of the release app: its UI thread in `ActionContextsEditor`, listing and sorting every element of every
+  kind (the "no state" pair's contexts) on every state change — 33 s of CPU in the first 77. The "no state" pair is no
+  longer listed (its B searches the other kinds, empty), and the kind's elements are listed again only when their source
+  changes (`SearchDomain.contextSourceOf`). Client rebuild only.
 
 ### A search's patience no longer runs out before the search starts — 2026-11-26
 
