@@ -307,6 +307,24 @@ class ScheduleScoreTest {
         assertTrue(!untimed.certified && !untimed.report.exhausted, "no time granted, nothing claimed: ${untimed.report}")
     }
 
+    /**
+     * 2026-11-26: a `q < 1` budget's patience counts from the SEARCH, not from the budget's creation. The full suite
+     * once failed `SchedulerRunLogTest` because the step-bounded passes outlasted the `q²` patience on a loaded fork
+     * and the search was never started — not certified, not exhausted, 0 ms.
+     */
+    @Test
+    fun a_patience_spent_before_the_search_does_not_take_the_search_away() {
+        val tasks = listOf(task("A", 0.6, 20), task("B", 0.4, 20))
+        val m = model(tasks, 6, blocks = listOf(PlanBlock(TaskId("A"), 50 * MIN, 70 * MIN)))
+        // q = 0.1: a patience of 1 % of the 20 s grant, 200 ms — and 300 ms go by before the plan is asked.
+        val budget = SearchBudget.paced(20_000, 0.1)
+        val since = kotlin.time.TimeSource.Monotonic.markNow()
+        while (since.elapsedNow().inWholeMilliseconds < 300) Unit
+        assertTrue(budget.expired() && budget.granted(), "the patience ran out, the deadline did not")
+        val plan = ScheduleOptimizer(m).plan(m.cursor(), 2.0 * HOUR, alternatives = false, budget = budget)
+        assertTrue(plan.certified, "${plan.report}")
+    }
+
     @Test
     fun the_alternative_is_another_permitted_task() {
         val tasks = listOf(task("A", 0.5, 20), task("B", 0.3, 20), task("C", 0.2, 20))

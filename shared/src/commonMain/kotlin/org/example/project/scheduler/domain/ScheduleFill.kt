@@ -361,7 +361,7 @@ internal object ScheduleFill {
         }
         // The platform solver is resolved only for a fill given search time: on the desktop, resolving it loads
         // OR-Tools' native library (~1 s once), which a display fill on the UI thread must never pay.
-        val optimizer = ScheduleOptimizer(model, solver = if (input.budget.expired()) null else platformScheduleSolver())
+        val optimizer = ScheduleOptimizer(model, solver = if (input.budget.granted()) platformScheduleSolver() else null)
         var plan = optimizer.plan(cursor, searchUntil, forcedFirst, refusedFirst, seeds = seeds, budget = input.budget, firstAmong = among)
         var settled = settle(model, plan.runs, ruleStateHash, approximate, emitU)
         if (settled.second == null && searchUntil < model.uEnd - ScoreModel.EPS) {

@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A search's patience no longer runs out before the search starts — 2026-11-26
+
+- Anomaly: `SchedulerRunLogTest.a_re_plan_given_the_time_reaches_and_reports_the_certified_best` failed in the full
+  `:shared:jvmTest` (`SearchReport(certified=false, exhausted=false, searchMillis=0)`) and passed alone. Cause: a
+  `SearchBudget.paced` budget below `q = 1` carries a patience of `q²` of its grant (1.25 s of the test's 20 s at the
+  default `q = 0.25`), counted from the budget's CREATION — and `ScheduleOptimizer.plan` decided whether any extra
+  time was granted with `expired()`, which reads that patience. The rollout, the improver and the first load of the
+  platform solver (OR-Tools, ~1 s) ran before that check, so on a loaded fork they outlasted the patience and the
+  search was never started, not even reported exhausted. Not test isolation: the same happened in the app on a slow
+  stage. Now whether time was granted reads the deadline alone (`SearchBudget.granted()`, also used to decide whether
+  to resolve the solver); the patience counts from the search's start, as its comment already said.
+  `ScheduleScoreTest.a_patience_spent_before_the_search_does_not_take_the_search_away`. Client rebuild only.
+
 ### "Contexts and states": a "context" field and a "states" field per pair — 2026-11-26
 
 - Anomaly (same day, after the fix below): *"I don't see the field named context and the field named states. When I

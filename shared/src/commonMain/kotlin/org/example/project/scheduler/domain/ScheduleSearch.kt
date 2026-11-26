@@ -61,6 +61,18 @@ class SearchBudget private constructor(
     }
 
     /**
+     * True while the DEADLINE has not passed — the patience aside. Whether extra time was granted at all is asked of
+     * this, never of [expired]: the patience counts from the search's start ([progressed]), and the passes before it
+     * (the rollout, the improver, the platform solver's first load) are not the search. Asked of [expired], a
+     * `q < 1` budget whose `q²` patience the step-bounded passes outlasted — a loaded machine, a GC, OR-Tools' native
+     * load — granted NOTHING, without even reporting itself exhausted (2026-11-26, `SchedulerRunLogTest`).
+     */
+    fun granted(): Boolean {
+        val d = deadline ?: return false
+        return !d.hasPassedNow()
+    }
+
+    /**
      * The search found something better than what it held (or is starting): its patience runs again from now. Every
      * pass that lowers the score says so — the exhaustive search at a better continuation, the solver at a kept window.
      */

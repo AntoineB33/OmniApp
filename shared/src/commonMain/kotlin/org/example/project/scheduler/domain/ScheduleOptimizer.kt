@@ -344,7 +344,8 @@ class ScheduleOptimizer(
 
         var certified = false
         var solverImproved = false
-        val extraGranted = !budget.expired()
+        // The deadline alone: the patience starts below, at the search, not at the passes above ([SearchBudget.granted]).
+        val extraGranted = budget.granted()
         val searchStart = kotlin.time.TimeSource.Monotonic.markNow()
         if (extraGranted && runs.isNotEmpty()) {
             // The search's patience ([SearchBudget.paced]) counts from here, not from the passes before it.
