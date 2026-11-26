@@ -3445,7 +3445,7 @@ internal val collapseKeepFromLevel = androidx.compose.runtime.mutableStateOf<Int
 private fun CollapseLevelField() {
     var text by remember { mutableStateOf(collapseKeepFromLevel.value?.toString().orEmpty()) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("children stay as they are from level", style = MaterialTheme.typography.labelSmall)
+        Text("keep from level", style = MaterialTheme.typography.labelSmall)
         org.example.project.ui.OutlinedTextField(
             value = text,
             onValueChange = { raw ->
@@ -3454,7 +3454,7 @@ private fun CollapseLevelField() {
             },
             placeholder = { Text("all") },
             singleLine = true,
-            modifier = Modifier.width(64.dp),
+            modifier = Modifier.width(56.dp),
         )
     }
 }

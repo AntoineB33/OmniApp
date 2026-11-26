@@ -17,6 +17,9 @@ Check here before assuming the code matches the docs.
   its "Deep copy" group pinned. An element that is no task copies with its children (`SearchDomain.elementsCopyText`,
   `elementsDeepestPath`); the deep copy rows are about every element now (`AddedAction.section` null), those only a
   task carries listed where a task is added (`DEEP_COPY_TASK_ACTIONS`). A row of an actions section has none.
+- Anomaly, same day (*"I don't see the input field at the right of 'collapse'"*): the field shared the 290 dp menu row
+  by weight with the entry's texts and its own caption took it all — 0 px wide. A menu entry's control keeps its own
+  width (`ItemResultRow.trailingFills`), captioned "keep from level". `CollapseLevelFieldTest` draws the real menu.
 - User: "collapse sub-trees" is "collapse", its row holding the level from which the children stay as they are
   (`SchedulerIntent.CollapseSubtrees.keepFromLevel`, replacing `includingSelf`; `SearchDomain.collapses`); "retract
   with every sub-child" is gone. Saved menu entry orders are healed (`SearchDomain.healedEntries`). `RowMenuTest`.

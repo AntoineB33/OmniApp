@@ -2201,6 +2201,7 @@ fun SearchWindow(
                                         // User rule 2026-11-21: a row that shows a window when hovered says so by its arrow,
                                         // before its name: at the row's far end it stood past the menu's edge, out of view.
                                         trailing = option?.trailing?.takeIf { !selectAll }?.invoke(result.id),
+                                        trailingFills = false,
                                         leading = run {
                                             val mark = option?.leading?.takeIf { !selectAll }
                                             if (hoverPopup == null) mark?.let { draw -> { draw(result.id) } }
@@ -4638,7 +4639,7 @@ private fun NotInTreeLogo() {
 }
 
 @Composable
-private fun ItemResultRow(
+internal fun ItemResultRow(
     /** The list's kind section's width ([rememberKindSectionWidth]). */
     kindWidth: Dp,
     /** User rule 2026-11-25: its element is in the window's added elements — this row outlined, never what it opens. */
@@ -4694,6 +4695,12 @@ private fun ItemResultRow(
     trailing: (@Composable () -> Unit)? = null,
     /** False: no arrow (a row whose control is on it, [trailing], opens nothing). */
     showArrow: Boolean = true,
+    /**
+     * True: [trailing] takes the rest of the row (a context field). False: its own width, the name the rest — a menu entry's
+     * small control (anomaly 2026-11-26: *"I don't see the input field at the right of 'collapse'"*: sharing the 290 dp menu
+     * row by weight with the texts, the field was left no width).
+     */
+    trailingFills: Boolean = true,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val workplaceRuns = LocalWorkplaceRuns.current
@@ -4763,7 +4770,7 @@ private fun ItemResultRow(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
-                if (trailing != null) Box(Modifier.weight(1f)) { trailing() }
+                if (trailing != null) Box(if (trailingFills) Modifier.weight(1f) else Modifier) { trailing() }
             }
         }
         // User rule 2026-11-12: the menu is a Search window of its entries.
