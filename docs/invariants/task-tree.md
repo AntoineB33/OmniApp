@@ -1447,13 +1447,14 @@ suggestions before it was ever entered.
     is set the same for the task elements A, B and C, then the context element will have the values A, B and C, and the
     state element will be the exact 'list of parents' element the user would find in the action section of A, B or
     C"*: each context names its elements, and under it stands the action's own editor over them, so a change there is
-    made for them all. **A context row opens its elements** (anomaly 2026-11-26, *"I can't select the context or add a
-    new pair of contexts - states fields"*): clicked, a Search window with them added (`SearchDomain.elementsSearchConfig`),
-    as a "State in each context" row opens its contexts. **The last pair is a new one** (where the action acts on two
-    elements or more): its context row's ▾ picks its elements among those the action acts on
-    (`SearchDomain.newContextMembers`), its state the action's editor over them; once a state set makes them one of the
-    contexts (`isOneOfContexts`, read when the contexts change, never while picking), an empty new pair follows. The
-    picked elements are view state, kept while the section is shown. What tells two elements apart is read per action: "Parents" by the element's parents; an action
+    made for them all. **Each pair is two fields, "context" and "states"** (anomalies 2026-11-26, *"I don't see the field
+    named context and the field named states … it doesn't open a little pop-up window B listing all the contexts in the
+    search result section of B and all the selected contexts in added elements list section of B"*): the context field,
+    clicked, opens pop-up window B (`PopupSearchField`, `SearchDomain.contextFieldConfig`) — every element of the kinds
+    the action acts on in its results, the context's values in its added elements; what B adds or removes is the
+    context's. The states field is the action's editor over those values. The last pair is new and empty
+    (`contextPairs`, `withPairValues`); the pairs are view state, set back to the contexts whenever a state set changes
+    them. What tells two elements apart is read per action: "Parents" by the element's parents; an action
     about a set has one context; **an element's own configuration is read off the element** (anomaly 2026-11-14, *"groups
     elements only for 'Parents'"*; `ownActionState`): a title, an alarm's time, days, state, ring and alert, a timer's
     duration, a quota's amount, loop, restarts and resilience, a reminder's cadence, a category's name, rules and kind, a

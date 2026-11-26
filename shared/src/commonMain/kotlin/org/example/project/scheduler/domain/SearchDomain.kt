@@ -5051,31 +5051,28 @@ object SearchDomain {
         Config(kinds = setOf(Kind.Context), added = contextIds.map(ContextDomain::keyOf))
 
     /**
-     * Anomaly 2026-11-26 (*"in 'Contexts and states', I can't select the context"*): **the Search window of [keys], added**
-     * — a "Contexts and states" context row's, as a "State in each context" one's ([contextsSearchConfig]): their kinds
-     * checked, so the window lists them.
+     * Anomaly 2026-11-26 (*"I don't see the field named context and the field named states … clicking … doesn't open a
+     * little pop-up window B listing all the contexts in the search result section of B and all the selected contexts in
+     * added elements list section of B"*): **the pairs a "Contexts and states" shows** — each derived context's elements
+     * ([actionContexts]), then an empty pair, the new one: a context field's values, by key.
      */
-    fun elementsSearchConfig(keys: List<String>): Config =
-        Config(
-            kinds = keys.mapNotNullTo(LinkedHashSet()) { key -> Kind.entries.firstOrNull { it.name == key.substringBefore('/') } }
-                .ifEmpty { setOf(Kind.Task) },
-            added = keys,
-        )
+    fun contextPairs(contexts: List<List<Result>>): List<List<String>> = contexts.map { it.map(::keyOf) } + listOf(emptyList())
 
     /**
-     * Anomaly 2026-11-26 (*"I can't … add a new pair of contexts - states fields"*): **the elements of the new pair a
-     * "Contexts and states" shows**, [picked] by the user among [members], in [members]' order.
+     * **[pairs] once pop-up window B set the values of the pair at [index] to [keys]** — an empty new pair still last: the
+     * new pair given values, another follows it.
      */
-    fun newContextMembers(members: List<Result>, picked: Set<String>): List<Result> = members.filter { keyOf(it) in picked }
-
-    /**
-     * Whether the new pair's [chosen] elements have become one of the [contexts] — what a state change on them alone
-     * does: the pair is then that context, and an empty new pair follows it.
-     */
-    fun isOneOfContexts(chosen: List<Result>, contexts: List<List<Result>>): Boolean {
-        val keys = chosen.mapTo(HashSet(), ::keyOf)
-        return keys.isNotEmpty() && contexts.any { context -> context.mapTo(HashSet(), ::keyOf) == keys }
+    fun withPairValues(pairs: List<List<String>>, index: Int, keys: List<String>): List<List<String>> {
+        val next = pairs.toMutableList().also { it[index] = keys }
+        return if (next.lastOrNull()?.isEmpty() == false) next + listOf(emptyList()) else next
     }
+
+    /**
+     * **Pop-up window B of a context field**: every element of the kinds the action acts on ([members]') in its results —
+     * every value a context can hold — and the context's own values ([keys]) in its added elements.
+     */
+    fun contextFieldConfig(members: List<Result>, keys: List<String>): Config =
+        Config(kinds = members.mapTo(LinkedHashSet()) { it.kind }.ifEmpty { setOf(Kind.Task) }, added = keys)
 
     /** The calendar element's id ([Kind.Calendar]): there is one. */
     const val CALENDAR_ID: String = "calendar"

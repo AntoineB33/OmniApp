@@ -589,7 +589,7 @@ internal val LocalActionSectionHost = androidx.compose.runtime.compositionLocalO
  * section of A, B or C"*, the action's own editor over those elements, so a change there changes it for them all.
  */
 @Composable
-private fun ActionContextsEditor(added: List<SearchDomain.Result>, onOpenSearch: (SearchDomain.Config) -> Unit) {
+private fun ActionContextsEditor(added: List<SearchDomain.Result>) {
     // Drawn in the section OF the section the added actions are rows of.
     val host = LocalActionSectionHost.current?.parent
     for (item in added) {
@@ -602,67 +602,39 @@ private fun ActionContextsEditor(added: List<SearchDomain.Result>, onOpenSearch:
         }
         val members = row.group.members
         val contexts = SearchDomain.actionContexts(host.state, action, members)
-        // Anomaly 2026-11-26 (*"I can't select the context"*): each context row, clicked, opens a Search window of its
-        // elements, added — as a "State in each context" context row does.
-        contexts.forEachIndexed { index, context ->
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                ContextRow(context.joinToString(", ") { it.name }) { onOpenSearch(SearchDomain.elementsSearchConfig(context.map(SearchDomain::keyOf))) }
-                host.draw(row, context, row.id + "/context/" + index)
-            }
-        }
-        // Anomaly 2026-11-26 (*"I can't … add a new pair of contexts - states fields"*): the last pair is a new one — its
-        // context row picks its elements among those the action acts on, its state the action's editor over them. Once
-        // they share a state no other element has, the pair is that context and a new empty one follows.
-        if (members.size > 1) {
-            var picked by remember(row.id) { mutableStateOf(emptySet<String>()) }
-            val pair = SearchDomain.newContextMembers(members, picked)
-            // Read when the contexts change (a state set), never while the elements are picked: ticking the elements of
-            // a context already there would empty the pair under the hand.
-            val contextKeys = contexts.map { context -> context.map(SearchDomain::keyOf) }
-            androidx.compose.runtime.LaunchedEffect(contextKeys) {
-                if (SearchDomain.isOneOfContexts(SearchDomain.newContextMembers(members, picked), contexts)) picked = emptySet()
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                var open by remember(row.id) { mutableStateOf(false) }
-                val popupOpener = rememberPopupOpener()
-                Box(Modifier.fillMaxWidth()) { OpenedBy(popupOpener) {
-                    Text(
-                        (if (pair.isEmpty()) "new context: choose its elements…" else pair.joinToString(", ") { it.name }) + "  ▾",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                            .menuToggleClickable(open, popupOpener) { open = it }
-                            .padding(horizontal = 10.dp, vertical = fieldFaceVerticalPadding()),
-                    )
-                    OptionSearchMenu("ActionContextsNewContext",
-                        open = open,
-                        onDismiss = { open = false },
-                        options = SearchOptions(
-                            options = members.map { SearchDomain.keyOf(it) to it.name },
-                            checked = picked,
-                            onClick = { key -> picked = if (key in picked) picked - key else picked + key },
-                            onSelectAll = { keys -> picked = keys.toSet() },
-                            onSolo = { key -> picked = setOf(key) },
-                        ),
-                    )
-                }}
-                if (pair.isNotEmpty()) host.draw(row, pair, row.id + "/context/new")
+        val contextKeys = contexts.map { context -> context.map(SearchDomain::keyOf) }
+        // Anomaly 2026-11-26 (*"I don't see the field named context and the field named states"*): each pair is a
+        // "context" field — a click opens pop-up window B, every value a context can hold in its results and this
+        // context's in its added elements, what B adds or removes being the context's — and a "states" field, the
+        // action's own editor over the context's values. The last pair is a new one, empty. The pairs follow the
+        // contexts again as a state set changes them; what B changed is kept until then (view state).
+        var pairs by remember(row.id) { mutableStateOf(SearchDomain.contextPairs(contexts)) }
+        androidx.compose.runtime.LaunchedEffect(contextKeys) { pairs = SearchDomain.contextPairs(contexts) }
+        pairs.forEachIndexed { index, keys ->
+            val values = remember(keys, host.state) { SearchDomain.resolve(host.state, keys, { emptyMap() }) }
+            val fieldId = row.id + "/context/" + index
+            var fieldConfig by remember(fieldId) { mutableStateOf(SearchDomain.contextFieldConfig(members, keys)) }
+            Column(Modifier.fillMaxWidth().padding(start = NESTED_ACTION_INDENT), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                PopupSearchField(
+                    placeholder = "context" + if (values.isEmpty()) " · new: choose its elements" else " · " + values.joinToString(", ") { it.name },
+                    state = host.state,
+                    config = fieldConfig.copy(added = keys),
+                    onConfigChange = { next ->
+                        fieldConfig = next
+                        if (next.added != keys) pairs = SearchDomain.withPairValues(pairs, index, next.added)
+                    },
+                    openedConfig = SearchDomain.contextFieldConfig(members, keys),
+                    fieldId = fieldId,
+                    modifier = Modifier.fillMaxWidth(),
+                    openedParts = EMBEDDED_SEARCH_SPLITS.copy(addedRemoved = false),
+                    caller = "",
+                )
+                Text("states", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (values.isEmpty()) NoteText("Choose the elements of the context first.")
+                else host.draw(row, values, fieldId)
             }
         }
     }
-}
-
-/** A context row: its elements' names, a click opening them ("State in each context", "Contexts and states"). */
-@Composable
-private fun ContextRow(text: String, onOpen: () -> Unit) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.clickable(onClick = onOpen),
-    )
 }
 
 /** How far right the actions inside a micro group stand of it (user rule 2026-10-18: "set them a little to the right"). */
@@ -1186,7 +1158,7 @@ private fun AddedActionBlocks(
         SearchDomain.AddedAction.ElementPresses -> ElementPressesAction(state, added, handlers.onOpenSearch)
         SearchDomain.AddedAction.ConfigurationContextStates -> ConfigurationContextStatesAction(state, added, { run(SearchDomain.AddedCommand.Raw(it)) }, handlers.onOpenSearch, handlers.claudeLogs())
         // User rule 2026-11-13: an action added to the actions section's own list — its contexts, and its state in each.
-        SearchDomain.AddedAction.ActionContexts -> ActionContextsEditor(added, handlers.onOpenSearch)
+        SearchDomain.AddedAction.ActionContexts -> ActionContextsEditor(added)
         SearchDomain.AddedAction.MuteSwitch ->
             androidx.compose.material3.Switch(
                 checked = state.soundMuted,

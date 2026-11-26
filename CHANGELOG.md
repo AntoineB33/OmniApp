@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Contexts and states": a "context" field and a "states" field per pair — 2026-11-26
+
+- Anomaly (same day, after the fix below): *"I don't see the field named context and the field named states. When I
+  click on the first row … it doesn't open a little pop-up window B listing all the contexts in the search result section
+  of B and all the selected contexts in added elements list section of B"*. Each pair is now a "context" field opening
+  pop-up B (every element of the action's kinds in its results, the context's values in its added elements; B's
+  changes are the context's) and a "states" field (the action's editor over them). The last pair is new and empty; a
+  pair given values is followed by another. Replaces the clickable text and the ▾ check-box list below.
+  `ActionContextPairsTest`. Client rebuild only.
+
 ### "Contexts and states": a context row opens its elements; a new pair — 2026-11-26
 
 - Anomaly: *"in the action section of the element 'Minimum Time', in 'Contexts and states', I can't select the context
