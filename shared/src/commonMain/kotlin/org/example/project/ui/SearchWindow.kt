@@ -2103,9 +2103,8 @@ fun SearchWindow(
                                             ),
                                             depth = actionRow.depth,
                                         )
-                                        // An open action's controls — and a pair's "context" or "states" row's (user rule 2026-11-26).
-                                        val hasContent = actionRow.action != null ||
-                                            actionRow.part?.kind.let { it == SearchDomain.PairPartKind.Context || it == SearchDomain.PairPartKind.States }
+                                        // An open action's controls — and a row's under an action that draws some (user rule 2026-11-26).
+                                        val hasContent = actionRow.action != null || actionRow.sub?.hasContent == true
                                         if (actionRow.open && hasContent) {
                                             // Hanging under the open action: its line, and its groups' (anomaly 2026-11-19).
                                             Box(

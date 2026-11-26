@@ -151,6 +151,22 @@ class ActionContextsTest {
         assertTrue("new: choose its contexts" in texts, texts.toString())
     }
 
+    /**
+     * User rule 2026-11-26 (*"when it can be rows it must be rows"*): "Clicks and keys" lists its groups of contexts as rows,
+     * each with its "context" row and a row per press, what it does beside — no longer text drawn under the action.
+     */
+    @Test
+    fun clicks_and_keys_lists_its_groups_and_presses_as_rows() {
+        val elements = listOf("a", "b", "c", "d", "e").map(::key)
+        val window = SearchDomain.Config(kinds = setOf(Kind.Chrono), added = elements, actionsExpanded = true)
+        val presses = actionRows(rows("a", "b", "c", "d", "e"), window).first { it.action == AddedAction.ElementPresses && it.group.members.size == 5 }
+        val texts = drawnTexts(window.copy(toggledActionRows = window.toggledActionRows + presses.id), height = 2400)
+        val groups = org.example.project.scheduler.domain.PressDomain.groups(emptyList(), Kind.Chrono)
+        assertEquals(groups.size, texts.count { it == "context" }, texts.toString())
+        val first = groups.first().behaviours.first()
+        assertTrue(first.press.label in texts && first.does in texts, "a press's row and what it does: $texts")
+    }
+
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
     private fun drawnTexts(initial: SearchDomain.Config, width: Int = 1300, height: Int = 800): List<String> {
         val scene = onEdt {

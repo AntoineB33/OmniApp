@@ -6467,17 +6467,17 @@ object SearchDomain {
         val action: AddedAction?,
         /**
          * User rule 2026-11-26 (*"In 'Contexts and states', it doesn't really seem to be real rows … there should be three
-         * rows, each with two children … when it can be rows it must be rows"*): a row of an open "Contexts and states" —
-         * a pair, or its context or its states. Null: a group or an action.
+         * rows, each with two children … when it can be rows it must be rows"*): a row an open action lists under it
+         * ([SubRow]). Null: a group or an action.
          */
-        val part: PairPart? = null,
+        val sub: SubRow? = null,
     )
 
-    /** What a row of "Contexts and states" is ([ActionListRow.part]): pair [index] of the added action row [itemId], or a part of it. */
-    data class PairPart(val itemId: String, val index: Int, val kind: PairPartKind)
-
-    /** A pair's own row, its "context" row (the field opening pop-up window B), its "states" row (the action's editor). */
-    enum class PairPartKind { Pair, Context, States }
+    /**
+     * A row an open action lists under it (user rule 2026-11-26: *"when it can be rows it must be rows"*) — "Contexts and
+     * states", "State in each context", "Clicks and keys", "Default presences": [hasContent] while it draws controls under it.
+     */
+    data class SubRow(val hasContent: Boolean)
 
     /**
      * User rule 2026-11-12: **the rows of the actions section, in order**, as its Search window lists them — what it drew

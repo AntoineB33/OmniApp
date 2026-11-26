@@ -1465,10 +1465,13 @@ suggestions before it was ever entered.
     pair, B of the first one task less — then a new pair, empty (`withPairValues`). An action about a set as such keeps
     its group's elements and has no "no state" pair. A context field names its pair's contexts while few, else counts them
     by kind. **Each pair is a row of the actions section** (user rule 2026-11-26, *"it doesn't really seem to be real rows
-    … there should be three rows, each with two children … when it can be rows it must be rows"*; `ActionListRow.part`,
-    `contextPairRows`): under the open "Contexts and states" row, a row per pair named by its contexts, its state beside,
+    … there should be three rows, each with two children … when it can be rows it must be rows"*; `ActionListRow.sub`,
+    `SubRowSpec`, `contextPairSpecs`): under the open "Contexts and states" row, a row per pair named by its contexts, its state beside,
     and under it a **"context"** row (the field opening B) and a **"states"** row (the action's editor) — open by default,
-    opened and closed as view state; the list scrolls them (no page of twenty any more). The pairs are view state, set back
+    opened and closed as view state; the list scrolls them (no page of twenty any more). **So are "State in each
+    context", "Clicks and keys" and "Default presences"** (`SUB_ROW_ACTIONS`): a row per group of contexts, its state or
+    nothing beside, with its "context" row (a link opening a Search window of them) and its "state" row (the control) or,
+    for the presses, a row per press with what it does beside — none draws text of its own under its action row. The pairs are view state, set back
     to the derived ones whenever a state set changes them. **The kind's
     elements are listed again only when what they are read from changes** (`SearchDomain.contextSourceOf`, their paths
     unread): listed on every state change with every other element besides, the editor held the UI thread 33 s of the

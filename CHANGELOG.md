@@ -18,9 +18,12 @@ Check here before assuming the code matches the docs.
   included; it counts its depth-0 rows now.
 - User rule: *"In 'Contexts and states', it doesn't really seem to be real rows … there should be three rows, each with
   two children … when it can be rows it must be rows."* Each pair is a row of the actions section under the open
-  "Contexts and states" row (`ActionListRow.part`, `contextPairRows`), its children a "context" row (the field opening
-  B) and a "states" row (the action's editor); the page of twenty pairs is gone. Selected, opened and closed as rows.
-  `ActionContextsTest.each_pair_is_a_row_with_its_context_and_states_rows`. Client rebuild only.
+  "Contexts and states" row (`ActionListRow.sub`, `SubRowSpec`), its children a "context" row (the field opening B)
+  and a "states" row (the action's editor); the page of twenty pairs is gone. Selected, opened and closed as rows.
+  `ActionContextsTest.each_pair_is_a_row_with_its_context_and_states_rows`. Then, the same way, "State in each
+  context", "Clicks and keys" and "Default presences" (`SUB_ROW_ACTIONS`): a row per group of contexts with its
+  "context" row and its "state" row, or a row per press. `clicks_and_keys_lists_its_groups_and_presses_as_rows`.
+  Client rebuild only.
 
 ### Section counts; every page's Search window has nothing on — 2026-11-26
 
