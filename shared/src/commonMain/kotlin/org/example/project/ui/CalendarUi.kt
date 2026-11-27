@@ -11311,7 +11311,8 @@ internal fun EditMenuRow(
         ActionMenu("EditMenuRow",
             open = menuOpen,
             onDismiss = { menuOpen = false },
-            actions = org.example.project.scheduler.ui.taskCellMenuActions(RowMenuCommon.NONE.menu(null, null, emptyList())),
+            // User 2026-11-27: its deep copy is itself, its label.
+            actions = org.example.project.scheduler.ui.taskCellMenuActions(RowMenuCommon(null, null, null, self = { SubRowSpec(label, label) }).menu(null, null, emptyList())),
         )
     }
 }

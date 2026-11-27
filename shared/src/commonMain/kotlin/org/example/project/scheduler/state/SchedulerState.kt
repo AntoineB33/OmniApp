@@ -1209,6 +1209,11 @@ data class SchedulerState(
     val copyIncludeText: Boolean = true,
     val copyIncludePriorityPercentages: Boolean = true,
     val copyIncludeMinimumTime: Boolean = true,
+    /**
+     * User 2026-11-27 (*"all the tree with only the id for each node"*): off, a deep copy writes each node that has an id
+     * as its id alone, in place of its title ([SchedulerDomain.CopyOptions.includeTitles]).
+     */
+    val copyIncludeTitles: Boolean = true,
     val copyExcludeTitle: String = "",
     /**
      * PRD §5 the relative-priority window: the cells whose percentage is **pinned** while a relative

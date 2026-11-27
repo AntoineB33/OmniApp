@@ -920,6 +920,7 @@ object SchedulerReducer {
                         it.copyIncludeText == o.includeText &&
                         it.copyIncludePriorityPercentages == o.includePriorityPercentages &&
                         it.copyIncludeMinimumTime == o.includeMinimumTime &&
+                        it.copyIncludeTitles == o.includeTitles &&
                         it.copyExcludeTitle == o.excludeTitle
                     ) {
                         it
@@ -930,6 +931,7 @@ object SchedulerReducer {
                             copyIncludeText = o.includeText,
                             copyIncludePriorityPercentages = o.includePriorityPercentages,
                             copyIncludeMinimumTime = o.includeMinimumTime,
+                            copyIncludeTitles = o.includeTitles,
                             copyExcludeTitle = o.excludeTitle,
                         )
                     }

@@ -700,6 +700,8 @@ internal fun CellListSection(
                     TaskCellMenuActions(
                         onStartNow = null, onEdit = null, onCopyId = null, onCopyPath = copyPath, onDeepCopy = null,
                         onCollapse = null,
+                        // User 2026-11-27: its deep copy is itself — an empty line, standing for no element.
+                        self = { org.example.project.ui.SubRowSpec(cellId.value, "") },
                     )
                 }
             } else {
@@ -3426,7 +3428,9 @@ internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.exampl
         add(org.example.project.ui.MenuAction(COPY_ID_LABEL, enabled = cellMenu.onCopyId != null) { cellMenu.onCopyId?.invoke() })
         add(org.example.project.ui.MenuAction(COPY_PATH_LABEL, enabled = cellMenu.onCopyPath != null) { cellMenu.onCopyPath?.invoke() })
         // User 2026-11-27: a row of an actions section shows its deep copy's rows while the entry is hovered, pinned by a click.
+        // User 2026-11-27: any other row, over itself ([TaskCellMenuActions.self]).
         val deepCopyPopup = cellMenu.deepCopyPopup
+            ?: cellMenu.self.takeIf { cellMenu.onDeepCopy == null }?.let { self -> { org.example.project.ui.SubRowDeepCopy(remember { self() }) } }
         if (deepCopyPopup != null) add(org.example.project.ui.MenuAction(DEEP_COPY_LABEL, hoverPopup = deepCopyPopup) {})
         else add(org.example.project.ui.MenuAction(DEEP_COPY_LABEL, enabled = cellMenu.onDeepCopy != null) { cellMenu.onDeepCopy?.invoke() })
         // User 2026-11-26: "collapse", its row holding the level from which the children stay as they are.
@@ -3511,6 +3515,11 @@ internal class TaskCellMenuActions(
      * Null: [onDeepCopy] runs on a click.
      */
     val deepCopyPopup: (@Composable () -> Unit)? = null,
+    /**
+     * User 2026-11-27 (*"'deep copy' must work on any row in the app, right?"*): **the row itself**, for a row with no deep
+     * copy of its own — its title and the keys it stands for; "deep copy" then shows the "Deep copy" rows over it alone.
+     */
+    val self: (() -> org.example.project.ui.SubRowSpec)? = null,
 )
 
 

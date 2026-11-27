@@ -1139,7 +1139,11 @@ suggestions before it was ever entered.
   a task row, the elements it is drawn under for a child, the menu's name for a menu's entry), **"deep copy"** (user 2026-11-26: every
   element's, not a task's alone — a Search window on it, its "Deep copy" group pinned, whose rows say what the copy
   carries; an element that is no task copies with its children, `ElementTree.childrenOf`, `SearchDomain.elementsCopyText`;
-  what only a task carries is listed where a task is added, `DEEP_COPY_TASK_ACTIONS`) and **"collapse"** (user 2026-11-26,
+  what only a task carries is listed where a task is added, `DEEP_COPY_TASK_ACTIONS`; **on every row of the app**, user
+  2026-11-27 *"'deep copy' must work on any row in the app, right?"*: a row with no deep copy of its own — an option, an
+  action, the calendar, a window, a task no live cell holds, an empty row, a menu's own row — shows the same rows while
+  the entry is hovered, over itself (`TaskCellMenuActions.self`, `SubRowDeepCopy`); a row of an actions section over it
+  and every row under it, closed ones included (`actionRowTree`, `actionListRows`' `expandAll`)) and **"collapse"** (user 2026-11-26,
   was "collapse sub-trees"; "retract with every sub-child" is gone): its row's field holds how many levels from the row
   stay as they are (the row is level 0, its children 1), every open row from there down closing — **0 by default**:
   the row and all under it; 1: the row stays open on its children, whose children are retracted
@@ -1491,7 +1495,7 @@ suggestions before it was ever entered.
     (`ActionListRow.warning`, `SearchDomain.contextsInNoPair`), until a pair holds them again — the action's kind, and,
     once listed and where the action has a "no state" pair, every other element. **Its rows' menus**: "copy path" (the
     titles of the rows it hangs from) and "collapse" (the open rows under it; greyed where none is) act on the section's
-    rows; "deep copy" of a row that has rows under it — "Contexts and states" and its pairs — shows, while hovered, the
+    rows; "deep copy" of any of its rows — "Contexts and states" and its pairs among them — shows, while hovered, the
     "Deep copy" rows an element's has but what only a task carries (user 2026-11-27, *"Shouldn't the deep copy open a
     window to select what kind of deep copy I want?"*; `SubRowDeepCopy`, the account's settings), and copies those rows,
     closed ones included, a tab further in per level, title " — " what stands beside, a pair's contexts' keys as its ids
@@ -1550,7 +1554,9 @@ suggestions before it was ever entered.
   - **The deep copy window is a group of rows** (user rule 2026-11-25: *"Transform the deep copy window into a search
     window where every action is a row"*; `SearchDomain.DEEP_COPY_ACTIONS`, `ActionGroup.tag`, `DeepCopyActionEditor`).
     In the group of the added tasks, a "Deep copy" group inside it holds one row per control the window had: Maximum
-    depth, Copy the entire sub-tree, the five "what a copy carries" switches, Exclude tasks with title, Copied down to,
+    depth, Copy the entire sub-tree, the "what a copy carries" switches — **"Copy the titles"** among them (user 2026-11-27,
+    *"all the tree with only the id for each node"*; `CopyOptions.includeTitles`, `SchedulerState.copyIncludeTitles`: off, a
+    node with an id is its id alone, a task its id reference, a row standing for none keeping its title) — Exclude tasks with title, Copied down to,
     Copy to the clipboard, Reset. They are the account's settings, written as changed (one History Unit per stretch,
     `DEEP_COPY_SETTINGS`). A row's menu "deep copy" opens a Search window on the selection's tasks with that group pinned
     (`App.openDeepCopySearch`). **The account's weight table and relative priority open the same way** — a Search window

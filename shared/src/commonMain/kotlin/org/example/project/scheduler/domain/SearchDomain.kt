@@ -5431,6 +5431,7 @@ object SearchDomain {
         DeepCopyMaxDepth(null, "Maximum depth"),
         DeepCopyWholeSubtree(null, "Copy the entire sub-tree"),
         DeepCopyIds(null, "Copy the ids"),
+        DeepCopyTitles(null, "Copy the titles"),
         DeepCopyWeightTables(null, "Copy the priority weight tables"),
         DeepCopyPercentages(null, "Copy priority percentages"),
         DeepCopyMinimumTime(null, "Copy minimum time"),
@@ -6115,7 +6116,8 @@ object SearchDomain {
      */
     val DEEP_COPY_ACTIONS: List<AddedAction> =
         listOf(
-            AddedAction.DeepCopyMaxDepth, AddedAction.DeepCopyWholeSubtree, AddedAction.DeepCopyIds, AddedAction.DeepCopyWeightTables,
+            AddedAction.DeepCopyMaxDepth, AddedAction.DeepCopyWholeSubtree, AddedAction.DeepCopyIds, AddedAction.DeepCopyTitles,
+            AddedAction.DeepCopyWeightTables,
             AddedAction.DeepCopyPercentages, AddedAction.DeepCopyMinimumTime, AddedAction.DeepCopyText, AddedAction.DeepCopyExcludeTitle,
             AddedAction.DeepCopyPath, AddedAction.TaskDeepCopy, AddedAction.DeepCopyReset,
         )
@@ -6157,6 +6159,7 @@ object SearchDomain {
         includeIds: Boolean,
         excludeTitle: String,
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+        includeTitles: Boolean = true,
     ): String {
         if (maxDepth < 1) return ""
         val names = HashMap<String, String>()
@@ -6167,8 +6170,9 @@ object SearchDomain {
             val name = nameOf(key)
             if (excludeTitle.isNotEmpty() && name == excludeTitle) return
             repeat(depth) { sb.append(TAB) }
-            sb.append(name).append(NEWLINE)
-            if (includeIds) {
+            // User 2026-11-27 ([SchedulerDomain.CopyOptions.includeTitles]): titles off, the element is its id alone.
+            sb.append(if (includeTitles) name else copiedId(key)).append(NEWLINE)
+            if (includeIds && includeTitles) {
                 repeat(depth + 1) { sb.append(TAB) }
                 sb.append("- id: ").append(copiedId(key)).append(NEWLINE)
             }
@@ -6505,7 +6509,7 @@ object SearchDomain {
             AddedAction.TaskRelationDrop -> "strike off remove weight table row"
             AddedAction.DeepCopyMaxDepth -> "deep copy maximum depth levels"
             AddedAction.DeepCopyWholeSubtree -> "deep copy entire sub-tree unlimited"
-            AddedAction.DeepCopyIds, AddedAction.DeepCopyWeightTables, AddedAction.DeepCopyPercentages,
+            AddedAction.DeepCopyIds, AddedAction.DeepCopyTitles, AddedAction.DeepCopyWeightTables, AddedAction.DeepCopyPercentages,
             AddedAction.DeepCopyMinimumTime, AddedAction.DeepCopyText -> "deep copy"
             AddedAction.DeepCopyExcludeTitle -> "deep copy exclude title"
             AddedAction.DeepCopyPath -> "deep copy path deepest"
@@ -6679,7 +6683,7 @@ object SearchDomain {
      * closed by default, but a top row while [Config.actionsExpanded]. Not grouped: every action a top row, naming the
      * elements it acts on, a group inside a group still a row of its own. Only what an open row holds is listed.
      */
-    fun actionListRows(groups: List<ActionGroup>, config: Config): List<ActionListRow> {
+    fun actionListRows(groups: List<ActionGroup>, config: Config, expandAll: Boolean = false): List<ActionListRow> {
         val search = if (config.actionSearchSortsOnly) config.actionSearch else ""
         val out = ArrayList<ActionListRow>()
         val seen = HashSet<String>()
@@ -6697,7 +6701,8 @@ object SearchDomain {
         fun groupRow(group: ActionGroup, depth: Int, top: Boolean) {
             val open = isActionRowOpen(config, group.id, top)
             out += ActionListRow(unique(group.id), group.id, group.title, "", depth, open, group, null)
-            if (!open) return
+            // [expandAll]: every row, open or closed — what a row's deep copy copies (user 2026-11-27).
+            if (!open && !expandAll) return
             for (entry in microGroups(group, search)) {
                 when (entry) {
                     is MicroGroup.One -> actionRow(group, entry.action, depth + 1, top = false, about = "")

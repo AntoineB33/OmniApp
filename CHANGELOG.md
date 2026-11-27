@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Deep copy on every row; "Copy the titles" — 2026-11-27
+
+- User: *"'deep copy' must work on any row in the app, right?"* It was greyed on options, actions, the calendar, windows,
+  creation rows, a task no live cell holds, the tree's empty rows and a menu's own rows. Every row now has it: one with no
+  deep copy of its own shows the "Deep copy" rows over itself (`TaskCellMenuActions.self`, `SubRowDeepCopy`); a row of an
+  actions section over it and every row under it, closed ones included (`actionRowTree`, `actionListRows(expandAll)`).
+- User: *"Are you sure it didn't exist? I thought it existed but only for the task elements"* — checked: "Copy the ids"
+  (an `- id:` line under each title) did, an ids-only tree never did. New account setting **"Copy the titles"**
+  (`SchedulerState.copyIncludeTitles`, default on, synced like the other copy switches, `CopyOptions.includeTitles`): off,
+  a node with an id is its id alone — a task its `OmniApp task id:` reference. A payload without it decodes to on
+  (`DeepCopyTitlesTest`). `every_action_row_deep_copies_its_rows_open_or_not`. Client rebuild only.
+
 ### "Contexts and states": no empty pair; its rows deep copy — 2026-11-27
 
 - Anomaly: *"In 'Action: Minimum time / Contexts and states', the third contexts-states pair hasn't any context, so why is

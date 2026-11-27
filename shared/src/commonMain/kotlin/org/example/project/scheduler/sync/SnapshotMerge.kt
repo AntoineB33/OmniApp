@@ -186,6 +186,7 @@ object SnapshotMerge {
                 copyIncludePriorityPercentages =
                     pick(base.copyIncludePriorityPercentages, local.copyIncludePriorityPercentages, remote.copyIncludePriorityPercentages),
                 copyIncludeMinimumTime = pick(base.copyIncludeMinimumTime, local.copyIncludeMinimumTime, remote.copyIncludeMinimumTime),
+                copyIncludeTitles = pick(base.copyIncludeTitles, local.copyIncludeTitles, remote.copyIncludeTitles),
                 copyExcludeTitle = pick(base.copyExcludeTitle, local.copyExcludeTitle, remote.copyExcludeTitle),
                 // PRD §14/§18: each default configuration is ONE value — a whole setting the user shaped in its
                 // window, not fields for two devices to interleave.

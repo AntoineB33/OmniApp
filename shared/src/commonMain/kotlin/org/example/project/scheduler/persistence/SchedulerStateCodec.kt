@@ -704,6 +704,7 @@ object SchedulerStateCodec {
             copyIncludeText = copyIncludeText,
             copyIncludePriorityPercentages = copyIncludePriorityPercentages,
             copyIncludeMinimumTime = copyIncludeMinimumTime,
+            copyIncludeTitles = copyIncludeTitles,
             copyExcludeTitle = copyExcludeTitle,
             // PRD §14/§18: what a new alarm / timer / reminder starts with.
             newAlarmDefaults = newAlarmDefaults.toPersisted(),
@@ -1426,6 +1427,7 @@ object SchedulerStateCodec {
             copyIncludeText = copyIncludeText,
             copyIncludePriorityPercentages = copyIncludePriorityPercentages,
             copyIncludeMinimumTime = copyIncludeMinimumTime,
+            copyIncludeTitles = copyIncludeTitles,
             copyExcludeTitle = copyExcludeTitle,
             // PRD §14/§18: healed to settings only — no id, name, time of day or run survives in a default.
             newAlarmDefaults =
@@ -1934,6 +1936,8 @@ private data class PersistedState(
     val copyIncludeText: Boolean = true,
     val copyIncludePriorityPercentages: Boolean = true,
     val copyIncludeMinimumTime: Boolean = true,
+    // User 2026-11-27: missing = a payload written before the switch — titles copied, as then.
+    val copyIncludeTitles: Boolean = true,
     val copyExcludeTitle: String = "",
     // PRD §14/§18: what a new alarm / timer / reminder starts with. Missing = a payload written before the
     // defaults existed, which decodes to the built-in defaults every new element had then.
@@ -3585,6 +3589,7 @@ internal object SettingEntries {
             put("copyIncludeText", s.copyIncludeText.toString())
             put("copyIncludePriorityPercentages", s.copyIncludePriorityPercentages.toString())
             put("copyIncludeMinimumTime", s.copyIncludeMinimumTime.toString())
+            put("copyIncludeTitles", s.copyIncludeTitles.toString())
             put("copyExcludeTitle", s.copyExcludeTitle)
             s.sleepingUntilMillis?.let { put("sleepingUntilMillis", it.toString()) }
             s.sleepingSinceMillis?.let { put("sleepingSinceMillis", it.toString()) }
@@ -3666,6 +3671,7 @@ internal object SettingEntries {
             "copyIncludeText" -> s.copy(copyIncludeText = value.toBoolean())
             "copyIncludePriorityPercentages" -> s.copy(copyIncludePriorityPercentages = value.toBoolean())
             "copyIncludeMinimumTime" -> s.copy(copyIncludeMinimumTime = value.toBoolean())
+            "copyIncludeTitles" -> s.copy(copyIncludeTitles = value.toBoolean())
             "copyExcludeTitle" -> s.copy(copyExcludeTitle = value)
             "newAlarmDefaults" -> s.copy(newAlarmDefaults = json.decodeFromString(PersistedAlarm.serializer(), value).toAlarmEntry())
             "newTimerDefaults" -> s.copy(newTimerDefaults = json.decodeFromString(PersistedTimer.serializer(), value).toTimerEntry())

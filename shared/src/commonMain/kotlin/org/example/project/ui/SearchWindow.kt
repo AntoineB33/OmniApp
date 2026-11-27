@@ -1347,6 +1347,8 @@ fun SearchWindow(
             // User rule 2026-11-25: the path includes the row clicked — its title, its id where it has none.
             onCopyPath = { writeSystemClipboardText(SearchDomain.pathLabel(shownPath + SearchDomain.pathSegment(live?.title ?: result.title, taskId.value))) },
             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
+            // User 2026-11-27: a task no live cell holds copies itself.
+            self = { SubRowSpec(taskId.value, live?.title ?: result.title, ids = listOf(SearchDomain.taskKey(taskId))) },
             // The row's sub-tree is this window's ([SchedulerState.searchExpanded]), never the tree's: closed here.
             onCollapse = childListId?.let { listId ->
                 { level ->
@@ -1381,6 +1383,9 @@ fun SearchWindow(
                     )
                 }
             },
+            // User 2026-11-27 (*"'deep copy' must work on any row in the app"*): an element holding no sub-tree (an option, an
+            // action, the calendar, a window) copies itself.
+            self = { SubRowSpec(key, selfName ?: SearchDomain.resolve(currentState, listOf(key), { emptyMap() }, windows, schedulerRuns, claudeLogs).firstOrNull()?.name ?: key.substringAfter('/'), ids = listOf(key)) },
         )
 
     childSelection.menuOf = { key, rowKey, ancestors -> elementMenu(key, rowKey, ancestors) }
@@ -2228,6 +2233,7 @@ fun SearchWindow(
                                                 onCopyId = { copyIds(listOf(resultKey(result))) },
                                                 onCopyPath = { copyPathOf(listOfNotNull(option.listName) + result.name) },
                                                 onCollapse = null,
+                                                self = { SubRowSpec(result.id, result.name, ids = listOf(resultKey(result))) },
                                             )
                                         } else elementMenu(resultKey(result), elementKey, null),
                                         timerRun = if (result.kind == SearchDomain.Kind.Timer) {
@@ -2844,6 +2850,8 @@ internal class RowMenuCommon(
     val onDeepCopy: (() -> Unit)? = null,
     /** User 2026-11-27: "deep copy" showing its rows while hovered ([TaskCellMenuActions.deepCopyPopup]) — an action row's. */
     val deepCopyPopup: (@Composable () -> Unit)? = null,
+    /** User 2026-11-27: the row itself, for its deep copy where it has none of its own ([TaskCellMenuActions.self]). */
+    val self: (() -> SubRowSpec)? = null,
 ) {
     fun menu(onAdd: (() -> Unit)?, onAddReplacing: (() -> Unit)?, extra: List<MenuAction>): TaskCellMenuActions =
         TaskCellMenuActions(
@@ -2857,6 +2865,7 @@ internal class RowMenuCommon(
             onAddReplacing = onAddReplacing,
             extra = extra + this.extra,
             deepCopyPopup = deepCopyPopup,
+            self = self,
         )
 
     companion object {
@@ -4641,6 +4650,8 @@ internal fun TaskIdentityRow(
                                 writeSystemClipboardText(SearchDomain.pathLabel(shownPath.orEmpty() + SearchDomain.pathSegment(latest.tasks[taskId]?.title, taskId.value)))
                             },
                             onDeepCopy = occurrence?.let { { onDeepCopyCell(it.cellId) } },
+                            // User 2026-11-27: a task no live cell holds copies itself.
+                            self = { SubRowSpec(taskId.value, latest.tasks[taskId]?.title ?: taskId.value, ids = listOf(SearchDomain.taskKey(taskId))) },
                             onCollapse = if (hasChildren) { level ->
                                 closeCells(level)
                                 if (SearchDomain.collapses(0, level)) expanded = false
@@ -4857,7 +4868,7 @@ internal fun ItemResultRow(
             open = menuOpen,
             onDismiss = { menuOpen = false },
             actions = org.example.project.scheduler.ui.taskCellMenuActions(
-                (rowMenu ?: RowMenuCommon.NONE).menu(
+                (rowMenu ?: RowMenuCommon(null, null, null, self = { SubRowSpec(item.id, item.name, ids = listOf(SearchDomain.keyOf(item))) })).menu(
                     onAdd = if (menuActions == null) onAdd else null,
                     onAddReplacing = if (menuActions == null) onAddReplacing else null,
                     extra = menuActions.orEmpty() + listOfNotNull(elsewhere?.let { MenuAction(it) { onOpen() } }),
@@ -5010,7 +5021,7 @@ private fun ElementChildren(
                 open = menuOpen,
                 onDismiss = { menuOpen = false },
                 actions = org.example.project.scheduler.ui.taskCellMenuActions(
-                    RowMenuCommon(null, selection.menuOf(parent, blankKey, path.toList()).onCopyPath, null)
+                    RowMenuCommon(null, selection.menuOf(parent, blankKey, path.toList()).onCopyPath, null, self = { SubRowSpec(blankKey, "") })
                         .menu(onAdd = null, onAddReplacing = null, extra = emptyList()),
                 ),
                 atPointer = LocalRowMenusAtPointer.current,

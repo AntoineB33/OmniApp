@@ -8428,6 +8428,12 @@ object SchedulerDomain {
         val includeText: Boolean = true,
         val includePriorityPercentages: Boolean = true,
         val includeMinimumTime: Boolean = true,
+        /**
+         * User 2026-11-27 (*"all the tree with only the id for each node"*): off, a node that has an id is written as its
+         * id alone — a task as the reference a paste turns back into it ([TASK_ID_REFERENCE_PREFIX]) — in place of its
+         * title; a node without one keeps its title, so the tree keeps its shape.
+         */
+        val includeTitles: Boolean = true,
         val excludeTitle: String = "",
     ) {
         companion object {
@@ -8439,6 +8445,7 @@ object SchedulerDomain {
                     includeText = state.copyIncludeText,
                     includePriorityPercentages = state.copyIncludePriorityPercentages,
                     includeMinimumTime = state.copyIncludeMinimumTime,
+                    includeTitles = state.copyIncludeTitles,
                     excludeTitle = state.copyExcludeTitle,
                 )
         }
@@ -8710,7 +8717,8 @@ object SchedulerDomain {
                 fields += "text: ${escapeField(node.text)}"
             }
             if (fields.isEmpty()) return
-            lines += "- ${escapeTitleField(node.title)}: ${fields.joinToString(", ")}"
+            val name = if (!options.includeTitles && node.taskId != null) TASK_ID_REFERENCE_PREFIX + node.taskId.value else escapeTitleField(node.title)
+            lines += "- $name: ${fields.joinToString(", ")}"
         }
 
         fun walk(ns: List<CopiedNode>) {
@@ -8733,10 +8741,12 @@ object SchedulerDomain {
         fun attribute(depth: Int, name: String, value: String) = line(depth, "$ATTR_MARKER$name: $value")
         fun render(ns: List<CopiedNode>, depth: Int) {
             for (n in ns) {
-                line(depth, escapeTitleField(n.title))
                 val d = depth + 1
+                // User 2026-11-27: titles off, a task with its id is its id reference alone.
+                val idOnly = !options.includeTitles && n.taskId != null
+                line(depth, if (idOnly) TASK_ID_REFERENCE_PREFIX + n.taskId!!.value else escapeTitleField(n.title))
                 // The identity first: pasting back into the tree lands on this very task (ADR 0012).
-                n.taskId?.let { attribute(d, ATTR_ID, it.value) }
+                if (!idOnly) n.taskId?.let { attribute(d, ATTR_ID, it.value) }
                 if (options.includeMinimumTime) {
                     attribute(d, ATTR_MIN_TIME, "${n.minMinutes ?: DEFAULT_MINIMUM_MINUTES} min")
                 }

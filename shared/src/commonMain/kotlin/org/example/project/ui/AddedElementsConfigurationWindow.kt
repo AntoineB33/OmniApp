@@ -614,8 +614,12 @@ private fun AddedActionList(
                 copyOf = { latestConfig },
                 onClose = close,
                 menuOf = { row -> rowMenus[row.id].orEmpty() },
+                // User 2026-11-27 (*"'deep copy' must work on any row in the app"*): every row — one with rows an open action
+                // lists under it, those; any other, the rows under it however open, read when its pop-up shows.
                 deepCopyOf = { row ->
-                    deepCopies[row.id]?.let { root -> { SubRowDeepCopy(state, root, onIntent) } }
+                    val root = deepCopies[row.id]
+                    if (root != null) { { SubRowDeepCopy(root, state, onIntent) } }
+                    else { { SubRowDeepCopy(remember(row.id, groups, config) { actionRowTree(SearchDomain.actionListRows(groups, config, expandAll = true), row) }, state, onIntent) } }
                 },
             ),
             modifier = modifier,
@@ -808,15 +812,21 @@ internal const val NEW_PAIR_MENU_ID: String = "create"
  * under it where [includeIds]; a row titled [excludeTitle] left out with what is under it. The settings are the "Deep copy"
  * group's ([SubRowDeepCopy]).
  */
-internal fun subRowsCopyText(root: SubRowSpec, maxDepth: Int, includeIds: Boolean, excludeTitle: String): String {
+internal fun subRowsCopyText(root: SubRowSpec, maxDepth: Int, includeIds: Boolean, excludeTitle: String, includeTitles: Boolean = true): String {
     val sb = StringBuilder()
     fun walk(spec: SubRowSpec, depth: Int) {
         if (depth >= maxDepth || (excludeTitle.isNotEmpty() && spec.title == excludeTitle)) return
         repeat(depth) { sb.append('\t') }
-        sb.append(spec.title)
-        if (spec.detail.isNotEmpty()) sb.append(" — ").append(spec.detail)
+        // Titles off ([SchedulerDomain.CopyOptions.includeTitles]): a row standing for elements is their ids alone, one line;
+        // a row standing for none keeps its title, so the tree keeps its shape.
+        val idsOnly = !includeTitles && spec.ids.isNotEmpty()
+        if (idsOnly) sb.append(spec.ids.joinToString(", ") { SearchDomain.copiedId(it) })
+        else {
+            sb.append(spec.title)
+            if (spec.detail.isNotEmpty()) sb.append(" — ").append(spec.detail)
+        }
         sb.append('\n')
-        if (includeIds) for (key in spec.ids) {
+        if (includeIds && !idsOnly) for (key in spec.ids) {
             repeat(depth + 1) { sb.append('\t') }
             sb.append("- id: ").append(SearchDomain.copiedId(key)).append('\n')
         }
@@ -836,18 +846,42 @@ internal fun subRowsDeepestPath(root: SubRowSpec, maxDepth: Int, excludeTitle: S
     return deepest(root, 0).orEmpty()
 }
 
-/** Each row of [specs] under [parent] that has rows under it — and [parent] — as the root of its deep copy, by row id. */
+/** Each row of [specs] under [parent] — and [parent] — as the root of its deep copy, by row id. */
 private fun subRowCopies(parent: SearchDomain.ActionListRow, specs: List<SubRowSpec>, into: MutableMap<String, SubRowSpec>) {
-    into[parent.id] = SubRowSpec(parent.id, parent.title, parent.detail, specs)
+    into[parent.id] = SubRowSpec(parent.id, parent.title, parent.detail, specs, ids = actionRowIds(parent))
     fun walk(prefix: String, list: List<SubRowSpec>) {
         for (spec in list) {
             val id = prefix + "/" + spec.key
-            if (spec.children.isNotEmpty()) into[id] = spec
+            into[id] = spec
             walk(id, spec.children)
         }
     }
     walk(parent.id + "/sub", specs)
 }
+
+/**
+ * User 2026-11-27: **the deep copy of the actions section's row [row]** — it and every row under it in [all] (the section's
+ * rows, every one open: [SearchDomain.actionListRows]' `expandAll`), a level further per level. Its ids ([actionRowIds]).
+ */
+internal fun actionRowTree(all: List<SearchDomain.ActionListRow>, row: SearchDomain.ActionListRow): SubRowSpec {
+    val start = all.indexOfFirst { it.id == row.id }
+    if (start < 0) return SubRowSpec(row.id, row.title, row.detail, ids = actionRowIds(row))
+    var i = start + 1
+    fun children(depth: Int): List<SubRowSpec> {
+        val out = ArrayList<SubRowSpec>()
+        while (i < all.size && all[i].depth > depth) {
+            val r = all[i++]
+            out += SubRowSpec(r.id, r.title, r.detail, children(r.depth), ids = actionRowIds(r))
+        }
+        return out
+    }
+    val top = all[start]
+    return SubRowSpec(top.id, top.title, top.detail, children(top.depth), ids = actionRowIds(top))
+}
+
+/** What a row of the actions section stands for, by key: an action itself (as "copy id" names it), a group its elements. */
+private fun actionRowIds(row: SearchDomain.ActionListRow): List<String> =
+    if (row.action != null) listOf(SearchDomain.Kind.Action.name + "/" + row.key) else row.group.members.map(SearchDomain::keyOf)
 
 /** [specs] under a row naming [item] when the action is about [count] of them ([ElementHeading]'s rule), else as they are. */
 private fun headed(item: String, count: Int, specs: List<SubRowSpec>): List<SubRowSpec> =
@@ -1368,7 +1402,7 @@ private fun AddedActionBlocks(
         }
         // User rule 2026-11-25: the deep copy window's controls, each a row of the "Deep copy" group.
         SearchDomain.AddedAction.TaskDeepCopy, SearchDomain.AddedAction.DeepCopyMaxDepth, SearchDomain.AddedAction.DeepCopyWholeSubtree,
-        SearchDomain.AddedAction.DeepCopyIds, SearchDomain.AddedAction.DeepCopyWeightTables, SearchDomain.AddedAction.DeepCopyPercentages,
+        SearchDomain.AddedAction.DeepCopyIds, SearchDomain.AddedAction.DeepCopyTitles, SearchDomain.AddedAction.DeepCopyWeightTables, SearchDomain.AddedAction.DeepCopyPercentages,
         SearchDomain.AddedAction.DeepCopyMinimumTime, SearchDomain.AddedAction.DeepCopyText, SearchDomain.AddedAction.DeepCopyExcludeTitle,
         SearchDomain.AddedAction.DeepCopyPath, SearchDomain.AddedAction.DeepCopyReset ->
             DeepCopyActionEditor(state, action, added) { run(SearchDomain.AddedCommand.Raw(it)) }

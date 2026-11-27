@@ -67,6 +67,9 @@ internal fun DeepCopyActionEditor(
             CompactSwitch(checked = state.deepCopyUnlimited, onCheckedChange = { onIntent(SchedulerIntent.SetDeepCopyUnlimited(it)) })
         SearchDomain.AddedAction.DeepCopyIds ->
             CompactSwitch(checked = options.includeIds, onCheckedChange = { setOptions(options.copy(includeIds = it)) })
+        // User 2026-11-27: off, a node with an id is copied as its id alone.
+        SearchDomain.AddedAction.DeepCopyTitles ->
+            CompactSwitch(checked = options.includeTitles, onCheckedChange = { setOptions(options.copy(includeTitles = it)) })
         SearchDomain.AddedAction.DeepCopyWeightTables ->
             CompactSwitch(checked = options.priorityTables, onCheckedChange = { setOptions(options.copy(priorityTables = it)) })
         SearchDomain.AddedAction.DeepCopyPercentages ->
@@ -103,7 +106,7 @@ internal fun DeepCopyActionEditor(
             val count = cells.size + others.size
             FrameButton(if (count == 1) "Copy" else "Copy $count", enabled = count > 0 && depth >= 1) {
                 val text = SchedulerDomain.copyCellsText(state, cells, depth, options) +
-                    SearchDomain.elementsCopyText(state, others, depth, options.includeIds, options.excludeTitle)
+                    SearchDomain.elementsCopyText(state, others, depth, options.includeIds, options.excludeTitle, includeTitles = options.includeTitles)
                 if (text.isNotEmpty()) writeSystemClipboardText(text)
             }
         }
@@ -125,7 +128,10 @@ internal fun DeepCopyActionEditor(
  * ([subRowsCopyText]) and its deepest path said ([subRowsDeepestPath]).
  */
 @Composable
-internal fun SubRowDeepCopy(state: SchedulerState, root: SubRowSpec, onIntent: (SchedulerIntent) -> Unit) {
+internal fun SubRowDeepCopy(root: SubRowSpec, given: SchedulerState? = null, givenIntent: ((SchedulerIntent) -> Unit)? = null) {
+    // Any row's menu shows it (user 2026-11-27): the account's state and dispatch, as `App` provides them, where not given.
+    val state = given ?: LocalPatternExceptionState.current ?: SchedulerState.empty()
+    val onIntent: (SchedulerIntent) -> Unit = givenIntent ?: LocalPatternExceptionDispatch.current ?: {}
     val options = SchedulerDomain.CopyOptions.from(state)
     val depth = if (state.deepCopyUnlimited) SchedulerDomain.FULL_SUBTREE_DEPTH else state.deepCopyMaxDepth
     androidx.compose.material3.Surface(
@@ -141,7 +147,7 @@ internal fun SubRowDeepCopy(state: SchedulerState, root: SubRowSpec, onIntent: (
                         org.example.project.scheduler.ui.DeepCopyPathRow(remember(root, depth, options.excludeTitle) { subRowsDeepestPath(root, depth, options.excludeTitle) })
                     SearchDomain.AddedAction.TaskDeepCopy ->
                         FrameButton("Copy", enabled = depth >= 1) {
-                            val text = subRowsCopyText(root, depth, options.includeIds, options.excludeTitle)
+                            val text = subRowsCopyText(root, depth, options.includeIds, options.excludeTitle, options.includeTitles)
                             if (text.isNotEmpty()) writeSystemClipboardText(text)
                         }
                     else -> DeepCopyActionEditor(state, action, emptyList(), onIntent)

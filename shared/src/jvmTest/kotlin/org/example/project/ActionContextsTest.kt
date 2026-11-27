@@ -35,6 +35,7 @@ import org.example.project.ui.SearchWindow
 import org.example.project.ui.SubRowSpec
 import org.example.project.ui.subRowsCopyText
 import org.example.project.ui.subRowsDeepestPath
+import org.example.project.ui.actionRowTree
 
 /**
  * User rule 2026-11-13: a row of the actions section is added to the section's own list, and its action there shows its
@@ -204,6 +205,40 @@ class ActionContextsTest {
         assertEquals("Contexts and states\n\tx, y \u2014 no state\n\t\tcontext\n", subRowsCopyText(root, all, includeIds = false, excludeTitle = "a, b"))
         assertEquals(listOf("Contexts and states", "a, b", "context"), subRowsDeepestPath(root, all, ""))
         assertEquals(listOf("Contexts and states", "a, b"), subRowsDeepestPath(root, 2, ""))
+        // User 2026-11-27 ("all the tree with only the id for each node"): titles off, a row standing for elements is
+        // their ids alone; one standing for none keeps its title, so the tree keeps its shape.
+        assertEquals(
+            "Contexts and states\n\tAlarm/a, Alarm/b\n\tChrono/x, Chrono/y\n",
+            subRowsCopyText(root, 2, includeIds = true, excludeTitle = "", includeTitles = false),
+        )
+    }
+
+    /**
+     * User 2026-11-27 (*"'deep copy' must work on any row in the app, right?"*): an action row's deep copy is it and every
+     * row under it, closed ones included; a row of the tree standing for nothing still offers the entry, over itself.
+     */
+    @Test
+    fun every_action_row_deep_copies_its_rows_open_or_not() {
+        val window = SearchDomain.Config(kinds = setOf(Kind.Chrono), added = listOf(key("a")), actionsGrouped = true)
+        val sections = SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), SearchDomain.actionKindsOf(rows("a"))), rows("a"))
+        val groups = SearchDomain.shownActionGroups(sections, rows("a"), window, ClaudeLogCatalog.EMPTY)
+        val shown = SearchDomain.actionListRows(groups, window)
+        val all = SearchDomain.actionListRows(groups, window, expandAll = true)
+        assertTrue(all.size > shown.size, "closed groups are walked too: ${shown.size} shown, ${all.size} in all")
+        val top = all.first()
+        val tree = actionRowTree(all, top)
+        fun count(s: SubRowSpec): Int = 1 + s.children.sumOf(::count)
+        assertEquals(1 + all.drop(1).takeWhile { it.depth > top.depth }.size, count(tree))
+        assertTrue(count(tree) > 1, "the group copies the actions under it")
+        assertEquals(listOf(key("a")), tree.ids, "a group of elements stands for them")
+        // The menu entry: any row with no deep copy of its own shows the rows over itself \u2014 never greyed.
+        val menu = org.example.project.scheduler.ui.taskCellMenuActions(
+            org.example.project.scheduler.ui.TaskCellMenuActions(null, null, null, null, null, null, self = { SubRowSpec("x", "") }),
+        )
+        val entry = menu.first { it.label == org.example.project.scheduler.ui.DEEP_COPY_LABEL }
+        assertTrue(entry.enabled && entry.hoverPopup != null)
+        val bare = org.example.project.scheduler.ui.taskCellMenuActions(org.example.project.scheduler.ui.TaskCellMenuActions(null, null, null, null, null, null))
+        assertFalse(bare.first { it.label == org.example.project.scheduler.ui.DEEP_COPY_LABEL }.enabled)
     }
 
     /** Anomaly 2026-11-26: an action row's "copy path" and "collapse sub-trees" were greyed. */
