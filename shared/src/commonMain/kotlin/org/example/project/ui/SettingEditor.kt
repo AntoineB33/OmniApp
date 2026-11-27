@@ -330,6 +330,8 @@ internal fun SettingEditor(
             Choices(SearchDomain.AlarmState.entries, f.alarmState, { it.label }) { filters(f.copy(alarmState = it)) }
         SearchDomain.Setting.AlarmDays ->
             DayChips(f.alarmDays) { filters(f.copy(alarmDays = it)) }
+        SearchDomain.Setting.DatedOnDays ->
+            DayChips(f.datedOnDays) { filters(f.copy(datedOnDays = it)) }
         SearchDomain.Setting.TimerStateSetting ->
             Choices(SearchDomain.TimerState.entries, f.timerState, { it.label }) { filters(f.copy(timerState = it)) }
         SearchDomain.Setting.ChronoStateSetting ->

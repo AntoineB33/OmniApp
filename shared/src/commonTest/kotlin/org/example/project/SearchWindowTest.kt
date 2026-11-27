@@ -8,6 +8,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.datetime.DayOfWeek
+import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SearchDomain
 import org.example.project.scheduler.model.AlarmEntry
@@ -574,6 +575,31 @@ class SearchWindowTest {
         // Both filters at once: the Search window's own element, among the window changes.
         val search = SearchDomain.Filters(historyChangedKinds = setOf(SearchDomain.Kind.Window), historyChangedElement = "Window/Search")
         assertEquals(listOf("Search text"), historyLabels(s, search))
+    }
+
+    /**
+     * User rule 2026-11-27 ("every row changed on a Sunday"): the General "Dated on" filter keeps the rows whose one date
+     * ([SearchDomain.dateOf]) falls on a checked weekday, keeps out a row with no date, and is saved with the window.
+     */
+    @Test
+    fun dated_on_keeps_the_rows_dated_on_a_checked_weekday() {
+        var s = treeWithAlarm()
+        s = r(s, SchedulerIntent.RenameTask(taskWithTitle(s, "Pie"), "Tart"))
+        val zone = kotlinx.datetime.TimeZone.UTC
+        val units = SearchDomain.results(s, setOf(SearchDomain.Kind.HistoryUnit), "", timeZone = zone)
+        assertTrue(units.isNotEmpty())
+        val days = units.map { row ->
+            kotlin.time.Instant.fromEpochMilliseconds(SearchDomain.dateOf(s, row)!!).toLocalDateTime(zone).dayOfWeek
+        }.toSet()
+        fun dated(on: Set<DayOfWeek>, kinds: Set<SearchDomain.Kind> = setOf(SearchDomain.Kind.HistoryUnit)) =
+            SearchDomain.results(s, kinds, "", filters = SearchDomain.Filters(datedOnDays = on), timeZone = zone)
+        assertEquals(units.map { it.name }, dated(days).map { it.name })
+        assertTrue(dated(DayOfWeek.entries.toSet() - days).isEmpty())
+        // A row with no date of its own is never "dated on" a day.
+        assertTrue(dated(DayOfWeek.entries.toSet(), setOf(SearchDomain.Kind.Alarm)).isEmpty())
+        val config = SearchDomain.Config(filters = SearchDomain.Filters(datedOnDays = setOf(DayOfWeek.SUNDAY)))
+        assertEquals(config, SearchDomain.Config.decode(config.encode()))
+        assertTrue(SearchDomain.Config.decode("{\"query\":\"\"}")!!.filters.datedOnDays.isEmpty())
     }
 
     @Test

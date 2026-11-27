@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A row's one date, and "Dated on" a weekday — 2026-11-27
+
+- Random request: *every change made to a task on a Sunday, newest first*. Nothing filtered by weekday but an alarm's
+  "Rings on". `SearchDomain.dateOf` is now the one date of a row (history unit, scheduler run, notification, log entry),
+  read by the three date sorts and by the new "Filters on every type › Dated on" (`Filters.datedOnDays`, the alarm's
+  `DayChips`). A row with no date is kept out while it is on. Local view state; an older stored configuration reads as any day.
+
 ### What can be copied of a row can be searched: "Where to search › Facts" — 2026-11-27
 
 - User: *"What if the user wants … all the history units of user actions that changed 'default search window > down arrow

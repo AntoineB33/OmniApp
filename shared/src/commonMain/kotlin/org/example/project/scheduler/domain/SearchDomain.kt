@@ -637,6 +637,22 @@ object SearchDomain {
     fun schedulerRunTimeOf(id: String): Long? =
         if (isSchedulerRunId(id)) id.removePrefix(RUN_ID_PREFIX).substringBefore('#').toLongOrNull() else null
 
+    /**
+     * User rule 2026-11-27: **the instant a row is dated at** — the one statement of it, read by the date sort
+     * ([SortKey.Date], [SortKey.HistoryDate], [SortKey.NotificationDate]) and the "Dated on" filter ([Filters.datedOnDays]):
+     * a history unit's commit, a scheduler run's, a notification's post, a log entry's writing. Null for a row with no
+     * date of its own.
+     */
+    fun dateOf(state: SchedulerState, row: Result): Long? {
+        val id = (row as? ItemResult)?.id ?: return null
+        return when (row.kind) {
+            Kind.HistoryUnit -> schedulerRunTimeOf(id) ?: historyUnitOf(state, id)?.timeMillis
+            Kind.Notification -> notificationTimeOf(id)
+            in CLAUDE_KINDS -> ClaudeLogCatalog.timeOf(id)
+            else -> null
+        }
+    }
+
     /** The run a row id names among [runs], or null once it has left the list (it is kept in memory only). */
     fun schedulerRunOf(runs: List<org.example.project.scheduler.state.SchedulerRunEntry>, id: String): org.example.project.scheduler.state.SchedulerRunEntry? =
         runs.lastOrNull { schedulerRunId(it) == id }
@@ -1162,6 +1178,7 @@ object SearchDomain {
                     periodResilienceTask = filters.periodResilienceTask?.value,
                     alarmState = filters.alarmState.name,
                     alarmDays = filters.alarmDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
+                    datedOnDays = filters.datedOnDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     timerState = filters.timerState.name,
                     chronoState = filters.chronoState.name,
                     quotaRepeats = filters.quotaRepeats.name,
@@ -1283,6 +1300,8 @@ object SearchDomain {
                         periodResilienceTask = stored.periodResilienceTask?.let(::TaskId),
                         alarmState = enumNamed(stored.alarmState, AlarmState.Any),
                         alarmDays = stored.alarmDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
+                            .toSet(),
+                        datedOnDays = stored.datedOnDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
                             .toSet(),
                         timerState = enumNamed(stored.timerState, TimerState.Any),
                         chronoState = enumNamed(stored.chronoState, TimerState.Any),
@@ -1545,6 +1564,8 @@ object SearchDomain {
         val alarmState: AlarmState = AlarmState.Any,
         /** Empty = any day; else the alarm rings on at least one of them. */
         val alarmDays: Set<DayOfWeek> = emptySet(),
+        /** User rule 2026-11-27: empty = any; else only the rows dated ([dateOf]) on one of these weekdays. */
+        val datedOnDays: Set<DayOfWeek> = emptySet(),
         val timerState: TimerState = TimerState.Any,
         /** A chrono is idle, running or paused like a timer — the same filter, over its own rows. */
         val chronoState: TimerState = TimerState.Any,
@@ -1840,6 +1861,7 @@ object SearchDomain {
                 Setting.PeriodResilienceSetting -> periodResilience to periodResilienceTask
                 Setting.AlarmStateSetting -> alarmState
                 Setting.AlarmDays -> alarmDays
+                Setting.DatedOnDays -> datedOnDays
                 Setting.TimerStateSetting -> timerState
                 Setting.ChronoStateSetting -> chronoState
                 Setting.QuotaRepeatsSetting -> quotaRepeats
@@ -1893,6 +1915,7 @@ object SearchDomain {
                 Setting.PeriodResilienceSetting -> periodResilience != ResilienceLevel.Any && periodResilienceTask != null
                 Setting.AlarmStateSetting -> alarmState != AlarmState.Any
                 Setting.AlarmDays -> alarmDays.isNotEmpty()
+                Setting.DatedOnDays -> datedOnDays.isNotEmpty()
                 Setting.TimerStateSetting -> timerState != TimerState.Any
                 Setting.ChronoStateSetting -> chronoState != TimerState.Any
                 Setting.QuotaRepeatsSetting -> quotaRepeats != Tri.Any
@@ -2273,6 +2296,8 @@ object SearchDomain {
         CalendarAdd(null, "Can go on the calendar at"),
         /** The "is on the calendar at" filter ([Filters.calendarAtOn]): the calendar's "edit…". */
         CalendarAt(null, "Is on the calendar at"),
+        /** User rule 2026-11-27: only the rows dated on the weekdays checked ([Filters.datedOnDays], [dateOf]). */
+        DatedOnDays(null, "Dated on"),
         /** The elements kept out of the list ([Filters.excludedElements]) and those always in it ([Filters.includedElements]). */
         ExcludedElements(null, "Excluded elements"),
         /** User rule 2026-11-21: where the rows a caller gives come from ([Filters.listedFrom]). */
@@ -3067,6 +3092,7 @@ object SearchDomain {
                 "The order of every row: the sorting methods checked, the first one dominant. " + SORT_KEY_HINTS
             Setting.CalendarAdd -> "Only what can be put on the calendar at the instant given."
             Setting.CalendarAt -> "Only what is on the calendar at the instant given."
+            Setting.DatedOnDays -> "Only the rows dated on one of the days checked: a history unit, a notification, a log entry."
             Setting.ExcludedElements -> "Elements always kept out of the list."
             Setting.ListedFrom -> "Where the rows come from: what the window is given to list. The rest of its configuration narrows them."
             Setting.IncludedElements -> "Elements always in the list, whatever else narrows it."
@@ -3279,6 +3305,8 @@ object SearchDomain {
         val periodResilienceTask: String? = null,
         val alarmState: String? = null,
         val alarmDays: List<Int> = emptyList(),
+        /** New 2026-11-27: absent from an older build's = any day. */
+        val datedOnDays: List<Int> = emptyList(),
         val timerState: String? = null,
         /** New 2026-09-26: absent from what an older build stored, which reads as any. */
         val chronoState: String? = null,
@@ -4299,6 +4327,14 @@ object SearchDomain {
                     }
                 }
                 .let { rows ->
+                    // "Dated on": about every row, through the one date of a row.
+                    if (filters.datedOnDays.isEmpty()) return@let rows
+                    rows.filter { row ->
+                        val at = dateOf(state, row) ?: return@filter false
+                        Instant.fromEpochMilliseconds(at).toLocalDateTime(timeZone).dayOfWeek in filters.datedOnDays
+                    }
+                }
+                .let { rows ->
                     // The blocks of the given elements: each block's element read once, not once per row.
                     if (filters.blocksOf.isEmpty() || rows.none { it.kind == Kind.CalendarBlock }) return@let rows
                     val owners = calendarBlocks(state, timeZone).associate { it.id to it.owner }
@@ -4481,15 +4517,13 @@ object SearchDomain {
                 SortKey.ReminderTime -> chores[row.id]?.timeOfDayMinutes
                 SortKey.ReminderCadence -> chores[row.id]?.spanDays
                 SortKey.BlockStart -> blocks[row.id]?.startMillis
-                SortKey.HistoryDate -> schedulerRunTimeOf(row.id) ?: historyUnitOf(state, row.id)?.timeMillis
-                SortKey.NotificationDate -> notificationTimeOf(row.id)
+                SortKey.HistoryDate, SortKey.NotificationDate, SortKey.Date -> dateOf(state, row)
                 SortKey.RelationSection -> sectionRank[row.detail.substringBefore(" · ")]
                 SortKey.ShortcutChord -> row.detail.substringBefore(" · ").lowercase()
                 SortKey.WindowState -> windowStatusOf(row)?.ordinal
                 SortKey.WindowId -> row.takeIf { it.kind == Kind.Window }?.let { windowIdOrder(it.id) }
                 SortKey.EvolutionInvolvement -> row.takeIf { it.kind == Kind.PresenceEvolution }?.let { involvement[it.id] ?: 2 }
                 SortKey.MinimumInvolvement -> row.takeIf { it.kind == Kind.MinimumEvolution }?.let { minimumInvolvement[it.id] ?: 2 }
-                SortKey.Date -> (row as? ItemResult)?.takeIf { it.kind in CLAUDE_KINDS }?.id?.let(ClaudeLogCatalog::timeOf)
                 else -> null
             }
     }
@@ -5082,7 +5116,7 @@ object SearchDomain {
             Setting.ReminderRepeatsSetting -> labels(ReminderRepeats.entries) { it.label }
             Setting.WindowDuplicatesSetting -> labels(WindowDuplicates.entries) { it.label }
             Setting.ChildDistance -> listOf("any", "1", "2", "3", "4", "5")
-            Setting.AlarmDays -> listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su", "any day")
+            Setting.AlarmDays, Setting.DatedOnDays -> listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su", "any day")
             Setting.TaskBoxesFrom, Setting.TaskBoxesUntil, Setting.PeriodBoxesFrom, Setting.PeriodBoxesUntil -> listOf("any", "Pick", "Now")
             Setting.CalendarAdd, Setting.CalendarAt -> listOf("Now")
             Setting.SearchBars -> listOf("Add a search bar")
