@@ -949,17 +949,20 @@ private fun ContextPairContext(model: ContextPairs, index: Int) {
     val pair = model.pairs.getOrNull(index) ?: return
     val keys = model.keysOf(pair)
     val fieldId = model.row.id + "/context/" + index
-    val opened = SearchDomain.contextFieldConfig(keys)
-    var fieldConfig by remember(fieldId) { mutableStateOf(opened) }
+    // What B opens with; what it is left with (its bar, its sorting…) is kept with the window it stands in, as every field's
+    // window's ([rememberInsideConfig]) — comes back as left for the same caller, forgotten with that window (user rule
+    // 2026-11-27). Its added elements are not its own: they are the pair's contexts, given here.
+    val opened = SearchDomain.contextFieldConfig(emptyList())
+    var fieldConfig by rememberInsideConfig(embeddedSearchId("field:$fieldId"), opened)
     PopupSearchField(
         placeholder = contextsSaid(pair, model.valuesOf(pair), model.action, keys.size),
         state = model.host.state,
         config = fieldConfig.copy(added = keys),
         onConfigChange = { next ->
-            fieldConfig = next
+            fieldConfig = next.copy(added = emptyList())
             if (next.added != keys) model.setPairs(SearchDomain.withPairValues(model.pairs, index, next.added))
         },
-        openedConfig = opened,
+        openedConfig = opened.copy(added = keys),
         fieldId = fieldId,
         modifier = Modifier.fillMaxWidth(),
         openedParts = EMBEDDED_SEARCH_SPLITS.copy(addedRemoved = false),

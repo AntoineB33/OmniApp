@@ -30,6 +30,8 @@ Check here before assuming the code matches the docs.
   pushed into the room after placing. All now go through `menuFit`, which shrinks the pop-up against its caller over the
   fewest rows rather than leave it. `MenuPlacementTest.a_pop_up_is_always_stuck_to_its_caller`,
   `FieldWindowKeepsItsAddedListTest`. Client rebuild only.
+- A "Contexts and states" pair's "context" window (B) keeps its own configuration (bar, sorting…) with its window as
+  every field's does (`rememberInsideConfig`), was composition-only; its added elements stay the pair's contexts.
 
 ### The ▾ tree's rows and an element's children are result rows — 2026-11-27
 
