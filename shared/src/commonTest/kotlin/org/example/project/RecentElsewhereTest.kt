@@ -62,9 +62,9 @@ class RecentElsewhereTest {
             node.children.drop(2).map { it.label },
         )
         // "Recent"'s own list: the last changed anywhere first.
-        assertEquals(listOf(Setting.SearchInId, Setting.Regex), recent.children.filterIsInstance<ConfigurationLeaf>().take(2).map { it.setting })
-        // Nothing done elsewhere: no "Elsewhere".
-        assertTrue(recentOf(SearchDomain.configurationTree(SearchDomain.Config())).children.none { it is ConfigurationCategory })
+        assertEquals(listOf(Setting.SearchInId, Setting.Regex), recent.recentOrder().take(2))
+        // Nothing done elsewhere: no "Elsewhere" — "Recent" holds its list of every configuration alone (user rule 2026-11-27).
+        assertEquals(listOf(SearchDomain.RECENT_NODE + "/all"), recentOf(SearchDomain.configurationTree(SearchDomain.Config())).children.map { (it as ConfigurationCategory).id })
     }
 
     @Test

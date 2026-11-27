@@ -542,6 +542,8 @@ object SearchDomain {
                 kinds = setOf(Kind.SearchConfiguration),
                 sorts = TREE_ORDER_SORTS,
                 filters = Filters(searchChildren = true, childDistance = CHILD_DISTANCE_ANY),
+                // User rule 2026-11-27: the ▾ lays its configurations out as a tree to navigate ([configurationTree]).
+                navigationTree = true,
             )),
             c(ADDED_LIST_CONTEXT, "default of an added elements section", Config(kinds = Kind.entries.toSet(), pageTypesOnly = false, dropButtons = true)),
             c(ACTIONS_SECTION_CONTEXT, "default of an actions section", Config(kinds = setOf(Kind.Action), pageTypesOnly = false)),
@@ -1111,6 +1113,14 @@ object SearchDomain {
          */
         val actionsExpanded: Boolean = false,
         /**
+         * User rule 2026-11-27, a search configuration ([Setting.NavigationTree], *"set to on … search configurations for
+         * some contexts, so that in some contexts the elements are organized in an intuitive tree structure"*): **the rows
+         * laid out as a tree to navigate** — "Recent", "Currently on", "Relevant here", "Default for this", the groups, the
+         * types, then the flat list of every row ([configurationTree]). On in the ▾'s context alone
+         * ([CONFIGURATION_TREE_CONTEXT]); off, the ▾ lists every configuration flat, in the tree's order.
+         */
+        val navigationTree: Boolean = false,
+        /**
          * User rule 2026-11-12, a search configuration ([Setting.SearchSortsOnly]): **the section's search bar sorts,
          * and hides nothing** — the behaviour of 2026-10-11 ([sortedByActionSearch]: the groups never filtered, the
          * actions sorted inside them, the list back to its top). Off: it filters as a search does — an action listed
@@ -1338,6 +1348,7 @@ object SearchDomain {
                     pinOpenedRows = pinOpenedRows.sorted(),
                     actionsGrouped = actionsGrouped,
                     actionsExpanded = actionsExpanded,
+                    navigationTree = navigationTree,
                     actionSearchSortsOnly = actionSearchSortsOnly,
                     menuCustomizing = menuCustomizing,
                     arranged = arranged,
@@ -1500,6 +1511,8 @@ object SearchDomain {
                     pinOpenedRows = stored.pinOpenedRows.toSet(),
                     actionsGrouped = stored.actionsGrouped,
                     actionsExpanded = stored.actionsExpanded,
+                    // Absent (stored before 2026-11-27): what the window's context gives ([CONFIGURATION_TREE_CONTEXT]: on).
+                    navigationTree = stored.navigationTree ?: stored.context?.let { windowContextDefaults[it]?.navigationTree } ?: false,
                     actionSearchSortsOnly = stored.actionSearchSortsOnly,
                     menuCustomizing = stored.menuCustomizing,
                     arranged = stored.arranged,
@@ -2467,6 +2480,8 @@ object SearchDomain {
         GroupByAddedElements(null, "Group by added elements"),
         /** User rule 2026-11-12: the top rows of the results open by default, not their children ([Config.actionsExpanded]). */
         ExpandResults(null, "Expand the results"),
+        /** User rule 2026-11-27: the rows laid out as a tree to navigate ([Config.navigationTree]). */
+        NavigationTree(null, "Tree to navigate"),
         /** User rule 2026-11-12: the search bar sorts and hides nothing ([Config.actionSearchSortsOnly]). */
         SearchSortsOnly(null, "Search sorts, hides nothing"),
         /**
@@ -2598,7 +2613,7 @@ object SearchDomain {
     fun roleOf(setting: Setting): SettingRole? =
         when {
             setting.sorts || setting == Setting.SearchSortsOnly -> SettingRole.Sort
-            setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults -> SettingRole.Children
+            setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults || setting == Setting.NavigationTree -> SettingRole.Children
             setting == Setting.DropButtons || setting == Setting.CompletionList || setting == Setting.MenuCustomizing ||
                 setting == Setting.ButtonFollowsExpansion || setting == Setting.TaskRowLayout || setting == Setting.Separators || setting == Setting.Entries ||
                 setting == Setting.RightClickChecksAlone || setting == Setting.Size -> SettingRole.Display
@@ -2677,6 +2692,7 @@ object SearchDomain {
         ) + Setting.entries.filter { s -> s.sorts && s.section != null && config.sorts.any { it.kind == s.section } } + listOfNotNull(
             Setting.CompletionList.takeIf { config.completion != null },
             Setting.ExpandResults.takeIf { config.actionsExpanded },
+            Setting.NavigationTree.takeIf { config.navigationTree },
             Setting.SearchSortsOnly.takeIf { !config.actionSearchSortsOnly },
             Setting.MenuCustomizing.takeIf { config.menuCustomizing },
             Setting.DropButtons.takeIf { config.dropButtons },
@@ -3053,6 +3069,16 @@ object SearchDomain {
             }
         val own = FEATURE_PAGES.firstOrNull { it.id == config.page }
         val ownKinds = own?.kinds.orEmpty().toSet()
+        // User rule 2026-11-27 (*"Make sure there are not lots of elements in one node"*): a page of many types lists them
+        // by family ([TypeFamily]), one hover more, never fourteen side by side.
+        fun familied(types: List<ConfigurationCategory>, idPrefix: String): List<ConfigurationNode> {
+            if (types.size <= TYPES_WITHOUT_FAMILY) return types
+            val byFamily = types.groupBy { TypeFamily.of(Kind.valueOf(it.id.removePrefix("kind/"))) }
+            return TypeFamily.entries.mapNotNull { family ->
+                val members = byFamily[family] ?: return@mapNotNull null
+                members.singleOrNull() ?: ConfigurationCategory(idPrefix + "family/" + family.id, family.label, members)
+            }
+        }
         // What this window holds by default: what it was opened on, else what its page's Search button opens.
         val defaultList = contextSettings(opened ?: pageDefaultConfig(config.page))
         val defaults = defaultList.toSet()
@@ -3080,16 +3106,26 @@ object SearchDomain {
                         listOfNotNull(defaultsOf(sub.id, under(sub))),
                 )
             val subs = TreeSubNode.entries.filter { it.group == group && it.parent == null }.map(::subNode)
+            val direct = settings.filter { subNodeOf(it) == null }
+            // User rule 2026-11-27: "Sorting" held every type's "Sort by" side by side (29 rows): the order of every row,
+            // then each family of types in a node of its own, this page's families first.
+            val leaves: List<ConfigurationNode> =
+                if (group != TreeGroup.Sorting || direct.size <= MAX_TREE_NODE_ROWS) qualified(direct)
+                else qualified(direct.filter { it.section == null }) +
+                    direct.filter { it.section != null }.groupBy { TypeFamily.of(it.section!!) }.entries
+                        .sortedWith(compareBy({ (_, members) -> if (members.any { it.section in ownKinds }) 0 else 1 }, { (family, _) -> family.ordinal }))
+                        .map { (family, members) -> ConfigurationCategory("${group.id}/family/${family.id}", family.label, qualified(members)) }
             ConfigurationCategory(
                 group.id, group.label,
-                subs + qualified(settings.filter { subNodeOf(it) == null }) + listOfNotNull(defaultsOf(group.id, settings)),
+                subs + leaves + listOfNotNull(defaultsOf(group.id, settings)),
             )
         }
         val others = FEATURE_PAGES.filter { it != own }
-            .mapNotNull { page -> typesOf(page).takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("page/" + page.id, page.label, it) } }
+            .mapNotNull { page -> typesOf(page).takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("page/" + page.id, page.label, familied(it, "page/${page.id}/")) } }
             .takeIf { it.isNotEmpty() }
             ?.let { ConfigurationCategory(OTHER_PAGES_NODE, "Other feature pages", it) }
-        val structure = groups + own?.let(::typesOf).orEmpty() + listOfNotNull(others)
+        val structure = (groups + own?.let { familied(typesOf(it), "") }.orEmpty() + listOfNotNull(others))
+            .map { if (it is ConfigurationCategory) bounded(it, ranked = false) else it }
         // Every category, by its path, as it stands away from its place: what only leads to other configurations is
         // found by its name too, in the root's flat list (those below the root) and in "Recent › Elsewhere".
         fun nested(nodes: List<ConfigurationNode>, above: List<String>): List<Pair<Boolean, ConfigurationCategory>> =
@@ -3114,15 +3150,99 @@ object SearchDomain {
                 .map { (what, _) -> if (what is Setting) ConfigurationLeaf(what, pathed = true) else awayById.getValue(what as String) },
         )
         fun lastChanged(setting: Setting) = maxOf(config.settingsChangedAt[setting] ?: Long.MIN_VALUE, elsewhere.changed[setting] ?: Long.MIN_VALUE)
-        val recent = ConfigurationCategory(
-            RECENT_NODE, "Recent",
-            listOfNotNull(
-                changedHere.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("$RECENT_NODE/here", "Here", pathed(it)) },
-                elsewhereNode,
-            ) + pathed(Setting.entries.sortedByDescending(::lastChanged)),
+        // User rule 2026-11-27: "Recent" held every configuration side by side (113 rows): the last changed ones by
+        // rank, in parts of fifteen at most ([bounded]).
+        val recent = bounded(
+            ConfigurationCategory(
+                RECENT_NODE, "Recent",
+                listOfNotNull(
+                    changedHere.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("$RECENT_NODE/here", "Here", pathed(it)) },
+                    elsewhereNode,
+                    ConfigurationCategory("$RECENT_NODE/all", "Every configuration, last changed first", pathed(Setting.entries.sortedByDescending(::lastChanged))),
+                ),
+            ),
+            ranked = true,
         )
-        return listOfNotNull(recent, on, about, byDefault) + structure + away.filterNot { it.first }.map { it.second } +
+        val unranked = listOfNotNull(on, about, byDefault).map { bounded(it, ranked = false) }
+        return listOf(recent) + unranked + structure + away.filterNot { it.first }.map { it.second } +
             pathed(Setting.entries.sortedBy { it.sorts })
+    }
+
+    /**
+     * What the ▾ lists with "Tree to navigate" off ([Config.navigationTree]): every configuration flat, each with the way
+     * to its place, what is kept before how it is laid out — the tree's own flat list.
+     */
+    fun flatConfigurationList(): List<ConfigurationNode> = Setting.entries.sortedBy { it.sorts }.map { ConfigurationLeaf(it, pathed = true) }
+
+    /**
+     * User rule 2026-11-27 (*"Make sure there are not lots of elements in one node of the tree structure, or the user will
+     * take time to find the right branch"*): **the most rows a category of the ▾ tree holds** — the root's flat list alone
+     * excepted, which is there to be typed into (user rule 2026-11-14). `NavigationTreeTest` reads every node.
+     */
+    const val MAX_TREE_NODE_ROWS: Int = 15
+
+    /** A page of more types than this lists them by family ([TypeFamily]). */
+    const val TYPES_WITHOUT_FAMILY: Int = 6
+
+    /**
+     * The types the tree lists under a family ([homePathOf]): those of a page with more than [TYPES_WITHOUT_FAMILY] types
+     * of a node of their own (a filter of their own: a type with an order alone has its node in "Sorting" only).
+     */
+    private val FAMILIED_KINDS: Set<Kind> by lazy {
+        FEATURE_PAGES.flatMapTo(HashSet()) { page ->
+            val noded = page.kinds.filter { kind -> Setting.entries.any { it.section == kind && !it.sorts } }
+            if (noded.size > TYPES_WITHOUT_FAMILY) noded else emptyList()
+        }
+    }
+
+    /**
+     * User rule 2026-11-27: **the families of types**, by what the user is after — what a page of many types (the Task
+     * Scheduler's fourteen) and "Sorting" list them under. Every type is in one ([of]); one added later goes to "App"
+     * until it is named here.
+     */
+    enum class TypeFamily(val id: String, val label: String) {
+        Tasks("tasks", "Tasks"),
+        Calendar("calendar", "Calendar"),
+        AlarmsAndTimers("alarms", "Alarms and timers"),
+        App("app", "App"),
+        ClaudeLogs("claude", "Claude Code logs"),
+        Settings("settings", "Settings");
+
+        companion object {
+            fun of(kind: Kind): TypeFamily =
+                when (kind) {
+                    Kind.Task, Kind.Category, Kind.TaskRelation, Kind.PresenceEvolution, Kind.MinimumEvolution, Kind.Md -> Tasks
+                    Kind.Calendar, Kind.CalendarBlock, Kind.RestrictivePeriod -> Calendar
+                    Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Reminder, Kind.Notification -> AlarmsAndTimers
+                    in CLAUDE_KINDS -> ClaudeLogs
+                    in SETTINGS_KINDS -> Settings
+                    else -> App
+                }
+        }
+    }
+
+    /**
+     * [node] with no category holding more than [MAX_TREE_NODE_ROWS] rows: one that does has its rows cut, in their
+     * order, into consecutive parts, each a category of its own — named by its ranks where the order is the point
+     * ([ranked]: "Recent", "1–15"), else by its first and last rows ("Alarm – Sort by"); parts of parts where they are
+     * many. What a node's own builder can group by meaning (the families, "Sorting") it groups first: this is the net
+     * under every node.
+     */
+    fun bounded(node: ConfigurationCategory, ranked: Boolean): ConfigurationCategory {
+        fun nameOf(n: ConfigurationNode) = if (n is ConfigurationLeaf) n.name else n.label
+        fun split(id: String, rows: List<ConfigurationNode>, firstRank: Int): List<ConfigurationNode> {
+            if (rows.size <= MAX_TREE_NODE_ROWS) return rows
+            // The size of each part: the least power of the bound that leaves no more parts than the bound.
+            var size = MAX_TREE_NODE_ROWS
+            while ((rows.size + size - 1) / size > MAX_TREE_NODE_ROWS) size *= MAX_TREE_NODE_ROWS
+            return rows.chunked(size).mapIndexed { i, part ->
+                val from = firstRank + i * size
+                val label = if (ranked) "$from–${from + part.size - 1}" else "${nameOf(part.first())} – ${nameOf(part.last())}"
+                ConfigurationCategory("$id/part$from", label, split("$id/part$from", part, from))
+            }
+        }
+        val children = node.children.map { if (it is ConfigurationCategory) bounded(it, ranked) else it }
+        return node.copy(children = split(node.id, children, 1))
     }
 
     /**
@@ -3176,7 +3296,8 @@ object SearchDomain {
      * configuration under its type, any other under its group and sub-category; none for Reset, a row of the root alone.
      */
     fun homePathOf(setting: Setting): List<String> {
-        setting.section?.let { return listOf(treeNameOf(it)) }
+        // User rule 2026-11-27: a type of a page listing its types by family stands under that family ([TypeFamily]).
+        setting.section?.let { kind -> return listOfNotNull(TypeFamily.of(kind).label.takeIf { kind in FAMILIED_KINDS }, treeNameOf(kind)) }
         val group = treeGroupOf(setting) ?: return emptyList()
         return listOf(group.label) + generateSequence(subNodeOf(setting)) { it.parent }.toList().asReversed().map { it.label }
     }
@@ -3280,6 +3401,9 @@ object SearchDomain {
             Setting.ParentDistance -> "How far above those elements a parent stands to be listed: 1, the direct parents; 2, their parents alone…"
             Setting.GroupByAddedElements -> "The actions grouped by the added elements they act on."
             Setting.ExpandResults -> "The top rows open, showing their children, from the start."
+            Setting.NavigationTree ->
+                "The rows laid out as a tree to navigate: recent, on, default, by group and by type, no node holding more " +
+                    "than $MAX_TREE_NODE_ROWS rows, then every row flat to find it by its name. Off: every row flat."
             Setting.SearchSortsOnly -> "The actions section's bar sorts the actions and hides none."
             Setting.MenuCustomizing -> "A press selects a row and activates nothing; a held press drags the selected rows into the order kept."
             Setting.DropButtons -> "A button on every element to drop it from the list."
@@ -3375,6 +3499,13 @@ object SearchDomain {
                 TreeSubNode.Matching -> "How the bars match: case, whole words, regular expressions."
             }
         }
+        // User rule 2026-11-27: the parts a long category is cut into ([bounded]), the families of types ([TypeFamily]).
+        if ("/part" in id) return "Part of a category too long to read at a glance: its rows in their order, from the first named to the last."
+        if (id.substringAfterLast("/") in TypeFamily.entries.map { it.id } && "family/" in id) {
+            val family = TypeFamily.entries.first { it.id == id.substringAfterLast("/") }
+            return "The configurations of the types of the family \"${family.label}\", type by type."
+        }
+        if (id == "$RECENT_NODE/all") return "Every configuration, the last changed here or in another ▾ tree first."
         if (id.startsWith("kind/")) {
             val kind = Kind.entries.firstOrNull { it.name == id.removePrefix("kind/") } ?: return null
             return "The configurations of the ${kind.plural}: their filters, then their order."
@@ -3552,6 +3683,8 @@ object SearchDomain {
         /** New 2026-11-12: absent = the actions grouped, closed, the bar sorting ([Config.actionsGrouped]…). */
         val actionsGrouped: Boolean = true,
         val actionsExpanded: Boolean = false,
+        /** New 2026-11-27: absent = its context's default ([Config.navigationTree]). */
+        val navigationTree: Boolean? = null,
         val actionSearchSortsOnly: Boolean = true,
         val menuCustomizing: Boolean = false,
         /** New 2026-11-14: absent = no order dragged ([Config.arranged]). */

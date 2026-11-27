@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Tree to navigate", and no node of the ▾ tree holds more than 15 rows — 2026-11-27
+
+- User: *"you should set to on (and add if didn't exist) search configurations for some contexts, so that in some contexts
+  the elements are organized in an intuitive tree structure … Make sure there are not lots of elements in one node of the
+  tree structure."* New search configuration **"Tree to navigate"** (`Config.navigationTree`, in "Parents and
+  children"): on, the ▾ lays its rows out as its tree ("Recent", "Currently on", "Relevant here", "Default for this", the
+  groups, the types, "Other feature pages", then the flat list); off, every configuration flat in the tree's order. On by
+  default in the ▾'s context alone (`CONFIGURATION_TREE_CONTEXT`); the page Search button keeps everything off.
+- Measured before: "Recent" held 113 rows, "Sorting" 29, the Task Scheduler's root 23 categories. Now
+  `MAX_TREE_NODE_ROWS` = 15 for every node but the root's flat list (`NavigationTreeTest` reads every node of every
+  page's tree, a full one included): a page of more than 6 types lists them by **family** (`TypeFamily`: Tasks, Calendar,
+  Alarms and timers, App, Claude Code logs, Settings), "Sorting" holds the order of every row then one node per family,
+  "Recent" holds "Here", "Elsewhere" and "Every configuration, last changed first", cut into parts "1–15", "16–30"…
+  (`bounded`, the net under every node: rank parts where the order is the point, else "first – last" parts).
+- A configuration listed away from its place says its family in its path ("Tasks › tasks › Root of a tree").
+- Persisted shape: one optional field on a stored configuration (`navigationTree`); absent, its context's default — a ▾
+  search stored before contexts were kept takes what the ▾ opens with (`ArrowSearches.of`).
+- Not done: a tree over **elements** (the Search button's own list). Only the configurations have a tree builder.
+
 ### A window opens at its context's size — 2026-11-27
 
 - User: *"For a context element, there should be a width and height values, right? Or maybe other values to get the

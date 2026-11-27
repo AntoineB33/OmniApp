@@ -1947,6 +1947,17 @@ suggestions before it was ever entered.
   the way to it** — "Recent", "Currently on", "Relevant here", "Default for this", the flat list — drawn small above
   its name (`ConfigurationLeaf.pathed`, `homePathOf`: *"This search configuration will show in its row the path
   search > where to search"*). Reset is one of those rows alone.
+- **THE ▾'S TREE IS A SEARCH CONFIGURATION, AND NO NODE OF IT IS LONG** (user rule 2026-11-27: *"set to on (and add if
+  didn't exist) search configurations for some contexts, so that in some contexts the elements are organized in an
+  intuitive tree structure … Make sure there are not lots of elements in one node"*; `Config.navigationTree`,
+  `Setting.NavigationTree`, `MAX_TREE_NODE_ROWS`, `TypeFamily`, `bounded`, `NavigationTreeTest`). **"Tree to navigate"**
+  lays the ▾'s rows out as the tree above; off, every configuration flat. It is on in the ▾'s context
+  (`CONFIGURATION_TREE_CONTEXT`), off in a page's Search button. **No category holds more than 15 rows**, the root's flat
+  list alone excepted: what can be grouped by meaning is — a page of more than 6 types lists them by family (Tasks,
+  Calendar, Alarms and timers, App, Claude Code logs, Settings), "Sorting" the order of every row then a node per family,
+  "Recent" its "Here", "Elsewhere" and "Every configuration, last changed first" — and `bounded` cuts what is still too
+  long into parts in its order ("1–15" where the order is the point, else "first – last"). A new node or configuration
+  that makes a node longer fails the test: group it by meaning first.
 - **A MENU'S CONFIGURATION SAYS WHAT IT LISTS** (anomaly 2026-11-21: *"in 'Default for this', I only find type: option
   … that would mean every single option element of the app should appear in the right-click menu of the calendar"*;
   `SearchDomain.optionListConfig`, `optionKey`, `MenuSaysWhatItListsTest`): every drop-down's and right-click menu's

@@ -53,7 +53,9 @@ class SearchConfigurationStatesTest {
         assertEquals(Setting.entries.count { SearchDomain.treeGroupOf(it) == SearchDomain.TreeGroup.Parents }, general.size)
         // A page holds its types' nodes, which hold their configurations.
         val page = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "page/"))
-        assertTrue(key(SearchDomain.CONFIGURATION_NODE_PREFIX + "kind/Task") in page)
+        // User rule 2026-11-27: the Task Scheduler's fourteen types by family ([SearchDomain.TypeFamily]).
+        assertTrue(key(SearchDomain.CONFIGURATION_NODE_PREFIX + "page//family/tasks") in page)
+        assertTrue(key(SearchDomain.CONFIGURATION_NODE_PREFIX + "kind/Task") in ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "page//family/tasks")))
         assertTrue(key(Setting.TaskSchedulable.name) in ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "kind/Task")))
         // One that changes something has none; and what the tree makes a child is not taken out.
         assertEquals(emptyList(), ElementTree.childrenOf(empty, key(Setting.ParentDistance.name)))

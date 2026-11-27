@@ -160,6 +160,9 @@ internal fun SettingEditor(
             CompactSwitch(checked = config.actionsGrouped, onCheckedChange = { onChange(config.copy(actionsGrouped = it)) })
         SearchDomain.Setting.ExpandResults ->
             CompactSwitch(checked = config.actionsExpanded, onCheckedChange = { onChange(config.copy(actionsExpanded = it)) })
+        // User rule 2026-11-27: the rows laid out as a tree to navigate ([SearchDomain.Config.navigationTree]).
+        SearchDomain.Setting.NavigationTree ->
+            CompactSwitch(checked = config.navigationTree, onCheckedChange = { onChange(config.copy(navigationTree = it)) })
         // User rule 2026-11-12: a button on every element of the list to drop it.
         SearchDomain.Setting.DropButtons ->
             CompactSwitch(checked = config.dropButtons, onCheckedChange = { onChange(config.copy(dropButtons = it)) })

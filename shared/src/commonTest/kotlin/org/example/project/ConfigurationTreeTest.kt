@@ -36,7 +36,7 @@ class ConfigurationTreeTest {
 
     /** The nodes listing configurations away from their own place: "Recent", "Currently on", "Relevant here", "Default for this", the flat list. */
     private fun ConfigurationCategory.elsewhere() =
-        id == "recent" || id == "context" || id == "on" || id == "default" || id.startsWith(SearchDomain.FLAT_NODE_PREFIX)
+        id == "recent" || id.startsWith("recent/") || id == "context" || id == "on" || id == "default" || id.startsWith(SearchDomain.FLAT_NODE_PREFIX)
 
     /** How many categories are hovered from the root to reach [setting], the nodes listing it away from its place left out. */
     private fun hoversTo(tree: List<ConfigurationNode>, setting: Setting): Int? {
@@ -92,7 +92,9 @@ class ConfigurationTreeTest {
     fun the_types_of_the_windows_page_stand_at_the_root_and_the_other_pages_under_one_node() {
         val scheduler = SearchDomain.configurationTree(SearchDomain.pageDefaultConfig("")).filterIsInstance<ConfigurationCategory>()
         assertTrue(scheduler.none { it.id.startsWith("page/") }, "no page node at the root")
-        assertTrue(scheduler.any { it.id == "kind/" + SearchDomain.Kind.Task.name })
+        // User rule 2026-11-27 ("not lots of elements in one node"): its fourteen types by family, one hover more.
+        val tasks = scheduler.single { it.id == "family/tasks" }
+        assertTrue(tasks.children.any { (it as? ConfigurationCategory)?.id == "kind/" + SearchDomain.Kind.Task.name })
         assertTrue(scheduler.none { it.id == "kind/" + SearchDomain.Kind.ClaudePrompt.name })
         val others = scheduler.single { it.id == SearchDomain.OTHER_PAGES_NODE }
         assertEquals("Other feature pages", others.label)
@@ -104,11 +106,13 @@ class ConfigurationTreeTest {
         // A type that has an order and no filter has no node of its own: its order is in "Sorting", under its name.
         val sorting = scheduler.single { it.id == SearchDomain.TreeGroup.Sorting.id }
         assertTrue(categoriesOf(scheduler).none { it.id == "kind/" + SearchDomain.Kind.Option.name })
-        assertTrue("options: Sort by" in sorting.children.map { it.label })
+        // User rule 2026-11-27: each family of types its node in "Sorting" (29 rows side by side before).
+        val app = sorting.children.filterIsInstance<ConfigurationCategory>().single { it.label == "App" }
+        assertTrue("options: Sort by" in app.children.map { it.label })
         assertEquals("Sort by", sorting.children.first().label, "the order of every row first")
-        // ...this page's types before the others'.
+        // ...this page's families before the others'.
         val labels = sorting.children.map { it.label }
-        assertTrue(labels.indexOf("tasks: Sort by") < labels.indexOf("prompts: Sort by"))
+        assertTrue(labels.indexOf("Tasks") < labels.indexOf("Claude Code logs"))
     }
 
     /**
@@ -132,10 +136,12 @@ class ConfigurationTreeTest {
         for (setting in Setting.entries - Setting.ResetSearch) {
             val otherPage = setting.section != null && setting.section !in SearchDomain.FEATURE_PAGES.first().kinds
             val expected = when {
-                otherPage && !setting.sorts -> 3
                 // Under its group and its sub-categories ("Search › Where to search › Children").
                 setting.section == null -> SearchDomain.homePathOf(setting).size
-                else -> 1
+                // User rule 2026-11-27: "Sorting › its family" — or its family › its type on this page.
+                setting.sorts -> 2
+                otherPage -> 3
+                else -> 2
             }
             assertEquals(expected, hoversTo(tree, setting), setting.name)
         }
@@ -157,8 +163,8 @@ class ConfigurationTreeTest {
         assertEquals(listOf("recent", "on"), tree.take(2).map { (it as ConfigurationCategory).id })
         val on = tree[1] as ConfigurationCategory
         assertEquals("Currently on", on.label)
-        assertEquals(listOf("tasks › Root of a tree"), on.children.map { it.label })
-        assertEquals(listOf(listOf("tasks")), on.children.map { (it as ConfigurationLeaf).path })
+        assertEquals(listOf("Tasks › tasks › Root of a tree"), on.children.map { it.label })
+        assertEquals(listOf(listOf("Tasks", "tasks")), on.children.map { (it as ConfigurationLeaf).path })
         // Nothing on: no such node.
         assertTrue(SearchDomain.configurationTree(SearchDomain.Config(kinds = SearchDomain.Kind.entries.toSet())).none { it is ConfigurationCategory && it.id == "on" })
     }
@@ -184,8 +190,9 @@ class ConfigurationTreeTest {
         assertEquals("Here", here.label)
         assertEquals(listOf("Search › Matching › Match case", "Search › Search text"), here.children.map { it.label })
         // Nothing changed here: no "Here".
-        assertTrue((SearchDomain.configurationTree(SearchDomain.Config()).first() as ConfigurationCategory).children.none { it is ConfigurationCategory })
-        val order = first.children.drop(1).map { (it as ConfigurationLeaf).setting }
+        assertTrue((SearchDomain.configurationTree(SearchDomain.Config()).first() as ConfigurationCategory).children.none { it.label == "Here" })
+        // User rule 2026-11-27: the list of every configuration under a node of its own, in parts of fifteen at most.
+        val order = first.recentOrder()
         assertEquals(listOf(Setting.MatchCase, Setting.SearchText), order.take(2))
         assertEquals(Setting.entries.toSet(), order.toSet(), "all of them")
         assertEquals(Setting.entries.filter { it != Setting.MatchCase && it != Setting.SearchText }, order.drop(2), "the others in their order")
@@ -259,10 +266,11 @@ class ConfigurationTreeTest {
     fun a_child_pop_up_query_narrows_its_own_children_alone() {
         val first = SearchDomain.configurationTree(SearchDomain.Config()).first() as ConfigurationCategory
         val needle = Setting.MatchCase.label
-        val narrowed = first.children.filterConfigurationNodes(needle)
+        val level = first.recentLeaves()
+        val narrowed = level.filterConfigurationNodes(needle)
         assertTrue(narrowed.isNotEmpty())
         assertTrue(narrowed.all { (it as ConfigurationLeaf).label.contains(needle, ignoreCase = true) })
-        assertEquals(first.children, first.children.filterConfigurationNodes(""), "an empty field narrows nothing")
+        assertEquals(level, level.filterConfigurationNodes(""), "an empty field narrows nothing")
     }
 
     /**

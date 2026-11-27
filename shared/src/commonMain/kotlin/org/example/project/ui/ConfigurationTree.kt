@@ -459,7 +459,11 @@ private fun ConfigurationTreeColumns(
     }
     // The whole configuration: the tree's first node is what is on now ([SearchDomain.activeSettings]).
     // User rule 2026-11-13: what the window was opened on comes first ([SearchDomain.contextSettings]).
-    val whole = remember(shown, openedConfig, relevant, elsewhere) { SearchDomain.configurationTree(shown, openedConfig, relevant, elsewhere) }
+    // User rule 2026-11-27: laid out as a tree while its own search says so ([SearchDomain.Config.navigationTree], on in
+    // the ▾'s context); off, every configuration flat in the tree's order.
+    val whole = remember(shown, openedConfig, relevant, elsewhere, search.navigationTree) {
+        if (search.navigationTree) SearchDomain.configurationTree(shown, openedConfig, relevant, elsewhere) else SearchDomain.flatConfigurationList()
+    }
     val treeRows = remember(whole) { SearchDomain.ConfigurationTreeRows(whole) }
     // User rule 2026-11-16: what the pop-up lists is its own search's answer, the one funnel ([SearchDomain.results]).
     val tree = remember(whole, search, state, windows, claudeLogs) {
@@ -998,7 +1002,11 @@ class ArrowSearches(
         openedBy[root + relative] = opened
         // Healed (2026-11-16): one stored before the ▾'s search sorted by the tree's order still follows its default sort,
         // which is that order now ([SearchDomain.defaultSortsOf]).
-        return SearchDomain.Config.decode(read(root)[relative])?.let(SearchDomain::withDefaultSort) ?: opened
+        return SearchDomain.Config.decode(read(root)[relative])?.let(SearchDomain::withDefaultSort)
+            // Healed (2026-11-27): one stored before contexts were kept says no context, and read no "Tree to navigate":
+            // it takes what it opens with ([SearchDomain.Config.navigationTree]).
+            ?.let { if (it.context == null) it.copy(navigationTree = opened.navigationTree) else it }
+            ?: opened
     }
 
     fun set(root: String, relative: String, config: SearchDomain.Config, opened: SearchDomain.Config = SearchDomain.CONFIGURATION_SEARCH) {
