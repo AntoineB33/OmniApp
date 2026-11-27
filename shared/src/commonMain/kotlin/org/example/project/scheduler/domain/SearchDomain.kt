@@ -2566,6 +2566,32 @@ object SearchDomain {
         override val label: String get() = result.name
     }
 
+    /**
+     * User 2026-11-27: **the row [node] is**, as a Search window lists it and the ▾ tree draws it — a
+     * [Kind.SearchConfiguration] row named as the tree names it; another type's row as it is (a task as an element row).
+     */
+    fun configurationRowOf(node: ConfigurationNode): ItemResult =
+        when (node) {
+            is ConfigurationOther -> elementRowOf(node.result)
+            else -> ItemResult(Kind.SearchConfiguration, configurationRowId(node), node.label, "")
+        }
+
+    /**
+     * The element the tree's row of [node] stands for, as drawn and added ([configurationRowOf]): a category of the root's
+     * flat list is that category again ([FLAT_NODE_PREFIX] dropped), and is added as it.
+     */
+    fun configurationElementOf(node: ConfigurationNode): ItemResult =
+        configurationRowOf(node).let { row ->
+            if (node is ConfigurationCategory) row.copy(id = CONFIGURATION_NODE_PREFIX + node.id.removePrefix(FLAT_NODE_PREFIX)) else row
+        }
+
+    /** [row] as an element's row draws it ([ItemResultRow]): a task by its title, under its key ([keyOf]). */
+    fun elementRowOf(row: Result): ItemResult =
+        when (row) {
+            is ItemResult -> row
+            is TaskResult -> ItemResult(Kind.Task, row.taskId.value, row.title, "")
+        }
+
     /** The id of the [Kind.SearchConfiguration] row [node] is: a configuration's name, a category's node id. */
     fun configurationRowId(node: ConfigurationNode): String =
         when (node) {
@@ -2592,7 +2618,7 @@ object SearchDomain {
         }
 
         fun rowsOf(nodes: List<ConfigurationNode>): List<Result> =
-            nodes.filter { it !is ConfigurationOther }.map { ItemResult(Kind.SearchConfiguration, configurationRowId(it), it.label, "") }
+            nodes.filter { it !is ConfigurationOther }.map(::configurationRowOf)
 
         /** The rows of [level] with what each holds: what [results] reads. */
         fun of(level: List<ConfigurationNode>): ConfigurationRows =

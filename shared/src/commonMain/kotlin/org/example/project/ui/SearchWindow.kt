@@ -86,6 +86,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
 import org.example.project.scheduler.domain.ElementTree
@@ -126,7 +127,7 @@ import org.example.project.scheduler.ui.ADD_REPLACING_LABEL
 internal val RESULT_ROW_HEIGHT: Dp = 34.dp
 
 /** Every row's kind section is this one width, so the names line up whatever the kinds (fits "restrictive period"). */
-private val KIND_SECTION_WIDTH: Dp = 104.dp
+internal val KIND_SECTION_WIDTH: Dp = 104.dp
 
 
 /** The narrowest the path box may be squeezed to by a long title — room for its arrow and a sliver of text. */
@@ -1724,8 +1725,42 @@ fun SearchWindow(
                     },
             ) {
                 if (treeList != null) {
-                    // A configuration of it right-clicked, "add": into this window's added elements.
-                    treeList.content { keys -> addKeys(keys) }
+                    // User 2026-11-27 (*"I right-click a row, and I get only 'add'"*): the tree's rows are this window's
+                    // result rows — the one row, the one row menu, the one double-click — with what the tree adds to them.
+                    treeList.content(
+                        TreeRows(add = { keys -> addKeys(keys) }) { spec ->
+                            val key = resultKey(spec.item)
+                            ItemResultRow(
+                                kindWidth = spec.kindWidth,
+                                outlined = elementKeyOf(key) in addedOutlined,
+                                item = spec.item,
+                                categories = elementCategories[key].orEmpty(),
+                                // A category opens its children in a pop-up of its own, on hover: no arrow under it.
+                                expanded = false,
+                                onToggleExpand = {},
+                                query = query,
+                                selected = spec.revealing,
+                                inSelection = false,
+                                onSelect = {},
+                                onSecondarySelect = {},
+                                onOpen = { openers.open(state, spec.item) },
+                                onDoubleClick = {
+                                    if (SearchRowOpeners.doubleClickOpens(spec.item.kind)) openers.open(state, spec.item)
+                                    else addKeys(listOf(key))
+                                },
+                                onAdd = { addKeys(listOf(key)) },
+                                onAddReplacing = { addKeys(listOf(key), replacing = true) },
+                                rowMenu = elementMenu(key, TREE_SURFACE + key, null),
+                                onPrimaryRelease = spec.onClick,
+                                leading = spec.leading,
+                                trailing = spec.trailing,
+                                showArrow = false,
+                                nameWidth = spec.nameWidth,
+                                namePath = spec.namePath,
+                                kindShown = spec.kindShown,
+                            )
+                        },
+                    )
                 } else if (count == 0) {
                     Text(
                         text =
@@ -3205,13 +3240,54 @@ class EmbeddedSearchRequest(
 
 /**
  * User rule 2026-11-15: **the configurations tree drawn as a Search window's list** ([SearchWindow]'s `treeList`): the ▾
- * pop-ups. [content] draws it, given what adds configurations to the window's added elements (a row's right-click
- * "add"); [arrowDepth] is the level of the ▾ in the window's bar — the configurations of this pop-up's own search.
+ * pop-ups. [content] draws it with the window's own rows ([TreeRows]); [arrowDepth] is the level of the ▾ in the window's
+ * bar — the configurations of this pop-up's own search.
  */
 class SearchTreeList(
     val arrowDepth: Int,
-    val content: @Composable (add: (List<String>) -> Unit) -> Unit,
+    val content: @Composable (rows: TreeRows) -> Unit,
 )
+
+/**
+ * User 2026-11-27 (*"Isn't it easy to just call existing code instead of having duplicate codes in the app?"*): **what a
+ * Search window gives the tree it lists** — [row] draws a row of it as the window draws a result row ([ItemResultRow]: its
+ * look, its one row menu, its double-click), [add] adds elements to the window's added elements.
+ */
+class TreeRows(val add: (List<String>) -> Unit, val row: @Composable (TreeRowSpec) -> Unit) {
+    companion object {
+        /** No Search window around it (a test drawing a row alone): the row drawn the same, its menu doing nothing. */
+        val ALONE = TreeRows(add = {}) { spec ->
+            ItemResultRow(
+                kindWidth = spec.kindWidth, item = spec.item, categories = emptyList(), expanded = false, onToggleExpand = {},
+                query = "", selected = spec.revealing, inSelection = false, onSelect = {}, onSecondarySelect = {}, onOpen = {},
+                onDoubleClick = {}, onAdd = {}, onAddReplacing = {}, onPrimaryRelease = spec.onClick, leading = spec.leading,
+                trailing = spec.trailing, showArrow = false, nameWidth = spec.nameWidth, namePath = spec.namePath,
+                kindShown = spec.kindShown,
+            )
+        }
+    }
+}
+
+/** A row of the ▾ tree: its element, and what only the tree adds to a result row. */
+class TreeRowSpec(
+    val item: SearchDomain.ItemResult,
+    /** The kind section's width, the widest kind its column lists ([rememberKindSectionWidth]). */
+    val kindWidth: Dp,
+    /** False where its column lists search configurations alone ([ItemResultRow]'s `kindShown`). */
+    val kindShown: Boolean = true,
+    /** Its click, taken on the release (a category pins the pop-up it opens); null: none. */
+    val onClick: (() -> Unit)? = null,
+    /** A category's pop-up is the one shown: drawn as the selected row. */
+    val revealing: Boolean = false,
+    val leading: (@Composable () -> Unit)? = null,
+    /** A configuration's control. */
+    val trailing: (@Composable () -> Unit)? = null,
+    val nameWidth: Dp? = null,
+    val namePath: String? = null,
+)
+
+/** The surface of the ▾ tree's rows: what their keys are drawn under ([SearchWindow]'s `elementMenu`). */
+private const val TREE_SURFACE: String = "tree:"
 
 /**
  * User rule 2026-11-12: **a Search window inside the actions section** (the "List of parents"), drawn by `App` with the
@@ -3655,7 +3731,7 @@ private fun KindSection(kind: SearchDomain.Kind, width: Dp = KIND_SECTION_WIDTH)
  * room. Measured on the labels, when the kinds listed change; never above the old fixed width.
  */
 @Composable
-private fun rememberKindSectionWidth(rows: List<SearchDomain.Result>): Dp {
+internal fun rememberKindSectionWidth(rows: List<SearchDomain.Result>): Dp {
     val kinds = rows.mapTo(LinkedHashSet()) { it.kind }
     val measurer = rememberTextMeasurer()
     val style = MaterialTheme.typography.labelSmall
@@ -3969,10 +4045,11 @@ internal fun logEntryColor(kind: SearchDomain.Kind): Color? =
     }
 
 @Composable
-internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false): Modifier =
+internal fun resultRowModifier(selected: Boolean, inSelection: Boolean = false, grows: Boolean = false): Modifier =
     Modifier
         .fillMaxWidth()
-        .height(RESULT_ROW_HEIGHT)
+        // A row carrying a control of several rows (a configuration's search bars) grows with it, from the one height.
+        .then(if (grows) Modifier.heightIn(min = RESULT_ROW_HEIGHT) else Modifier.height(RESULT_ROW_HEIGHT))
         // Said to accessibility, and to the tests that read which rows show as selected.
         .semantics { this.selected = selected }
         .then(selectionLook(selected, inSelection))
@@ -4767,6 +4844,16 @@ internal fun ItemResultRow(
      * row by weight with the texts, the field was left no width).
      */
     trailingFills: Boolean = true,
+    /**
+     * User 2026-11-27 (*"why are those rows not looking the same as the rows in the search result list"*): the name's own
+     * column, so the controls of a list of rows that carry one ([trailing]) line up — the ▾ tree's configurations. Null: the
+     * name takes what it needs.
+     */
+    nameWidth: Dp? = null,
+    /** Drawn small above the name: where the element stands, shown away from it (the ▾ tree's "Recent", flat list). */
+    namePath: String? = null,
+    /** False: no kind section — its list is of one kind its owner names (the ▾ tree's search configurations). */
+    kindShown: Boolean = true,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // Where the row and its control are laid out: a press on the control is the control's ([pickOnRelease]'s skip).
@@ -4782,7 +4869,7 @@ internal fun ItemResultRow(
         // the indent stands outside the row's background and selection outline, as a task cell's does.
         // Anomaly 2026-11-19: the guide-lines of the levels it hangs from, as a tree cell has ([nestingGuideLines]).
         modifier = Modifier.nestingGuideLines(depth, NESTING_STEP, itemArrowCenter(item.kind, kindWidth))
-            .padding(start = NESTING_STEP * depth).then(resultRowModifier(selected, inSelection))
+            .padding(start = NESTING_STEP * depth).then(resultRowModifier(selected, inSelection, grows = trailing != null))
             .then(if (outlined) Modifier.addedOutline() else Modifier)
             .then(if (warning != null) Modifier.background(MaterialTheme.colorScheme.errorContainer) else Modifier)
             .then(if (enabled) Modifier else Modifier.alpha(0.38f))
@@ -4811,8 +4898,9 @@ internal fun ItemResultRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(RESULT_ROW_GAP),
         ) {
-            // A drop-down lists options alone, the actions section actions: no column saying so on each row.
-            if (!SearchDomain.isPickedRow(item.kind) && item.kind != SearchDomain.Kind.Action) KindSection(item.kind, kindWidth)
+            // A drop-down lists options alone, the actions section actions, a column of the ▾ tree search configurations:
+            // no column saying so on each row ([kindShown]).
+            if (kindShown && !SearchDomain.isPickedRow(item.kind) && item.kind != SearchDomain.Kind.Action) KindSection(item.kind, kindWidth)
             // User rule 2026-11-02: every element has its arrow. A "creation" row is a command, and an option a choice:
             // neither is an element.
             if (showArrow && item.kind != SearchDomain.Kind.Creation && !SearchDomain.isPickedRow(item.kind)) SectionArrow(!expanded, onToggleExpand)
@@ -4821,21 +4909,41 @@ internal fun ItemResultRow(
             if (timerRun != null) {
                 timerRun()
             } else {
-                Text(
-                    text = searchHighlighted(item.name, query),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = logEntryColor(item.kind) ?: Color.Unspecified,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
+                // User 2026-11-27: the element's description is its name's info bubble on every row that names it
+                // ([SearchDomain.descriptionOf]) — the ▾ tree's rows had it, the result list's did not.
+                InfoHint(
+                    text = SearchDomain.descriptionOf(item),
+                    modifier = if (nameWidth != null) Modifier.width(nameWidth) else Modifier.weight(1f, fill = false),
+                ) {
+                    Column {
+                        // The two lines set tight, so the row stays its one height.
+                        if (namePath != null) {
+                            Text(
+                                text = searchHighlighted(namePath, query),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            text = searchHighlighted(item.name, query),
+                            style = if (namePath == null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyMedium.copy(lineHeight = 16.sp),
+                            color = logEntryColor(item.kind) ?: Color.Unspecified,
+                        )
+                    }
+                }
                 // Anomaly 2026-11-20 (*"the field doesn't show anything in the pop-up window"*): measured first, unweighted,
                 // a long detail took the whole of a narrow row and left the name no width at all. The two share it, each
                 // wrapping in its half when both are long.
-                Text(
-                    text = searchHighlighted(withCategories(SearchDomain.shownDetail(item) { workplaceRuns?.isRunning(it) == true }, categories), query),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
+                // None: no empty text, whose gap would stand before the row's control.
+                val detail = withCategories(SearchDomain.shownDetail(item) { workplaceRuns?.isRunning(it) == true }, categories)
+                if (detail.isNotEmpty()) {
+                    Text(
+                        text = searchHighlighted(detail, query),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = logEntryColor(item.kind) ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
                 if (warning != null) {
                     Text(
                         text = warning,
@@ -4910,6 +5018,7 @@ private fun ElementChildren(
     selection: ElementChildSelection,
 ) {
     val children = elementChildRows(state, parent, surface, path, windows, schedulerRuns, claudeLogs)
+    val categories = remember(state.elementLinks, state.categories) { ElementTree.categoryTitles(state) }
     // Anomaly 2026-11-19: the guide-lines under the arrows of the rows these hang from, as under a tree cell's
     // ([nestingGuideLines]); a row's own indent after them, so they span the row.
     val indent = Modifier.nestingGuideLines(depth, NESTING_STEP, RESULT_ROW_PADDING + kindWidth + RESULT_ROW_GAP + 10.dp)
@@ -4923,57 +5032,45 @@ private fun ElementChildren(
             val rowKey = child.rowKey
             selection.elements[rowKey] = key
             val currentRow by rememberUpdatedState(row)
-            var menuOpen by remember { mutableStateOf(false) }
             // Moved onto by the arrows: the list scrolls just enough to show it, as it does for a row.
             val isMain = rowKey == selection.main
             val bringIntoView = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
             LaunchedEffect(isMain) { if (isMain) runCatching { bringIntoView.bringIntoView() } }
-            Box(Modifier.outsidePressPart(selection.editor).bringIntoViewRequester(bringIntoView)) {
-            Row(
-                // User rule 2026-11-15: the indent moves the row's rectangle, its background and selection outline
-                // included — outside [resultRowModifier], as a task cell's indent stands outside its background.
-                modifier = indent.then(
-                    resultRowModifier(
-                        selected = rowKey in selection.selected && isMain,
-                        inSelection = rowKey in selection.selected && !isMain,
-                    ),
-                ).then(if (key in selection.addedKeys) Modifier.addedOutline() else Modifier)
-                    .recordPressModifiers(selection.pressModifiers)
-                    .resultRowGestures(
-                        rowKey,
-                        onSelect = { selection.click(siblings, rowKey) },
-                        onSecondarySelect = { selection.secondaryClick(rowKey) },
-                        onOpen = { openers.open(state, currentRow) },
-                        onOpenMenu = {
-                            selection.captureForMenu(rowKey)
-                            menuOpen = true
-                        },
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(RESULT_ROW_GAP),
+            // User 2026-11-27 (*"Isn't it easy to just call existing code instead of having duplicate codes in the app?"*):
+            // a child is a result row ([ItemResultRow]) — its look, its detail and categories, its one row menu on the
+            // selected children (added to the window's elements, as a result row's "add" adds) — one level in. It drew
+            // a row of its own, its name alone.
+            Box(
+                Modifier.outsidePressPart(selection.editor).bringIntoViewRequester(bringIntoView)
+                    .recordPressModifiers(selection.pressModifiers),
             ) {
-                KindSection(row.kind, kindWidth)
-                SectionArrow(rowKey !in expanded) { onToggle(rowKey) }
-                Text(row.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                if (ElementTree.canUnlink(state, parent, key, claudeLogs)) {
-                    CrossButton { ElementTree.parentIntents(state, listOf(key), parent, on = false).forEach(onIntent) }
-                }
-            }
-            // The menu, on the selected children: added to the window's elements, as a result row's "add" adds.
-            // User rule 2026-11-12: the menu is a Search window of its entries.
-            // User rule 2026-11-25: the one row menu ([taskCellMenuActions]).
-            ActionMenu("ElementChildren",
-                open = menuOpen,
-                onDismiss = { menuOpen = false },
-                actions = org.example.project.scheduler.ui.taskCellMenuActions(
-                    selection.menuOf(key, rowKey, path.toList()).menu(
-                        onAdd = { selection.add(replacing = false) },
-                        onAddReplacing = { selection.add(replacing = true) },
-                        extra = emptyList(),
-                    ),
-                ),
-                atPointer = LocalRowMenusAtPointer.current,
-            )
+                ItemResultRow(
+                    kindWidth = kindWidth,
+                    outlined = key in selection.addedKeys,
+                    item = SearchDomain.elementRowOf(row),
+                    categories = categories[key].orEmpty(),
+                    expanded = rowKey in expanded,
+                    onToggleExpand = { onToggle(rowKey) },
+                    query = "",
+                    selected = rowKey in selection.selected && isMain,
+                    inSelection = rowKey in selection.selected && !isMain,
+                    onSelect = { selection.click(siblings, rowKey) },
+                    onSecondarySelect = {
+                        selection.secondaryClick(rowKey)
+                        selection.captureForMenu(rowKey)
+                    },
+                    onOpen = { openers.open(state, currentRow) },
+                    onDoubleClick = { openers.open(state, currentRow) },
+                    onAdd = { selection.add(replacing = false) },
+                    onAddReplacing = { selection.add(replacing = true) },
+                    rowMenu = selection.menuOf(key, rowKey, path.toList()),
+                    depth = depth,
+                    // A child's ✕ takes it out of this parent, never off the account.
+                    trailing = if (ElementTree.canUnlink(state, parent, key, claudeLogs)) {
+                        { CrossButton { ElementTree.parentIntents(state, listOf(key), parent, on = false).forEach(onIntent) } }
+                    } else null,
+                    trailingFills = false,
+                )
             }
             if (rowKey in expanded) {
                 ElementChildren(key, childSurface(rowKey), depth + 1, path + key, state, windows, schedulerRuns, claudeLogs, expanded, onToggle, openers, onIntent, kindWidth, selection)

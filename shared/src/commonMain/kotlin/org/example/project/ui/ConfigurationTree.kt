@@ -370,8 +370,8 @@ internal fun ConfigurationTreeWindow(
     val latestWindows by rememberUpdatedState(windows)
     val latestLogs by rememberUpdatedState(claudeLogs)
     val treeList = remember {
-        SearchTreeList(1) { add ->
-            androidx.compose.runtime.CompositionLocalProvider(LocalTreeAdd provides { key -> add(listOf(key)) }) {
+        SearchTreeList(1) { rows ->
+            androidx.compose.runtime.CompositionLocalProvider(LocalTreeRowsOf provides rows) {
                 ConfigurationTreeColumns(
                     latestState, latestConfig, latestOpened, latestChange, own, path, { path = it }, nowMillis, latestWindows, latestLogs, 0,
                     elsewhere = elsewhere,
@@ -466,7 +466,7 @@ private fun ConfigurationTreeColumns(
     val tree = remember(whole, search, state, windows, claudeLogs) {
         SearchDomain.shownConfigurationNodes(state, whole, root = true, treeRows, search, windows, claudeLogs)
     }
-    val leaf: @Composable (SearchDomain.ConfigurationLeaf) -> Unit = { node ->
+    val leaf: @Composable (SearchDomain.ConfigurationLeaf, androidx.compose.ui.unit.Dp, Boolean) -> Unit = { node, kindWidth, kindShown ->
         ConfigurationLeafRow(
             node, state, shown, openedConfig,
             { next ->
@@ -475,7 +475,7 @@ private fun ConfigurationTreeColumns(
                 shown = stamped
                 onConfigChange(stamped)
             },
-            windows, onPickOnCalendar, claudeLogs,
+            windows, onPickOnCalendar, claudeLogs, kindWidth, kindShown,
         )
     }
     HighlightsSearch("") {
@@ -507,16 +507,22 @@ internal fun ConfigurationLeafRow(
     windows: List<SearchDomain.WindowEntry> = emptyList(),
     onPickOnCalendar: (SearchDomain.BoxBound) -> Unit = {},
     claudeLogs: org.example.project.claudelogs.ClaudeLogCatalog = org.example.project.claudelogs.ClaudeLogCatalog.EMPTY,
+    kindWidth: androidx.compose.ui.unit.Dp = KIND_SECTION_WIDTH,
+    kindShown: Boolean = false,
 ) {
-    CompactFields {
-        SettingRow(
-            // User rule 2026-11-16: its description, in the info bubble its name shows on hover.
-            node.name, TREE_LABEL_WIDTH, hint = SearchDomain.settingDescription(node.setting),
-            path = node.path.takeIf { it.isNotEmpty() }?.joinToString(SearchDomain.TREE_PATH_SEPARATOR),
-        ) {
-            SettingEditor(state, node.setting, config, openedConfig, onChange, windows, onPickOnCalendar, claudeLogs)
-        }
-    }
+    // User 2026-11-27: a result row of the Search window it is in ([TreeRows]), its control on it — its description the
+    // info bubble its name shows on hover (user rule 2026-11-16), as on every row.
+    LocalTreeRowsOf.current.row(
+        TreeRowSpec(
+            // Its name alone: its path is drawn apart above it ([namePath]).
+            item = SearchDomain.configurationRowOf(node).copy(name = node.name),
+            kindWidth = kindWidth,
+            kindShown = kindShown,
+            trailing = { CompactFields { SettingEditor(state, node.setting, config, openedConfig, onChange, windows, onPickOnCalendar, claudeLogs) } },
+            nameWidth = TREE_LABEL_WIDTH,
+            namePath = node.path.takeIf { it.isNotEmpty() }?.joinToString(SearchDomain.TREE_PATH_SEPARATOR),
+        ),
+    )
 }
 
 /** One level of the tree: its [nodes], and the pop-up of the one of them [path] says reveals its children. */
@@ -526,7 +532,7 @@ private fun TreeColumn(
     depth: Int,
     path: List<String>,
     onPathChange: (List<String>) -> Unit,
-    leaf: @Composable (SearchDomain.ConfigurationLeaf) -> Unit,
+    leaf: @Composable (SearchDomain.ConfigurationLeaf, androidx.compose.ui.unit.Dp, Boolean) -> Unit,
     state: SchedulerState,
     config: SearchDomain.Config,
     openedConfig: SearchDomain.Config?,
@@ -561,6 +567,10 @@ private fun TreeColumn(
     }
     // User rule 2026-11-16: a category's pop-up never hides this column, the list its row is in ([LocalCallerList]).
     val columnBounds = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
+    // The rows' kind section: said once by the column while it lists search configurations alone, as an actions section's.
+    val kindShown = nodes.any { it is SearchDomain.ConfigurationOther }
+    val kindWidth = rememberKindSectionWidth(remember(nodes) { nodes.map(SearchDomain::configurationRowOf) })
+    val rows = LocalTreeRowsOf.current
     Column(
         Modifier
             .reportsHover(LocalMenuHover.current)
@@ -633,32 +643,17 @@ private fun TreeColumn(
                     // A category's pop-up is a ▾ window too: its owner's id and the category.
                     val owner = LocalArrowOwner.current
                     val branchId = owner?.let { it + "/" + node.id }
-                    // A category of the root's flat list is that category again, and is added as it.
-                    AddableTreeRow(SearchDomain.CONFIGURATION_NODE_PREFIX + node.id.removePrefix(SearchDomain.FLAT_NODE_PREFIX)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(if (revealing) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-                                .reportsHover(branch)
-                                .popupOpener(rowOpener, revealing)
-                                .onHoverEnter { if (MenuHoverTracker.hoverActs(around)) reveal() }
-                                // User rule 2026-11-14: a click on the row pins the pop-up it opens — opened if it is not.
-                                .clickable {
-                                    if (branch.clickedOpener(rowOpener, revealing, toggles = false)) {
-                                        onPathChange(path.take(depth) + node.id)
-                                        branch.pin()
-                                    }
-                                }
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                        ) {
-                            // User rule 2026-11-16: a category is a search configuration too; its description in an info bubble.
-                            InfoHint(text = SearchDomain.nodeDescription(node.id.removePrefix(SearchDomain.FLAT_NODE_PREFIX)), modifier = Modifier.weight(1f)) {
-                                Text(node.label, style = MaterialTheme.typography.bodyMedium)
-                            }
-                            HoverPopupArrow()
-                        }
+                    // User 2026-11-27: a result row of the Search window it is in ([TreeRows]) — a category is a search
+                    // configuration too (user rule 2026-11-16), its description the bubble of its name. A category of the
+                    // root's flat list is that category again ([SearchDomain.configurationElementOf]).
+                    Box(
+                        Modifier
+                            .reportsHover(branch)
+                            .popupOpener(rowOpener, revealing)
+                            .onHoverEnter { if (MenuHoverTracker.hoverActs(around)) reveal() },
+                    ) {
+                        // Its pop-up hangs from the row (the Box), never from the column; the row, and the menu it opens, drawn
+                        // after it, so that menu stands over it.
                         if (revealing) {
                             androidx.compose.runtime.CompositionLocalProvider(
                                 LocalMenuSides provides MenuSide.SUBMENU,
@@ -719,20 +714,37 @@ private fun TreeColumn(
                                 }
                             }
                         }
+                        rows.row(
+                            TreeRowSpec(
+                                item = SearchDomain.configurationElementOf(node),
+                                kindWidth = kindWidth,
+                                kindShown = kindShown,
+                                // User rule 2026-11-14: a click on the row pins the pop-up it opens — opened if it is not.
+                                onClick = {
+                                    if (branch.clickedOpener(rowOpener, revealing, toggles = false)) {
+                                        onPathChange(path.take(depth) + node.id)
+                                        branch.pin()
+                                    }
+                                },
+                                revealing = revealing,
+                                // User rule 2026-11-21: a row that shows a window when hovered says so by its arrow, before its name.
+                                leading = { HoverPopupArrow() },
+                            ),
+                        )
                     }
                 }
-                // A row of another type its own search checks too: drawn as its name, no control of its own.
+                // A row of another type its own search checks too: a result row of its kind, no control of its own.
                 is SearchDomain.ConfigurationOther -> {
                     val around = LocalMenuHover.current
                     Box(Modifier.onHoverEnter { if (path.size > depth && MenuHoverTracker.hoverActs(around)) onPathChange(path.take(depth)) }) {
-                        Text(node.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
+                        rows.row(TreeRowSpec(item = SearchDomain.configurationRowOf(node), kindWidth = kindWidth, kindShown = kindShown))
                     }
                 }
                 is SearchDomain.ConfigurationLeaf -> {
                     // An end node closes what a category hovered in this column opened — a hover like the rows'.
                     val around = LocalMenuHover.current
                     Box(Modifier.onHoverEnter { if (path.size > depth && MenuHoverTracker.hoverActs(around)) onPathChange(path.take(depth)) }) {
-                        AddableTreeRow(node.setting.name) { leaf(node) }
+                        leaf(node, kindWidth, kindShown)
                     }
                 }
             }
@@ -750,8 +762,9 @@ private val TREE_PATH_CATEGORY_COLUMN_WIDTH = 380.dp
 internal val TREE_LABEL_WIDTH = 208.dp
 
 /** The room a configuration's row has in the tree: its label, and the widest control one has, on one line. */
-// User rule 2026-11-16 (*"the pop-up windows are a little too wide"*): 520 until then.
-internal val TREE_LEAF_CONTENT_WIDTH = 490.dp
+// User rule 2026-11-16 (*"the pop-up windows are a little too wide"*): 520 until then, 490 until 2026-11-27, when the row
+// became a result row (its padding and its gap before the control around the same label and control).
+internal val TREE_LEAF_CONTENT_WIDTH = TREE_LABEL_WIDTH + 282.dp + RESULT_ROW_PADDING * 2 + RESULT_ROW_GAP
 
 /** A column's own side padding. */
 private val TREE_COLUMN_PADDING = 6.dp
@@ -767,7 +780,9 @@ private val TREE_POPUP_PADDING = 8.dp
  */
 private fun treeColumnWidth(nodes: List<SearchDomain.ConfigurationNode>) =
     when {
-        nodes.any { it is SearchDomain.ConfigurationLeaf } -> TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2
+        nodes.any { it is SearchDomain.ConfigurationLeaf } -> TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 +
+            // Another type's row listed too: the rows say their kind ([TreeColumn]).
+            (if (nodes.any { it is SearchDomain.ConfigurationOther }) KIND_SECTION_WIDTH + RESULT_ROW_GAP else 0.dp)
         // Anomaly 2026-11-16 (seen headlessly): categories named by their path ("Recent › Elsewhere › Looked into the
         // children") wrapped in the narrow column, "Search › Where to / search › Children".
         nodes.any { SearchDomain.TREE_PATH_SEPARATOR in it.label } -> TREE_PATH_CATEGORY_COLUMN_WIDTH
@@ -788,8 +803,8 @@ private val TREE_COLUMN_MAX_HEIGHT = 480.dp
  * elements are a Search window's, the root's pop-up and every category's alike. Until then it drew a look-alike of its
  * own, whose right sections were placeholders. Drawn through `App`'s embedded Search window where there is one
  * ([LocalEmbeddedSearch]: its actions get the app's handlers), else with none. Its height is the tree's ([TreeColumn]'s
- * `onFit`), as far as [TREE_POPUP_MAX_HEIGHT]; its right sections shown, it widens for them. A right-click on a
- * configuration or a category adds it to its added elements ([AddableTreeRow]). Its own layer: a press in it closes the
+ * `onFit`), as far as [TREE_POPUP_MAX_HEIGHT]; its right sections shown, it widens for them. Its rows are the
+ * window's result rows ([TreeRows]): the one row menu, "add" among it. Its own layer: a press in it closes the
  * menus itself ([dismissesMenusOnPress]).
  */
 @Composable
@@ -827,8 +842,8 @@ private fun TreeSearchWindow(
     }
     val latestFit by androidx.compose.runtime.rememberUpdatedState(fit)
     val treeList = remember(arrowDepth) {
-        SearchTreeList(arrowDepth) { add ->
-            androidx.compose.runtime.CompositionLocalProvider(LocalTreeAdd provides { key -> add(listOf(key)) }) {
+        SearchTreeList(arrowDepth) { rows ->
+            androidx.compose.runtime.CompositionLocalProvider(LocalTreeRowsOf provides rows) {
                 tree { latestFit(it) }
             }
         }
@@ -862,37 +877,8 @@ private fun TreeSearchWindow(
     }
 }
 
-/** What adds a configuration of the tree, by its [SearchDomain.Kind.SearchConfiguration] id, to its pop-up's added elements. */
-private val LocalTreeAdd = androidx.compose.runtime.compositionLocalOf<((String) -> Unit)?> { null }
-
-/**
- * A row of the tree that a right-click offers to "add" — the configuration (or the category) [id], a
- * [SearchDomain.Kind.SearchConfiguration] row, into its pop-up's added elements, whose actions are about it.
- */
-@Composable
-private fun AddableTreeRow(id: String, content: @Composable () -> Unit) {
-    val add = LocalTreeAdd.current
-    if (add == null) {
-        Box { content() }
-        return
-    }
-    var menu by remember { mutableStateOf(false) }
-    Box(Modifier.then(org.example.project.scheduler.ui.contextMenuModifier(enabled = true, key = "tree-row:$id") { menu = true })) {
-        content()
-        ActionMenu(
-            "TreeRowMenu",
-            open = menu,
-            onDismiss = { menu = false },
-            actions = listOf(
-                MenuAction("add") {
-                    menu = false
-                    add(SearchDomain.keyOf(SearchDomain.ItemResult(SearchDomain.Kind.SearchConfiguration, id, "", "")))
-                },
-            ),
-            atPointer = true,
-        )
-    }
-}
+/** The rows of the Search window the tree is drawn in ([TreeRows]): what every row of the tree is drawn by. */
+private val LocalTreeRowsOf = androidx.compose.runtime.compositionLocalOf { TreeRows.ALONE }
 
 /** How far a tree pop-up's height may be off its tree's before it is fitted again ([TreeColumn]'s `onFit`). */
 private const val FIT_DEAD_BAND_PX = 2

@@ -20,12 +20,14 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.scheduler.ui.TASK_ROW_MIN_HEIGHT
 import org.example.project.ui.ConfigurationLeafRow
 import org.example.project.ui.TREE_LEAF_CONTENT_WIDTH
+import org.example.project.ui.RESULT_ROW_HEIGHT
 
 /**
  * User rule 2026-11-14: *"the 'search bars' element has a big height because the text on the right is squished by the
  * width of the window … I want every element has rows with the same height."* Every configuration of the ▾ tree, drawn
- * as the tree draws it ([ConfigurationLeafRow]) at the width the tree gives it, is rows of ONE height — a task cell's:
- * one row as it opens, and one more per thing the user adds to it (a search bar, a sorting method).
+ * as the tree draws it ([ConfigurationLeafRow]) at the width the tree gives it, is ONE result row as it opens (since
+ * 2026-11-27 it is a result row, [RESULT_ROW_HEIGHT]), and its control one more task cell's row per thing the user adds
+ * to it (a search bar, a sorting method).
  */
 class SettingRowHeightTest {
 
@@ -57,7 +59,11 @@ class SettingRowHeightTest {
         return out
     }
 
-    private val row = TASK_ROW_MIN_HEIGHT.value
+    /** A row as it opens: a result row's height. */
+    private val row = RESULT_ROW_HEIGHT.value
+
+    /** A row of a control: a task cell's height. */
+    private val controlRow = TASK_ROW_MIN_HEIGHT.value
 
     @Test
     fun every_configuration_is_one_row_tall_as_it_opens() {
@@ -83,15 +89,16 @@ class SettingRowHeightTest {
         // Each is a whole number of rows (the gap between two rows of one element aside).
         val gap = org.example.project.ui.COMPACT_ROW_GAP.value
         for ((setting, height) in all) {
-            val rows = ((height + gap) / (row + gap))
+            if (height == row) continue
+            val rows = ((height + gap) / (controlRow + gap))
             assertEquals(rows.toInt().toFloat(), rows, "$setting is $height tall: no whole number of rows")
         }
         // Two bars added: the button's row, a row per bar, the formula's.
-        assertEquals(4 * row + 3 * gap, all.getValue(Setting.SearchBars))
+        assertEquals(4 * controlRow + 3 * gap, all.getValue(Setting.SearchBars))
         // Nothing added: the button's row alone.
         assertEquals(row, heights(SearchDomain.Config()).getValue(Setting.SearchBars))
         // User rule 2026-11-22, "Row layout": the buttons' row, then a row per part.
         val layout = heights(SearchDomain.Config(taskRowLayout = SearchDomain.TaskRowPart.ARROW_RELATIVE_TITLE))
-        assertEquals(4 * row + 3 * gap, layout.getValue(Setting.TaskRowLayout))
+        assertEquals(4 * controlRow + 3 * gap, layout.getValue(Setting.TaskRowLayout))
     }
 }

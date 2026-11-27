@@ -93,45 +93,6 @@ private fun ClaudeFilterEditor(
 /** The frame id of the Configuration Search window — also its `FloatingWindow` name in `App`. */
 const val CONFIGURATION_SEARCH_FRAME_ID: String = "ConfigSearch"
 
-/** One setting: its name, on ONE line, then its control — a row one task cell tall unless the control is taller. */
-@Composable
-internal fun SettingRow(
-    label: String,
-    labelWidth: androidx.compose.ui.unit.Dp = 130.dp,
-    /** What the label's info bubble says ([SearchDomain.filterHint]); none where null. */
-    hint: String? = null,
-    /**
-     * User rule 2026-11-16: the way to the configuration's own category ("Search › Matching"), drawn small above its
-     * name where it stands away from it ([SearchDomain.ConfigurationLeaf.path]); none where null.
-     */
-    path: String? = null,
-    editor: @Composable () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().heightIn(min = TASK_ROW_MIN_HEIGHT),
-    ) {
-        InfoHint(text = hint, modifier = Modifier.width(labelWidth).padding(end = 6.dp)) {
-            androidx.compose.foundation.layout.Column {
-                // The two lines set tight, so the row stays a task cell tall (user rule 2026-11-14: rows of one height).
-                if (path != null) {
-                    Text(
-                        text = searchHighlighted(path),
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(
-                    text = searchHighlighted(label),
-                    style = if (path == null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyMedium.copy(lineHeight = 16.sp),
-                    // User rule 2026-11-04: wrapped in its column, never cut by "…" ("Only this page's types").
-                )
-            }
-        }
-        Box(Modifier.weight(1f)) { editor() }
-    }
-}
-
 /** How far below a row "Where to search › Children" may look: 1 (its children) to this. */
 private const val CHILD_DISTANCE_CHOICES = 5
 

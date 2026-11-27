@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The ▾ tree's rows and an element's children are result rows — 2026-11-27
+
+- User: *"In the default search window, in down arrow of the search section, I right-click a row, and I get only
+  'add'... why are those rows not looking the same as the rows in the search result list?"* — the ▾ tree drew its own
+  rows (`AddableTreeRow`, a menu of "add" alone; `SettingRow` for a configuration, a hand-made row for a category, a bare
+  text for another type's row). Every row of it is now drawn by the Search window's `ItemResultRow` through `TreeRows`:
+  the one row menu ("add and remove the others", "copy id", "copy path", "deep copy"…), the double-click adding it, the
+  result row's height and look. What the tree adds is passed to the row: a configuration's control (`trailing`), its
+  path above its name (`namePath`), a category's hover arrow — now before its name, the 2026-11-21 rule — and its open
+  pop-up drawn as the selected row. A configuration row is a result row tall (34 dp, was 28); `TREE_LEAF_CONTENT_WIDTH`
+  512 dp (was 490: the result row's padding and gap). A column of search configurations alone says its kind once.
+- User: *"make sure I won't find anything where the code is not unified for no reason"* — an element's children under its
+  arrow drew a row of their own too (name alone, no detail, no categories): now `ItemResultRow` one level in. Every
+  result row's name shows its description as an info bubble (`SearchDomain.descriptionOf`), as only the tree's did; an
+  empty detail no longer leaves a gap. `TreeRowMenuTest`, `SettingRowHeightTest`. Client rebuild only.
+
 ### Deep copy on every row; "Copy the titles" — 2026-11-27
 
 - User: *"'deep copy' must work on any row in the app, right?"* It was greyed on options, actions, the calendar, windows,

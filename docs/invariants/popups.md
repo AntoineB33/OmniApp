@@ -864,7 +864,7 @@ means.
   one answer: every hit of every term, words or "quoted phrases", case aside, in the tree's Ctrl+F shade): the Search
   window's rows (name and detail, a task's title), and, by `HighlightsSearch` around them, the actions section and the
   two configuration windows' lists — read by the shared texts through `searchHighlighted` (a group's and a micro group's
-  title, `ElementHeading`, `FrameButton`, `NoteText`, `SettingRow`, `HistoryTextLine`, a log entry's text). An editor
+  title, `ElementHeading`, `FrameButton`, `NoteText`, `ItemResultRow`, `HistoryTextLine`, a log entry's text). An editor
   embedded there highlights its labels with no word of its own, and draws as ever elsewhere. A value inside a text
   field is not highlighted. Not yet: the History window's "Filter", the task picker's "Find a task".
 

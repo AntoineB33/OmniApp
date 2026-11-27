@@ -1852,9 +1852,10 @@ suggestions before it was ever entered.
   no cross); it takes `keyboardActions`, so none needs to.
 - **EVERY CONFIGURATION OF THE ▾ TREE IS ROWS OF ONE HEIGHT** (user rule 2026-11-14: *"I want every element has rows
   with the same height"*; `ConfigurationLeafRow`, `treeColumnWidth` / `treePopupWidth`, `SettingRowHeightTest`). A
-  configuration is ONE row, a task cell tall, as it opens; what the user adds to it (a search bar, the formula) adds
-  rows of that same height. Three things hold it, and the test renders every configuration off screen and measures:
-  **(1) a pop-up is as wide as its column** — a column holding a configuration is `TREE_LEAF_CONTENT_WIDTH` (520 dp:
+  configuration is ONE row, a result row tall (`RESULT_ROW_HEIGHT`, since 2026-11-27: it is a result row), as it opens;
+  what the user adds to it (a search bar, the formula) adds rows of a task cell's height to its control, the row growing
+  with it. Three things hold it, and the test renders every configuration off screen and measures:
+  **(1) a pop-up is as wide as its column** — a column holding a configuration is `TREE_LEAF_CONTENT_WIDTH` (512 dp since 2026-11-27, 520 until 2026-11-16:
   the longest label on one line, `TREE_LABEL_WIDTH`, and the widest control), one of categories alone 200 dp; the
   root's is always the wide one, so it never changes width as one types (anomaly 2026-11-14: a column asked for 600 dp
   inside a pop-up 200 or 320 dp wide, got some 55 dp per control, and every text wrapped a word a line).
@@ -2032,8 +2033,16 @@ suggestions before it was ever entered.
   the root's and each category's, IS the `SearchWindow`** (user rule 2026-11-15, *"Yes, rebuild it"*; `TreeSearchWindow`,
   `SearchTreeList`): drawn in no frame, its list the tree, its head, bar, ▾, background menu, actions and added elements
   a Search window's own — drawn through `App`'s embedded Search window where there is one, so its actions have the app's
-  handlers. A configuration or a category right-clicked, "add", is an added element of it (`AddableTreeRow`, a
-  `SearchConfiguration` row). Its height is its tree's (`TreeColumn`'s `onFit`); its right sections shown, it widens.
+  handlers. **Its rows ARE the window's result rows** (user 2026-11-27: *"I right-click a row, and I get only 'add'… why
+  are those rows not looking the same as the rows in the search result list?"*; `TreeRows`, `TreeRowSpec`,
+  `TreeRowMenuTest`): every category, configuration and row of another type is drawn by `ItemResultRow` through the
+  window's `TreeRows.row` — its look and height, its one row menu ("add", "add and remove the others", "copy id", "copy
+  path", "deep copy"…, the element's `elementMenu`), its double-click adding it, its description as its name's bubble.
+  What the tree adds is passed to that row, never drawn beside it: a configuration's control (`trailing`, at the name
+  column `TREE_LABEL_WIDTH` so the controls line up), its path above its name (`namePath`), a category's hover arrow
+  before its name and its pop-up shown as the selected row. A column of search configurations alone says its kind once
+  (`kindShown`, as an actions section). It had its own row (`AddableTreeRow`, a menu of "add" alone; `SettingRow`) until
+  then — never draw one again. Its height is its tree's (`TreeColumn`'s `onFit`); its right sections shown, it widens.
   Until that day it was `SearchPopupParts`, a look-alike whose right sections were placeholders — never draw one again. Each is a layer of its own, which the root's press observer never sees: its content
   reports a press itself (`dismissesMenusOnPress` → `TransientMenuHost.onPressInPopup`), closing the menus and no edit —
   anomaly 2026-11-11, a click on its background left the background menu open.
