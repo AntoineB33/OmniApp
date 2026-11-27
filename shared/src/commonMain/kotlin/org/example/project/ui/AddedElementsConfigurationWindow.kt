@@ -446,7 +446,9 @@ private fun AddedActionList(
                     val outerAction = outerRow?.action
                     if (outerHost == null || outerRow == null || outerAction == null) emptyList()
                     else androidx.compose.runtime.key(item.name) {
-                        val model = rememberContextPairs(outerHost, outerRow, outerAction)
+                        val model = rememberContextPairs(outerHost, outerRow, outerAction) { writes ->
+                            writes.forEach { w -> SearchDomain.addedIntents(state, w.to, w.command, nowMillis()).forEach(onIntent) }
+                        }
                         model.warning()?.let { said ->
                             warnings[row.id] = listOfNotNull(warnings[row.id], if (members.size > 1) item.name + ": " + said else said).joinToString("; ")
                         }
@@ -691,20 +693,18 @@ private class ContextPairs(
     /** Their names, by key: what the "no state" pair's title lists. */
     val otherNames: Map<String, String>,
     val setPairs: (List<SearchDomain.ContextPair>) -> Unit,
+    /** What its pairs ask of the account ([SearchDomain.contextPairsOutcome]). */
+    val outcome: SearchDomain.PairsOutcome,
 ) {
     val others: List<String> get() = listedOthers.orEmpty()
 
     fun keysOf(pair: SearchDomain.ContextPair): List<String> = pair.keys ?: others
 
-    /** What its "Contexts and states" row warns of: the elements in no pair ([SearchDomain.contextsInNoPair]), or null. */
-    fun warning(): String? {
-        // An action about a set as such ([kind] null) has no "no state" pair: the account's other elements are none of its.
-        val missing = SearchDomain.contextsInNoPair(pairs, byKey.keys.toList(), if (kind == null) null else listedOthers)
-        if (missing.isEmpty()) return null
-        val unknown = missing.take(3).filter { it !in byKey }
-        val resolved = if (unknown.isEmpty()) emptyMap() else SearchDomain.resolve(host.state, unknown, { emptyMap() }).associateBy(SearchDomain::keyOf)
-        return SearchDomain.contextsIncompleteWarning(missing) { k -> (byKey[k] ?: resolved[k])?.name ?: k.substringAfter('/') }
-    }
+    /**
+     * What its "Contexts and states" row warns of: why its pairs make no sense ([SearchDomain.contextPairsOutcome]) — an
+     * element in no pair or in two, a state that cannot be given — or null.
+     */
+    fun warning(): String? = (outcome as? SearchDomain.PairsOutcome.Problem)?.warning
 
     /** The pair's contexts, as rows: never the "no state" pair's (it has no state to edit; its title says how many). */
     fun valuesOf(pair: SearchDomain.ContextPair): List<SearchDomain.Result> =
@@ -713,7 +713,13 @@ private class ContextPairs(
 
 /** The pairs of [row]'s action in [host] ([ContextPairs]), kept as the state changes; what B changes is view state. */
 @Composable
-private fun rememberContextPairs(host: ActionSectionHost, row: SearchDomain.ActionListRow, action: SearchDomain.AddedAction): ContextPairs {
+private fun rememberContextPairs(
+    host: ActionSectionHost,
+    row: SearchDomain.ActionListRow,
+    action: SearchDomain.AddedAction,
+    /** What writes the states a change of the pairs gives ([SearchDomain.StateWrite]). */
+    write: (List<SearchDomain.StateWrite>) -> Unit,
+): ContextPairs {
     val members = row.group.members
     val kind = action.section.takeUnless { SearchDomain.isSetAction(action) }
     // Every element of the action's kind — the account's, not this window's added ones (anomaly 2026-11-26: *"I must find
@@ -741,10 +747,25 @@ private fun rememberContextPairs(host: ActionSectionHost, row: SearchDomain.Acti
     }
     val othersKeys = remember(listedOthers) { listedOthers?.map(SearchDomain::keyOf) }
     val otherNames = remember(listedOthers) { listedOthers.orEmpty().associate { SearchDomain.keyOf(it) to it.name } }
-    // The pairs B changed are view state, set back to the derived ones whenever a state set changes them.
+    // The pairs as B changed them: shown as they are while they make no sense (the row warns why), set back to the account's
+    // whenever it changes — and, making sense, written at once (user rule 2026-11-27: *"If the user changes it, then it is
+    // … a question of what are the contexts of this pair, which are now changed. Of course if the change makes no sense
+    // (with a warning message in 'Contexts and states'), then the change is not saved when the 'Contexts and states' row
+    // is retracted or the window is closed."*): every context moved into a pair given that pair's state, after which the
+    // account's pairs are those.
     var pairs by remember(row.id) { mutableStateOf(derived) }
     LaunchedEffect(derived) { pairs = derived }
-    return ContextPairs(host, row, action, kind, pairs, byKey, othersKeys, otherNames) { pairs = it }
+    fun outcomeOf(next: List<SearchDomain.ContextPair>): SearchDomain.PairsOutcome =
+        SearchDomain.contextPairsOutcome(host.state, action, kind, next, derived, byKey, othersKeys) { k ->
+            byKey[k]?.name ?: otherNames[k] ?: SearchDomain.resolve(host.state, listOf(k), { emptyMap() }).firstOrNull()?.name ?: k.substringAfter('/')
+        }
+    val outcome = remember(pairs, derived, othersKeys) { outcomeOf(pairs) }
+    val latestWrite by rememberUpdatedState(write)
+    return ContextPairs(host, row, action, kind, pairs, byKey, othersKeys, otherNames, setPairs = { next ->
+        pairs = next
+        val writes = (outcomeOf(next) as? SearchDomain.PairsOutcome.Writes)?.writes.orEmpty()
+        if (writes.isNotEmpty()) latestWrite(writes)
+    }, outcome = outcome)
 }
 
 /**

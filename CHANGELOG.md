@@ -32,6 +32,12 @@ Check here before assuming the code matches the docs.
   `FieldWindowKeepsItsAddedListTest`. Client rebuild only.
 - A "Contexts and states" pair's "context" window (B) keeps its own configuration (bar, sorting…) with its window as
   every field's does (`rememberInsideConfig`), was composition-only; its added elements stay the pair's contexts.
+- User: *"If the user changes it, then it is … a question of what are the contexts of this pair, which are now changed"*,
+  then *"Apply immediately"*: a pair's contexts were view state alone — a task moved from the "10 min" pair into the
+  "5 min" one kept its 10 min, and the arrangement was lost at the row's retraction. Now a change that makes sense is
+  written at once (`SearchDomain.contextPairsOutcome`, `actionStateWrites`: each moved context given its pair's state);
+  one that does not — an element in no pair or in two, in "no state", of another kind, a new pair of mixed states, a
+  state that cannot be given — turns the row red saying why and writes nothing. `ContextPairsWriteTest`.
 
 ### The ▾ tree's rows and an element's children are result rows — 2026-11-27
 

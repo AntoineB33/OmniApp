@@ -1489,8 +1489,17 @@ suggestions before it was ever entered.
     `SubRowSpec` with controls and no rows under it) — "context", "states", "state" alike; the list scrolls them (no page of twenty any more). **So are "State in each
     context", "Clicks and keys" and "Default presences"** (`SUB_ROW_ACTIONS`): a row per group of contexts, its state or
     nothing beside, with its "context" row (a link opening a Search window of them) and its "state" row (the control) or,
-    for the presses, a row per press with what it does beside — none draws text of its own under its action row. The pairs are view state, set back
-    to the derived ones whenever a state set changes them. **Elements in no pair** (user rule 2026-11-26: one taken out of a pair's
+    for the presses, a row per press with what it does beside — none draws text of its own under its action row. **A change of a pair's contexts is a change of
+    the account, written at once while it makes sense** (user rule 2026-11-27, *"If the user changes it, then it is … a
+    question of what are the contexts of this pair, which are now changed. Of course if the change makes no sense (with a
+    warning message in 'Contexts and states'), then the change is not saved when the 'Contexts and states' row is
+    retracted or the window is closed"*, and *"Apply immediately"*; `SearchDomain.contextPairsOutcome`,
+    `actionStateWrites`, `ContextPairsWriteTest`): every context moved into a pair is given that pair's state — what its
+    elements held — through the commands the action's own editor writes with, and the account's pairs are then those. It
+    makes no sense, the row red saying why and nothing written, while an element is in no pair or in two, one of the
+    action's kind is in "no state" or one of another kind in a pair with a state, a new pair gathers elements holding
+    different states, or the action's state cannot be given (one that shows the element; a category's rules; a formula).
+    The pairs shown are set back to the account's whenever it changes, and are not kept past the row retracted. **Elements in no pair** (user rule 2026-11-26: one taken out of a pair's
     contexts in B): the "Contexts and states" row is drawn red, *"not complete: … in no context-state"* beside it
     (`ActionListRow.warning`, `SearchDomain.contextsInNoPair`), until a pair holds them again — the action's kind, and,
     once listed and where the action has a "no state" pair, every other element. **Its rows' menus**: "copy path" (the

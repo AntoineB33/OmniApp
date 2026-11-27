@@ -5839,6 +5839,155 @@ object SearchDomain {
         }
     }
 
+    /** One write of a context-state's state ([contextPairsOutcome]): [command] over the elements [to]. */
+    data class StateWrite(val to: List<Result>, val command: AddedCommand)
+
+    /**
+     * User rule 2026-11-27 (*"When clicking the 'contexts' field, the added elements list represent all the contexts of this
+     * pair. If the user changes it, then it is … a question of what are the contexts of this pair, which are now changed"*):
+     * **[to] given the state [action] holds for [from]** — the inverse of [actionStateOf], one case per action it reads
+     * ([ownActionState]), through the commands the action's own editor writes with ([addedIntents]). Null where no state
+     * can be given: one that SHOWS the element (each its own), or one not written field by field here.
+     */
+    fun actionStateWrites(state: SchedulerState, action: AddedAction, from: Result, to: List<Result>): List<StateWrite>? {
+        if (to.isEmpty()) return emptyList()
+        val id = (from as? ItemResult)?.id
+        val task = (from as? TaskResult)?.let { state.tasks[it.taskId] }
+        val alarm = state.alarms.firstOrNull { it.id == id }
+        val timer = state.timers.firstOrNull { it.id == id }
+        val quota = state.quotas.firstOrNull { it.id == id }
+        val chore = state.chores.firstOrNull { it.id.ifEmpty { it.title } == id }
+        val category = id?.let { state.categoryById(CategoryId(it)) }
+        fun one(command: AddedCommand) = listOf(StateWrite(to, command))
+        fun ids() = to.mapNotNull { (it as? ItemResult)?.id }
+        fun titles(kind: Kind, title: String?) = title?.let { t -> one(AddedCommand.Titles(kind, ids().associateWith { t })) }
+        fun alarms(change: (org.example.project.scheduler.model.AlarmEntry) -> org.example.project.scheduler.model.AlarmEntry) =
+            one(AddedCommand.AlarmsEdit(change = change))
+        fun timers(change: (org.example.project.scheduler.model.TimerEntry) -> org.example.project.scheduler.model.TimerEntry) =
+            one(AddedCommand.TimersEdit(change = change))
+        fun reminders(change: (org.example.project.scheduler.model.ChoreEntry) -> org.example.project.scheduler.model.ChoreEntry) =
+            one(AddedCommand.RemindersEdit(change))
+        fun quotas(change: (org.example.project.scheduler.model.QuotaEntry) -> org.example.project.scheduler.model.QuotaEntry): List<StateWrite> {
+            val targets = ids().toSet()
+            return one(AddedCommand.Raw(SchedulerIntent.SetQuotas(state.quotas.map { q -> if (q.id in targets) change(q) else q })))
+        }
+        return when (action) {
+            // Every element holds the same: nothing to give.
+            AddedAction.TaskEdit, AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar, AddedAction.PeriodTaskSearch,
+            AddedAction.WorkplaceApply, AddedAction.MdAskClaude -> emptyList()
+            AddedAction.ElementParents -> {
+                val parents = ElementTree.parentsOf(state, keyOf(from)).toSet()
+                to.flatMap { t ->
+                    val own = ElementTree.parentsOf(state, keyOf(t)).toSet()
+                    (parents - own).map { StateWrite(listOf(t), AddedCommand.ElementParent(it, on = true)) } +
+                        (own - parents).map { StateWrite(listOf(t), AddedCommand.ElementParent(it, on = false)) }
+                }
+            }
+            AddedAction.TaskMinimumTime -> task?.let { one(AddedCommand.MinimumTime(it.minimumMinutes)) }
+            AddedAction.TaskResilience -> task?.let { t -> t.resilience.map { (k, v) -> StateWrite(to, AddedCommand.Resilience(k, v)) } }
+            AddedAction.TaskScheduleUnit -> task?.let { one(AddedCommand.ScheduleUnit(it.scheduleUnit)) }
+            AddedAction.TaskTreeName ->
+                treeRootsOf(listOf(from)).mapNotNull { state.tasks[it]?.title }.distinct().singleOrNull()?.let { one(AddedCommand.TreeName(it)) }
+            AddedAction.MdText -> state.mdElements.firstOrNull { it.id == id && from.kind == Kind.Md }?.text?.let { text ->
+                ids().map { StateWrite(to, AddedCommand.MdSetText(it, text)) }
+            }
+            AddedAction.AlarmTitle -> titles(Kind.Alarm, alarm?.label)
+            AddedAction.AlarmOnOff -> alarm?.let { one(AddedCommand.AlarmsOn(it.enabled)) }
+            AddedAction.AlarmTime -> alarm?.let { a -> alarms { it.copy(timeOfDayMinutes = a.timeOfDayMinutes, onlyOnEpochDay = a.onlyOnEpochDay) } }
+            AddedAction.AlarmDays -> alarm?.let { a -> alarms { it.copy(days = a.days) } }
+            AddedAction.AlarmRingsFor -> alarm?.let { a -> alarms { it.copy(soundSeconds = a.soundSeconds) } }
+            AddedAction.AlarmRepeat -> alarm?.let { a -> alarms { it.copy(repeats = a.repeats) } }
+            AddedAction.AlarmAlert -> alarm?.let { a -> alarms { it.copy(alert = a.alert) } }
+            AddedAction.TimerTitle -> titles(Kind.Timer, timer?.label)
+            AddedAction.TimerDuration -> timer?.let { t -> timers { it.copy(durationSeconds = t.durationSeconds) } }
+            AddedAction.TimerRingsFor -> timer?.let { t -> timers { it.copy(soundSeconds = t.soundSeconds) } }
+            AddedAction.TimerBelowZero -> timer?.let { t -> timers { it.copy(goesNegative = t.goesNegative) } }
+            AddedAction.TimerAlert -> timer?.let { t -> timers { it.copy(alert = t.alert) } }
+            AddedAction.ChronoTitle -> titles(Kind.Chrono, state.chronos.firstOrNull { it.id == id }?.label)
+            AddedAction.QuotaTitle -> titles(Kind.Quota, quota?.title)
+            AddedAction.QuotaAmount -> quota?.let { q -> quotas { it.copy(amount = q.amount, unit = q.unit) } }
+            AddedAction.QuotaLoop -> quota?.let { q ->
+                quotas { it.copy(startMillis = q.startMillis, endMillis = q.endMillis, repeats = q.repeats, endByDelta = q.endByDelta, repeatCount = q.repeatCount) }
+            }
+            AddedAction.QuotaRestarts -> quota?.let { q -> quotas { it.copy(renewals = q.renewals) } }
+            AddedAction.QuotaResilience -> quota?.let { q -> quotas { it.copy(resilience = q.resilience) } }
+            AddedAction.QuotaLoops -> quota?.let { q -> quotas { it.copy(loops = q.loops) } }
+            AddedAction.ReminderTitle -> titles(Kind.Reminder, chore?.title)
+            AddedAction.ReminderEvery -> chore?.let { c -> reminders { it.copy(spanDays = c.spanDays, recurrenceUnit = c.recurrenceUnit, daysFormula = c.daysFormula) } }
+            AddedAction.ReminderTime -> chore?.let { c -> reminders { it.copy(timeOfDayMinutes = c.timeOfDayMinutes) } }
+            AddedAction.ReminderConstraint -> chore?.let { c -> reminders { it.copy(constrainedToReminderId = c.constrainedToReminderId) } }
+            AddedAction.ReminderAlert -> chore?.let { c -> reminders { it.copy(alert = c.alert) } }
+            AddedAction.CategoryName -> category?.let { c -> ids().map { StateWrite(to, AddedCommand.Raw(SchedulerIntent.RenameCategory(CategoryId(it), c.title))) } }
+            AddedAction.CategoryKind -> category?.let { c -> ids().map { StateWrite(to, AddedCommand.Raw(SchedulerIntent.SetCategoryKind(CategoryId(it), c.kind))) } }
+            AddedAction.PeriodDrawing -> id?.takeIf { from.kind == Kind.RestrictivePeriod }?.let { one(AddedCommand.Drawing(state.periodKindConfig.drawing(it))) }
+            else -> if (isSetAction(action)) emptyList() else null
+        }
+    }
+
+    /** What the pairs a "Contexts and states" is shown with ask of the account ([contextPairsOutcome]). */
+    sealed interface PairsOutcome {
+        /** They make no sense: [warning] says why, and nothing is written. */
+        data class Problem(val warning: String) : PairsOutcome
+
+        /** They make sense: [writes] give every moved context its pair's state (none: nothing moved). */
+        data class Writes(val writes: List<StateWrite>) : PairsOutcome
+    }
+
+    /**
+     * User rule 2026-11-27 (*"If the user changes it, then it is … a question of what are the contexts of this pair, which are
+     * now changed. Of course if the change makes no sense (with a warning message in 'Contexts and states'), then the change
+     * is not saved"*; the same day: written at once): **what the [pairs] a "Contexts and states" is shown with ask of the
+     * account**, against the pairs the account holds ([derived], [actionContextPairs]: a pair of [pairs] at the same place
+     * is that one, a later one is a new pair). [elements]: the action's kind's, by key; [others]: every other element (null
+     * while not listed); [names]: what a warning calls a key. It makes no sense, and nothing is written, while an element is
+     * in no pair ([contextsInNoPair]) or in two, one of the action's kind is in the "no state" pair or one of another kind in
+     * a pair with a state, a new pair gathers elements holding different states, or a state cannot be given to what was
+     * moved ([actionStateWrites]). Otherwise every element moved into a pair is given that pair's state.
+     */
+    fun contextPairsOutcome(
+        state: SchedulerState,
+        action: AddedAction,
+        kind: Kind?,
+        pairs: List<ContextPair>,
+        derived: List<ContextPair>,
+        elements: Map<String, Result>,
+        others: List<String>?,
+        names: (String) -> String,
+    ): PairsOutcome {
+        fun said(keys: List<String>): String =
+            keys.take(3).joinToString(", ") { names(it) } + if (keys.size > 3) " and ${keys.size - 3} more" else ""
+        fun be(keys: List<String>) = if (keys.size == 1) "is" else "are"
+        val missing = contextsInNoPair(pairs, elements.keys.toList(), if (kind == null) null else others)
+        contextsIncompleteWarning(missing, names)?.let { return PairsOutcome.Problem(it) }
+        if (kind != null) {
+            val foreign = pairs.filter { it.stated }.flatMap { it.keys.orEmpty() }.filter { it !in elements }.distinct()
+            if (foreign.isNotEmpty()) return PairsOutcome.Problem("not possible: ${said(foreign)} ${be(foreign)} not ${kind.plural}")
+            val stateless = pairs.filter { !it.stated }.flatMap { it.keys.orEmpty() }.filter { it in elements }.distinct()
+            if (stateless.isNotEmpty()) return PairsOutcome.Problem("not possible: ${said(stateless)} cannot have no state")
+        }
+        val seen = HashSet<String>()
+        val twice = pairs.flatMap { it.keys.orEmpty() }.filter { !seen.add(it) }.distinct()
+        if (twice.isNotEmpty()) return PairsOutcome.Problem("not possible: ${said(twice)} ${be(twice)} in two context-states")
+        if (kind == null) return PairsOutcome.Writes(emptyList())
+        val writes = ArrayList<StateWrite>()
+        for ((index, pair) in pairs.withIndex()) {
+            val members = pair.keys.orEmpty().mapNotNull { elements[it] }
+            if (!pair.stated || members.isEmpty()) continue
+            val before = derived.getOrNull(index)?.takeIf { it.stated }?.keys.orEmpty().mapNotNull { elements[it] }
+            // The pair's state: what its elements held before; a new pair's, what its elements hold — one state.
+            val from = before.firstOrNull() ?: members.first()
+            val holds = actionStateOf(state, action, from)
+            val moved = members.filter { actionStateOf(state, action, it) != holds }
+            if (moved.isEmpty()) continue
+            if (before.isEmpty()) {
+                return PairsOutcome.Problem("not possible: ${said(members.map(::keyOf))} hold different states in one context-state")
+            }
+            writes += actionStateWrites(state, action, from, moved)
+                ?: return PairsOutcome.Problem("not possible: the state of ${names(keyOf(from))} cannot be given to ${said(moved.map(::keyOf))}")
+        }
+        return PairsOutcome.Writes(writes)
+    }
+
     /** The actions that show a Claude Code log entry, each one block per added entry. */
     val CLAUDE_ENTRY_ACTIONS: Set<AddedAction> by lazy {
         setOf(
