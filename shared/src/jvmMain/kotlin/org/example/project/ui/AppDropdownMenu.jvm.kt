@@ -266,10 +266,16 @@ private class MenuSession(
      * the keyboard is given back if the click keeps it, [act] is dropped if the click closes it, and done as ever when
      * no click comes ([PopupOpener.SAME_GESTURE], or the pointer leaving the opener).
      */
+    // TEMPORARY [popup] trace (anomaly 2026-11-27, a ▾ pop-up shown a blink): removed once the user has reproduced it.
+    private fun trace(what: String) = org.example.project.scheduler.platform.Diagnostics.log(
+        "[popup] menu site=$site #${System.identityHashCode(this)} focusable=$focusable $what",
+    )
+
     private fun keyboardLeft(act: () -> Unit) {
+        trace("keyboard left: opener=${opener?.value != null}")
         val handle = PopupOpeners.keyboardLeft(
             opener?.value,
-            lost = { if (!closed) act() },
+            lost = { if (!closed) { trace("keyboard left -> lost (closes)"); act() } },
             kept = { if (!closed) dialog?.giveKeyboard() },
         ) ?: return
         javax.swing.Timer(PopupOpener.SAME_GESTURE.inWholeMilliseconds.toInt()) { PopupOpeners.expire(handle) }
@@ -450,6 +456,7 @@ private class MenuSession(
     private val ownerListener = object : WindowAdapter() {
         override fun windowDeactivated(event: WindowEvent) {
             if (!ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
+                trace("owner deactivated -> dismiss (to ${event.oppositeWindow?.javaClass?.simpleName})")
                 dismiss.value()
             }
         }
@@ -476,6 +483,7 @@ private class MenuSession(
         override fun windowLostFocus(event: WindowEvent) {
             if (rightPressedInApp()) return
             if (focusable && !ours(event.oppositeWindow) && !pinnedAway(event.oppositeWindow) && !settling(event.oppositeWindow)) {
+                trace("lost focus to ${event.oppositeWindow?.javaClass?.simpleName}")
                 keyboardLeft { dismiss.value() }
             }
         }
@@ -505,6 +513,7 @@ private class MenuSession(
             // A right-click in the app's window: the app closed the menus and opened the right-clicked one ([rightPressedInApp]).
             if (!ours(active) && rightPressedInApp()) return@invokeLater
             if (!ours(active)) {
+                trace("active window now ${active?.javaClass?.simpleName} (pinned=${hover?.pinned})")
                 // Back in the app by a press on another of its windows — which no loss of the keyboard told the pop-up,
                 // having lost it to the other application: it closes as a press elsewhere in the app closes it.
                 // Anomaly 2026-11-16 (*"clicked on Parents and Children, and instead of pinning the children window … it
@@ -572,6 +581,7 @@ private class MenuSession(
         openedAt = System.nanoTime()
         placingSince = openedAt
         pressesAtOpen = RightPresses.presses
+        trace("open (size known=${MenuWindows.lastSize[site] != null})")
         window.focusableWindowState = focusable
         size = MenuWindows.lastSize[site]
         window.size = size ?: Dimension(2, 2)
@@ -582,6 +592,7 @@ private class MenuSession(
             // A focusable menu is material's: Escape closes it. A non-focusable one never sees a key.
             onPreviewKeyEvent = { event ->
                 if (focusable && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    trace("escape")
                     dismiss.value()
                     true
                 } else {
@@ -609,6 +620,7 @@ private class MenuSession(
                         // Gone to a pop-up this one hangs from: what is below that one closes, it stays.
                         if (!inside && !(event.oppositeWindow == null && tracker.pinned) && !heldByHand) {
                             val opposite = event.oppositeWindow
+                            trace("tracker window lost focus to ${opposite?.javaClass?.simpleName}")
                             keyboardLeft { tracker.windowLeft(gone(opposite)) }
                         }
                     }
@@ -747,6 +759,7 @@ private class MenuSession(
     }
 
     fun close() {
+        if (!closed) trace("close (shown ${(System.nanoTime() - openedAt) / 1_000_000} ms)")
         closed = true
         val window = dialog ?: return
         dialog = null

@@ -61,7 +61,9 @@ class MenuHoverTracker(
      * (the ▾), kept where it does not (a row); a quick run of clicks is one ([PopupOpener.click]).
      */
     fun clickedOpener(opener: PopupOpener, isOpen: Boolean, toggles: Boolean): Boolean =
-        opener.click(isOpen, closes = toggles && pinned)
+        opener.click(isOpen, closes = toggles && pinned).also {
+            org.example.project.scheduler.platform.Diagnostics.log("[popup] hover #${hashCode()} opener clicked: open=$isOpen pinned=$pinned toggles=$toggles -> open=$it")
+        }
 
     /** The pop-up closed: the next opening is a hover pop-up again, until a press pins it. */
     fun unpin() {
@@ -102,6 +104,7 @@ class MenuHoverTracker(
             at.pinned = false
             at.pending?.cancel()
             at.pending = null
+            org.example.project.scheduler.platform.Diagnostics.log("[popup] hover #${at.hashCode()} closed: keyboard left (pinned)")
             at.onLeft()
             at = above
         }
@@ -151,6 +154,7 @@ class MenuHoverTracker(
         pending = scope.launch {
             delay(GRACE_MILLIS)
             if (inside.isEmpty() && !pinned) {
+                org.example.project.scheduler.platform.Diagnostics.log("[popup] hover #${this@MenuHoverTracker.hashCode()} closed: pointer left (last part $part)")
                 onLeft()
             }
         }
