@@ -2602,8 +2602,7 @@ fun ChoresManagerWindow(
         title = if (defaults) "Default reminder" else "Reminder",
         state = frame,
         onClose = onDismiss,
-        defaultWidth = 560.dp,
-        defaultHeight = 480.dp,
+        sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Reminder"),
         // PRD §14: clicking anywhere in the window that is not the focused title field or its edit-mode
         // menus leaves Edit mode — a tap on empty/non-interactive space clears focus, which the title
         // field's onFocusChanged turns into focusedIndex = null (hiding the menus). Interactive children
@@ -2922,8 +2921,7 @@ fun HistoryManagerWindow(
             title = "History",
             state = frame,
             onClose = onDismiss,
-            defaultWidth = 980.dp,
-            defaultHeight = 520.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("History"),
             onRaise = onRaise,
             onGeometryChange = onGeometryChange,
         ) {
@@ -3627,8 +3625,7 @@ private fun HistoryEntryInfoWindow(
         title = historyEntryTitle(entry),
         state = frame,
         onClose = onDismiss,
-        defaultWidth = 480.dp,
-        defaultHeight = 420.dp,
+        sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("History unit"),
         claimsKeyboard = true,
         onRaise = onRaise,
         // "Copy all" belongs in this window's head rather than its body: it is about the window's whole
@@ -10425,8 +10422,7 @@ fun ManualEntryEditWindow(
             title = "Edit task",
             state = frame,
             onClose = onDismiss,
-            defaultWidth = 320.dp,
-            defaultHeight = 560.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Edit task"),
             claimsKeyboard = true,
             modifier = Modifier.align(Alignment.Center),
         ) {
@@ -10742,8 +10738,7 @@ fun PeriodEditWindow(
             title = (if (isNew) "Add period: " else "Edit period: ") + label,
             state = frame,
             onClose = onDismiss,
-            defaultWidth = 340.dp,
-            defaultHeight = 520.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Period"),
             claimsKeyboard = true,
             modifier = Modifier.align(Alignment.Center),
         ) {
@@ -10981,8 +10976,7 @@ fun ReminderEditWindow(
             title = "Add reminder",
             state = frame,
             onClose = onDismiss,
-            defaultWidth = 320.dp,
-            defaultHeight = 480.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Add reminder"),
             claimsKeyboard = true,
             modifier = Modifier.align(Alignment.Center),
         ) {
@@ -11116,8 +11110,7 @@ fun ReminderConstraintEditWindow(
                 title = "Constrain to reminder",
                 state = frame,
                 onClose = onDismiss,
-                defaultWidth = 320.dp,
-                defaultHeight = 420.dp,
+                sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Constrain to reminder"),
                 claimsKeyboard = true,
                 modifier = Modifier.align(Alignment.Center),
             ) {

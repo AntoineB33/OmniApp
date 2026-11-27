@@ -67,8 +67,7 @@ class WindowHoldsKeyboardTest {
                                             closed += id
                                             host.focusHeirOf(id)?.let(host::focus)
                                         },
-                                        defaultWidth = 400.dp,
-                                        defaultHeight = 300.dp,
+                                        sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Notice"),
                                     ) { Text("nothing to type in") }
                                 }
                             }

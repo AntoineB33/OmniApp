@@ -24,6 +24,28 @@ class ContextCatalogTest {
     }
 
     /**
+     * User rule 2026-11-27: every window and sized pop-up the code opens under a name is a context of its own
+     * ([ContextDomain.FRAMES]) — one missing would open at a size no context shows, and its own could not be set.
+     */
+    @Test
+    fun every_window_size_name_of_the_code_is_in_the_catalog() {
+        val sources = File("src/commonMain/kotlin").walkTopDown().filter { it.isFile && it.extension == "kt" }
+        val named = Regex("""(?:frameContextId|contextSize)\(\s*"([^"]+)"""")
+        val names = sources.flatMap { file -> named.findAll(file.readText()).map { it.groupValues[1] } }.toSet()
+        val catalog = ContextDomain.FRAMES.map { it.first }.toSet()
+        assertEquals(catalog, names, "every catalogued window is opened, and every opened one catalogued")
+        assertEquals(catalog.size, ContextDomain.FRAMES.size, "no window twice")
+        // No window sizes itself apart from its context any more.
+        val sized = Regex("""defaultWidth\s*=""")
+        assertEquals(emptyList(), sources.filter { sized.containsMatchIn(it.readText()) }.map { it.name }.toList())
+        // The tree's window opens at its column's width.
+        assertEquals(
+            org.example.project.ui.TREE_ROOT_POPUP_WIDTH.value.toInt(),
+            ContextDomain.sizeOf(emptyList(), ContextDomain.frameContextId("Configurations tree")).widthDp,
+        )
+    }
+
+    /**
      * User rule 2026-11-27: every drop-down named in the code is a context of its own ([ContextDomain.DROP_DOWNS]) — one
      * missing opens with "default of a drop-down", and no configuration could be set for it alone.
      */

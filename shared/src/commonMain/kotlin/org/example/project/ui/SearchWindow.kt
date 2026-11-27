@@ -2769,8 +2769,7 @@ fun SearchWindow(
             colorKind = org.example.project.scheduler.domain.WindowColorSpace.UNFOCUSED_NOTIF.takeIf { SearchDomain.isNotificationsWindow(config) },
             state = frame,
             onClose = onDismiss,
-            defaultWidth = 1040.dp,
-            defaultHeight = 600.dp,
+            sizeContext = config.context ?: org.example.project.scheduler.domain.ContextDomain.SEARCH_WINDOW,
             modifier = modifier,
             onRaise = onRaise,
             onGeometryChange = onGeometryChange,
@@ -5148,8 +5147,6 @@ private fun ElementChildren(
 }
 
 /** How large the Search window a blank child row shows is ([ChildSearchPopup]); the app's window caps it. */
-private val CHILD_SEARCH_POPUP_WIDTH = 760.dp
-private val CHILD_SEARCH_POPUP_HEIGHT = 480.dp
 
 /**
  * User rule 2026-11-25: **the Search window the blank row ending [parent]'s children shows** — what its double-click
@@ -5173,7 +5170,7 @@ internal fun ChildSearchPopup(parent: String) {
             onSplitsChange = { parts = it },
             openedConfig = opened,
         ),
-        Modifier.width(CHILD_SEARCH_POPUP_WIDTH).height(CHILD_SEARCH_POPUP_HEIGHT),
+        contextSize("Children search").let { Modifier.width(it.widthDp.dp).height(it.heightDp.dp) },
     )
 }
 

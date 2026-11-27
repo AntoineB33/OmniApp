@@ -616,8 +616,7 @@ fun AlarmWindow(
         title = shown?.let { if (defaults) "Default " + it.title.lowercase() else it.title } ?: "Alarms",
         state = frame,
         onClose = onDismiss,
-        defaultWidth = 440.dp,
-        defaultHeight = 560.dp,
+        sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Alarms"),
         modifier = modifier
             .focusRequester(windowFocus)
             .focusable()

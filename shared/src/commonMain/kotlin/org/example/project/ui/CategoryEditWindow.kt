@@ -77,8 +77,7 @@ fun CategoryEditWindow(
             title = "Category",
             state = frame,
             onClose = onDismiss,
-            defaultWidth = 420.dp,
-            defaultHeight = 620.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Category"),
             claimsKeyboard = true,
             modifier = Modifier.align(Alignment.Center),
         ) {

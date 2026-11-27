@@ -1152,6 +1152,12 @@ object SearchDomain {
          */
         val rightClickChecksAlone: Boolean = false,
         /**
+         * User rule 2026-11-27, a search configuration ([Setting.Size]): **the size a window of this context opens at**
+         * ([WindowSize]) — read from the context's default alone ([ContextDomain.sizeOf]), never from a window's own
+         * configuration, whose size is the one the user gave it on this device (`WindowPlacement`). Null: the code's.
+         */
+        val size: WindowSize? = null,
+        /**
          * User rule 2026-11-25, a search configuration ([Setting.Entries]): *"one search configuration that basically just
          * set the elements in the right place"* — **the entries a menu lists, by id, in this order**; an entry the code
          * gives and this does not name is not listed. Empty: every entry the code gives, in its order.
@@ -1339,6 +1345,10 @@ object SearchDomain {
                     buttonFollowsExpansion = buttonFollowsExpansion,
                     separators = separators,
                     rightClickChecksAlone = rightClickChecksAlone,
+                    sizeWidthDp = size?.widthDp,
+                    sizeHeightDp = size?.heightDp,
+                    sizeMaxWidthPercent = size?.maxWidthPercent,
+                    sizeMaxHeightPercent = size?.maxHeightPercent,
                     entries = entries,
                     taskRowLayout = taskRowLayout.map { it.name },
                     actionSearch = actionSearch,
@@ -1497,6 +1507,7 @@ object SearchDomain {
                     buttonFollowsExpansion = stored.buttonFollowsExpansion,
                     separators = stored.separators,
                     rightClickChecksAlone = stored.rightClickChecksAlone,
+                    size = WindowSize.of(stored.sizeWidthDp, stored.sizeHeightDp, stored.sizeMaxWidthPercent, stored.sizeMaxHeightPercent),
                     entries = healedEntries(stored.entries),
                     taskRowLayout = TaskRowPart.decode(stored.taskRowLayout),
                     actionSearch = stored.actionSearch,
@@ -2472,6 +2483,8 @@ object SearchDomain {
         Separators(null, "Separators between groups"),
         /** User rule 2026-11-27: a right-click checks a row alone ([Config.rightClickChecksAlone]). */
         RightClickChecksAlone(null, "Right-click checks it alone"),
+        /** User rule 2026-11-27: the size a window of the context opens at ([Config.size], [WindowSize]). */
+        Size(null, "Size"),
         /** User rule 2026-11-25: the entries a menu lists, in order ([Config.entries]). */
         Entries(null, "Entries, in order"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
@@ -2588,7 +2601,7 @@ object SearchDomain {
             setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults -> SettingRole.Children
             setting == Setting.DropButtons || setting == Setting.CompletionList || setting == Setting.MenuCustomizing ||
                 setting == Setting.ButtonFollowsExpansion || setting == Setting.TaskRowLayout || setting == Setting.Separators || setting == Setting.Entries ||
-                setting == Setting.RightClickChecksAlone -> SettingRole.Display
+                setting == Setting.RightClickChecksAlone || setting == Setting.Size -> SettingRole.Display
             setting == Setting.ResetSearch -> null
             else -> SettingRole.Filter
         }
@@ -2632,6 +2645,7 @@ object SearchDomain {
             Setting.SortResults -> config.sorts.filter { it.kind == null }
             Setting.CompletionList -> config.completion
             Setting.Entries -> config.entries
+            Setting.Size -> config.size
             Setting.TaskRowLayout -> config.taskRowLayout
             else ->
                 if (setting.sorts && setting.section != null) config.sorts.filter { it.kind == setting.section }
@@ -2669,6 +2683,7 @@ object SearchDomain {
             Setting.ButtonFollowsExpansion.takeIf { config.buttonFollowsExpansion },
             Setting.Separators.takeIf { config.separators },
             Setting.RightClickChecksAlone.takeIf { config.rightClickChecksAlone },
+            Setting.Size.takeIf { config.size != null },
             Setting.Entries.takeIf { config.entries.isNotEmpty() },
             Setting.TaskRowLayout.takeIf { config.taskRowLayout.isNotEmpty() },
         )
@@ -3274,6 +3289,10 @@ object SearchDomain {
             Setting.RightClickChecksAlone ->
                 "In a list with check boxes, a right-click on a row checks it and unchecks every other one; " +
                     "Shift + right-click opens the row's menu. Off: the right-click opens the menu, whose \"check only this\" does it."
+            Setting.Size ->
+                "The size a window opens at, in dp, each side at most a share of the room the app gives it: the room's own size " +
+                    "where it is smaller. A window resized keeps its own size on this device; its head's \"Use this size as the " +
+                    "default here\" writes it here."
             Setting.Separators ->
                 "A horizontal line between groups of rows: in a background menu, between the window's own options and those of " +
                     "the section right-clicked (its actions or its added elements)."
@@ -3545,6 +3564,11 @@ object SearchDomain {
         val separators: Boolean = false,
         /** New 2026-11-27: absent = the right-click opens the row menu ([Config.rightClickChecksAlone]). */
         val rightClickChecksAlone: Boolean = false,
+        /** New 2026-11-27: absent = the code's size ([Config.size]); one side missing, none is read. */
+        val sizeWidthDp: Int? = null,
+        val sizeHeightDp: Int? = null,
+        val sizeMaxWidthPercent: Int? = null,
+        val sizeMaxHeightPercent: Int? = null,
         /** New 2026-11-25: absent = every entry the code gives ([Config.entries]). */
         val entries: List<String> = emptyList(),
         /** New 2026-11-22: absent = the default task row ([Config.taskRowLayout]); a part this build does not know is skipped. */
@@ -6218,6 +6242,7 @@ object SearchDomain {
         is Map<*, *> -> if (value.isEmpty()) "none" else value.entries.joinToString(", ") { (k, v) -> "${valueText(k)}: ${valueText(v)}" }
         is Collection<*> -> if (value.isEmpty()) "none" else value.joinToString(", ") { valueText(it) }
         is Pair<*, *> -> listOfNotNull(value.first, value.second).joinToString(" ") { valueText(it) }
+        is WindowSize -> value.text
         else -> value.toString()
     }
 
@@ -8424,6 +8449,36 @@ object SearchDomain {
      * on. So a stated length remembers the elements' own length it was stated over ([lengthOverMillis]) and gives way
      * once the added elements have another.
      */
+    /**
+     * User rule 2026-11-27 (*"For a context element, there should be a width and height values, right?"*): **the size a
+     * window opens at** — [widthDp] × [heightDp], each side at most [maxWidthPercent] / [maxHeightPercent] of the room
+     * the app gives it ([ContextDomain.fitted]). In dp and in shares of the room, never in pixels: it is synced, and the
+     * same value must hold on a phone and on a desktop.
+     */
+    data class WindowSize(val widthDp: Int, val heightDp: Int, val maxWidthPercent: Int = 100, val maxHeightPercent: Int = 100) {
+        /** As the user reads it: "520 × 560 dp", and the shares where one is not the whole room. */
+        val text: String
+            get() = "$widthDp × $heightDp dp" + if (maxWidthPercent == 100 && maxHeightPercent == 100) "" else ", at most $maxWidthPercent% × $maxHeightPercent% of the room"
+
+        companion object {
+            /** A side's least, as the frame's own ([org.example.project.ui.MIN_WINDOW_WIDTH_PX] is in px; this is dp). */
+            const val MIN_DP: Int = 80
+            const val MAX_DP: Int = 10_000
+
+            /**
+             * The stored sides read back, or null for none stored. A value an older or a hand-edited row holds out of range
+             * is healed into it: a side between [MIN_DP] and [MAX_DP], a share between 1 and 100 (absent: 100).
+             */
+            fun of(width: Int?, height: Int?, maxWidth: Int?, maxHeight: Int?): WindowSize? {
+                if (width == null || height == null) return null
+                return WindowSize(
+                    width.coerceIn(MIN_DP, MAX_DP), height.coerceIn(MIN_DP, MAX_DP),
+                    (maxWidth ?: 100).coerceIn(1, 100), (maxHeight ?: 100).coerceIn(1, 100),
+                )
+            }
+        }
+    }
+
     data class Placement(
         val startMillis: Long? = null,
         val endByDelta: Boolean = true,

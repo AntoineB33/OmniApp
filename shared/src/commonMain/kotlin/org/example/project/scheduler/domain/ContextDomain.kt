@@ -135,6 +135,9 @@ object ContextDomain {
         SearchDomain.Setting.WindowStatusSetting,
     )
 
+    /** The head menu's entry writing the window's size as its context's ([withSize]). */
+    const val USE_SIZE_ENTRY: String = "Use this size as the default here"
+
     /** How many sections deep a background menu names its sections' groups ([MENU_ENTRIES]' "SearchPartsMenu"). */
     private const val NESTED_SECTION_GROUPS: Int = 3
 
@@ -160,7 +163,7 @@ object ContextDomain {
             "MenuAddableBox" to listOf("add in the left-side menu"),
             "HeadMenu" to listOf(
                 "Rename", "Copy id", "Remove from menu", "Copy all", "Add a button for this window to the left menu", "Duplicate",
-                "Fill the width", "Fill the height", "Reduce", "Maximize", "Close",
+                "Fill the width", "Fill the height", "Reduce", "Maximize", USE_SIZE_ENTRY, "Close",
             ),
             "window bar menu" to listOf("close selection", "minimize selection", "open selection", "global"),
             "WindowBarMoreButton" to listOf("undo", "redo"),
@@ -173,6 +176,55 @@ object ContextDomain {
         )
     }
 
+    /** What a window's context id starts with, before its name ([FRAMES]). */
+    const val FRAME_PREFIX: String = "window:"
+
+    /**
+     * User rule 2026-11-27 (*"For a context element, there should be a width and height values"*): **the windows that are
+     * no Search window, by the name each opens its size under** (`AppWindowFrame`'s `sizeContext`, `contextSize`), what
+     * the user calls it, and the size the code gives it ([SearchDomain.WindowSize]). Each is a context of its own, so its
+     * size is set like any context's value ([sizeOf]). A Search window's is its own context's ([SEARCH_WINDOW]'s where
+     * that sets none). `ContextCatalogTest` lists every name the code opens a window under.
+     */
+    val FRAMES: List<Triple<String, String, SearchDomain.WindowSize>> = listOf(
+        Triple("Online", "the Online window", SearchDomain.WindowSize(420, 460)),
+        Triple("Priority weights", "the priority weights window", SearchDomain.WindowSize(760, 600)),
+        Triple("Relative priority", "a relative priority window", SearchDomain.WindowSize(520, 420)),
+        Triple("Task", "a task's window", SearchDomain.WindowSize(360, 620)),
+        Triple("Deep copy", "the deep copy window", SearchDomain.WindowSize(420, 380)),
+        Triple("Added elements configurations", "the added elements configurations window", SearchDomain.WindowSize(520, 560)),
+        Triple("Alarms", "the alarms window", SearchDomain.WindowSize(440, 560)),
+        Triple("Calendar elements", "the calendar elements window", SearchDomain.WindowSize(400, 640)),
+        Triple("Reminder", "a reminder's window", SearchDomain.WindowSize(560, 480)),
+        Triple("History", "the History window", SearchDomain.WindowSize(980, 520)),
+        Triple("History unit", "a history unit's window", SearchDomain.WindowSize(480, 420)),
+        Triple("Edit task", "the calendar's edit task window", SearchDomain.WindowSize(320, 560)),
+        Triple("Period", "a period's window", SearchDomain.WindowSize(340, 520)),
+        Triple("Add reminder", "the add reminder window", SearchDomain.WindowSize(320, 480)),
+        Triple("Constrain to reminder", "the constrain to reminder window", SearchDomain.WindowSize(320, 420)),
+        Triple("Categories", "the categories window", SearchDomain.WindowSize(460, 520)),
+        Triple("Category", "a category's window", SearchDomain.WindowSize(420, 620)),
+        // The tree's column as `TREE_ROOT_POPUP_WIDTH` lays it (`ContextCatalogTest` holds the two together).
+        Triple("Configurations tree", "the configurations tree window", SearchDomain.WindowSize(552, 600)),
+        Triple("Default sub-tree", "the default sub-tree window", SearchDomain.WindowSize(560, 560)),
+        Triple("Notice", "a notice", SearchDomain.WindowSize(420, 200)),
+        Triple("Keyboard shortcuts", "the keyboard shortcuts window", SearchDomain.WindowSize(470, 620)),
+        Triple("Sleep", "the sleep window", SearchDomain.WindowSize(320, 300)),
+        Triple("Task relations", "the task relations window", SearchDomain.WindowSize(560, 520)),
+        Triple("Cell edit", "a task cell's edit pop-up", SearchDomain.WindowSize(480, 440)),
+        Triple("Field", "a field's pop-up window", SearchDomain.WindowSize(480, 440)),
+        Triple("Children search", "the pop-up of an element's children", SearchDomain.WindowSize(760, 480)),
+    )
+
+    /** A Search window's size where its own context sets none: the code's ([SEARCH_WINDOW]'s default). */
+    val SEARCH_WINDOW_SIZE: SearchDomain.WindowSize = SearchDomain.WindowSize(1040, 600)
+
+    /** A window opened under a name no context has: what it opens at (`ContextCatalogTest` keeps it unused). */
+    private val UNKNOWN_FRAME_SIZE: SearchDomain.WindowSize = SearchDomain.WindowSize(480, 480)
+
+    /** The context of the window opened under [name] ([FRAMES]). */
+    fun frameContextId(name: String): String = FRAME_PREFIX + name
+
     /** Every context, in the order the action lists them. */
     val CONTEXTS: List<SearchContext> by lazy {
         listOf(SearchContext(SEARCH_WINDOW, "default of a Search window", SearchDomain.Config())) +
@@ -184,7 +236,8 @@ object ContextDomain {
                 SearchContext("integers", "default of a list of integers", SearchDomain.INTEGER_SEARCH),
             ) +
             DROP_DOWNS.map { (name, what) -> SearchContext(DROP_DOWN_PREFIX + name, "default of the drop-down of $what", SearchDomain.OPTION_SEARCH) } +
-            SearchDomain.WINDOW_CONTEXTS.map { (id, title, config) -> SearchContext(id, title, config) }
+            SearchDomain.WINDOW_CONTEXTS.map { (id, title, config) -> SearchContext(id, title, config) } +
+            FRAMES.map { (name, what, size) -> SearchContext(frameContextId(name), "default of $what", SearchDomain.Config(size = size)) }
     }
 
     private val byId: Map<String, SearchContext> by lazy { CONTEXTS.associateBy { it.id } }
@@ -236,6 +289,42 @@ object ContextDomain {
     }
 
     fun configOf(state: SchedulerState, id: String): SearchDomain.Config = configOf(state.contextDefaults, id)
+
+    /**
+     * User rule 2026-11-27: **the size a window of the context [id] opens at** - the one funnel every window and sized
+     * pop-up reads (`AppWindowFrame`, `contextSize`): the account's value of the context where it set one, else the
+     * code's; a Search window's context setting none takes a Search window's ([SEARCH_WINDOW]). The size the user gave
+     * a window on a device (`WindowPlacement`) stands over this one; this is where a window starts and what Reset gives.
+     */
+    fun sizeOf(defaults: List<ContextDefault>, id: String): SearchDomain.WindowSize =
+        configOf(defaults, id).size
+            // A row stored with no size (an older build's, or one cleared): the code's size of the context.
+            ?: context(id)?.default?.size
+            ?: UNKNOWN_FRAME_SIZE.takeIf { id.startsWith(FRAME_PREFIX) }
+            ?: configOf(defaults, SEARCH_WINDOW).size
+            ?: SEARCH_WINDOW_SIZE
+
+    /**
+     * **[size] in the room the app gives the window**, in dp: each side its own, cut to its share of the room (an unknown
+     * room - not laid out yet, or unbounded - cuts nothing), never under [minDp]. What a window opens at.
+     */
+    fun fitted(size: SearchDomain.WindowSize, roomWidthDp: Float?, roomHeightDp: Float?, minDp: Float = 0f): Pair<Float, Float> {
+        fun side(dp: Int, room: Float?, percent: Int): Float {
+            val cap = room?.takeIf { it.isFinite() && it > 0f }?.let { it * percent / 100f } ?: Float.MAX_VALUE
+            return minOf(dp.toFloat(), cap).coerceAtLeast(minDp)
+        }
+        return side(size.widthDp, roomWidthDp, size.maxWidthPercent) to side(size.heightDp, roomHeightDp, size.maxHeightPercent)
+    }
+
+    /**
+     * User rule 2026-11-27, the head's "Use this size as the default here": **the defaults once the context [id] opens at
+     * [widthDp] x [heightDp]**, its shares of the room kept - one History Unit like any change of a context's default.
+     */
+    fun withSize(defaults: List<ContextDefault>, id: String, widthDp: Int, heightDp: Int): List<ContextDefault> {
+        val before = sizeOf(defaults, id)
+        val size = SearchDomain.WindowSize.of(widthDp, heightDp, before.maxWidthPercent, before.maxHeightPercent) ?: return defaults
+        return written(defaults, id, configOf(defaults, id).copy(size = size))
+    }
 
     /** One group of [groups]: whether [setting] is on in its [contexts]. */
     /** [value]: what the setting holds in these contexts where it is on ([SearchDomain.settingValue]) as text; null where none. */

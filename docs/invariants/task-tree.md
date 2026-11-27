@@ -1189,7 +1189,8 @@ suggestions before it was ever entered.
   define what row is shown in a window. What is built in code is the default values of context-values of search
   configuration elements."*). `ContextDomain.CONTEXTS` is the one catalog of the places that show rows — a Search window
   opened on nothing, each right-click menu by the name it is drawn under (`RIGHT_CLICK_MENUS`, `ContextCatalogTest`
-  finds every `ActionMenu` of the code there), a drop-down, a list of integers — each with the default configuration the
+  finds every `ActionMenu` of the code there), a drop-down, a list of integers, every window that is no Search window
+  (`FRAMES`, user rule 2026-11-27: its "Size", `popups.md`) — each with the default configuration the
   code gives it, the one place such defaults are built. A context is an element (`Kind.Context`). What the user changes
   of a default is synced (`contextDefaults`, `persistence.md`); a place opens with `ContextDomain.configOf`. An added
   search configuration's action **"State in each context"** groups the contexts by its state — on, then off; off

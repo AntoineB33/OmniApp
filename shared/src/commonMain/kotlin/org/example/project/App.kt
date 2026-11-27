@@ -4674,6 +4674,13 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         val patternExceptionDispatch = remember(vm) { { intent: SchedulerIntent -> vm.dispatch(intent) } }
         val appNowMillis = remember(clock) { { clock.nowMillis() } }
+        val contextSizeWriter = remember(vm) {
+            { id: String, widthDp: Int, heightDp: Int ->
+                val before = vm.state.value.contextDefaults
+                val after = org.example.project.scheduler.domain.ContextDomain.withSize(before, id, widthDp, heightDp)
+                if (after != before) vm.dispatch(SchedulerIntent.SetContextDefaults(after))
+            }
+        }
         CompositionLocalProvider(
             // What "Now" beside every time field reads ([org.example.project.ui.InstantButtons]): the app's clock.
             org.example.project.ui.LocalAppNowMillis provides appNowMillis,
@@ -4681,6 +4688,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             LocalTaskIdentityRow provides taskIdentityRow,
             // User rule 2026-11-25: what each menu and drop-down opens with ([org.example.project.scheduler.domain.ContextDomain]).
             org.example.project.ui.LocalContextDefaults provides schedulerState.contextDefaults,
+            // User rule 2026-11-27: a window's head writes its size as its context's.
+            org.example.project.ui.LocalContextSizeWriter provides contextSizeWriter,
             LocalPeriodRefusal provides periodRefusal,
             org.example.project.ui.LocalPeriodAtLine provides periodAtLine,
             org.example.project.ui.LocalCalendarElementDrag provides calendarElementDrag,

@@ -53,8 +53,6 @@ import org.example.project.scheduler.ui.cellEditModeOptions
 
 /** The rectangle's size, or the room there is. Wide enough for a Search section ([COMPACT_SECTION_MIN_WIDTH]). */
 // User rule 2026-11-16 (*"the pop-up windows are a little too wide"*): 560 until then.
-private val CELL_EDIT_POPUP_WIDTH = 480.dp
-private val CELL_EDIT_POPUP_HEIGHT = 440.dp
 
 /**
  * User rule 2026-11-02: where the rectangle of a cell in Edit Mode stands, all in the same coordinates: **below** the
@@ -223,6 +221,8 @@ internal fun CellEditPopupLayer(
     val frames = LocalWindowFrameHost.current
     val cellWindow = remember(cellId) { frames?.focusedId }
     var origin by remember { mutableStateOf(Offset.Zero) }
+    // User rule 2026-11-27: the size it opens at is its context's ([contextSize]).
+    val cellEditSize = contextSize("Cell edit")
 
     // Read once a session: the list's question does not change as the draft does, and it walks a sub-tree per task.
     // A row out of the tree changes no cell: every task is listed, to be looked through.
@@ -304,8 +304,7 @@ internal fun CellEditPopupLayer(
         },
         modifier = modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() },
     ) { measurables, constraints ->
-        val width = CELL_EDIT_POPUP_WIDTH.roundToPx().coerceAtMost(constraints.maxWidth)
-        val height = CELL_EDIT_POPUP_HEIGHT.roundToPx().coerceAtMost(constraints.maxHeight)
+        val (width, height) = fittedPx(cellEditSize, constraints.maxWidth, constraints.maxHeight)
         // Placed before it is measured: where it fits neither below nor above, it is as tall as the room it takes.
         val bounds = request.anchor()?.let {
             cellEditPopupBounds(it.translate(-origin), IntSize(width, height), IntSize(constraints.maxWidth, constraints.maxHeight))
@@ -592,6 +591,8 @@ private fun FieldSearchPopup(
     closeAbove: () -> Unit,
 ) {
     var origin by remember { mutableStateOf(Offset.Zero) }
+    // User rule 2026-11-27: the size it opens at is its context's ([contextSize]).
+    val fieldSize = contextSize("Field")
     var shownAt by remember { mutableStateOf<Rect?>(null) }
     // Its head dragged: it is its window already ([DetachedDrag]), and stays only to finish the drag, unseen.
     var drag by remember { mutableStateOf<DetachedDrag?>(null) }
@@ -649,8 +650,7 @@ private fun FieldSearchPopup(
         },
         modifier = modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() },
     ) { measurables, constraints ->
-        val width = CELL_EDIT_POPUP_WIDTH.roundToPx().coerceAtMost(constraints.maxWidth)
-        val height = CELL_EDIT_POPUP_HEIGHT.roundToPx().coerceAtMost(constraints.maxHeight)
+        val (width, height) = fittedPx(fieldSize, constraints.maxWidth, constraints.maxHeight)
         val bounds = request.anchor()?.let {
             fieldPopupBounds(
                 it.translate(-origin), request.list()?.translate(-origin), IntSize(width, height),

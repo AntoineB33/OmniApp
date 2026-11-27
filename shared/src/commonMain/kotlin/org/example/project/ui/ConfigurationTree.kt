@@ -385,8 +385,7 @@ internal fun ConfigurationTreeWindow(
         title = SearchDomain.windowTitle(own),
         state = frame,
         onClose = onDismiss,
-        defaultWidth = TREE_ROOT_POPUP_WIDTH,
-        defaultHeight = 600.dp,
+        sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Configurations tree"),
         modifier = modifier,
         onRaise = onRaise,
         onGeometryChange = onGeometryChange,
@@ -809,7 +808,7 @@ private fun treeColumnWidth(nodes: List<SearchDomain.ConfigurationNode>) =
 private fun treePopupWidth(nodes: List<SearchDomain.ConfigurationNode>) = treeColumnWidth(nodes) + TREE_POPUP_PADDING * 2
 
 /** The root's pop-up: it holds every configuration, whatever its field has narrowed it to — it never changes width as one types. */
-private val TREE_ROOT_POPUP_WIDTH = TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 + SCROLLBAR_ROOM + TREE_POPUP_PADDING * 2
+internal val TREE_ROOT_POPUP_WIDTH = TREE_LEAF_CONTENT_WIDTH + TREE_COLUMN_PADDING * 2 + SCROLLBAR_ROOM + TREE_POPUP_PADDING * 2
 private val TREE_COLUMN_MAX_HEIGHT = 480.dp
 
 /**

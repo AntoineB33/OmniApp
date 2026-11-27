@@ -1995,8 +1995,7 @@ internal fun PriorityWeightWindow(
             title = "Priority weights",
             state = rememberWindowFrameState(PRIORITY_WEIGHTS_FRAME_ID),
             onClose = onDismiss,
-            defaultWidth = 760.dp,
-            defaultHeight = 600.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Priority weights"),
             // Its rows ARE task cells (PRD §4), so it answers keystrokes itself and takes the keyboard off the
             // tree while it is the focused window.
             claimsKeyboard = true,
@@ -2176,8 +2175,7 @@ internal fun RelativePriorityWindow(
             title = "Relative priority of " + quoted(state.tasks[taskId]?.title.orEmpty()),
             state = rememberWindowFrameState(RELATIVE_PRIORITY_FRAME_ID),
             onClose = onDismiss,
-            defaultWidth = 520.dp,
-            defaultHeight = 420.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Relative priority"),
             claimsKeyboard = true,
             modifier = modifier,
             content = { content() },
@@ -3713,8 +3711,7 @@ internal fun TaskEditWindow(
             title = task.title.ifBlank { "Task" },
             state = frame,
             onClose = onDismiss,
-            defaultWidth = 360.dp,
-            defaultHeight = 620.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Task"),
             claimsKeyboard = true,
             modifier = Modifier.align(Alignment.Center),
         ) {
@@ -3915,8 +3912,7 @@ internal fun DeepCopyWindow(
             title = if (cellIds.size > 1) "Deep copy — ${cellIds.size} cells" else "Deep copy",
             state = frame,
             onClose = onDismiss,
-            defaultWidth = 420.dp,
-            defaultHeight = 380.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Deep copy"),
             claimsKeyboard = true,
             modifier = Modifier
                 .align(Alignment.Center)

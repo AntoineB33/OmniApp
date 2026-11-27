@@ -100,6 +100,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
+import org.example.project.scheduler.domain.ContextDomain
+import org.example.project.scheduler.domain.SearchDomain
 import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
 
@@ -1518,9 +1523,10 @@ private val RESIZE_CORNER_SIZE: Dp = 14.dp
  * owns everything else about the window's shape and position — **including where it sits in the stack**,
  * which it reads off [WindowFrameHost.zOf] so that no caller can pin a window above the order.
  *
- * [defaultWidth]/[defaultHeight] are the size the window opens at. Both are explicit — never "as tall as
- * the content" — because a window whose height is its content's cannot be given a *different* height by
- * dragging its bottom edge. [content] is laid out in a column below the head, so a scrolling list inside
+ * [sizeContext] is the context whose size the window opens at (user rule 2026-11-27, [ContextDomain.sizeOf]: a
+ * Search window's own context, else [ContextDomain.frameContextId] of its name), cut to the room the app gives it
+ * ([ContextDomain.fitted]). Both sides are explicit — never "as tall as the content" — because a window whose height
+ * is its content's cannot be given a *different* height by dragging its bottom edge. [content] is laid out in a column below the head, so a scrolling list inside
  * it takes `Modifier.weight(1f)` and follows the window's height instead of a `heightIn(max = …)` cap.
  */
 @Composable
@@ -1528,8 +1534,7 @@ fun AppWindowFrame(
     title: String,
     state: WindowFrameState,
     onClose: () -> Unit,
-    defaultWidth: Dp,
-    defaultHeight: Dp,
+    sizeContext: String,
     modifier: Modifier = Modifier,
     /** Raise this window in `App`'s stack — fired on a press anywhere inside it, as it always was. */
     onRaise: () -> Unit = {},
@@ -1631,8 +1636,9 @@ fun AppWindowFrame(
     // The head's measured height, for the clamp that keeps it reachable. Written from the layout phase and
     // read from another layout pass, so deliberately not Compose state — nothing should recompose on it.
     val headHeight = remember(state.id) { FloatArray(1) }
-    val widthDp = with(density) { state.size.width.takeIf { it > 0f }?.toDp() } ?: defaultWidth
-    val heightDp = with(density) { state.size.height.takeIf { it > 0f }?.toDp() } ?: defaultHeight
+    // User rule 2026-11-27: the size the window opens at is its context's, as the account has it — the one funnel.
+    val opensAt = ContextDomain.sizeOf(LocalContextDefaults.current, sizeContext)
+    val sizeWriter = LocalContextSizeWriter.current
     val commit = { onGeometryChange(state.offset, state.size) }
     commitRef[0] = commit
 
@@ -1645,10 +1651,9 @@ fun AppWindowFrame(
             // measured into nothing and never placed, so it neither draws nor takes a press.
             .unplaced(state.minimized)
             .offset { IntOffset(state.appliedOffset.x.roundToInt(), state.appliedOffset.y.roundToInt()) }
-            // requiredWidth/Height (not width/height) so a window keeps its own size instead of adapting to
-            // the content area when that is narrower than it; a FILLED axis is exactly the opposite request.
-            .then(if (state.fill.fillsWidth) Modifier.fillMaxWidth() else Modifier.requiredWidth(widthDp))
-            .then(if (state.fill.fillsHeight) Modifier.fillMaxHeight() else Modifier.requiredHeight(heightDp))
+            // Its own size, not the content area's where that is narrower ([frameSized]); a FILLED axis is exactly
+            // the opposite request.
+            .frameSized(state, opensAt)
             // THE CALLER'S MODIFIER GOES INSIDE THE OFFSET AND THE SIZE, never around them. `offset`
             // reports its child's size *at its own position* and merely places the child elsewhere, so
             // anything hung outside it keeps the bounds the window would have had undragged: a hit region
@@ -1710,8 +1715,15 @@ fun AppWindowFrame(
                     onRename = { name -> host?.rename(state.id, name, title) },
                     inMenu = menuButtons?.has?.invoke(state.id) == true,
                     onRemoveFromMenu = { menuButtons?.remove?.invoke(state.id) },
-                    headMenu = headMenu,
-                    actions = frameHeadActions(state, commit, with(density) { Size(defaultWidth.toPx(), defaultHeight.toPx()) }),
+                    // User rule 2026-11-27: the window's size, written as its context's ([ContextDomain.withSize]).
+                    headMenu = headMenu + listOfNotNull(
+                        sizeWriter?.let { use ->
+                            HeadMenuEntry(ContextDomain.USE_SIZE_ENTRY, enabled = state.size.width > 0f && state.size.height > 0f) {
+                                with(density) { use(sizeContext, state.size.width.toDp().value.roundToInt(), state.size.height.toDp().value.roundToInt()) }
+                            }
+                        },
+                    ),
+                    actions = frameHeadActions(state, commit) { opensAtPx(state, opensAt, density) },
                     // The window's own colour; a frame outside any host (a preview) keeps the theme's.
                     color = host?.colors?.get(state.id)?.let(::windowColor) ?: MaterialTheme.colorScheme.surfaceVariant,
                     obstacle = headObstacle,
@@ -1974,13 +1986,13 @@ internal interface HeadActions {
 }
 
 /** A window frame's head: [state] moved, filled, reduced, maximized; [onCommit] keeps the geometry. */
-private fun frameHeadActions(state: WindowFrameState, onCommit: () -> Unit, defaultSizePx: Size): HeadActions =
+private fun frameHeadActions(state: WindowFrameState, onCommit: () -> Unit, defaultSizePx: () -> Size): HeadActions =
     object : HeadActions {
         override val fillsWidth get() = state.fill.fillsWidth
         override val fillsHeight get() = state.fill.fillsHeight
         override val maximized get() = state.maximized
         // A maximized window comes back to its normal size under the pointer, then follows it.
-        override fun dragStart(pointer: Offset, headWidth: Float) = state.unmaximizeUnder(pointer, headWidth, defaultSizePx)
+        override fun dragStart(pointer: Offset, headWidth: Float) = state.unmaximizeUnder(pointer, headWidth, defaultSizePx())
         override fun drag(delta: Offset) = state.moveBy(delta)
         override fun dragEnd() = onCommit()
         override fun toggleFillWidth() {
@@ -2299,6 +2311,57 @@ private fun Modifier.windowHeadGestures(
 }
 
 /** Publishes the card's measured size to the state, so the resize edges have numbers to work from. */
+/**
+ * User rule 2026-11-27: **how the head's "Use this size as the default here" writes a window's size as its context's** —
+ * the context, the width and the height in dp ([ContextDomain.withSize]). Null where nothing can be written (a preview, a
+ * test): the entry is not offered. Provided by `App`; what a size is read from is [LocalContextDefaults].
+ */
+val LocalContextSizeWriter = compositionLocalOf<((contextId: String, widthDp: Int, heightDp: Int) -> Unit)?> { null }
+
+/**
+ * User rule 2026-11-27: **the size a pop-up of the window [name] opens at** ([ContextDomain.FRAMES]) — the one funnel
+ * ([ContextDomain.sizeOf]) a pop-up of a fixed size reads, as a window's frame reads it. Laid out with [fittedPx].
+ */
+@Composable
+internal fun contextSize(name: String): SearchDomain.WindowSize =
+    ContextDomain.sizeOf(LocalContextDefaults.current, ContextDomain.frameContextId(name))
+
+/** [size] in px within [maxWidth] × [maxHeight] ([ContextDomain.fitted]), never more than they are. */
+internal fun Density.fittedPx(size: SearchDomain.WindowSize, maxWidth: Int, maxHeight: Int): IntSize {
+    val room = { max: Int -> if (max == Constraints.Infinity) null else max.toDp().value }
+    val (w, h) = ContextDomain.fitted(size, room(maxWidth), room(maxHeight))
+    return IntSize(w.dp.roundToPx().coerceAtMost(maxWidth), h.dp.roundToPx().coerceAtMost(maxHeight))
+}
+
+/** The size [opensAt] gives the window in its container as last laid out ([WindowFrameState.parentInWindow]), in px. */
+private fun opensAtPx(state: WindowFrameState, opensAt: SearchDomain.WindowSize, density: Density): Size =
+    with(density) {
+        val room = state.parentInWindow
+        val (w, h) = ContextDomain.fitted(opensAt, room?.width?.toDp()?.value, room?.height?.toDp()?.value)
+        Size(w.dp.toPx().coerceAtLeast(state.minWidth), h.dp.toPx().coerceAtLeast(state.minHeight))
+    }
+
+/**
+ * **The window's size on each axis**: the container's on a filled axis; the size it has ([WindowFrameState.size]); and,
+ * before its first layout gave it one, its context's ([ContextDomain.fitted] in the room it is laid out in — user rule
+ * 2026-11-27, the room's own size where it is smaller), never under the frame's least. A side larger than the container
+ * stays its own (the window is not squeezed into the content area), centred as `requiredWidth` would centre it.
+ */
+private fun Modifier.frameSized(state: WindowFrameState, opensAt: SearchDomain.WindowSize): Modifier =
+    layout { measurable, constraints ->
+        val room = { max: Int -> if (max == Constraints.Infinity) null else max.toDp().value }
+        val (fitW, fitH) = ContextDomain.fitted(opensAt, room(constraints.maxWidth), room(constraints.maxHeight))
+        fun side(fills: Boolean, max: Int, has: Float, fit: Float, least: Float): Int = when {
+            fills && max != Constraints.Infinity -> max
+            has > 0f -> has.roundToInt()
+            else -> fit.dp.roundToPx().coerceAtLeast(least.roundToInt())
+        }
+        val w = side(state.fill.fillsWidth, constraints.maxWidth, state.size.width, fitW, state.minWidth)
+        val h = side(state.fill.fillsHeight, constraints.maxHeight, state.size.height, fitH, state.minHeight)
+        val placeable = measurable.measure(Constraints.fixed(w, h))
+        layout(w, h) { placeable.place(0, 0) }
+    }
+
 private fun Modifier.onWindowFrameMeasured(state: WindowFrameState): Modifier =
     layout { measurable, constraints ->
         val placeable = measurable.measure(constraints)

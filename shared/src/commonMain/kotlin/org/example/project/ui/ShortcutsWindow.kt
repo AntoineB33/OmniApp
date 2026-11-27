@@ -190,8 +190,7 @@ fun ShortcutsWindow(
         title = "Keyboard shortcuts",
         state = frame,
         onClose = onDismiss,
-        defaultWidth = 470.dp,
-        defaultHeight = 620.dp,
+        sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Keyboard shortcuts"),
         // Focusable ONLY while a row is listening for a chord: the window is an overlay over the tree, and
         // a node that could hold the keyboard the rest of the time would swallow the tree's own typing.
         modifier = modifier.then(captureModifier),

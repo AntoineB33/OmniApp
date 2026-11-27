@@ -129,8 +129,7 @@ fun CalendarElementsWindow(
             title = mode.title + " at " + formatHm(atMillis, tz),
             state = frame,
             onClose = onDismiss,
-            defaultWidth = 400.dp,
-            defaultHeight = 640.dp,
+            sizeContext = org.example.project.scheduler.domain.ContextDomain.frameContextId("Calendar elements"),
             claimsKeyboard = true,
             modifier = Modifier.align(Alignment.Center),
         ) {

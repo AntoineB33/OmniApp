@@ -346,6 +346,13 @@ means.
 - **Every window has an explicit default width AND height**, and its content sits in a `weight(1f)` slot.
   Never `heightIn(max = …)` + wrap: a window whose height is its content's cannot be given a different one
   by dragging its bottom edge, which is the whole point of the edge.
+- **That default is its CONTEXT's size, read through one funnel** (user rule 2026-11-27; `ContextDomain.sizeOf`,
+  `fitted`, `AppWindowFrame`'s `sizeContext`, `frameSized`, `contextSize`). A window that is no Search window, and a
+  pop-up of a fixed size, opens under a name of `ContextDomain.FRAMES` (`ContextCatalogTest` finds every one); a Search
+  window under its own context, else a Search window's. The size is in dp, each side cut to its share of the room the
+  app gives it (the whole room by default), never under the frame's least. **Never write a size at a call site**: it
+  could not be seen or set as the context's ("Size", synced). What the user gives a window by resizing it stays
+  local to the device and stands over the context's; the head's "Use this size as the default here" writes it there.
 
 ### Menus on the frame
 

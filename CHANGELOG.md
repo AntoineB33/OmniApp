@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A window opens at its context's size — 2026-11-27
+
+- User: *"For a context element, there should be a width and height values, right? Or maybe other values to get the
+  perfect size of the window for this context when there is not enough room or whatever."* New search configuration
+  **"Size"** (`Config.size`, `SearchDomain.WindowSize`): a width and a height in dp, and the share of the room each may
+  take at most (100% by default: the room's own size where it is smaller). Every window that is no Search window, and
+  the three fixed-size pop-ups (a task cell's edit, a field's window, an element's children), is a context of its own
+  (`ContextDomain.FRAMES`, 26 entries), its old hard-coded size now that context's code default. `AppWindowFrame` takes a
+  `sizeContext` instead of `defaultWidth` / `defaultHeight`; every window and sized pop-up reads `ContextDomain.sizeOf`
+  (a Search window: its own context's size, else a Search window's, else 1040 × 600) and `fitted` — the one funnel.
+- The size the user gives a window stays local to the device (`WindowPlacement`, unchanged) and wins; the context's size
+  is where a window starts and what Reset gives. The head's new entry **"Use this size as the default here"** writes the
+  window's current size as its context's (synced, one History Unit, the shares kept). A menu whose head entries the
+  account already reordered does not list it until it is added there.
+- Not done: sizing to the content. Windows' lists are lazy and fill their window (`weight(1f)`), so they have no size of
+  their own to measure, and `popups.md` already forbids a window whose height is its content's; menus already fit theirs.
+- Persisted shape: four optional fields on a stored configuration (`sizeWidthDp`, `sizeHeightDp`, `sizeMaxWidthPercent`,
+  `sizeMaxHeightPercent`); absent = no size, out of range healed on decode (`ContextSizeTest`). No migration.
+
 ### An opened pop-up never moves — 2026-11-27
 
 - Anomaly: *"in down arrow > types > types field > I click on one check box and the window moves. The window must not

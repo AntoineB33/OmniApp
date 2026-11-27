@@ -167,6 +167,9 @@ internal fun SettingEditor(
             EntriesEditor(config.entries) { onChange(config.copy(entries = it)) }
         SearchDomain.Setting.RightClickChecksAlone ->
             CompactSwitch(checked = config.rightClickChecksAlone, onCheckedChange = { onChange(config.copy(rightClickChecksAlone = it)) })
+        // User rule 2026-11-27: the size a window of the context opens at.
+        SearchDomain.Setting.Size ->
+            SizeEditor(config.size) { onChange(config.copy(size = it)) }
         SearchDomain.Setting.Separators ->
             CompactSwitch(checked = config.separators, onCheckedChange = { onChange(config.copy(separators = it)) })
         SearchDomain.Setting.ButtonFollowsExpansion ->
@@ -910,6 +913,51 @@ private fun CalendarInstantField(millis: Long?, onChange: (Long) -> Unit) {
         )
     }
 }
+
+/**
+ * User rule 2026-11-27: **the size a window opens at** ([SearchDomain.WindowSize]) — two fields on one row, as every
+ * configuration's control is one row (`SettingRowHeightTest`): the width and the height in dp ("440 x 560"), and the
+ * share of the room each may take at most ("100 x 100", in %). What does not read as two numbers in range is not
+ * written; the cross clears the size back to the code's.
+ */
+@Composable
+private fun SizeEditor(size: SearchDomain.WindowSize?, onChange: (SearchDomain.WindowSize?) -> Unit) {
+    val shown = size ?: SearchDomain.WindowSize(480, 480)
+    @Composable
+    fun Pair(hint: String, first: Int, second: Int, range: IntRange, write: (Int, Int) -> SearchDomain.WindowSize) {
+        fun parse(text: String): kotlin.Pair<Int, Int>? =
+            SIZE_PAIR.matchEntire(text.trim())?.destructured?.let { (a, b) -> a.toInt() to b.toInt() }
+                ?.takeIf { (a, b) -> a in range && b in range }
+        var draft by remember(first, second) { mutableStateOf("$first x $second") }
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { typed ->
+                draft = typed
+                parse(typed)?.let { (a, b) -> onChange(write(a, b)) }
+            },
+            singleLine = true,
+            isError = parse(draft) == null,
+            placeholder = { Text(hint) },
+            modifier = Modifier.width(SETTING_SIZE_FIELD_WIDTH),
+        )
+    }
+    InfoHint("The width x the height, in dp; then the share of the room each may take at most, in %.") {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            val sides = SearchDomain.WindowSize.MIN_DP..SearchDomain.WindowSize.MAX_DP
+            Pair("width x height", shown.widthDp, shown.heightDp, sides) { w, h -> shown.copy(widthDp = w, heightDp = h) }
+            Pair("max % x %", shown.maxWidthPercent, shown.maxHeightPercent, 1..100) { w, h ->
+                shown.copy(maxWidthPercent = w, maxHeightPercent = h)
+            }
+            if (size != null) ClearMark { onChange(null) }
+        }
+    }
+}
+
+/** Two whole numbers, by "x", "×" or "*". */
+private val SIZE_PAIR = Regex("""(\d{1,5})\s*[xX×*]\s*(\d{1,5})""")
+
+/** How wide one field of [SizeEditor] is: "10000 x 10000". */
+private val SETTING_SIZE_FIELD_WIDTH = 104.dp
 
 /** The alarm's "Rings on" filter: no day ticked = any day; else it rings on at least one ticked day. */
 @Composable
