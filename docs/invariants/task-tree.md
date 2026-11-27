@@ -1196,6 +1196,16 @@ suggestions before it was ever entered.
   everywhere is one group — each group a **context row**, opening a Search window whose added elements are those
   contexts (`contextsSearchConfig`), and a **state row**, "on"/"off" and the configuration's own control, a change made
   in every context of the group (`ContextDomain.withChange`, field by field), one History Unit.
+- **Every window opens in a context, with that context's defaults** (user rule 2026-11-27, *"When a window opens, every
+  search configuration element for this window gets the corresponding value by default."*). Every window and field the
+  code opens is one of `SearchDomain.WINDOW_CONTEXTS` (History, calendar "add…"/"edit…", notifications, list of parents,
+  the ▾ tree, an element's own window…), saying it in `Config.context`. Its builder starts from that context's code
+  default (`contextDefault`) and adds only what the opening says (an instant, elements, a pinned row) — never a
+  configuration typed out beside it. **`ContextDomain.opened` is the one funnel**: it puts the account's default of the
+  context under what the opening says, field by field — at `openWindowOnItsPage` (a Search window), `rememberInsideConfig`
+  (a field's window), the ▾ and the Edit Mode picker. Each drop-down named in the code is a context of its own
+  (`DROP_DOWNS`, `ContextCatalogTest`) inheriting "default of a drop-down" as the account has it (`parentOf`), what it
+  changes laid over that. Known limit: a named drop-down set back to the code's value of a field follows its parent's.
 - **Every element says what each press on its row does, in each context** (user rule 2026-11-26, *"each element has in
   the action section the behavior of when [it] is clicked, when it is double-clicked etc…"*): the action **"Clicks and
   keys"** (`AddedAction.ElementPresses`, offered for any added row) groups the contexts by what click, click on the

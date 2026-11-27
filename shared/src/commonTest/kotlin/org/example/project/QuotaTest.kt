@@ -555,7 +555,7 @@ class QuotaTest {
         )
         // What it opens: that kind alone, nothing filtered, nothing added — so every quota is listed.
         val config = SearchDomain.kindSearchConfig(SearchDomain.Kind.Quota)
-        assertEquals(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Quota)), config)
+        assertEquals(SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Quota), context = SearchDomain.KIND_CONTEXT), config)
         // …and its creation row, which is of the kind too (user rule 2026-10-30).
         assertEquals(listOf("quota-0", SearchDomain.Kind.Quota.name), SearchDomain.results(s, config.kinds, config.query).map { (it as SearchDomain.ItemResult).id })
     }

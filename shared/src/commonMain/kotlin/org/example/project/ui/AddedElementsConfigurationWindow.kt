@@ -646,7 +646,7 @@ internal fun keptOfSection(own: SearchDomain.Config, next: SearchDomain.Config):
  * ([SearchDomain.Kind.Action]); the rest of its configuration is the window's it stands in.
  */
 internal val ACTIONS_SECTION_OWN: SearchDomain.Config by lazy {
-    SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Action), pageTypesOnly = false)
+    SearchDomain.contextDefault(SearchDomain.ACTIONS_SECTION_CONTEXT)
 }
 
 /**

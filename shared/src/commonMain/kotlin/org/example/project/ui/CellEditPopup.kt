@@ -134,7 +134,17 @@ internal class CellEditPopupHost {
      * (the cell's draft, [withDraft]) — set through the configurations arrow after the cell's cross, and kept from one
      * Edit Mode to the next for this run of the app, like a Search window's own. Its default lists the tasks by title.
      */
-    var searchConfig: SearchDomain.Config by mutableStateOf(DEFAULT_SEARCH)
+    var searchConfig: SearchDomain.Config
+        get() = chosen ?: opened
+        set(value) { chosen = value }
+    private var chosen: SearchDomain.Config? by mutableStateOf(null)
+
+    /** The account's context defaults (`App` keeps them current): what the Edit Mode's window opens with until changed. */
+    var contextDefaults: List<org.example.project.scheduler.domain.ContextDefault> by mutableStateOf(emptyList())
+
+    /** User rule 2026-11-27: its context's default as the account has it ([org.example.project.scheduler.domain.ContextDomain.opened]). */
+    val opened: SearchDomain.Config
+        get() = org.example.project.scheduler.domain.ContextDomain.opened(contextDefaults, DEFAULT_SEARCH)
 
     /**
      * User rule 2026-11-11: what that Search window shows of itself, kept from one Edit Mode to the next as its
@@ -152,14 +162,7 @@ internal class CellEditPopupHost {
     }
 
     companion object {
-        val DEFAULT_SEARCH: SearchDomain.Config =
-            SearchDomain.Config(
-                kinds = setOf(SearchDomain.Kind.Task),
-                completion = SearchDomain.Completion.TaskTitles,
-                // User rule 2026-11-04: the tasks sorted by their title, the creation row before them ([SearchDomain.pickerRows]).
-                sorts = SearchDomain.PICKER_SORTS,
-                sortFollowsDefault = false,
-            )
+        val DEFAULT_SEARCH: SearchDomain.Config get() = SearchDomain.contextDefault(SearchDomain.TASK_PICKER_CONTEXT)
 
         /** The picker as it opens (user rule 2026-11-02): no head, no actions, no added elements — hidden, not retracted. */
         val PICKER_SPLITS: SearchSplits = SearchSplits(headerRemoved = true, actionsRemoved = true, addedRemoved = true)

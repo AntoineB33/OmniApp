@@ -1116,7 +1116,11 @@ internal fun RegisterEmbeddedSearch(
  * stands above it, by the composition, for as long as [opened] is the same.
  */
 @Composable
-internal fun rememberInsideConfig(id: String?, opened: SearchDomain.Config): androidx.compose.runtime.MutableState<SearchDomain.Config> {
+internal fun rememberInsideConfig(id: String?, built: SearchDomain.Config): androidx.compose.runtime.MutableState<SearchDomain.Config> {
+    // User rule 2026-11-27: a field's window opens with its context's defaults as the account has them, under what the
+    // field says ([org.example.project.scheduler.domain.ContextDomain.opened]) — the window's funnel, for a field.
+    val defaults = LocalContextDefaults.current
+    val opened = remember(built, defaults) { org.example.project.scheduler.domain.ContextDomain.opened(defaults, built) }
     val registry = LocalArrowSearches.current
     val root = LocalArrowRoot.current
     val local = remember(id, opened) { mutableStateOf(opened) }
@@ -1141,18 +1145,21 @@ internal fun rememberInsideConfig(id: String?, opened: SearchDomain.Config): and
 private fun rememberArrowSearch(id: String?, open: Boolean): androidx.compose.runtime.MutableState<SearchDomain.Config> {
     val registry = LocalArrowSearches.current
     val root = LocalArrowRoot.current
-    val local = remember { mutableStateOf(SearchDomain.CONFIGURATION_SEARCH) }
+    // User rule 2026-11-27: the ▾ opens with its context's default as the account has it.
+    val defaults = LocalContextDefaults.current
+    val opened = remember(defaults) { org.example.project.scheduler.domain.ContextDomain.opened(defaults, SearchDomain.CONFIGURATION_SEARCH) }
+    val local = remember(opened) { mutableStateOf(opened) }
     if (registry == null || id == null || root == null || !id.startsWith(root)) return local
     val relative = id.removePrefix(root)
     DisposableEffect(registry, id, open) {
         if (open) registry.open[id] = true
         onDispose { registry.open.remove(id) }
     }
-    return remember(registry, root, relative) {
+    return remember(registry, root, relative, opened) {
         object : androidx.compose.runtime.MutableState<SearchDomain.Config> {
             override var value: SearchDomain.Config
-                get() = registry.of(root, relative)
-                set(next) = registry.set(root, relative, next)
+                get() = registry.of(root, relative, opened)
+                set(next) = registry.set(root, relative, next, opened)
             override fun component1() = value
             override fun component2(): (SearchDomain.Config) -> Unit = { value = it }
         }

@@ -22,4 +22,20 @@ class ContextCatalogTest {
         assertEquals(catalog.size, ContextDomain.RIGHT_CLICK_MENUS.size, "no menu twice")
         assertEquals(ContextDomain.CONTEXTS.size, ContextDomain.CONTEXTS.map { it.id }.toSet().size, "every context's id is its own")
     }
+
+    /**
+     * User rule 2026-11-27: every drop-down named in the code is a context of its own ([ContextDomain.DROP_DOWNS]) — one
+     * missing opens with "default of a drop-down", and no configuration could be set for it alone.
+     */
+    @Test
+    fun every_named_drop_down_of_the_code_is_in_the_catalog() {
+        val sources = File("src/commonMain/kotlin").walkTopDown().filter { it.isFile && it.extension == "kt" }
+        val named = Regex("""(?:CheckBoxDropDown|ChoiceDropDown|OptionSearchMenu|KindsDropDown|ElementsDropDown|EnumPicker)\(\s*"([^"]+)"""")
+        val names = sources.flatMap { file -> named.findAll(file.readText()).map { it.groupValues[1] } }.toSet()
+        assertTrue(names.size >= 20, "the drop-downs are found: $names")
+        // A list of integers has its own context ("integers").
+        val catalog = ContextDomain.DROP_DOWNS.map { it.first }.toSet() + "ParentDistanceField"
+        assertEquals(emptySet(), names - catalog, "drop-downs missing from the catalog")
+        assertEquals(ContextDomain.DROP_DOWNS.size, ContextDomain.DROP_DOWNS.map { it.first }.toSet().size, "no drop-down twice")
+    }
 }

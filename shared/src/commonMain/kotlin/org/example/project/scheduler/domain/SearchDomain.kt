@@ -486,10 +486,134 @@ object SearchDomain {
      * 2026-10-18: **every search configuration off on every page** (user rule 2026-11-26, [clearedConfig]) — every kind of
      * the app, the default sorting; the page is only where the window stands.
      */
-    fun pageDefaultConfig(page: String): Config = clearedConfig(page)
+    fun pageDefaultConfig(page: String): Config = contextDefault(PAGE_SEARCH_CONTEXT).copy(page = page)
 
     /** The configuration a Search window of the Claude Code logs page opens with: every kind of the logs, newest first. */
-    fun claudeLogsConfig(): Config = Config(kinds = CLAUDE_KINDS.toSet(), page = CLAUDE_LOGS_PAGE, sorts = CLAUDE_SORTS, pageTypesOnly = true)
+    fun claudeLogsConfig(): Config = contextDefault(CLAUDE_LOGS_CONTEXT)
+
+    /**
+     * User rule 2026-11-27 (*"Make sure any list in the app is the result of search configuration elements set to off or
+     * on in each context … Only their default contexts-states pairs are built in"*): **the contexts a window or a field is
+     * opened in, each with the configuration the code gives it** — the one place those defaults are written. A builder
+     * below starts from its context's and adds only what the opening says (the instant, the elements, the period);
+     * [ContextDomain.opened] puts the account's own default under it when the window opens. Listed with the other
+     * contexts ([ContextDomain.CONTEXTS]).
+     */
+    val WINDOW_CONTEXTS: List<Triple<String, String, Config>> by lazy {
+        fun c(id: String, title: String, config: Config) = Triple(id, title, config.copy(context = id))
+        val notifications = Config(
+            kinds = setOf(Kind.Notification),
+            // The newest first: the one that has just fired is the one the window was opened for.
+            sorts = listOf(SortMethod(Kind.Notification, SortKey.NotificationDate, descending = true)),
+        )
+        listOf(
+            c(PAGE_SEARCH_CONTEXT, "default of a page's Search button", Config(kinds = Kind.entries.toSet())),
+            c(CLAUDE_LOGS_CONTEXT, "default of a Claude Code logs window", Config(kinds = CLAUDE_KINDS.toSet(), page = CLAUDE_LOGS_PAGE, sorts = CLAUDE_SORTS, pageTypesOnly = true)),
+            c(RESILIENCE_CONTEXT, "default of a period's resilience window", Config(kinds = setOf(Kind.Task), filters = Filters(taskSchedulable = Tri.Yes), actionQuery = RESILIENCE_ACTION_QUERY)),
+            c(ROOT_CONTEXT, "default of the root task's window", Config(
+                kinds = emptySet(),
+                filters = Filters(includedElements = setOf(taskKey(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK))),
+                buttonFollowsExpansion = true,
+            )),
+            c(MD_CONTEXT, "default of an md element's window", Config(kinds = emptySet())),
+            c(ELEMENT_CONTEXT, "default of an element's own window", Config()),
+            c(KIND_CONTEXT, "default of every element of a type", Config()),
+            c(NOTIFICATIONS_CONTEXT, "default of the notifications window", notifications),
+            c(CALENDAR_CONTEXT, "default of a calendar window", calendarWindowConfig(Config(kinds = setOf(Kind.Calendar)))),
+            c(WINDOW_TYPES_CONTEXT, "default of the window types", Config(kinds = setOf(Kind.Window), filters = Filters(windowDuplicates = WindowDuplicates.Hidden))),
+            c(PRESENCE_EVOLUTIONS_CONTEXT, "default of a task's presence evolutions field", evolutionsFieldDefault(EvolutionTarget.Presence)),
+            c(MINIMUM_EVOLUTIONS_CONTEXT, "default of a task's minimum evolutions field", evolutionsFieldDefault(EvolutionTarget.Minimum)),
+            c(CONTEXTS_CONTEXT, "default of a list of contexts", Config(kinds = setOf(Kind.Context))),
+            c(CONTEXT_FIELD_CONTEXT, "default of a pair's context field", Config(kinds = CONTEXT_KINDS)),
+            c(ADD_PARENT_CONTEXT, "default of \"add a parent\"", Config(kinds = setOf(Kind.Task), sorts = PICKER_SORTS, sortFollowsDefault = false)),
+            c(PARENTS_LIST_CONTEXT, "default of a list of parents", Config(dropButtons = true, kinds = ElementTree.PARENT_KINDS.toSet(), pageTypesOnly = false)),
+            c(CALENDAR_ADD_CONTEXT, "default of the calendar's \"add…\"", Config(
+                kinds = CALENDAR_ADD_KINDS,
+                filters = Filters(calendarAddOn = true),
+                // User rule 2026-10-11: what "add…" is for comes first among the actions.
+                actionSearch = CALENDAR_ADD_ACTION_SEARCH,
+            )),
+            c(CALENDAR_AT_CONTEXT, "default of the calendar's \"edit…\"", Config(
+                kinds = CALENDAR_AT_KINDS,
+                filters = Filters(calendarAtOn = true),
+                sorts = withCalendarBubbleSort(DEFAULT_SORTS),
+            )),
+            c(CONFIGURATION_TREE_CONTEXT, "default of the configurations tree (the down arrow)", Config(
+                kinds = setOf(Kind.SearchConfiguration),
+                sorts = TREE_ORDER_SORTS,
+                filters = Filters(searchChildren = true, childDistance = CHILD_DISTANCE_ANY),
+            )),
+            c(ADDED_LIST_CONTEXT, "default of an added elements section", Config(kinds = Kind.entries.toSet(), pageTypesOnly = false, dropButtons = true)),
+            c(ACTIONS_SECTION_CONTEXT, "default of an actions section", Config(kinds = setOf(Kind.Action), pageTypesOnly = false)),
+            c(HISTORY_CONTEXT, "default of the History window", Config(
+                kinds = setOf(Kind.HistoryUnit),
+                // Newest first, as the History window listed them (checked on the desktop 2026-11-26: by name otherwise).
+                sorts = listOf(SortMethod(Kind.HistoryUnit, SortKey.HistoryDate, descending = true)),
+                sortFollowsDefault = false,
+            )),
+            c(ALARMS_CONTEXT, "default of the Alarms window", Config(kinds = setOf(Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Reminder))),
+            c(TASK_RELATIONS_CONTEXT, "default of the Task relations window", Config(kinds = setOf(Kind.TaskRelation))),
+            c(CATEGORIES_CONTEXT, "default of the Categories window", Config(kinds = setOf(Kind.Category))),
+            c(SHORTCUTS_CONTEXT, "default of the Keyboard shortcuts window", Config(kinds = setOf(Kind.Shortcut))),
+            c(TASK_PICKER_CONTEXT, "default of a task cell's Edit Mode list", Config(
+                kinds = setOf(Kind.Task),
+                completion = Completion.TaskTitles,
+                // User rule 2026-11-04: the tasks sorted by their title, the creation row before them ([pickerRows]).
+                sorts = PICKER_SORTS,
+                sortFollowsDefault = false,
+            )),
+            c(PRESENCE_TASKS_CONTEXT, "default of a presence row's tasks field", Config(kinds = setOf(Kind.Task))),
+            c(PRESENCE_RELATIVE_CONTEXT, "default of a presence row's \"relative to\" field", Config(kinds = setOf(Kind.Task), sorts = PICKER_SORTS, sortFollowsDefault = false)),
+            c(PRESENCE_CATEGORIES_CONTEXT, "default of a presence row's categories field", Config(kinds = setOf(Kind.Category))),
+            c(LATERAL_MENU_CONTEXT, "default of the left-side menu", Config(kinds = setOf(Kind.Option), pageTypesOnly = false)),
+            c(BLOCKS_CONTEXT, "default of an element's blocks", Config(kinds = setOf(Kind.CalendarBlock), sorts = listOf(SortMethod(Kind.CalendarBlock, SortKey.BlockStart)))),
+        )
+    }
+
+    private val windowContextDefaults: Map<String, Config> by lazy { WINDOW_CONTEXTS.associate { it.first to it.third } }
+
+    /** The code's default of the window context [id] ([WINDOW_CONTEXTS]). */
+    fun contextDefault(id: String): Config = windowContextDefaults.getValue(id)
+
+    const val PAGE_SEARCH_CONTEXT: String = "page-search"
+    const val CLAUDE_LOGS_CONTEXT: String = "claude-logs"
+    const val RESILIENCE_CONTEXT: String = "resilience"
+    const val ROOT_CONTEXT: String = "root"
+    const val MD_CONTEXT: String = "md-element"
+    const val ELEMENT_CONTEXT: String = "element"
+    const val KIND_CONTEXT: String = "kind"
+    const val NOTIFICATIONS_CONTEXT: String = "notifications"
+    const val CALENDAR_CONTEXT: String = "calendar"
+    const val WINDOW_TYPES_CONTEXT: String = "window-types"
+    const val PRESENCE_EVOLUTIONS_CONTEXT: String = "presence-evolutions"
+    const val MINIMUM_EVOLUTIONS_CONTEXT: String = "minimum-evolutions"
+    const val CONTEXTS_CONTEXT: String = "contexts"
+    const val CONTEXT_FIELD_CONTEXT: String = "context-field"
+    const val ADD_PARENT_CONTEXT: String = "add-parent"
+    const val PARENTS_LIST_CONTEXT: String = "parents-list"
+    const val CALENDAR_ADD_CONTEXT: String = "calendar-add"
+    const val CALENDAR_AT_CONTEXT: String = "calendar-at"
+    const val BLOCKS_CONTEXT: String = "blocks"
+    const val HISTORY_CONTEXT: String = "history"
+    const val LATERAL_MENU_CONTEXT: String = "lateral-menu"
+    const val ALARMS_CONTEXT: String = "alarms"
+    const val TASK_RELATIONS_CONTEXT: String = "task-relations"
+    const val CATEGORIES_CONTEXT: String = "categories"
+    const val SHORTCUTS_CONTEXT: String = "shortcuts"
+    const val TASK_PICKER_CONTEXT: String = "task-picker"
+    const val PRESENCE_TASKS_CONTEXT: String = "presence-tasks"
+    const val PRESENCE_RELATIVE_CONTEXT: String = "presence-relative"
+    const val PRESENCE_CATEGORIES_CONTEXT: String = "presence-categories"
+
+    /**
+     * **An element's own window with one of its rows pinned** ([ELEMENT_CONTEXT]): [keys] added, their kinds listed, the
+     * row [pinned] in view — a deep copy, a task's weights, a period's schedule, an element's blocks.
+     */
+    fun pinnedElementConfig(keys: List<String>, kinds: Set<Kind>, pinned: String?, pickedBlocks: Set<String> = emptySet()): Config =
+        contextDefault(ELEMENT_CONTEXT).copy(kinds = kinds, added = keys, pinnedActionRow = pinned, pickedBlocks = pickedBlocks)
+    const val CONFIGURATION_TREE_CONTEXT: String = "configurations-tree"
+    const val ADDED_LIST_CONTEXT: String = "added-list"
+    const val ACTIONS_SECTION_CONTEXT: String = "actions-section"
 
     /**
      * The logs' entries newest first, whatever their kind: a log is read back from its end. ONE method (user rule
@@ -524,12 +648,7 @@ object SearchDomain {
      * reads), its actions filtered down to the resilience one, whose period field is set to [periodKind].
      */
     fun resilienceSearchConfig(periodKind: String): Config =
-        Config(
-            kinds = setOf(Kind.Task),
-            filters = Filters(taskSchedulable = Tri.Yes),
-            actionQuery = RESILIENCE_ACTION_QUERY,
-            resiliencePeriod = periodKind,
-        )
+        contextDefault(RESILIENCE_CONTEXT).copy(resiliencePeriod = periodKind)
 
     /**
      * **An element's own window** (user rule 2026-10-01): the Search window of [kind] holding the element [id] alone in
@@ -540,12 +659,7 @@ object SearchDomain {
      * default "Root" button. No type checked, the root included, the button following its open rows
      * ([Config.buttonFollowsExpansion]).
      */
-    fun rootSearchConfig(): Config =
-        Config(
-            kinds = emptySet(),
-            filters = Filters(includedElements = setOf(taskKey(org.example.project.scheduler.model.WellKnownIds.ROOT_TASK))),
-            buttonFollowsExpansion = true,
-        )
+    fun rootSearchConfig(): Config = contextDefault(ROOT_CONTEXT)
 
     /**
      * User rule 2026-11-20: the Search window of ONE md element ([MdDomain.LIFE_CONTEXT_ID] for the menu's default), listed
@@ -553,7 +667,8 @@ object SearchDomain {
      */
     fun mdSearchConfig(id: String): Config {
         val key = Kind.Md.name + "/" + id
-        return Config(kinds = emptySet(), filters = Filters(includedElements = setOf(key)), added = listOf(key))
+        val base = contextDefault(MD_CONTEXT)
+        return base.copy(filters = base.filters.copy(includedElements = base.filters.includedElements + key), added = base.added + key)
     }
 
     /** The md element a Search configuration shows alone ([mdSearchConfig]), or null. */
@@ -562,13 +677,13 @@ object SearchDomain {
             ?.substringAfter('/')
 
     fun elementSearchConfig(kind: Kind, id: String): Config =
-        Config(kinds = setOf(kind), added = listOf(kind.name + "/" + id))
+        contextDefault(ELEMENT_CONTEXT).copy(kinds = setOf(kind), added = listOf(kind.name + "/" + id))
 
     /**
      * **Every element of a kind** (user rule 2026-10-04): the Search window listing [kind] alone, nothing filtered and
      * nothing added — what a creation row's "Search every element of the kind" opens ([AddedAction.CreationSearchAll]).
      */
-    fun kindSearchConfig(kind: Kind): Config = Config(kinds = setOf(kind))
+    fun kindSearchConfig(kind: Kind): Config = contextDefault(KIND_CONTEXT).copy(kinds = setOf(kind))
 
     /**
      * **The notifications window** (user rule 2026-10-04): the Search window the app opens when a notification —
@@ -577,12 +692,7 @@ object SearchDomain {
      * stays, and goes on gathering, until the user closes it; the next one starts at the next loss of focus.
      */
     fun notificationsConfig(sinceMillis: Long): Config =
-        Config(
-            kinds = setOf(Kind.Notification),
-            filters = Filters(notificationsSinceMillis = sinceMillis),
-            // The newest first: the one that has just fired is the one the window was opened for.
-            sorts = listOf(SortMethod(Kind.Notification, SortKey.NotificationDate, descending = true)),
-        )
+        contextDefault(NOTIFICATIONS_CONTEXT).let { it.copy(filters = it.filters.copy(notificationsSinceMillis = sinceMillis)) }
 
     /**
      * A [Kind.Notification] row's id: the instant it was posted at and its place among the notifications posted at
@@ -693,12 +803,13 @@ object SearchDomain {
      * lists ([notificationKeysSince], user rule 2026-10-13). Only such a window goes on gathering — once the user has
      * changed its search or added something else, the next notification out of focus opens a new one beside it.
      */
-    fun isUntouchedNotificationsWindow(config: Config): Boolean {
+    fun isUntouchedNotificationsWindow(config: Config, defaults: List<ContextDefault> = emptyList()): Boolean {
         val since = config.filters.notificationsSinceMillis ?: return false
         // What the app writes itself (the calendar's view of the notifications) and what the hand opens or picks in the
         // actions section are no change of the window's search; an element added beside the calendar is.
         val search = config.copy(added = emptyList(), calendarView = "", calendarDay = null, calendarDayMode = null, toggledActionRows = emptySet(), pinnedActionRow = null, pinOpenedRows = emptySet())
-        return search == notificationsConfig(since) && config.added.all { it == CALENDAR_KEY }
+        // As it opened: its context's default as the account has it ([ContextDomain.opened]).
+        return search == ContextDomain.opened(defaults, notificationsConfig(since)) && config.added.all { it == CALENDAR_KEY }
     }
 
     /**
@@ -813,7 +924,7 @@ object SearchDomain {
      * ([Config.page]): a window reset stays on the page it is on.
      */
     fun resetConfig(current: Config, opened: Config?): Config =
-        if (opened != null && current != opened) opened else clearedConfig(current.page)
+        if (opened != null && current != opened) opened else clearedConfig(current.page).copy(context = current.context)
 
     /**
      * [config] for a Search window opened from the Search window [sourceId] holding [source] (user rule 2026-10-18):
@@ -826,7 +937,7 @@ object SearchDomain {
 
     /** The Search configuration a [Kind.Window] creation row opens: every window TYPE, once. */
     val WINDOW_TYPES_CONFIG: Config
-        get() = Config(kinds = setOf(Kind.Window), filters = Filters(windowDuplicates = WindowDuplicates.Hidden))
+        get() = contextDefault(WINDOW_TYPES_CONTEXT)
 
     /**
      * Whether the window rows list every window (every copy, every per-object window) or ONE row per window TYPE
@@ -1109,6 +1220,11 @@ object SearchDomain {
          */
         val page: String = "",
         /**
+         * User rule 2026-11-27: **the context the window was opened in** ([ContextDomain.CONTEXTS], [WINDOW_CONTEXTS]) —
+         * what its search configurations' defaults are read from when it opens ([ContextDomain.opened]). Null: none.
+         */
+        val context: String? = null,
+        /**
          * The Search window this one was opened from, by frame id (user rule 2026-10-18: *"the window that opens must be
          * linked to the previous Search window"*) — a row opened, an action's "New", "Search every element of the kind"…
          * Its tab stands beside that window's and it closes with it; null for a window opened from anywhere else.
@@ -1260,6 +1376,7 @@ object SearchDomain {
                     placeStatedOverMillis = placement.lengthOverMillis,
                     placeEndMillis = placement.endMillis,
                     page = page,
+                    context = context,
                     openedFrom = openedFrom,
                     elementSource = elementSource,
                     inside = inside,
@@ -1403,6 +1520,7 @@ object SearchDomain {
                         endMillis = stored.placeEndMillis,
                     ),
                     page = stored.page,
+                    context = stored.context,
                     openedFrom = stored.openedFrom,
                     elementSource = stored.elementSource,
                     // The ▾ tree has no "General" node since 2026-11-14: what its pop-up kept names no window any more.
@@ -2590,10 +2708,15 @@ object SearchDomain {
      * (anomaly 2026-11-20: an order no configuration said was "a fundamental issue").
      */
     fun evolutionsFieldConfig(taskIds: Collection<TaskId>, target: EvolutionTarget = EvolutionTarget.Presence): Config {
+        val base = contextDefault(if (target == EvolutionTarget.Minimum) MINIMUM_EVOLUTIONS_CONTEXT else PRESENCE_EVOLUTIONS_CONTEXT)
+        return base.copy(filters = base.filters.copy(involvementOf = taskIds.mapTo(LinkedHashSet(), ::taskKey)))
+    }
+
+    /** What [evolutionsFieldConfig] holds whatever the tasks: its context's default ([WINDOW_CONTEXTS]). */
+    private fun evolutionsFieldDefault(target: EvolutionTarget): Config {
         val kind = evolutionKindOf(target)
         return Config(
             kinds = setOf(kind),
-            filters = Filters(involvementOf = taskIds.mapTo(LinkedHashSet(), ::taskKey)),
             sorts = listOf(SortMethod(kind, if (target == EvolutionTarget.Minimum) SortKey.MinimumInvolvement else SortKey.EvolutionInvolvement)),
             sortFollowsDefault = false,
         )
@@ -3278,13 +3401,7 @@ object SearchDomain {
      * ([TREE_ORDER_SORTS]), its bar reading their names and their children's at any depth — so a category is found by what
      * it holds ([CHILD_DISTANCE_ANY]).
      */
-    val CONFIGURATION_SEARCH: Config by lazy {
-        Config(
-            kinds = setOf(Kind.SearchConfiguration),
-            sorts = TREE_ORDER_SORTS,
-            filters = Filters(searchChildren = true, childDistance = CHILD_DISTANCE_ANY),
-        )
-    }
+    val CONFIGURATION_SEARCH: Config by lazy { contextDefault(CONFIGURATION_TREE_CONTEXT) }
 
     /** [next], what [previous] became by a change of [settings] at [nowMillis]: their change times written ([Config.settingsChangedAt]). */
     fun withChanged(previous: Config, next: Config, settings: Collection<Setting>, nowMillis: Long): Config =
@@ -3461,6 +3578,8 @@ object SearchDomain {
         val placeStatedOverMillis: Long? = null,
         /** New 2026-10-18 (the Claude Code logs page): absent = the Task Scheduler's window, no filter on the logs. */
         val page: String = "",
+        /** New 2026-11-27: absent = opened in no context ([Config.context]). */
+        val context: String? = null,
         /** New 2026-10-18: absent = opened from no Search window. */
         val openedFrom: String? = null,
         /** New 2026-11-02: absent = the window comes from no element. */
@@ -5246,7 +5365,7 @@ object SearchDomain {
 
     /** User rule 2026-11-25: the Search window of [contextIds], added — a "State in each context" context row's. */
     fun contextsSearchConfig(contextIds: List<String>): Config =
-        Config(kinds = setOf(Kind.Context), added = contextIds.map(ContextDomain::keyOf))
+        contextDefault(CONTEXTS_CONTEXT).copy(added = contextIds.map(ContextDomain::keyOf))
 
     /**
      * **A pair of "Contexts and states"**: its contexts — the elements whose actions section it is about, by key — and its
@@ -5412,7 +5531,7 @@ object SearchDomain {
      * **Pop-up window B of a context field**: every context in its results ([CONTEXT_KINDS]) and the pair's own ([keys])
      * in its added elements — the tasks of "45 minutes" for "Minimum time", one less once one of them is changed.
      */
-    fun contextFieldConfig(keys: List<String>): Config = Config(kinds = CONTEXT_KINDS, added = keys)
+    fun contextFieldConfig(keys: List<String>): Config = contextDefault(CONTEXT_FIELD_CONTEXT).copy(added = keys)
 
     /** The calendar element's id ([Kind.Calendar]): there is one. */
     const val CALENDAR_ID: String = "calendar"
@@ -5431,7 +5550,8 @@ object SearchDomain {
      * group of its actions and its "Calendar" row open, so the calendar is what the actions section shows. What the
      * calendar window was, and what every way to "open the calendar" opens now.
      */
-    fun calendarWindowConfig(base: Config = Config(kinds = setOf(Kind.Calendar))): Config {
+    fun calendarWindowConfig(base: Config? = null): Config {
+        if (base == null) return contextDefault(CALENDAR_CONTEXT)
         val added = (base.added - CALENDAR_KEY) + CALENDAR_KEY
         val group = calendarActionGroup(base)
         val open =
@@ -6382,7 +6502,7 @@ object SearchDomain {
      * User rule 2026-11-12: **the Search window "Add a parent" opens**, *"with the search configuration of only tasks"*: the
      * tasks, by title, as a cell's Edit Mode lists them ([PICKER_SORTS]); a click picks the parent.
      */
-    val ADD_PARENT_SEARCH: Config by lazy { Config(kinds = setOf(Kind.Task), sorts = PICKER_SORTS, sortFollowsDefault = false) }
+    val ADD_PARENT_SEARCH: Config by lazy { contextDefault(ADD_PARENT_CONTEXT) }
 
     /**
      * The children of "Parents" ([AddedAction.ElementParents]), in their order. User rule 2026-11-12: each is a field, the
@@ -6412,10 +6532,12 @@ object SearchDomain {
     }
 
     fun parentsListConfig(children: List<String>, current: Config? = null): Config {
-        val base = current ?: Config(dropButtons = true)
+        // The question it asks is set again: the context's types, those children.
+        val default = contextDefault(PARENTS_LIST_CONTEXT)
+        val base = current ?: default
         return base.copy(
-            kinds = ElementTree.PARENT_KINDS.toSet(),
-            pageTypesOnly = false,
+            kinds = default.kinds,
+            pageTypesOnly = default.pageTypesOnly,
             filters = base.filters.copy(parentsOf = children.toSet()),
         )
     }
@@ -7816,13 +7938,9 @@ object SearchDomain {
      * the filter on that instant, and the right-click remembered for the filter's button.
      */
     fun calendarAddConfig(atMillis: Long): Config =
-        Config(
-            kinds = CALENDAR_ADD_KINDS,
-            filters = Filters(calendarAddOn = true, calendarAddAtMillis = atMillis),
-            calendarClickMillis = atMillis,
-            // User rule 2026-10-11: what "add…" is for comes first among the actions.
-            actionSearch = CALENDAR_ADD_ACTION_SEARCH,
-        )
+        contextDefault(CALENDAR_ADD_CONTEXT).let {
+            it.copy(filters = it.filters.copy(calendarAddAtMillis = atMillis), calendarClickMillis = atMillis)
+        }
 
     /** The kinds of what can be on the calendar at an instant — what the calendar's "edit…" lists. */
     val CALENDAR_AT_KINDS: Set<Kind> = setOf(Kind.Task, Kind.RestrictivePeriod, Kind.Reminder, Kind.Alarm, Kind.Timer)
@@ -7839,12 +7957,9 @@ object SearchDomain {
      * order the hover bubble names them there ([CALENDAR_BUBBLE_SORT], user rule 2026-10-02).
      */
     fun calendarAtConfig(atMillis: Long): Config =
-        Config(
-            kinds = CALENDAR_AT_KINDS,
-            filters = withBoxesAt(Filters(calendarAtOn = true, calendarAtMillis = atMillis), atMillis),
-            sorts = withCalendarBubbleSort(DEFAULT_SORTS),
-            calendarClickMillis = atMillis,
-        )
+        contextDefault(CALENDAR_AT_CONTEXT).let {
+            it.copy(filters = withBoxesAt(it.filters.copy(calendarAtMillis = atMillis), atMillis), calendarClickMillis = atMillis)
+        }
 
     /**
      * User rule 2026-10-11: *"the fields 'Every box from' and 'Every box until' should be both set to the date and
@@ -8698,11 +8813,7 @@ object SearchDomain {
      * the calendar blocks alone, those of [owners] ([Filters.blocksOf]), in the timeline's order.
      */
     fun blocksSearchConfig(owners: List<String>): Config =
-        Config(
-            kinds = setOf(Kind.CalendarBlock),
-            filters = Filters(blocksOf = owners.toSet()),
-            sorts = listOf(SortMethod(Kind.CalendarBlock, SortKey.BlockStart)),
-        )
+        contextDefault(BLOCKS_CONTEXT).let { it.copy(filters = it.filters.copy(blocksOf = owners.toSet())) }
 
     /** A new alarm on the calendar: the element window's fresh alarm at [atMillis], the account's default configuration. */
     fun calendarAlarmDraft(state: SchedulerState, atMillis: Long): CalendarElements.Draft =

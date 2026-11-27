@@ -1404,6 +1404,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             walkPositions(undoRedoIntentFor(key, keyDown = true, ctrlOrMeta = ctrl, shift = shift, alt = alt))
         }
         val cellEditPopups = remember { org.example.project.ui.CellEditPopupHost() }
+        androidx.compose.runtime.SideEffect { cellEditPopups.contextDefaults = schedulerState.contextDefaults }
         val fieldSearchPopups = remember { org.example.project.ui.FieldSearchPopupHost() }
         // The window bar's tab names (user rule 2026-10-01): loaded once, keeping only the windows that come back —
         // a row the user closed since is not visible — and written whenever a button names a tab.
@@ -2445,21 +2446,15 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             fun pinnedOn(key: String, action: SearchDomain.AddedAction): SearchDomain.Config {
                 val rows = SearchDomain.resolve(vm.state.value, listOf(key), { emptyMap() })
                 val searched = SearchDomain.Kind.entries.first { key.startsWith(it.name + "/") }
-                return SearchDomain.Config(kinds = setOf(searched), added = listOf(key), pinnedActionRow = SearchDomain.actionRowId(rows, action))
+                return SearchDomain.pinnedElementConfig(listOf(key), setOf(searched), SearchDomain.actionRowId(rows, action))
             }
             val config = when (kind) {
                 // Newest first, as the History window listed them (checked on the desktop 2026-11-26: by name otherwise).
-                FloatingWindow.History -> SearchDomain.Config(
-                    kinds = setOf(SearchDomain.Kind.HistoryUnit),
-                    sorts = listOf(SearchDomain.SortMethod(SearchDomain.Kind.HistoryUnit, SearchDomain.SortKey.HistoryDate, descending = true)),
-                    sortFollowsDefault = false,
-                )
-                FloatingWindow.Alarms -> SearchDomain.Config(
-                    kinds = setOf(SearchDomain.Kind.Alarm, SearchDomain.Kind.Timer, SearchDomain.Kind.Chrono, SearchDomain.Kind.Reminder),
-                )
-                FloatingWindow.TaskRelations -> SearchDomain.Config(kinds = setOf(SearchDomain.Kind.TaskRelation))
-                FloatingWindow.Categories -> SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Category))
-                FloatingWindow.Shortcuts -> SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Shortcut))
+                FloatingWindow.History -> SearchDomain.contextDefault(SearchDomain.HISTORY_CONTEXT)
+                FloatingWindow.Alarms -> SearchDomain.contextDefault(SearchDomain.ALARMS_CONTEXT)
+                FloatingWindow.TaskRelations -> SearchDomain.contextDefault(SearchDomain.TASK_RELATIONS_CONTEXT)
+                FloatingWindow.Categories -> SearchDomain.contextDefault(SearchDomain.CATEGORIES_CONTEXT)
+                FloatingWindow.Shortcuts -> SearchDomain.contextDefault(SearchDomain.SHORTCUTS_CONTEXT)
                 FloatingWindow.Sleep ->
                     pinnedOn(SearchDomain.Kind.RestrictivePeriod.name + "/" + PeriodKinds.SLEEP, SearchDomain.AddedAction.PeriodSleepSchedule)
                 FloatingWindow.Online ->
@@ -2472,11 +2467,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         fun openWindowOnItsPage(
             kind: FloatingWindow,
-            config: String? = null,
+            asked: String? = null,
             asCopy: Boolean = false,
             atBack: Boolean = false,
             matches: ((String) -> Boolean)? = null,
         ): String {
+            // User rule 2026-11-27: a Search window opens with its context's defaults as the account has them, under what
+            // the opening says ([org.example.project.scheduler.domain.ContextDomain.opened]) — the one funnel of a window.
+            val config =
+                if (kind != FloatingWindow.Search || asked == null) asked
+                else SearchDomain.Config.decode(asked)
+                    ?.let { org.example.project.scheduler.domain.ContextDomain.opened(vm.state.value.contextDefaults, it) }
+                    ?.encode() ?: asked
             // User rule 2026-11-25 (*"the search window is the only window of the app"*): these windows are Search windows
             // set for what they showed ([lateralAsSearch]) — the one open is brought back, else one opens.
             lateralAsSearch(kind)?.let { search ->
@@ -2515,12 +2517,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 }
                 // User rule 2026-11-12: the calendar button's opens on the day display ("Lock to now" is on by default).
                 val calendar =
-                    SearchDomain.calendarWindowConfig(
-                        SearchDomain.Config(
-                            kinds = setOf(SearchDomain.Kind.Calendar), calendarView = view,
-                            calendarDayMode = true.takeIf { config == null },
-                        ),
-                    )
+                    SearchDomain.calendarWindowConfig().copy(calendarView = view, calendarDayMode = true.takeIf { config == null })
                 return openWindowOnItsPage(
                     FloatingWindow.Search, calendar.encode(), asCopy = true, atBack = atBack,
                     matches = { id -> id in calendars && searchConfigOf(id).calendarView == view },
@@ -2785,7 +2782,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // The window already gathering (held, or left open across a restart) is brought back in front; else a
                 // new one opens on what fired since the focus was lost. One the user CHANGED since (its search
                 // configuration or its added elements) is theirs now: it stays as it is and a new one opens beside it.
-                fun gathering(id: String) = SearchDomain.isUntouchedNotificationsWindow(searchConfigOf(id))
+                fun gathering(id: String) = SearchDomain.isUntouchedNotificationsWindow(searchConfigOf(id), vm.state.value.contextDefaults)
                 val standing = notificationsWindowId?.takeIf { it in open && gathering(it) }
                     ?: open.firstOrNull { gathering(it) }
                 // User rule 2026-11-12: the notifications are in its result list, and its calendar shows them as chips.
@@ -2923,7 +2920,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             val keys = tasks.distinct().map { SearchDomain.Kind.Task.name + "/" + it.value }
             if (keys.isEmpty()) return
             val rows = SearchDomain.resolve(vm.state.value, keys, { emptyMap() })
-            val config = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task), added = keys, pinnedActionRow = pinnedOf(rows))
+            val config = SearchDomain.pinnedElementConfig(keys, setOf(SearchDomain.Kind.Task), pinnedOf(rows))
             openPinnedSearch(config)
         }
         // The same block "copy" takes: a deep copy of a multi-selection is every selected cell's task.
@@ -2944,9 +2941,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             if (kind != null) {
                 val rows = SearchDomain.resolve(vm.state.value, listOf(owner), { emptyMap() })
                 openPinnedSearch(
-                    SearchDomain.Config(
-                        kinds = setOf(kind), added = listOf(owner), pickedBlocks = blockIds.toSet(),
-                        pinnedActionRow = SearchDomain.taggedGroupId(rows, SearchDomain.BLOCKS_GROUP),
+                    SearchDomain.pinnedElementConfig(
+                        listOf(owner), setOf(kind), SearchDomain.taggedGroupId(rows, SearchDomain.BLOCKS_GROUP), blockIds.toSet(),
                     ),
                 )
             }
@@ -2962,7 +2958,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 val key = SearchDomain.Kind.Creation.name + "/" + made.name
                 val rows = SearchDomain.resolve(vm.state.value, listOf(key), { emptyMap() })
                 openPinnedSearch(
-                    SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Creation), added = listOf(key), pinnedActionRow = SearchDomain.groupIdOf(rows, key)),
+                    SearchDomain.pinnedElementConfig(listOf(key), setOf(SearchDomain.Kind.Creation), SearchDomain.groupIdOf(rows, key)),
                 )
             }
         }
@@ -4840,7 +4836,8 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 // window's (its placement row, its History Units), its ▾ windows named after it.
                 val menuSearchConfig =
                     searchConfigs[org.example.project.ui.LATERAL_MENU_ID]
-                        ?: (SearchDomain.Config.decode(placements[org.example.project.ui.LATERAL_MENU_ID]?.config) ?: org.example.project.ui.LATERAL_MENU_SEARCH)
+                        ?: (SearchDomain.Config.decode(placements[org.example.project.ui.LATERAL_MENU_ID]?.config)
+                            ?: org.example.project.scheduler.domain.ContextDomain.opened(schedulerState.contextDefaults, org.example.project.ui.LATERAL_MENU_SEARCH))
                             // Healed: a build of 2026-11-21 kept it on no type, which narrows its items to none.
                             .let { if (it.kinds.isEmpty()) it.copy(kinds = setOf(SearchDomain.Kind.Option)) else it }
                             .also { searchConfigs[org.example.project.ui.LATERAL_MENU_ID] = it }

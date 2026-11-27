@@ -79,6 +79,62 @@ object ContextDomain {
         "TaskIdentityRow", "EditMenuRow",
     )
 
+    /** What a named drop-down's context id starts with, before its name ([DROP_DOWNS]). */
+    const val DROP_DOWN_PREFIX: String = "drop-down:"
+
+    /**
+     * User rule 2026-11-27 (after *"Types › Types"*: one context for every drop-down could not turn a configuration on for
+     * one of them): **the drop-downs, by the name each is drawn under** (`OptionSearchMenu`'s first argument, a search
+     * configuration's own being its [SearchDomain.Setting] name) and what the user calls it. Each is a context of its own
+     * whose default is [DROP_DOWN]'s as the account has it, what it changes laid over that ([configOf]). One missing here
+     * opens with [DROP_DOWN]'s (`ContextCatalogTest` lists those named in the code).
+     */
+    val DROP_DOWNS: List<Pair<String, String>> by lazy {
+        listOf(
+            "PeriodSelectorField" to "a period selector field",
+            "AddedElementsConfigurationWindow" to "the added elements configurations window's types",
+            "workplace operating system" to "a workplace setup's operating system",
+            "period drawing" to "a period's drawing",
+            "picked timers" to "the timers picked",
+            "picked chronos" to "the chronos picked",
+            "ShortcutWindowEditor" to "a shortcut's window",
+            "ResilienceEditor" to "a task's resilience",
+            "NewElementTimesEditor" to "a new element's time",
+            "NewElementTimesEditor#2" to "a new element's second time",
+            "AlertSoundDropdown" to "an alert's sound",
+            "calendar blocks" to "the calendar blocks",
+            "dragged blocks" to "the dragged blocks",
+            "CalendarElementsWindow" to "the calendar elements window",
+            "HistoryDropdownField" to "a history field",
+            "RecurrenceUnitDropdown" to "a recurrence's unit",
+            "PageNavButton" to "the page button",
+            "CalendarElementDisplay" to "the calendar's displayed elements",
+            "EditModeSelector" to "the edit mode",
+            "LengthField" to "a length",
+            "ClaudeFilterEditor" to "a Claude Code logs filter",
+            "sort by" to "the sorting methods",
+            "task row parts" to "a task row's parts",
+            "menu entries" to "a menu's entries",
+            "SleepTimeChoice" to "a sleep time",
+            "TaskCategoryCell" to "a task's categories",
+            "TimeSimPanel" to "the time simulation",
+            "constrained in" to "where a task is constrained",
+            "task of the blocks" to "the task of the blocks",
+            "md links" to "an md element's links",
+        ) + DROP_DOWN_SETTINGS.map { it.name to "the \"${it.label}\" field (${it.section?.label ?: "every type"})" }
+    }
+
+    /** The search configurations whose control is a drop-down drawn under their own name (`SettingEditor`). */
+    val DROP_DOWN_SETTINGS: List<SearchDomain.Setting> = listOf(
+        SearchDomain.Setting.Types, SearchDomain.Setting.CompletionList, SearchDomain.Setting.CalendarAdd,
+        SearchDomain.Setting.ExcludedElements, SearchDomain.Setting.IncludedElements, SearchDomain.Setting.ParentsOf,
+        SearchDomain.Setting.InvolvementOf, SearchDomain.Setting.NoParentOfKinds, SearchDomain.Setting.PeriodDrawingSetting,
+        SearchDomain.Setting.HistoryCategorySetting, SearchDomain.Setting.HistoryWindowSetting,
+        SearchDomain.Setting.HistoryChangedKindsSetting, SearchDomain.Setting.NotificationSourceSetting,
+        SearchDomain.Setting.RelationSectionSetting, SearchDomain.Setting.WindowListedKindsSetting,
+        SearchDomain.Setting.WindowStatusSetting,
+    )
+
     /** How many sections deep a background menu names its sections' groups ([MENU_ENTRIES]' "SearchPartsMenu"). */
     private const val NESTED_SECTION_GROUPS: Int = 3
 
@@ -126,25 +182,57 @@ object ContextDomain {
             listOf(
                 SearchContext(DROP_DOWN, "default of a drop-down", SearchDomain.OPTION_SEARCH),
                 SearchContext("integers", "default of a list of integers", SearchDomain.INTEGER_SEARCH),
-            )
+            ) +
+            DROP_DOWNS.map { (name, what) -> SearchContext(DROP_DOWN_PREFIX + name, "default of the drop-down of $what", SearchDomain.OPTION_SEARCH) } +
+            SearchDomain.WINDOW_CONTEXTS.map { (id, title, config) -> SearchContext(id, title, config) }
     }
 
     private val byId: Map<String, SearchContext> by lazy { CONTEXTS.associateBy { it.id } }
 
     fun context(id: String): SearchContext? = byId[id]
 
-    /** The context a menu drawn under [name] opens in: its own where it is a right-click menu, else a drop-down's. */
+    /** The context a menu drawn under [name] opens in: its own, a right-click menu's or a drop-down's, else a drop-down's. */
     fun menuContextId(name: String, rightClick: Boolean): String =
-        (MENU_PREFIX + name).takeIf { rightClick && it in byId } ?: DROP_DOWN
+        if (rightClick) (MENU_PREFIX + name).takeIf { it in byId } ?: DROP_DOWN
+        else (DROP_DOWN_PREFIX + name).takeIf { it in byId } ?: DROP_DOWN
+
+    /** The context whose default [id]'s is, as the account has it: a named drop-down's is [DROP_DOWN]'s. */
+    fun parentOf(id: String): String? = DROP_DOWN.takeIf { id.startsWith(DROP_DOWN_PREFIX) }
 
     /** The key of a context's element ([SearchDomain.Kind.Context]). */
     fun keyOf(id: String): String = SearchDomain.Kind.Context.name + "/" + id
 
     /** **What a context opens with** — the user's default where they changed it ([ContextDefault]), else the code's. */
     fun configOf(defaults: List<ContextDefault>, id: String): SearchDomain.Config {
-        val base = context(id)?.default ?: SearchDomain.Config()
-        val stored = defaults.firstOrNull { it.id == id } ?: return base
-        return SearchDomain.Config.decode(stored.config) ?: base
+        val code = context(id)?.default ?: SearchDomain.Config()
+        val base = inheritedOf(defaults, id)
+        val stored = defaults.firstOrNull { it.id == id }?.let { SearchDomain.Config.decode(it.config) } ?: return base
+        return if (base === code) stored else withChange(base, code, stored)
+    }
+
+    /** What [id] opens with before its own change: its parent's as the account has it ([parentOf]), else the code's. */
+    private fun inheritedOf(defaults: List<ContextDefault>, id: String): SearchDomain.Config {
+        val code = context(id)?.default ?: SearchDomain.Config()
+        val parent = parentOf(id) ?: return code
+        val inherited = configOf(defaults, parent)
+        // Nothing changed above it: the code's own, the same object.
+        return if (inherited.encode() == (context(parent)?.default ?: SearchDomain.Config()).encode()) code else inherited
+    }
+
+    /**
+     * User rule 2026-11-27 (*"When a window opens, every search configuration element for this window gets the
+     * corresponding value by default"*): **what a window [built] in a context opens with** — the one funnel every window
+     * and field goes through as it opens. [built] is its context's code default ([SearchDomain.WINDOW_CONTEXTS]) with
+     * what the opening says laid over it (the instant, the elements); here, what the account made of that context's
+     * default is put under it, field by field ([withChange]). A configuration in no context, or in one the account never
+     * changed, is opened as it is.
+     */
+    fun opened(defaults: List<ContextDefault>, built: SearchDomain.Config): SearchDomain.Config {
+        val id = built.context ?: return built
+        val code = context(id)?.default ?: return built
+        val account = configOf(defaults, id)
+        if (account === code) return built
+        return withChange(account, code, built)
     }
 
     fun configOf(state: SchedulerState, id: String): SearchDomain.Config = configOf(state.contextDefaults, id)
@@ -221,9 +309,9 @@ object ContextDomain {
      * [config] is the code's own default — nothing is stored that the code says already.
      */
     fun written(defaults: List<ContextDefault>, id: String, config: SearchDomain.Config): List<ContextDefault> {
-        val default = context(id)?.default ?: SearchDomain.Config()
         val rest = defaults.filterNot { it.id == id }
-        if (config.encode() == default.encode()) return rest
+        // A named drop-down holding what its parent holds says nothing of its own.
+        if (config.encode() == inheritedOf(rest, id).encode()) return rest
         val row = ContextDefault(id, config.encode())
         val at = defaults.indexOfFirst { it.id == id }
         return if (at < 0) rest + row else rest.toMutableList().apply { add(at, row) }

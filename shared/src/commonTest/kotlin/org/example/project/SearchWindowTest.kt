@@ -761,13 +761,14 @@ class SearchWindowTest {
         // Changed since it opened: the whole opening configuration comes back, added elements and filters included.
         assertEquals(opened, SearchDomain.resetConfig(changed, opened))
         // As it opened: the whole configuration cancelled — every kind, not the default's tasks alone…
-        assertEquals(cleared, SearchDomain.resetConfig(opened, opened))
+        // (it stays in the context it opened in, user rule 2026-11-27).
+        assertEquals(cleared.copy(context = opened.context), SearchDomain.resetConfig(opened, opened))
         // …and a second click brings the opening one back (anomaly 2026-10-15: the History Search window).
         val history = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.HistoryUnit))
         assertEquals(cleared, SearchDomain.resetConfig(history, history))
         assertEquals(history, SearchDomain.resetConfig(cleared, history))
         // Nothing known of how it opened: cancelled, and nothing more to reset once it is.
-        assertEquals(cleared, SearchDomain.resetConfig(changed, null))
+        assertEquals(cleared.copy(context = changed.context), SearchDomain.resetConfig(changed, null))
         assertEquals(cleared, SearchDomain.resetConfig(cleared, null))
         // Opened on the cleared configuration and left there: nothing to reset (the button is greyed).
         assertEquals(cleared, SearchDomain.resetConfig(cleared, cleared))

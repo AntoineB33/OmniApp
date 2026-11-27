@@ -3130,7 +3130,7 @@ internal fun TaskRow(
                                     org.example.project.ui.ConfigurationTreeArrow(
                                         state = shown,
                                         config = popups.withDraft(textFieldValue.text),
-                                        openedConfig = org.example.project.ui.CellEditPopupHost.DEFAULT_SEARCH,
+                                        openedConfig = popups.opened,
                                         onConfigChange = { next ->
                                             popups.change(next, textFieldValue.text) { draft ->
                                                 textFieldValue = TextFieldValue(draft, androidx.compose.ui.text.TextRange(draft.length))

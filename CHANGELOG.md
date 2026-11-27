@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every window opens in a context, with that context's defaults — 2026-11-27
+
+- User: *"Make sure any list in the app is the result of search configuration elements set to off or on in each context
+  … Only their default contexts-states pairs are built in"*, then *"When a window opens, every search configuration
+  element for this window gets the corresponding value by default."* Only a Search window opened on nothing and the
+  menus read a context; about twenty builders typed their configuration out. Each is now a context
+  (`SearchDomain.WINDOW_CONTEXTS`, `Config.context`), its builder its code default plus what the opening says, and
+  `ContextDomain.opened` lays the account's default under it as the window or field opens. Every named drop-down is a
+  context inheriting "default of a drop-down". `WindowContextsTest`, `ContextCatalogTest`. `Config.context` is new and
+  local; absent from an older stored configuration = none.
+
 ### "Right-click checks it alone"; the ▾ tree keeps a row's state by what it is — 2026-11-27
 
 - Anomaly: *"down arrow > 'Types' > 'Types' field, then I click on 'deselect all', but the window disappears."* Types

@@ -24,13 +24,14 @@ class ContextDefaultsTest {
 
     @Test
     fun off_everywhere_is_one_group_on_for_one_context_is_two() {
-        val off = ContextDomain.groups(emptyList(), Setting.DropButtons)
+        // A list of parents and an added elements section have a drop button by default: "Arrange by dragging" is off everywhere.
+        val off = ContextDomain.groups(emptyList(), Setting.MenuCustomizing)
         assertEquals(1, off.size)
         assertFalse(off.single().on)
         assertEquals(ContextDomain.CONTEXTS, off.single().contexts)
 
-        val on = ContextDomain.written(emptyList(), calendar, ContextDomain.configOf(emptyList(), calendar).copy(dropButtons = true))
-        val groups = ContextDomain.groups(on, Setting.DropButtons)
+        val on = ContextDomain.written(emptyList(), calendar, ContextDomain.configOf(emptyList(), calendar).copy(menuCustomizing = true))
+        val groups = ContextDomain.groups(on, Setting.MenuCustomizing)
         assertEquals(listOf(true, false), groups.map { it.on })
         assertEquals(listOf(calendar), groups[0].contexts.map { it.id })
         assertEquals(ContextDomain.CONTEXTS.size - 1, groups[1].contexts.size)

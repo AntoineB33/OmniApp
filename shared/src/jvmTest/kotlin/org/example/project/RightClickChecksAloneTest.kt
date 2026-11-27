@@ -95,8 +95,9 @@ class RightClickChecksAloneTest {
         val dropDown = groups.single { g -> g.contexts.any { it.id == ContextDomain.DROP_DOWN } }
         assertTrue(dropDown.behaviours.any { it.press == PressDomain.Press.RightClick && "checks it and unchecks every other" in it.does })
         assertTrue(groups.size > 1, "the other contexts keep the menu")
-        // And "State in each context" names the one context where it is on.
-        val states = ContextDomain.groups(defaults, SearchDomain.Setting.RightClickChecksAlone)
-        assertEquals(listOf(ContextDomain.DROP_DOWN), states.single { it.on }.contexts.map { it.id })
+        // And "State in each context" names where it is on: the drop-downs, each named one inheriting it.
+        val on = ContextDomain.groups(defaults, SearchDomain.Setting.RightClickChecksAlone).single { it.on }.contexts.map { it.id }
+        assertTrue(ContextDomain.DROP_DOWN in on)
+        assertTrue(on.all { it == ContextDomain.DROP_DOWN || it.startsWith(ContextDomain.DROP_DOWN_PREFIX) }, "the drop-downs alone: $on")
     }
 }

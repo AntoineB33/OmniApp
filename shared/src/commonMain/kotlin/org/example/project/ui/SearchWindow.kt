@@ -1381,7 +1381,7 @@ fun SearchWindow(
                 {
                     val rows = SearchDomain.resolve(currentState, listOf(key), { emptyMap() }, windows, schedulerRuns, claudeLogs)
                     actionHandlers.onOpenSearch(
-                        SearchDomain.Config(kinds = rows.mapTo(HashSet()) { it.kind }, added = listOf(key), pinnedActionRow = SearchDomain.deepCopyGroupId(rows)),
+                        SearchDomain.pinnedElementConfig(listOf(key), rows.mapTo(HashSet()) { it.kind }, SearchDomain.deepCopyGroupId(rows)),
                     )
                 }
             },
@@ -3132,10 +3132,12 @@ internal fun OptionSearchMenu(
         atPointer = atPointer,
     ) {
         androidx.compose.runtime.CompositionLocalProvider(LocalPopupChrome provides PopupChrome(), LocalEnclosingMenus provides enclosingMenus + menuKey) {
-        val opened = org.example.project.scheduler.domain.ContextDomain.configOf(
-            contextDefaults,
-            if (options.integers != null) "integers" else org.example.project.scheduler.domain.ContextDomain.menuContextId(name, rightClick),
-        )
+        val opened = remember(contextDefaults, name, rightClick, options.integers != null) {
+            org.example.project.scheduler.domain.ContextDomain.configOf(
+                contextDefaults,
+                if (options.integers != null) "integers" else org.example.project.scheduler.domain.ContextDomain.menuContextId(name, rightClick),
+            )
+        }
         // User rule 2026-11-13: a drop-down's list has an id — the window's it opens over, and its [name], which says
         // what list it is (written where it is called: a place in the code would change from one build to the next).
         val listId = embeddedSearchId("list:$name")
@@ -3612,7 +3614,7 @@ private const val SHOW_ONLY_ACTIONS_LABEL: String = "show only its actions"
  * The left-side menu's Search window as it opens: nothing typed, its items given — said by its "Listed from"
  * ([listedFromOf]) and narrowed by its types, options.
  */
-val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Option), pageTypesOnly = false) }
+val LATERAL_MENU_SEARCH: SearchDomain.Config by lazy { SearchDomain.contextDefault(SearchDomain.LATERAL_MENU_CONTEXT) }
 
 /** What the left-side menu is about, on or off: its ▾'s "Relevant here" leads with it (user rule 2026-11-14). */
 val LATERAL_MENU_RELEVANT: List<SearchDomain.Setting> = listOf(SearchDomain.Setting.MenuCustomizing)
@@ -3698,7 +3700,7 @@ class AddedSearchRows(
  * each row. What the user makes of it since is kept with the window it is drawn in ([rememberInsideConfig]).
  */
 internal val ADDED_LIST_SEARCH: SearchDomain.Config by lazy {
-    SearchDomain.Config(kinds = SearchDomain.Kind.entries.toSet(), pageTypesOnly = false, dropButtons = true)
+    SearchDomain.contextDefault(SearchDomain.ADDED_LIST_CONTEXT)
 }
 
 /**

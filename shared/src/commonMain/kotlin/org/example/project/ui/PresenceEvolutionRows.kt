@@ -152,7 +152,7 @@ internal fun EvolutionRows(
 
     // --- 2. the tasks that get it
     val aTasks = a.flatMap { it.taskIds }.distinct()
-    val tasksOpened = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task))
+    val tasksOpened = SearchDomain.contextDefault(SearchDomain.PRESENCE_TASKS_CONTEXT)
     var tasksConfig by rememberInsideConfig(embeddedSearchId("field:$rowId/${PresenceRow.Tasks.placeholder}"), tasksOpened)
     val tasksShown = tasksConfig.copy(added = aTasks.map(SearchDomain::taskKey))
     Indented {
@@ -183,7 +183,7 @@ internal fun EvolutionRows(
     // --- 3. relative to: the tasks above every task of A, and the parent distance — a presence ratio target's alone
     if (target == EvolutionTarget.Presence) {
     val above = remember(state.cells, state.lists, state.tasks, aTasks) { PresenceEvolutions.commonAncestors(state, aTasks) }
-    val relativeOpened = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Task), sorts = SearchDomain.PICKER_SORTS, sortFollowsDefault = false)
+    val relativeOpened = SearchDomain.contextDefault(SearchDomain.PRESENCE_RELATIVE_CONTEXT)
     var relativeConfig by rememberInsideConfig(embeddedSearchId("field:$rowId/${PresenceRow.Relative.placeholder}"), relativeOpened)
     val relativeNow = a.map { PresenceEvolutions.relativeText(state, it) }.distinct()
     Indented {
@@ -256,7 +256,7 @@ internal fun EvolutionRows(
     // --- 6. the categories
     val aKeys = a.map { evolutionKey(it.id) }
     val carried = aKeys.flatMap { ElementTree.parentsOf(state, it) }.filter { ElementTree.kindOf(it) == SearchDomain.Kind.Category }.distinct()
-    val categoriesOpened = SearchDomain.Config(kinds = setOf(SearchDomain.Kind.Category))
+    val categoriesOpened = SearchDomain.contextDefault(SearchDomain.PRESENCE_CATEGORIES_CONTEXT)
     var categoriesConfig by rememberInsideConfig(embeddedSearchId("field:$rowId/${PresenceRow.Categories.placeholder}"), categoriesOpened)
     Indented {
         PopupSearchField(
