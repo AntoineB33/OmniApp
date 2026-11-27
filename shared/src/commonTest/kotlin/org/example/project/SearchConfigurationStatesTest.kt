@@ -42,7 +42,8 @@ class SearchConfigurationStatesTest {
         val groups = rows().filter { it.detail == "group" }.map { it.name }
         assertTrue(groups.containsAll(listOf("Recent", "Search", "Matching", "Sorting", "Other feature pages", "Task Scheduler", "Claude Code logs", "task", "prompt")), groups.toString())
         // Every configuration that changes something is still a row, with one of the four.
-        assertEquals(Setting.entries.size, rows().count { it.detail != "group" })
+        // ...and each check box of a check-box configuration (user request 2026-11-27).
+        assertEquals(Setting.entries.size + SearchDomain.checkBoxOptionRows().size, rows().count { it.detail != "group" })
     }
 
     @Test

@@ -278,7 +278,7 @@ internal fun SettingEditor(
         // User rule 2026-11-12: the kinds no parent of a listed element may be — the app's one check-box drop-down.
         SearchDomain.Setting.NoParentOfKinds ->
             CheckBoxDropDown(setting.name,
-                options = SearchDomain.Kind.entries.filter(org.example.project.scheduler.domain.ElementTree::isElement),
+                options = SearchDomain.NO_PARENT_OF_KIND_OPTIONS,
                 checked = f.noParentOfKinds,
                 face = if (f.noParentOfKinds.isEmpty()) "any parent" else SearchDomain.Kind.entries.filter { it in f.noParentOfKinds }.joinToString(", ") { it.label },
                 label = { it.label },
@@ -393,7 +393,7 @@ internal fun SettingEditor(
             }
         SearchDomain.Setting.WindowListedKindsSetting ->
             CheckBoxDropDown(setting.name,
-                options = SearchDomain.Kind.entries.filter { it != SearchDomain.Kind.Creation },
+                options = SearchDomain.WINDOW_LISTED_KIND_OPTIONS,
                 checked = f.windowListedKinds,
                 face = if (f.windowListedKinds.isEmpty()) "any type"
                 else SearchDomain.Kind.entries.filter { it in f.windowListedKinds }.joinToString(", ") { it.label },

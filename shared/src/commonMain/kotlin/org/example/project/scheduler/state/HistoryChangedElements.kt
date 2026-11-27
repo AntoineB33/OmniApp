@@ -173,21 +173,46 @@ val Delta.changedElements: Set<ChangedElement>
         }
     }
 
+val Delta.changedConfigurations: List<String>
+    get() = configurationChanges.map { it.path }
+
+/**
+ * One search configuration a unit changed ([configurationChanges]): [where] (a context's title, a Search window's frame id),
+ * the [setting], and the configuration before and after.
+ */
+data class ConfigurationChange(val where: String, val setting: SearchDomain.Setting, val before: SearchDomain.Config, val after: SearchDomain.Config) {
+    /** "<where> › <its path> › <its label>": what [changedConfigurations] says. */
+    val path: String get() = "$where › ${SearchDomain.homePathOf(setting).plus(setting.label).joinToString(" › ")}"
+
+    /**
+     * User request 2026-11-27 (*"all the rows with a check box the user checked on a Sunday"*): **what this change checked
+     * (true) and unchecked (false)** — the items of a check-box configuration ([SearchDomain.CHECK_BOX_OPTIONS]) that its
+     * value gained or lost. Empty for any other configuration.
+     */
+    val checks: List<Pair<Any, Boolean>>
+        get() {
+            if (setting !in SearchDomain.CHECK_BOX_OPTIONS) return emptyList()
+            val b = SearchDomain.settingValue(before, setting) as? Set<*> ?: return emptyList()
+            val a = SearchDomain.settingValue(after, setting) as? Set<*> ?: return emptyList()
+            return (a - b).filterNotNull().map { it to true } + (b - a).filterNotNull().map { it to false }
+        }
+}
+
 /**
  * User rule 2026-11-27 (*"history units … that changed 'default search window > down arrow > Sorting > Sort by'"*): **the
- * search configurations this unit changed, and where** — "<where> › <configuration>": a context's default ([ContextDefaultsDelta],
- * where = the context's title, a context absent on one side being the code's default) or a Search window's own configuration
+ * search configurations this unit changed, and where** — a context's default ([ContextDefaultsDelta], where = the
+ * context's title, a context absent on one side being the code's default) or a Search window's own configuration
  * ([ExternalKeys.SEARCH], where = its frame id). A configuration changed is one whose being on or its value
  * ([SearchDomain.settingValue]) differs. Read off the delta, never stored.
  */
-val Delta.changedConfigurations: List<String>
+val Delta.configurationChanges: List<ConfigurationChange>
     get() {
-        fun diff(where: String, before: SearchDomain.Config?, after: SearchDomain.Config?): List<String> {
+        fun diff(where: String, before: SearchDomain.Config?, after: SearchDomain.Config?): List<ConfigurationChange> {
             if (before == null || after == null) return emptyList()
             val on = SearchDomain.activeSettings(before).toSet() to SearchDomain.activeSettings(after).toSet()
             return SearchDomain.Setting.entries.filter { s ->
                 (s in on.first) != (s in on.second) || SearchDomain.settingValue(before, s) != SearchDomain.settingValue(after, s)
-            }.map { s -> "$where › ${SearchDomain.homePathOf(s).plus(s.label).joinToString(" › ")}" }
+            }.map { s -> ConfigurationChange(where, s, before, after) }
         }
         return when (val delta = this) {
             is ContextDefaultsDelta -> delta.changes.touched.flatMap { id ->

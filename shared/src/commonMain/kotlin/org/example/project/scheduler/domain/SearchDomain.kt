@@ -12,7 +12,7 @@ import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.NotificationSource
 import org.example.project.scheduler.state.ChangedElement
 import org.example.project.scheduler.state.changedElements
-import org.example.project.scheduler.state.changedConfigurations
+import org.example.project.scheduler.state.configurationChanges
 import kotlinx.datetime.number
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.TimeZone
@@ -2136,6 +2136,11 @@ object SearchDomain {
          * the ▾'s own search sorts by ([CONFIGURATION_SEARCH]); a row from no tree has no value, and goes last.
          */
         TreeOrder(null, "tree order"),
+        /**
+         * User request 2026-11-27 (*"sort them by the last character of their id"*): **the id read from its last character
+         * back** - its last character decides, the one before it a tie, and so on.
+         */
+        IdFromEnd(null, "id, from its last character"),
     }
 
     /**
@@ -2144,7 +2149,7 @@ object SearchDomain {
      */
     fun sortKeysOf(kind: Kind?): List<SortKey> =
         if (kind == null) {
-            listOf(SortKey.Relevance, SortKey.Name, SortKey.Type, SortKey.CalendarBubble, SortKey.CreationFirst, SortKey.Date, SortKey.TreeOrder)
+            listOf(SortKey.Relevance, SortKey.Name, SortKey.Type, SortKey.CalendarBubble, SortKey.CreationFirst, SortKey.Date, SortKey.TreeOrder, SortKey.IdFromEnd)
         } else {
             listOf(SortKey.Relevance, SortKey.Name) + SortKey.entries.filter { it.kind == kind }
         }
@@ -3366,6 +3371,10 @@ object SearchDomain {
 
     /** The search configuration children of the [Kind.SearchConfiguration] row [id], by id: a node's, in the tree's order; a leaf has none. */
     fun configurationChildIds(id: String): List<String> {
+        // User request 2026-11-27: a check-box configuration's children are its check boxes ([checkBoxOptionRows]).
+        Setting.entries.firstOrNull { it.name == id }?.let { setting ->
+            return CHECK_BOX_OPTIONS[setting].orEmpty().map { checkBoxRowId(setting, it) }
+        }
         if (!id.startsWith(CONFIGURATION_NODE_PREFIX)) return emptyList()
         // A category of the root's flat list is that category again.
         val own = id.removePrefix(CONFIGURATION_NODE_PREFIX).removePrefix(FLAT_NODE_PREFIX)
@@ -4255,7 +4264,7 @@ object SearchDomain {
                 } + Setting.entries.map { setting ->
                     // ...and its category ([SettingRole]).
                     ItemResult(kind, setting.name, setting.label, listOfNotNull(setting.section?.label ?: "general", roleOf(setting)?.label).joinToString(" · "))
-                }
+                } + checkBoxOptionRows()
             }
         // An md element is found by its whole text, after what its title matches (user rule 2026-11-19).
         val mdTexts = if (kind == Kind.Md && query.isNotBlank()) state.mdElements.associate { it.id to it.text } else emptyMap()
@@ -4382,6 +4391,8 @@ object SearchDomain {
          * what each one holds ([ConfigurationRows.childrenOf]). Null: those every window has.
          */
         configurationRows: ConfigurationRows? = null,
+        /** 1 while a context's own rows are listed for its facts ([contextRowFacts]): theirs are not listed again. */
+        factsDepth: Int = 0,
     ): List<Result> {
         val calendar = if (filters.readsCalendar) CalendarBoxes(state, timeZone) else null
         // Several bars, or a regular expression: every row of the kinds is read, and the bars decide ([barsMatch]). One
@@ -4428,7 +4439,7 @@ object SearchDomain {
                             }
                             // A row's facts are read once, whatever the number of bars ([factsOf]).
                             val factMemo = HashMap<String, List<Pair<String, String>>>()
-                            val facts = { row: Result -> factMemo.getOrPut(keyOf(row)) { factsOf(state, row, nowMillis, timeZone) } }
+                            val facts = { row: Result -> factMemo.getOrPut(keyOf(row)) { factsOf(state, row, nowMillis, timeZone, factsDepth) } }
                             val answers = { row: Result, bar: String -> fieldsMatch(row, bar, filters, childrenOf, claudeLogs, facts) }
                             if (severalBars) rows.filter { row -> SearchBarFormula.evaluate(queryFormula, bars.size) { i -> answers(row, bars[i]) } }
                             else rows.filter { answers(it, query) }
@@ -4634,6 +4645,7 @@ object SearchDomain {
                 SortKey.CalendarBubble -> CalendarBubbleRank.of(row.kind, (row as? ItemResult)?.id)
                 SortKey.CreationFirst -> if (row.kind == Kind.Creation) 0 else 1
                 SortKey.TreeOrder -> treeOrder[keyOf(row)]
+                SortKey.IdFromEnd -> keyOf(row).substringAfter('/').reversed()
                 SortKey.TaskPriority -> (row as? TaskResult)?.let { priorities[it.taskId] }
                 SortKey.TaskPathLength -> (row as? TaskResult)?.takeIf { it.paths.isNotEmpty() }?.shownPath?.size
                 SortKey.TaskPathCount -> (row as? TaskResult)?.paths?.size
@@ -6768,9 +6780,109 @@ object SearchDomain {
         row: Result,
         nowMillis: Long = org.example.project.time.SystemAppClock.nowMillis(),
         timeZone: TimeZone = TimeZone.currentSystemDefault(),
+        /** How deep in a context's own result list this row is read ([contextRowFacts]): its rows say none of theirs. */
+        depth: Int = 0,
     ): List<Pair<String, String>> =
         elementStateLines(state, row, nowMillis) +
-            (if (row.kind == Kind.HistoryUnit) (row as? ItemResult)?.id?.let { historyUnitOf(state, it) }?.let { historyUnitFacts(state, it, timeZone) }.orEmpty() else emptyList())
+            (if (row.kind == Kind.HistoryUnit) (row as? ItemResult)?.id?.let { historyUnitOf(state, it) }?.let { historyUnitFacts(state, it, timeZone) }.orEmpty() else emptyList()) +
+            checkFacts(state, keyOf(row), timeZone) +
+            (if (row.kind == Kind.Context && depth == 0) contextRowFacts(state, (row as ItemResult).id, nowMillis, timeZone) else emptyList())
+
+    /**
+     * User request 2026-11-27 (*"every context where search configurations show a result list where the 3rd row has a
+     * title that starts with the letter d"*): **the first [CONTEXT_FACT_ROWS] rows the context's configuration lists**, as
+     * "Row 1: <name>"... - the account's default of it ([ContextDomain.configOf]) run through the one [results], over the
+     * account's rows (a list whose rows its caller gives - a menu, a drop-down - is searched here as a window of the
+     * account would be: the caller is not known).
+     */
+    private fun contextRowFacts(state: SchedulerState, id: String, nowMillis: Long, timeZone: TimeZone): List<Pair<String, String>> {
+        val config = ContextDomain.configOf(state, id)
+        val rows = results(
+            state, config.searchedKinds, config.query, filters = config.filters, sorts = config.sorts, timeZone = timeZone,
+            nowMillis = nowMillis, match = config.filters.queryOptions, extraQueries = config.extraQueries,
+            queryFormula = config.queryFormula, factsDepth = 1,
+        )
+        return rows.take(CONTEXT_FACT_ROWS).mapIndexed { i, row -> "Row ${i + 1}" to row.name }
+    }
+
+    /** How many of a context's rows its facts say ([contextRowFacts]). */
+    const val CONTEXT_FACT_ROWS: Int = 10
+
+    /**
+     * User request 2026-11-27 (*"all the rows with a check box the user checked on a Sunday"*): **when each row was checked
+     * or unchecked, and where** - "Checked: on · 2026-11-22 10:00 sunday · Search#2 › Types" - read off every history unit
+     * ([org.example.project.scheduler.state.ConfigurationChange.checks]): an option of a check-box configuration by its row
+     * ([checkedRowKey]), an element checked in a list of elements by its own. Built once per histories value.
+     */
+    fun checkFacts(state: SchedulerState, key: String, timeZone: TimeZone): List<Pair<String, String>> {
+        val cached = checkIndex
+        val index =
+            if (cached != null && cached.first === state.histories && cached.second == timeZone) cached.third
+            else HashMap<String, MutableList<Pair<String, String>>>().also { out ->
+                for (category in HistoryCategory.entries) for (unit in state.histories.forCategory(category).units) {
+                    for (change in unit.delta.configurationChanges) for ((item, on) in change.checks) {
+                        out.getOrPut(checkedRowKey(change.setting, item), ::ArrayList) +=
+                            "Checked" to "${if (on) "on" else "off"} · ${factTime(unit.timeMillis, timeZone)} · ${change.path}"
+                    }
+                }
+            }.also { checkIndex = Triple(state.histories, timeZone, it) }
+        return index[key].orEmpty()
+    }
+
+    @Volatile
+    private var checkIndex: Triple<org.example.project.scheduler.state.SchedulerHistories, TimeZone, Map<String, List<Pair<String, String>>>>? = null
+
+    /**
+     * User request 2026-11-27: **the check-box configurations and the items each one checks**, in their drop-down's order -
+     * the one list their drop-downs offer (`SettingEditor`) and the rows the account lists of them ([checkBoxOptionRows]). An item
+     * that is an element (a key) is no option: it is that element's row.
+     */
+    val CHECK_BOX_OPTIONS: Map<Setting, List<Enum<*>>> by lazy {
+        linkedMapOf(
+            Setting.Types to Kind.entries,
+            Setting.NoParentOfKinds to NO_PARENT_OF_KIND_OPTIONS,
+            Setting.HistoryChangedKindsSetting to HISTORY_CHANGED_KINDS,
+            Setting.NotificationSourceSetting to org.example.project.scheduler.state.NotificationSource.entries,
+            Setting.WindowListedKindsSetting to WINDOW_LISTED_KIND_OPTIONS,
+        )
+    }
+
+    /** What "No parent of the types" checks. */
+    val NO_PARENT_OF_KIND_OPTIONS: List<Kind> by lazy { Kind.entries.filter(ElementTree::isElement) }
+
+    /** What "Lists types" checks. */
+    val WINDOW_LISTED_KIND_OPTIONS: List<Kind> by lazy { Kind.entries.filter { it != Kind.Creation } }
+
+    /**
+     * User request 2026-11-27: **each check box of a check-box configuration is a search configuration element of its own**
+     * - "Types › alarm", on or off - so the rows with a check box can be listed, and what was checked found
+     * ([checkFacts]). Id "<its configuration>.<the item>", named by the item, its configuration's path as detail.
+     */
+    fun checkBoxOptionRows(): List<ItemResult> =
+        CHECK_BOX_OPTIONS.flatMap { (setting, items) ->
+            val path = (homePathOf(setting) + setting.label).joinToString(" › ")
+            items.map { item -> ItemResult(Kind.SearchConfiguration, checkBoxRowId(setting, item), checkBoxOptionLabel(item), path) }
+        }
+
+    private fun checkBoxRowId(setting: Setting, item: Enum<*>): String = setting.name + "." + item.name
+
+    /** The name of an item of [CHECK_BOX_OPTIONS]. */
+    fun checkBoxOptionLabel(item: Any): String =
+        when (item) {
+            is Kind -> item.label
+            is org.example.project.scheduler.state.NotificationSource -> item.label
+            is Enum<*> -> item.name
+            else -> item.toString()
+        }
+
+    /** The row [item] checked in [setting] is: an element by its key, else the option row of the configuration. */
+    fun checkedRowKey(setting: Setting, item: Any): String =
+        (item as? String)?.takeIf { ElementTree.kindOf(it) != null }
+            ?: (Kind.SearchConfiguration.name + "/" + ((item as? Enum<*>)?.let { checkBoxRowId(setting, it) } ?: (setting.name + "." + item)))
+
+    /** "2026-10-04 13:20 sunday": an instant as the facts say it, its weekday spelled so a bar finds it. */
+    fun factTime(millis: Long, timeZone: TimeZone): String =
+        dateTime(millis, timeZone) + " " + Instant.fromEpochMilliseconds(millis).toLocalDateTime(timeZone).dayOfWeek.name.lowercase()
 
     /**
      * What the app knows of a device by its id, beside its id — "phone", "desktop" — read off its sessions by `App`
@@ -6782,9 +6894,7 @@ object SearchDomain {
 
     /** A history unit's facts the state holds ([factsOf]): its time, its device, what it changed and which configuration where. */
     fun historyUnitFacts(state: SchedulerState, unit: HistoryUnit, timeZone: TimeZone): List<Pair<String, String>> {
-        val t = Instant.fromEpochMilliseconds(unit.timeMillis).toLocalDateTime(timeZone)
-        fun two(n: Int) = n.toString().padStart(2, '0')
-        val time = "${t.year}-${two(t.month.number)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)} ${t.dayOfWeek.name.lowercase()}"
+        val time = factTime(unit.timeMillis, timeZone)
         val me = org.example.project.scheduler.state.SchedulerReducer.deviceId()
         val device = listOfNotNull(
             unit.deviceId.ifEmpty { "(not recorded)" },
@@ -6800,7 +6910,11 @@ object SearchDomain {
                 val names = resolve(state, keys, { emptyMap() }).associate { keyOf(it) to it.name }
                 add("Changed elements" to keys.joinToString(", ") { k -> names[k]?.let { "$it ($k)" } ?: k })
             }
-            for (configuration in unit.delta.changedConfigurations) add("Changed configuration" to configuration)
+            val changes = unit.delta.configurationChanges
+            for (change in changes) add("Changed configuration" to change.path)
+            for (change in changes) for ((item, on) in change.checks) {
+                add("Checked" to "${if (on) "on" else "off"} · ${change.path} › ${checkBoxOptionLabel(item)}")
+            }
         }
     }
 

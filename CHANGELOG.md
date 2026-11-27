@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Random requests 1–2: what was checked when, and what a context lists — 2026-11-27
+
+- Request 1: *"all the rows with a check box the user checked on a Sunday"*. A check box was no row of the account and
+  no unit said what it checked. Each item of a check-box configuration (`SearchDomain.CHECK_BOX_OPTIONS`: Types, No parent
+  of the types, Changed element types, Notification source, Lists types — the one list their drop-downs offer) is now a
+  search configuration row ("Types › alarm", `checkBoxOptionRows`), a child of its configuration (`configurationChildIds`). What a unit changed is one structured funnel
+  (`Delta.configurationChanges`, `ConfigurationChange.checks`; `changedConfigurations` reads it), and every row's facts
+  say when it was checked: "Checked: on · 2026-11-22 12:00 sunday · Search#2 › Types › Types" (`checkFacts`, built once
+  per histories value); a unit's own say "Checked: on · … › alarm". An element checked in a list of elements gets the
+  line on its own row. Typed: Types = search configuration, Where to search › Facts, bar `"Checked: on" sunday`.
+- Request 2: *"every context whose result list's 3rd row starts with d and has h as 5th letter, sorted by the last
+  character of their id"*. A context's facts now hold its first rows ("Row 3: Death", `contextRowFacts`, the account's
+  default run through `results`), and a sort about every row reads the id from its end (`SortKey.IdFromEnd`). Typed: Types
+  = context, Where to search › Facts, regular expression `^Row 3: d...h`, Sort results › id, from its last character.
+  `RandomRequestsTest`. No stored shape changed. Client rebuild only.
+
 ### Every window opens in a context, with that context's defaults — 2026-11-27
 
 - User: *"Make sure any list in the app is the result of search configuration elements set to off or on in each context

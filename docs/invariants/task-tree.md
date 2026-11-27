@@ -1196,6 +1196,11 @@ suggestions before it was ever entered.
   everywhere is one group — each group a **context row**, opening a Search window whose added elements are those
   contexts (`contextsSearchConfig`), and a **state row**, "on"/"off" and the configuration's own control, a change made
   in every context of the group (`ContextDomain.withChange`, field by field), one History Unit.
+- **A check box is a row; when it was checked is a fact** (user request 2026-11-27). Every item of a check-box
+  configuration is a search configuration row of its own (`CHECK_BOX_OPTIONS`, `checkBoxOptionRows` — the drop-downs
+  read the same lists); what a unit checked is read off its delta by the one `Delta.configurationChanges`, and said on
+  the checked row's facts (`checkFacts`) and the unit's. A context's facts hold its first `CONTEXT_FACT_ROWS` rows,
+  computed by `results` over the account (a caller's given rows are not known there); never one level deeper.
 - **Every window opens in a context, with that context's defaults** (user rule 2026-11-27, *"When a window opens, every
   search configuration element for this window gets the corresponding value by default."*). Every window and field the
   code opens is one of `SearchDomain.WINDOW_CONTEXTS` (History, calendar "add…"/"edit…", notifications, list of parents,
