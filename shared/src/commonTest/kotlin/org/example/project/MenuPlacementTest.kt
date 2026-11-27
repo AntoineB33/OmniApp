@@ -9,6 +9,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.example.project.ui.MenuSide
 import org.example.project.ui.keepsSpot
+import org.example.project.ui.keptInPlace
 import org.example.project.ui.menuFit
 import org.example.project.ui.menuSpot
 import org.example.project.ui.stuckTo
@@ -314,5 +315,18 @@ class MenuPlacementTest {
         val above = reStuck(IntOffset(600, 0), IntSize(200, 80), IntRect(600, 200, 700, 230), screen)
         assertEquals(IntOffset(600, 120), above, "above: its bottom edge kept on the caller's top")
         assertEquals(null, reStuck(IntOffset(400, 100), IntSize(250, 900), arrow, screen), "no longer on the screen: placed afresh")
+    }
+
+    /**
+     * Anomaly 2026-11-27: *"I click on one check box and the window moves. The window must not move, even if the caller
+     * doesn't stick anymore to the new window, which must be verified only when the window opens."* Opened, a pop-up whose
+     * content changes size stays where it stands — its caller gone from beside it or not — cut only where the app ends.
+     */
+    @Test
+    fun an_opened_pop_up_keeps_its_place_whatever_its_size_becomes() {
+        val at = IntOffset(400, 100)
+        assertEquals(IntSize(250, 400), keptInPlace(at, IntSize(250, 400), screen), "it fits: its own size, where it is")
+        assertEquals(IntSize(600, 700), keptInPlace(at, IntSize(900, 900), screen), "too big: cut by the app's right and bottom, never moved")
+        assertEquals(IntSize(1, 1), keptInPlace(IntOffset(1000, 800), IntSize(50, 50), screen), "never below a pixel")
     }
 }

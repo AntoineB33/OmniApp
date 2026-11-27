@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### An opened pop-up never moves — 2026-11-27
+
+- Anomaly: *"in down arrow > types > types field > I click on one check box and the window moves. The window must not
+  move, even if the caller doesn't stick anymore to the new window, which must be verified only when the window
+  opens."* Ticking a kind added "Currently on" to the ▾ tree; the tree resized and was placed again, the Types pop-up
+  hanging from it followed, and so did the drop-down — every anchor change placed a desktop pop-up afresh. Now
+  (`MenuSession.placing`, `keptInPlace`) a pop-up is placed against its caller during its first 600 ms only; after, its
+  anchor moving does nothing and its content changing size keeps its top-left, cut only at the app's edge. A pop-up it
+  hangs from resizing moves nothing; the app's window moving or resized still places every pop-up afresh.
+- Same report, anomaly 2: *"when the window opens, it is not stuck to the caller, which is the types field"*. No cause
+  found by reading the placing (which checks stuckness at every placing); the likeliest is the same chain moving the
+  tree as the drop-down opens. Not reproduced: to check on the desktop after the redeploy.
+
 ### What matches everything is not "on" — 2026-11-27
 
 - User: *"A search configuration element that matches with everything shouldn't be put in 'Currently on' or 'Default

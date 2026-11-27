@@ -369,15 +369,35 @@ private class MenuSession(
      * again too, which reports it; a move alone does not, the anchor being said in the window.)
      */
     private val ownerMoves = object : java.awt.event.ComponentAdapter() {
+        // A pop-up it hangs from moves only with the app's window now ([placing]): it follows.
         override fun componentMoved(event: java.awt.event.ComponentEvent) = placeAfresh()
-        override fun componentResized(event: java.awt.event.ComponentEvent) = placeAfresh()
+        // Anomaly 2026-11-27 (*"I click on one check box and the window moves"*): a pop-up it hangs from changing size with
+        // its content (the ▾ tree gaining "Currently on") is no reason to move; the app's window resized is.
+        override fun componentResized(event: java.awt.event.ComponentEvent) {
+            if (owner.owner == null) placeAfresh()
+        }
     }
 
 
     private fun placeAfresh() {
         if (closed || dialog == null || heldByHand) return
+        // Placed afresh as when it opened: its anchor, laid out again for the app's new size, is followed for as long.
+        placingSince = System.nanoTime()
         place()
     }
+
+    /**
+     * Anomaly 2026-11-27 (*"I click on one check box and the window moves. The window must not move, even if the caller
+     * doesn't stick anymore to the new window, which must be verified only when the window opens."*): **a pop-up is placed
+     * while it opens, then stays where it stands.** For [SETTLE_NANOS] after it opens (or after the app's window moved or
+     * changed size, [ownerMoves]) its anchor moving and its content measuring place it against its caller ([menuFit],
+     * [reStuck]); after, neither moves it ([keptInPlace]). Until this day every change of its anchor placed it afresh, and
+     * every change of its size placed it again where it no longer touched its caller: a tick in the Types drop-down added
+     * "Currently on" to the ▾ tree, which moved the tree, the Types pop-up hanging from it, and the drop-down.
+     */
+    private var placingSince = 0L
+
+    private fun placing(): Boolean = System.nanoTime() - placingSince < SETTLE_NANOS
     private var anchor: Rect? = null
     private var offsetPx = Offset.Zero
     private var dialog: ComposeDialog? = null
@@ -540,7 +560,8 @@ private class MenuSession(
         offsetPx = offset
         EventQueue.invokeLater {
             if (closed) return@invokeLater
-            if (dialog == null) open() else place()
+            // Opened, it stays where it stands: its caller moving no longer moves it ([placing]).
+            if (dialog == null) open() else if (placing()) place()
         }
     }
 
@@ -549,6 +570,7 @@ private class MenuSession(
         val window = MenuWindows.take(owner)
         dialog = window
         openedAt = System.nanoTime()
+        placingSince = openedAt
         pressesAtOpen = RightPresses.presses
         window.focusableWindowState = focusable
         size = MenuWindows.lastSize[site]
@@ -662,7 +684,15 @@ private class MenuSession(
             // settles: a pop-up fitted to its content in its first moments (the ▾ tree) is placed for the size it ends
             // at, never left where its first size put it (anomaly 2026-11-15: *"appear too far to the top"*).
             val shown = window.location.takeIf { window.isShowing && it.x > OFF_SCREEN && it.y > OFF_SCREEN }
-            val settled = System.nanoTime() - openedAt >= SETTLE_NANOS
+            // Opened: it stays where it stands, at the size its content wants from there ([placing], [keptInPlace]).
+            if (shown != null && !placing() && !heldByHand) {
+                val area = appArea(owner)
+                val kept = if (area == null) IntSize(fitted.width, fitted.height)
+                else keptInPlace(IntOffset(shown.x, shown.y), IntSize(fitted.width, fitted.height), area)
+                applyPlacement(window, Placed(shown, Dimension(kept.width, kept.height)))
+                return@invokeLater
+            }
+            val settled = !placing()
             if (capped == null && window.size != fitted) window.size = fitted
             // Settling, it is not kept where its first size put it — but a pop-up is put back against its caller by the edge
             // the pointer crossed rather than placed afresh, which moved it from under the pointer (anomaly 2026-11-19).

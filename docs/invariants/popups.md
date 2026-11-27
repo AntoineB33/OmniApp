@@ -591,6 +591,17 @@ means.
     - It replaced `PopupPositions` (2026-11-11 → 2026-11-22), a second timeline kept in memory beside the history,
       walked before it and joined to it by stamps: lost at a restart, outside the pins' rules, and thrown away by any
       newer position until it was keyed by place.
+  - **A pop-up is placed while it opens, then NEVER MOVES** (anomaly 2026-11-27: *"in down arrow > types > types field >
+    I click on one check box and the window moves. The window must not move, even if the caller doesn't stick anymore to
+    the new window, which must be verified only when the window opens."*; `MenuSession.placing`, `keptInPlace`,
+    `MenuPlacementTest`). For its first `SETTLE_NANOS` (600 ms) its anchor moving and its content measuring place it
+    against its caller (`menuFit`, `reStuck`) — that is where "stuck to its caller" is checked. After, its anchor moving
+    does nothing and a change of its content's size keeps its top-left where it stands, its size cut only where it would
+    leave the app. A pop-up it hangs from changing size moves nothing; one moving moves it (that one moves only with the
+    app). **The app's window moving or resized places every pop-up afresh and opens that placing time again**
+    (`ownerMoves`, user rule 2026-11-15). Until this day every anchor change placed it afresh and every size change re-
+    checked it against its caller: ticking a kind added "Currently on" to the ▾ tree, which moved the tree, the Types
+    pop-up hanging from it, and the drop-down. The two bullets below now hold during the placing time alone.
   - **An open menu that changes size stays where it is** while it fits on the screen and keeps off its anchor
     (`keepsSpot`, anomaly 2026-11-11): placed again, it slid from under the pointer, which then closed the tree. **A
     pop-up (not a right-click's menu) stays only while it still touches its caller** (user rule 2026-11-19: *"Make sure

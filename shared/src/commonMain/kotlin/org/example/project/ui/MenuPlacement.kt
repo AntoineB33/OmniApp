@@ -273,6 +273,19 @@ internal fun reStuck(current: IntOffset, size: IntSize, anchor: IntRect, area: I
     return at.takeIf { keepsSpot(it, size, anchor, area, list, stuck = true) }
 }
 
+/**
+ * Anomaly 2026-11-27 (*"I click on one check box and the window moves. The window must not move, even if the caller
+ * doesn't stick anymore to the new window, which must be verified only when the window opens."*): **the size an open
+ * pop-up is shown at once it has opened** — where it stands, [at], never moved: the [size] its content wants, cut only
+ * where it would leave the app's [area] from there (never below one pixel). Where it stands it stays, stuck to its caller
+ * or not: whether it is stuck was settled as it opened ([menuFit]).
+ */
+internal fun keptInPlace(at: IntOffset, size: IntSize, area: IntRect): IntSize =
+    IntSize(
+        minOf(size.width, area.right - at.x).coerceAtLeast(minOf(size.width, 1)),
+        minOf(size.height, area.bottom - at.y).coerceAtLeast(minOf(size.height, 1)),
+    )
+
 /** A side of its anchor a menu opens on ([menuSpot]), tried in the order a menu is given. */
 enum class MenuSide {
     Below, Above, Right, Left,
