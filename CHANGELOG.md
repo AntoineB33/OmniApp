@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### What matches everything is not "on" — 2026-11-27
+
+- User: *"A search configuration element that matches with everything shouldn't be put in 'Currently on' or 'Default
+  for this', right? Fix it and find other similar anomalies then fix them."* Three such were "on" (`activeSettings`,
+  `contextSettings`, and so the ▾'s "Currently on" / "Default for this", the filter count and the default sorting):
+  the children's parts of "Where to search" while the children were not searched (`fieldsMatch` reads them only then),
+  "Search the children" with none of their parts checked, and "From" (notification source) with every source checked —
+  every notification answers one, "other" included. `whereSettingsOn` and `Filters.isOn` now say off for them, and
+  `results` asks the check-box filters through `isOn`. Not changed: "Rings on", "Dated on", "Changed element types" and
+  "Lists types" checked whole still keep out a row with no day, date, change or type, so they narrow.
+  `MatchesEverythingIsNotOnTest` (it also checks that no window context's code default holds a filter that is off).
+
 ### A hover pop-up opens from its arrow alone, and hangs from it — 2026-11-27
 
 - User rule: *"Rows that open a window when hovered over must now open it only when the arrow is hovered over. The

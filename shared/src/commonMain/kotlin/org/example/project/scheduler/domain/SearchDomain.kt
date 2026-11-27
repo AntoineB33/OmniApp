@@ -2069,12 +2069,23 @@ object SearchDomain {
                 Setting.ParentsOf -> parentsOf.isNotEmpty()
                 Setting.InvolvementOf -> involvementOf.isNotEmpty()
                 Setting.ParentDistance -> parentsOf.isNotEmpty() && parentDistance != 1
-                Setting.NotificationSourceSetting -> notificationSources.isNotEmpty()
+                Setting.NotificationSourceSetting -> notificationSources.narrows(org.example.project.scheduler.state.NotificationSource.entries)
                 Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject -> claudeProject != null
                 Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom -> claudeFrom != null
                 Setting.PromptUntil, Setting.AnswerUntil, Setting.ReasoningUntil -> claudeUntil != null
                 else -> false
             }
+
+        /**
+         * User 2026-11-27 (*"A search configuration element that matches with everything shouldn't be put in 'Currently on'
+         * or 'Default for this'"*): **a check-box filter whose boxes cover every row narrows while some are checked and not
+         * all** — every box checked is none set, as for the types (user rule 2026-11-26). Only where every row answers one
+         * box (a notification's source: [NotificationSource.of] has "other"): "Rings on", "Dated on", "Changed element
+         * types" and "Lists types" checked whole still keep out a row with no day, date, change or type (user rule
+         * 2026-11-27, `SearchWindowTest.dated_on_keeps_the_rows_dated_on_a_checked_weekday`). [results] asks them through
+         * [isOn] alone.
+         */
+        private fun Set<*>.narrows(every: Collection<*>): Boolean = isNotEmpty() && !containsAll(every)
     }
 
     /**
@@ -2686,14 +2697,27 @@ object SearchDomain {
      * User rule 2026-11-16: **what of "Where to search" is set otherwise than by default** — a part checked that is not
      * by default ([DEFAULT_SEARCH_IN]: the name), and the children's parent distance once it is not 1. A part unchecked
      * is off, so not "on": the name, by default checked, is no news.
+     *
+     * User 2026-11-27 (*"A search configuration element that matches with everything shouldn't be put in 'Currently on' or
+     * 'Default for this'"*): what changes no match is not on — a part of the children while the children are not searched
+     * ([fieldsMatch] reads them only then), and the children searched in none of their parts.
      */
     fun whereSettingsOn(filters: Filters): List<Setting> =
         WHERE_SETTINGS.filter { setting ->
+            val searchesChildren = filters.searchChildren && filters.childSearchIn.isNotEmpty()
             when (setting) {
-                Setting.ChildDistance -> filters.searchChildren && filters.childDistance != 1
+                Setting.SearchInChildren -> searchesChildren
+                Setting.ChildDistance -> searchesChildren && filters.childDistance != 1
+                in CHILD_WHERE_SETTINGS -> searchesChildren && filters.searches(setting) == true && Filters().searches(setting) != true
                 else -> filters.searches(setting) == true && Filters().searches(setting) != true
             }
         }
+
+    /** "Where to search"'s parts of the children: asked only while the children are searched ([Filters.searchChildren]). */
+    private val CHILD_WHERE_SETTINGS: Set<Setting> = setOf(
+        Setting.ChildSearchInId, Setting.ChildSearchInName, Setting.ChildSearchInDescription, Setting.ChildSearchInButtons,
+        Setting.ChildSearchInFacts,
+    )
 
     /** "Where to search"'s configurations, in the tree's order ([TreeSubNode.WhereToSearch]). */
     val WHERE_SETTINGS: List<Setting> = listOf(
@@ -4455,7 +4479,7 @@ object SearchDomain {
                     rows.filter { it.kind in only || it.kind == Kind.Creation }
                 }
                 .let { rows ->
-                    val windowsById = if (filters.windowListedKinds.isEmpty()) emptyMap() else windows.associateBy { it.id }
+                    val windowsById = if (!filters.isOn(Setting.WindowListedKindsSetting)) emptyMap() else windows.associateBy { it.id }
                     rows.filter { passes(state, it, filters, calendar, windowsById) }
                 }
                 .let { rows ->
@@ -4474,7 +4498,7 @@ object SearchDomain {
                 }
                 .let { rows ->
                     // "Dated on": about every row, through the one date of a row.
-                    if (filters.datedOnDays.isEmpty()) return@let rows
+                    if (!filters.isOn(Setting.DatedOnDays)) return@let rows
                     rows.filter { row ->
                         val at = dateOf(state, row) ?: return@filter false
                         Instant.fromEpochMilliseconds(at).toLocalDateTime(timeZone).dayOfWeek in filters.datedOnDays
@@ -4725,7 +4749,7 @@ object SearchDomain {
                         AlarmState.On -> alarm.enabled
                         AlarmState.Off -> !alarm.enabled
                     }
-                    onOff && (filters.alarmDays.isEmpty() || alarm.days.any { it in filters.alarmDays })
+                    onOff && (!filters.isOn(Setting.AlarmDays) || alarm.days.any { it in filters.alarmDays })
                 }
                 Kind.Timer -> {
                     val timer = state.timers.firstOrNull { it.id == result.id } ?: return true
@@ -4758,14 +4782,14 @@ object SearchDomain {
                 Kind.Notification ->
                     (filters.notificationsSinceMillis == null ||
                         (notificationTimeOf(result.id) ?: Long.MAX_VALUE) >= filters.notificationsSinceMillis) &&
-                        (filters.notificationSources.isEmpty() || NotificationSource.of(result.name) in filters.notificationSources)
+                        (!filters.isOn(Setting.NotificationSourceSetting) || NotificationSource.of(result.name) in filters.notificationSources)
                 Kind.HistoryUnit -> {
                     // A set of rules the scheduler engine found: kept by its own filter, and by none of a unit's — it
                     // was made in no window, belongs to no stack, changed no element and is never undone.
                     if (isSchedulerRunId(result.id)) {
                         return tri(filters.historyEngine, true) && filters.historyCategory == null &&
                             filters.historyWindow == null && filters.historyMadeInWindow == null && filters.historyUndone != Tri.Yes &&
-                            filters.historyChangedKinds.isEmpty() && filters.historyChangedElement == null
+                            !filters.isOn(Setting.HistoryChangedKindsSetting) && filters.historyChangedElement == null
                     }
                     if (!tri(filters.historyEngine, false)) return false
                     val unit = historyUnitOf(state, result.id) ?: return true
@@ -4785,7 +4809,7 @@ object SearchDomain {
                 }
                 Kind.Window ->
                     (filters.windowStatus == null || windowStatusOf(result) == filters.windowStatus) &&
-                        (filters.windowListedKinds.isEmpty() ||
+                        (!filters.isOn(Setting.WindowListedKindsSetting) ||
                             windowsById[result.id]?.listedKinds.orEmpty().any { it in filters.windowListedKinds })
                 // [Filters.blocksOf] is asked of the whole list at once ([results]).
                 // The logs' filters are asked as their rows are made ([claudeResults]).
@@ -5088,7 +5112,7 @@ object SearchDomain {
 
     /** Whether a unit that changed [changed] passes the two "changed" filters: one of the checked kinds, the one element. */
     internal fun historyChangeMatches(changed: Set<ChangedElement>, filters: Filters): Boolean =
-        (filters.historyChangedKinds.isEmpty() || changed.any { it.kind in filters.historyChangedKinds }) &&
+        (!filters.isOn(Setting.HistoryChangedKindsSetting) || changed.any { it.kind in filters.historyChangedKinds }) &&
             (filters.historyChangedElement == null || changed.any { it.key == filters.historyChangedElement })
 
     /** One identity row of the "Changed element" field: the element's Search key, and what the row reads. */
