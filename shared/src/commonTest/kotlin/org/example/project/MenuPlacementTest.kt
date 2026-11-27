@@ -249,6 +249,42 @@ class MenuPlacementTest {
     }
 
     /**
+     * User rule 2026-11-27: *"Make sure the window appears only stuck to the caller. Make sure of that in the whole app."*
+     * Wherever its caller stands, whatever its size and sides, a pop-up — a right-click's menu too — touches its caller and
+     * is never over it, as long as one side of it has any room.
+     */
+    @Test
+    fun a_pop_up_is_always_stuck_to_its_caller() {
+        val random = kotlin.random.Random(27)
+        val app = IntRect(0, 0, 1000, 800)
+        val sideSets = listOf(MenuSide.DEFAULT, MenuSide.SUBMENU, MenuSide.POPUP)
+        repeat(4000) { i ->
+            val list = if (i % 2 == 0) null else {
+                val l = random.nextInt(0, 700); val t = random.nextInt(0, 500)
+                IntRect(l, t, random.nextInt(l + 50, 1001), random.nextInt(t + 60, 801))
+            }
+            val anchor = if (list != null) {
+                val top = random.nextInt(list.top, list.bottom - 20)
+                IntRect(list.left + random.nextInt(0, 20), top, list.right, top + 20)
+            } else {
+                val l = random.nextInt(0, 990); val t = random.nextInt(0, 790)
+                // A point (a right-click), or a field.
+                if (i % 4 == 0) IntRect(l, t, l, t) else IntRect(l, t, minOf(1000, l + random.nextInt(1, 600)), minOf(800, t + random.nextInt(1, 60)))
+            }
+            val size = IntSize(random.nextInt(20, 1100), random.nextInt(20, 900))
+            val sides = sideSets[i % sideSets.size]
+            val fit = menuFit(anchor, size, app, sides, list)
+            val caller = if (list == null) anchor else shownRow(anchor, list)
+            val room = maxOf(caller.left - app.left, app.right - caller.right) > 0 || maxOf(caller.top - app.top, app.bottom - caller.bottom) > 0
+            if (!room) return@repeat
+            val shown = IntRect(fit.at.x, fit.at.y, fit.at.x + fit.size.width, fit.at.y + fit.size.height)
+            assertTrue(stuckTo(shown, anchor, list), "stuck: anchor=$anchor list=$list size=$size sides=$sides -> $fit")
+            assertFalse(shown.overlaps(caller), "not over its caller: anchor=$anchor list=$list size=$size -> $fit")
+            assertTrue(fit.size.width <= size.width && fit.size.height <= size.height, "never larger than it wants: $fit")
+        }
+    }
+
+    /**
      * User rule 2026-11-19: the down arrow of a window that appears stands on its left or right side, whichever is further
      * from the caller, and what it opens tries that side first.
      */

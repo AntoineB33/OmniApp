@@ -425,16 +425,34 @@ object SearchDomain {
     }
 
     /**
-     * User rule 2026-11-21: *"The 'added elements' list section of a window must be preserved between closing and
-     * re-appearing, except if the caller changes."* **What a field's window opens with** — what it opens with by default
-     * ([opened]), what its bar holds ([query]), and the added elements it had ([current]) while they were added for this
-     * [caller] (or for no caller said: kept from before it was said); else those it opens with by default.
+     * User rule 2026-11-27: *"The added elements list, the position of the section separators, whether the
+     * header/search/actions/added elements list is shown or not etc... is preserved if the caller is the same."* **What a
+     * field's window opens with**: opened again by the [caller] it was last opened by ([sameFieldCaller]), it is
+     * [current] as it was left, what its bar holds ([query]) put in; by another, what it opens with by default ([opened]).
+     * (2026-11-21 kept its added elements alone; a configuration that says no caller — written before 2026-11-27 with
+     * nothing added, or before 2026-11-21 — keeps those, the rest its default.) Its parts ([sameFieldCaller]'s answer)
+     * and what was opened inside it are the field's to keep or drop: a window opened inside it was closed with it.
      */
     fun fieldWindowReopened(current: Config, opened: Config, caller: String, query: String): Config {
-        val keeps = current.addedFor == null || current.addedFor == caller
-        val added = if (keeps) current.added else opened.added
-        return opened.copy(query = query, added = added, addedFor = caller.takeIf { added.isNotEmpty() })
+        if (sameFieldCaller(current, caller)) return current.copy(query = query)
+        val added = if (current.addedFor == null) current.added else opened.added
+        return opened.copy(query = query, added = added, addedFor = caller)
     }
+
+    /** Whether the field's window [current] was last opened by [caller] ([Config.addedFor]): it comes back as it was left. */
+    fun sameFieldCaller(current: Config, caller: String): Boolean = current.addedFor == caller
+
+    /**
+     * User rule 2026-11-27: *"The caller is not the same if it is in a window that got closed."* **Whether [key], an id in
+     * [Config.inside] (or of a Search window's kept parts), is a pop-up opened inside the window, or anything inside
+     * one**: a field's window (`/field:`), a drop-down's list (`/list:`), a ▾ window. Its sections (`/actions`) are the
+     * window's own.
+     */
+    fun isPopupInside(key: String): Boolean = "/field:" in key || "/list:" in key || "▾" in key
+
+    /** [config] closed: every pop-up opened inside it forgotten ([isPopupInside]), opened again by no caller it had. */
+    fun withPopupsClosed(config: Config): Config =
+        if (config.inside.keys.none(::isPopupInside)) config else config.copy(inside = config.inside.filterKeys { !isPopupInside(it) })
 
     /** The kinds of the settings page: the app's settings, whose actions are their controls ([AppSettingEntry]). */
     val SETTINGS_KINDS: List<Kind> = listOf(Kind.AppSetting, Kind.WorkplaceSetup)
@@ -917,7 +935,9 @@ object SearchDomain {
          * User rule 2026-11-21: **the caller the [added] elements were added for** — a field's window ([PopupSearchField]):
          * the set of elements of the actions section's group its field stands in, by their keys ([fieldCallerOf]). Its
          * added elements come back when the field opens it again from that caller, and are lost from another (*"the field
-         * F for only E1 and E2 doesn't exist anymore"*). Null: added from no such caller, or nothing added.
+         * F for only E1 and E2 doesn't exist anymore"*). Since 2026-11-27 the caller the window was last opened by,
+         * whatever it holds: the whole window comes back for it ([fieldWindowReopened]). Null: opened by no such caller
+         * (a configuration of before 2026-11-27 with nothing added).
          */
         val addedFor: String? = null,
         /**

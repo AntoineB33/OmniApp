@@ -803,7 +803,8 @@ private val TREE_COLUMN_MAX_HEIGHT = 480.dp
  * elements are a Search window's, the root's pop-up and every category's alike. Until then it drew a look-alike of its
  * own, whose right sections were placeholders. Drawn through `App`'s embedded Search window where there is one
  * ([LocalEmbeddedSearch]: its actions get the app's handlers), else with none. Its height is the tree's ([TreeColumn]'s
- * `onFit`), as far as [TREE_POPUP_MAX_HEIGHT]; its right sections shown, it widens for them. Its rows are the
+ * `onFit`), as far as [TREE_POPUP_MAX_HEIGHT]; its right sections shown as it opens, it is wider for them — never
+ * resized by a section shown or hidden while it is open (user rule 2026-11-27). Its rows are the
  * window's result rows ([TreeRows]): the one row menu, "add" among it. Its own layer: a press in it closes the
  * menus itself ([dismissesMenusOnPress]).
  */
@@ -826,7 +827,9 @@ private fun TreeSearchWindow(
     tree: @Composable (onFit: (Int) -> Unit) -> Unit,
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val rightShown = !(parts.actionsRemoved && parts.addedRemoved)
+    // User rule 2026-11-27: *"showing/hiding a section should not change the size of the window"* — it is sized for the
+    // sections it OPENED with; a section shown or hidden since is laid out within that size.
+    val rightShown = remember { !(parts.actionsRemoved && parts.addedRemoved) }
     var heightPx by remember { mutableStateOf(with(density) { TREE_POPUP_FIRST_HEIGHT.toPx() }) }
     val leastPx = with(density) { (if (rightShown) TREE_POPUP_RIGHT_MIN_HEIGHT else TREE_POPUP_MIN_HEIGHT).toPx() }
     val mostPx = with(density) { TREE_POPUP_MAX_HEIGHT.toPx() }
@@ -1014,10 +1017,15 @@ class ArrowSearches(
     /**
      * Every window drawn inside [relative] (in [root]) forgotten — what follows its id with "/" or "▾" — itself kept: a
      * field's window opened afresh is its default window, nothing of what was opened inside it before (anomaly 2026-11-15).
+     * [popupsOnly]: only the pop-ups that were open inside it ([SearchDomain.isPopupInside]) — its sections are its own,
+     * and it comes back as it was left for the same caller (user rule 2026-11-27).
      */
-    fun forgetInside(root: String, relative: String) {
+    fun forgetInside(root: String, relative: String, popupsOnly: Boolean = false) {
         val all = read(root)
-        val next = all.filterKeys { !(it.startsWith("$relative/") || it.startsWith(relative + ARROW)) }
+        val next = all.filterKeys { key ->
+            val inside = key.startsWith("$relative/") || key.startsWith(relative + ARROW)
+            !inside || (popupsOnly && !SearchDomain.isPopupInside(key.removePrefix(relative)))
+        }
         if (next != all) write(root, next)
     }
 

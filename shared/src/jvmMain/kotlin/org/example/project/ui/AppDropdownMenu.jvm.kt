@@ -680,14 +680,14 @@ private class MenuSession(
         // Dragged by its head: where the hand left it ([control]).
         if (heldByHand && window.isShowing) return
         val placed = menuPlacement(
-            owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow(), stuck = avoidsList, settling = settling,
+            owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, keeping, listNow(), settling = settling,
             shown = shrunkTo,
         )
         applyPlacement(window, placed)
     }
 
     private fun location(): Placed =
-        menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow(), stuck = avoidsList)
+        menuPlacement(owner, anchor ?: Rect.Zero, offsetPx, size ?: Dimension(0, 0), sides, list = listNow())
 
     /** The window at [placed]: its place, and its size — the content's, or less where [menuFit] shrank it ([cap]). */
     private fun applyPlacement(window: ComposeDialog, placed: Placed) {
@@ -981,8 +981,12 @@ private fun menuPlacement(
     /** Where the menu is shown, kept if it still may stand there ([keepsSpot]); null for a menu placed afresh. */
     keeping: Point? = null,
     list: Rect? = null,
-    /** User rule 2026-11-19: a pop-up is kept only where it still touches its caller ([stuckTo]). */
-    stuck: Boolean = false,
+    /**
+     * User rule 2026-11-19: a pop-up is kept only where it still touches its caller ([stuckTo]). User rule 2026-11-27
+     * (*"Make sure the window appears only stuck to the caller. Make sure of that in the whole app."*): every menu, a
+     * right-click's included — it was placed by [menuSpot] alone, whose last resort pushed it off its caller.
+     */
+    stuck: Boolean = true,
     /** In its first moments: never kept as it stands, only put back against its caller ([reStuck]). */
     settling: Boolean = false,
     /** The size it is shown at now where it is shrunk ([menuFit]); null: [size]. */
@@ -1002,8 +1006,8 @@ private fun menuPlacement(
     if (keeping != null && stuck && shown == null) {
         reStuck(IntOffset(keeping.x, keeping.y), IntSize(size.width, size.height), on, area, listOn)?.let { return Placed(Point(it.x, it.y), size) }
     }
-    // User rule 2026-11-21: a pop-up stuck to its caller, shrunk rather than hiding its rows ([menuFit]); a right-click's
-    // menu at its size ([menuSpot]).
+    // User rule 2026-11-21: a pop-up stuck to its caller, shrunk rather than hiding its rows ([menuFit]); since 2026-11-27 a
+    // right-click's menu too — at its size wherever a side of its caller holds it, shrunk rather than leave it elsewhere.
     if (stuck) {
         val fit = menuFit(on, IntSize(size.width, size.height), area, sides, listOn)
         return Placed(Point(fit.at.x, fit.at.y), Dimension(fit.size.width, fit.size.height))

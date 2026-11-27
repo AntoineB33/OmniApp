@@ -65,13 +65,19 @@ internal const val POPUP_MIN_HEIGHT = 160
  * User rule 2026-11-21: *"Make sure the pop-up window is stuck to the caller (a row or a button). Its position and sizes
  * must be adjusted for the best. It must avoid as much as possible to hide the rows in the same section as the caller,
  * even if it means reducing the size of the pop-up window. It must prioritize appearing to the left and to the top."*
- * **Where a pop-up (not a right-click's menu) stands, and at what size**, in this order:
+ * **Where a pop-up stands, and at what size** — a right-click's menu too since 2026-11-27, its caller the point or the
+ * layout it was opened on, its [sides] its own — in this order:
  *  1. [menuSpot]'s spot, where it holds the pop-up WHOLE, stuck to its caller and hiding no row of its [list];
  *  2. else the pop-up made smaller, on a side of its caller where it hides no row: at the left or the right of the row
  *     as the list shows it, above the first row, below the last; of a field or a button, any side. The spot keeping the
  *     most of it wins, [sides]' order (left and top first) breaking ties. Never below [POPUP_MIN_WIDTH] x
  *     [POPUP_MIN_HEIGHT] (or its own size, when smaller). Beside its caller it reaches up first, above or below it left;
- *  3. else [menuSpot]'s spot at its own size: the one hiding the fewest rows.
+ *  3. else [menuSpot]'s spot at its own size, where it is stuck to its caller: the one hiding the fewest rows;
+ *  4. else made smaller on a side of its caller over the fewest rows — above or below a row in the middle included —
+ *     never under the least size; 5. else as large as a side of its caller holds it.
+ * User rule 2026-11-27: *"Make sure the window appears only stuck to the caller. Make sure of that in the whole app."* — it
+ * never leaves its caller: the last resort used to be [menuSpot]'s fallback, pushed back onto the screen off its caller.
+ * Only a caller with no room on any side at all (it fills the app) leaves it there.
  */
 internal fun menuFit(
     anchor: IntRect,
@@ -85,8 +91,15 @@ internal fun menuFit(
     fun rect(at: IntOffset, s: IntSize) = IntRect(at.x, at.y, at.x + s.width, at.y + s.height)
     fun inArea(r: IntRect) = r.left >= area.left && r.top >= area.top && r.right <= area.right && r.bottom <= area.bottom
     fun hidesNone(r: IntRect) = list == null || !r.overlaps(list)
+    fun hidden(r: IntRect): Long {
+        if (list == null) return 0L
+        val w = minOf(r.right, list.right) - maxOf(r.left, list.left)
+        val h = minOf(r.bottom, list.bottom) - maxOf(r.top, list.top)
+        return if (w <= 0 || h <= 0) 0L else w.toLong() * h
+    }
     val shown = rect(spot, size)
-    if (inArea(shown) && !shown.overlaps(caller) && hidesNone(shown) && stuckTo(shown, anchor, list)) return MenuFit(spot, size)
+    val stuckWhole = inArea(shown) && !shown.overlaps(caller) && stuckTo(shown, anchor, list)
+    if (stuckWhole && hidesNone(shown)) return MenuFit(spot, size)
     // Above or below a row only from the first or the last: elsewhere the rows between would be hidden, or the pop-up
     // would stand away from its row.
     val first = list == null || caller.top <= list.top + 1
@@ -97,14 +110,15 @@ internal fun menuFit(
     fun along(preferred: Int, lo: Int, hi: Int, length: Int, callerStart: Int, callerEnd: Int): Int =
         preferred.coerceIn(lo, maxOf(lo, hi - length))
             .coerceIn(minOf(callerEnd - length, callerStart), maxOf(callerEnd - length, callerStart))
-    val shrunk = sides.distinct().mapNotNull { side ->
+    // The pop-up shrunk against each side of its caller, at least [least]: hiding no row, or ([overRows]) any.
+    fun shrunk(overRows: Boolean, least: IntSize): List<MenuFit> = sides.distinct().mapNotNull { side ->
         val left = side == MenuSide.Left || side == MenuSide.LeftTop
         val horizontal = left || side == MenuSide.Right || side == MenuSide.RightTop
         val above = side == MenuSide.Above || side == MenuSide.AboveEnd
-        if (!horizontal && (if (above) !first else !last)) return@mapNotNull null
+        if (!overRows && !horizontal && (if (above) !first else !last)) return@mapNotNull null
         val w = minOf(size.width, if (!horizontal) area.width else if (left) caller.left - area.left else area.right - caller.right)
         val h = minOf(size.height, if (horizontal) area.height else if (above) caller.top - area.top else area.bottom - caller.bottom)
-        if (w < minW || h < minH) return@mapNotNull null
+        if (w < least.width || h < least.height || w <= 0 || h <= 0) return@mapNotNull null
         val at =
             if (horizontal) {
                 IntOffset(if (left) caller.left - w else caller.right, along(caller.bottom - h, area.top, area.bottom, h, caller.top, caller.bottom))
@@ -112,10 +126,16 @@ internal fun menuFit(
                 IntOffset(along(caller.right - w, area.left, area.right, w, caller.left, caller.right), if (above) caller.top - h else caller.bottom)
             }
         val r = rect(at, IntSize(w, h))
-        if (inArea(r) && !r.overlaps(caller) && hidesNone(r)) MenuFit(at, IntSize(w, h)) else null
+        if (inArea(r) && !r.overlaps(caller) && (overRows || hidesNone(r))) MenuFit(at, IntSize(w, h)) else null
     }
+    fun MenuFit.area() = size.width.toLong() * size.height
     // The most of the pop-up kept; the sides' order breaks ties (maxBy keeps the first of equals).
-    shrunk.maxByOrNull { it.size.width.toLong() * it.size.height }?.let { return it }
+    shrunk(overRows = false, IntSize(minW, minH)).maxByOrNull { it.area() }?.let { return it }
+    if (stuckWhole) return MenuFit(spot, size)
+    shrunk(overRows = true, IntSize(minW, minH))
+        .minWithOrNull(compareBy<MenuFit> { hidden(rect(it.at, it.size)) }.thenByDescending { it.area() })
+        ?.let { return it }
+    shrunk(overRows = true, IntSize(1, 1)).maxByOrNull { it.area() }?.let { return it }
     return MenuFit(spot, size)
 }
 

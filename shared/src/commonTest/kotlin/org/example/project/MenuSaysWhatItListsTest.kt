@@ -103,7 +103,44 @@ class FieldWindowKeepsItsAddedListTest {
         val closed = opened.copy(added = listOf("Task/x"), addedFor = e1e2)
         val again = SearchDomain.fieldWindowReopened(closed, opened, e1e2e3, query = "")
         assertEquals(emptyList(), again.added)
-        assertNull(again.addedFor)
+        assertEquals(e1e2e3, again.addedFor, "now the window of its new caller")
+    }
+
+    /**
+     * User rule 2026-11-27: *"The added elements list, the position of the section separators, wether the
+     * header/search/actions/added elements list is shown or not etc... is preserved if the caller is the same."*
+     */
+    @Test
+    fun opened_again_by_the_same_caller_it_is_the_window_it_was_left() {
+        val closed = opened.copy(
+            kinds = setOf(Kind.Task, Kind.Category), addedFor = e1e2, query = "old",
+            actionSearch = "move", toggledActionRows = setOf("row"),
+        )
+        assertTrue(SearchDomain.sameFieldCaller(closed, e1e2))
+        assertEquals(closed.copy(query = "new"), SearchDomain.fieldWindowReopened(closed, opened, e1e2, query = "new"))
+        // By another caller: its default window, its caller said even with nothing added.
+        assertFalse(SearchDomain.sameFieldCaller(closed, e1e2e3))
+        assertEquals(opened.copy(addedFor = e1e2e3), SearchDomain.fieldWindowReopened(closed, opened, e1e2e3, query = ""))
+        // A configuration that says no caller (nothing added before 2026-11-27) is no caller's: its default window.
+        assertFalse(SearchDomain.sameFieldCaller(opened.copy(actionSearch = "x"), e1e2))
+    }
+
+    /** User rule 2026-11-27: *"The caller is not the same if it is in a window that got closed."* */
+    @Test
+    fun a_window_closed_forgets_the_pop_ups_that_were_open_inside_it() {
+        val inside = mapOf(
+            "/actions" to "a",
+            "/actions/actions" to "b",
+            "/actions/field:row/List of parents" to "c",
+            "/actions/field:row/List of parents/actions" to "d",
+            "/list:Sort" to "e",
+            "▾" to "f",
+            "/actions▾cat" to "g",
+        )
+        val closed = SearchDomain.withPopupsClosed(opened.copy(inside = inside))
+        assertEquals(setOf("/actions", "/actions/actions"), closed.inside.keys, "its own sections stay")
+        val none = opened.copy(inside = mapOf("/actions" to "a"))
+        assertTrue(SearchDomain.withPopupsClosed(none) === none)
     }
 
     @Test

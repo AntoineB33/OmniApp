@@ -83,16 +83,16 @@ internal fun cellEditPopupBounds(anchor: Rect, popup: IntSize, room: IntSize): a
 /**
  * User rule 2026-11-16: **where a field's window stands** ([FieldSearchPopup]) — *"When a row makes a window appear, it
  * must never hide the list of rows the caller is in. The positions below and above are only possible when it doesn't
- * hide."* The pop-ups' one placing ([menuSpot], [MenuSide.POPUP]) off the [list] the field is a row of, inside the app's
- * content area ([room]); as tall as the room it is given where it holds whole nowhere.
+ * hide."* The pop-ups' one placing ([menuFit], [MenuSide.POPUP]) off the [list] the field is a row of, inside the app's
+ * content area ([room]), stuck to the field: made smaller where it holds whole nowhere.
  */
 internal fun fieldPopupBounds(anchor: Rect, list: Rect?, popup: IntSize, room: IntSize): androidx.compose.ui.unit.IntRect {
     fun Rect.int() = androidx.compose.ui.unit.IntRect(left.toInt(), top.toInt(), right.toInt(), bottom.toInt())
     val area = androidx.compose.ui.unit.IntRect(0, 0, room.width, room.height)
-    val at = menuSpot(anchor.int(), popup, area, MenuSide.POPUP, list?.int())
-    val x = at.x.coerceIn(0, (room.width - popup.width).coerceAtLeast(0))
-    val y = at.y.coerceIn(0, room.height)
-    return androidx.compose.ui.unit.IntRect(x, y, x + popup.width.coerceAtMost(room.width), (y + popup.height).coerceAtMost(room.height))
+    // User rule 2026-11-27 (*"Make sure the window appears only stuck to the caller"*): the pop-ups' one placing and sizing,
+    // [menuFit] — the spot pushed back into the room afterwards used to leave the field.
+    val fit = menuFit(anchor.int(), popup, area, MenuSide.POPUP, list?.int())
+    return androidx.compose.ui.unit.IntRect(fit.at.x, fit.at.y, fit.at.x + fit.size.width, fit.at.y + fit.size.height)
 }
 
 /**
@@ -415,11 +415,11 @@ internal fun PopupSearchField(
 ) {
     val search = LocalEmbeddedSearch.current
     val host = LocalFieldSearchPopupHost.current
-    // What its window adds is added for its caller ([SearchDomain.Config.addedFor]).
+    // Its window is its caller's ([SearchDomain.Config.addedFor]): what it holds comes back for that caller alone.
     val latestCaller by androidx.compose.runtime.rememberUpdatedState(caller)
     val latestChange by androidx.compose.runtime.rememberUpdatedState(onConfigChange)
     val onConfigChange: (SearchDomain.Config) -> Unit = remember {
-        { next -> latestChange(next.copy(addedFor = latestCaller.takeIf { next.added.isNotEmpty() })) }
+        { next -> latestChange(next.copy(addedFor = latestCaller)) }
     }
     var open by remember { mutableStateOf(false) }
     // User rule 2026-11-13: the field's window has an id — the window's it stands in, and the field.
@@ -429,7 +429,7 @@ internal fun PopupSearchField(
     androidx.compose.runtime.CompositionLocalProvider(LocalArrowOwner provides windowId) {
         locals = androidx.compose.runtime.currentCompositionLocalContext
     }
-    RegisterEmbeddedSearch(windowId, placeholder, config, open = open, saved = config != openedConfig, set = onConfigChange)
+    RegisterEmbeddedSearch(windowId, placeholder, config, open = open, saved = config.copy(addedFor = null) != openedConfig.copy(addedFor = null), set = onConfigChange)
     var bounds by remember { mutableStateOf<Rect?>(null) }
     val focusManager = LocalFocusManager.current
     val close = {
@@ -455,18 +455,24 @@ internal fun PopupSearchField(
     // ([openedConfig]; what the bar holds kept), its parts the default ones, and nothing of what was opened inside it
     // before — the windows inside it, their parts, their pop-ups left open. Brought back after a restart ([PopupMemory]),
     // it is as it was left instead.
-    // User rule 2026-11-21 (*"The 'added elements' list section of a window must be preserved between closing and
-    // re-appearing, except if the caller changes"*): but its added elements, while its caller is the same
-    // ([SearchDomain.fieldWindowReopened]) — the field in the group of other elements is another caller.
+    // User rule 2026-11-27 (*"The added elements list, the position of the section separators, wether the
+    // header/search/actions/added elements list is shown or not etc... is preserved if the caller is the same"*; 2026-11-21
+    // said it of the added elements alone): opened again by the same caller, it is as it was left — its configuration,
+    // its parts, its sections' own — but every pop-up that was open inside it was closed with it, and is another caller's
+    // now (*"The caller is not the same if it is in a window that got closed"*). By another caller
+    // ([SearchDomain.fieldWindowReopened]) — the field in the group of other elements — it is its default window.
     val registry = LocalArrowSearches.current
     val arrowRoot = LocalArrowRoot.current
     val partsStore = LocalSearchPartsStore.current
     fun openFresh(query: String) {
+        val same = SearchDomain.sameFieldCaller(config, caller)
         onConfigChange(SearchDomain.fieldWindowReopened(config, openedConfig, caller, query))
-        parts = openedParts
+        if (!same) parts = openedParts
         if (windowId != null) {
-            if (registry != null && arrowRoot != null && windowId.startsWith(arrowRoot)) registry.forgetInside(arrowRoot, windowId.removePrefix(arrowRoot))
-            partsStore?.forgetInside(windowId)
+            if (registry != null && arrowRoot != null && windowId.startsWith(arrowRoot)) {
+                registry.forgetInside(arrowRoot, windowId.removePrefix(arrowRoot), popupsOnly = same)
+            }
+            if (same) partsStore?.forgetPopupsInside(windowId) else partsStore?.forgetInside(windowId)
             memory?.setField(windowId, false)
         }
         open = true

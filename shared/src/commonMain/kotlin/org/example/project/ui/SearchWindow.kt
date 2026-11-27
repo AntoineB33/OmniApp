@@ -3146,7 +3146,11 @@ internal fun OptionSearchMenu(
             typed = next.query
             kept = next.copy(query = "")
         }
-        var splits by remember { mutableStateOf(EMBEDDED_SEARCH_SPLITS) }
+        // User rule 2026-11-27: what it shows of itself (its sections, their lines) comes back as it was left while its
+        // caller is the same — this drop-down of the window it opens over, kept by its id ([rememberKeptParts]); that window
+        // closed, they are forgotten with it (`App`'s close of a window, a field's window opened again).
+        // Not where it was scrolled: a menu opens on its first entries, whatever it lists this time.
+        var splits by rememberKeptParts(listId, EMBEDDED_SEARCH_SPLITS) { it.copy(scrolls = emptyList()) }
         // No account is searched: the options are the rows.
         val nothing = remember { SchedulerState.empty() }
         val rows = (options.integers?.let { it.count + 1 } ?: options.options.size) + (if (options.checked != null) 1 else 0) + (if (options.onCreate != null) 1 else 0)
@@ -3627,6 +3631,11 @@ class SearchPartsStore(
     val write: (id: String, SearchSplits) -> Unit,
     /** The parts of every Search window drawn inside [id] forgotten (what follows its id with "/" or "▾"). */
     val forgetInside: (id: String) -> Unit = {},
+    /**
+     * User rule 2026-11-27: the parts of the pop-ups that were open inside [id] alone forgotten ([SearchDomain.isPopupInside]
+     * of what follows its id) — closed with it; its own sections' kept.
+     */
+    val forgetPopupsInside: (id: String) -> Unit = {},
 )
 
 val LocalSearchPartsStore = androidx.compose.runtime.staticCompositionLocalOf<SearchPartsStore?> { null }

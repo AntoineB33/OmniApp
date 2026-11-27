@@ -424,6 +424,14 @@ means.
     row a pop-up reaches UP from it (its bottom on the row's bottom), down only where the room's top stops it; above or
     below its caller it reaches left. `MenuSide.POPUP` already led with the left, then above. A right-click's menu keeps
     `DEFAULT` (below first, 2026-10-14) at its own size.
+  - **…and NEVER leaves its caller, a right-click's menu included** (user rule 2026-11-27: *"Make sure the window appears
+    only stuck to the caller. Make sure of that in the whole app."*; `menuFit`, `menuPlacement`'s `stuck` always,
+    `fieldPopupBounds`, `MenuPlacementTest.a_pop_up_is_always_stuck_to_its_caller`): where no spot above holds it,
+    `menuFit` takes its whole spot stuck to the caller over the fewest rows, else shrinks it against its caller over the
+    fewest rows (above or below a middle row included), else as large as a side holds it. Its last resort used to be
+    `menuSpot`'s fallback, pushed back onto the screen off its caller; a right-click's menu was placed by `menuSpot` alone,
+    and a field's window was pushed into the room after placing. A right-click's menu keeps its own size wherever a side
+    of its caller holds it.
   - **In the Search window a ROW's right-click menu opens AT THE POINTER** (user rule 2026-10-13: *"for the
     elements in the result list of the Search window, the menu still appears at the left of the element instead of
     the mouse position"*; `AppDropdownMenu`'s `atPointer`, `LocalRowMenusAtPointer`, provided by `SearchWindow`).
@@ -744,6 +752,22 @@ means.
     it (`SearchDomain.withLostCallersDropped`); the change's History Unit holds what was dropped, so Ctrl+Z brings it
     back. A field whose added elements are its caller's own state, not its window's (the tasks an evolution goes to, the
     categories it carries), says `caller = ""`: never lost.
+    **Since 2026-11-27, the WHOLE window while its caller is the same** (user rule: *"The added elements list, the position
+    of the section separators, wether the header/search/actions/added elements list is shown or not etc... is preserved if
+    the caller is the same. The caller is not the same if it is in a window that got closed, if the caller is an action
+    that is not involving the same elements … if not in an action section then the set of involved elements is always
+    empty."*; `SearchDomain.fieldWindowReopened`, `sameFieldCaller`): `Config.addedFor` is the caller the window was last
+    opened by, written whatever it holds; opened again by it, its configuration and its parts come back as left (the
+    2026-11-15 default window above is a NEW caller's). **A pop-up inside a window that closed is another caller's**: a
+    Search window of the app closing forgets every pop-up that was open inside it — fields' windows, drop-downs' lists,
+    ▾ windows (`SearchDomain.isPopupInside`, `withPopupsClosed`, `App`'s `searchWindowClosed`, in the close's History
+    Unit) — and a field's window opened again forgets those that were open inside it, its own sections kept
+    (`ArrowSearches.forgetInside`'s `popupsOnly`, `SearchPartsStore.forgetPopupsInside`). A drop-down's list keeps its
+    parts by its id (`OptionSearchMenu`'s `rememberKeptParts`), its scroll excepted.
+  - **Showing or hiding a section never changes a window's size** (user rule 2026-11-27): a window of the app has the size
+    the user gave it, a pop-up Search window a fixed one (a field's, a drop-down's list, a hover pop-up), and the ▾ tree's
+    pop-up the one its sections OPENED with (`TreeSearchWindow`'s `rightShown`, remembered): a section shown since is laid
+    out within it.
   - **The pop-ups left open come back after a restart, as the windows do** (anomaly 2026-11-15: *"I pinned the window
     …, I restart the app, and all the windows disappeared... Only the first one, the default search window,
     remains"*; `PopupMemory`, the `OpenPopups` placement row, local-only): a field's Search window left open, and a

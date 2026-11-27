@@ -746,6 +746,9 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         fun seedSubtreeCells(id: String, cells: Set<String>) {
             vm.dispatch(SchedulerIntent.SetSearchExpanded(id, cells.mapTo(HashSet()) { org.example.project.scheduler.model.CellId(it) }))
         }
+        // User rule 2026-11-27 (*"The caller is not the same if it is in a window that got closed"*): what a Search window
+        // closing forgets of the pop-ups that were open inside it — set below, once the windows' configurations are known.
+        val searchWindowClosed = remember { arrayOf<(String) -> Unit>({}) }
         fun updatePlacementById(id: String, change: (WindowPlacement) -> WindowPlacement) {
             val previous = placements[id] ?: WindowPlacement(x = 0f, y = 0f, visible = false)
             val next = change(previous)
@@ -773,6 +776,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 seedSubtreeCells(id, emptySet())
                 searchSplits.keys.filter { it.startsWith("$id/") }.forEach { searchSplits.remove(it) }
                 calendarCopySections.remove(id)
+                searchWindowClosed[0](id)
             }
             if (id !in VIEW_ROWS) viewHistory.onLayout(id, previous, next)
             if (closing) viewHistory.endGroup()
@@ -1550,6 +1554,16 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         saveWindowSections()
                     }
                 },
+                forgetPopupsInside = { id ->
+                    val inside = searchSplits.keys.filter {
+                        (it.startsWith("$id/") || it.startsWith(id + org.example.project.ui.ArrowSearches.ARROW)) &&
+                            SearchDomain.isPopupInside(it.removePrefix(id))
+                    }
+                    if (inside.isNotEmpty()) {
+                        inside.forEach(searchSplits::remove)
+                        saveWindowSections()
+                    }
+                },
             )
         }
         // The per-object windows (`popups.md`): each is about ONE object, and each kind is the list of its open
@@ -1763,6 +1777,18 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                 SEARCH_KEY + id, before.encode(), config.encode(), searchChangeLabel(before, config),
                 coalesceKey = typed?.let { SEARCH_KEY + id + "/" + it },
             )
+        }
+        // User rule 2026-11-27: a Search window closed, the pop-ups that were open inside it — fields' windows, drop-downs'
+        // lists, ▾ windows — are forgotten ([SearchDomain.withPopupsClosed]): opened again, theirs is another caller, and
+        // they are their default windows. In the close's History Unit: Ctrl+Z brings the window back with them.
+        searchWindowClosed[0] = { id ->
+            val before = searchConfigs[id]
+            val after = before?.let(SearchDomain::withPopupsClosed)
+            if (before != null && after != before) {
+                searchConfigs[id] = after!!
+                updatePlacementById(id) { it.copy(config = after.encode()) }
+                viewHistory.record(SEARCH_KEY + id, before.encode(), after.encode(), "Close the pop-ups inside " + id)
+            }
         }
         // User rule 2026-11-20: the pin of the bar of the Search window [owner], stored by the window [root] — every Search
         // window's, found by the window itself ([org.example.project.ui.LocalSearchBarPins]): ↑ / ↓ in it walk its

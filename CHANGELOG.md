@@ -11,6 +11,26 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A pop-up comes back as it was left for the same caller; always stuck to it — 2026-11-27
+
+- User: *"The added elements list, the position of the section separators, wether the header/search/actions/added
+  elements list is shown or not etc... is preserved if the caller is the same."* A field's window opened again by the
+  caller it was last opened by (`Config.addedFor`, now written whatever it holds) is its configuration and its parts as
+  left (`SearchDomain.fieldWindowReopened`, `sameFieldCaller`); by another, its default window. A drop-down's list keeps
+  its parts by its id (`OptionSearchMenu`, was reset at each opening), its scroll excepted. Takes back the 2026-11-15
+  *"default window"* for the same caller.
+- *"The caller is not the same if it is in a window that got closed"*: a Search window closing forgets the pop-ups that
+  were open inside it — fields' windows, lists, ▾ windows (`SearchDomain.withPopupsClosed`, in the close's History Unit);
+  a field's window opened again forgets those opened inside it, its own sections kept (`ArrowSearches.forgetInside`'s
+  `popupsOnly`, `SearchPartsStore.forgetPopupsInside`).
+- *"showing/hiding a section should not change the size of the window"*: the ▾ tree's pop-up is sized for the sections
+  it opened with (it widened by 380 dp for its right side). Every other pop-up Search window had a fixed size already.
+- *"Make sure the window appears only stuck to the caller … in the whole app"*: `menuFit`'s last resort (the spot pushed
+  back onto the screen) and a right-click's menu (placed by `menuSpot` alone) could leave the caller; a field's window was
+  pushed into the room after placing. All now go through `menuFit`, which shrinks the pop-up against its caller over the
+  fewest rows rather than leave it. `MenuPlacementTest.a_pop_up_is_always_stuck_to_its_caller`,
+  `FieldWindowKeepsItsAddedListTest`. Client rebuild only.
+
 ### The ▾ tree's rows and an element's children are result rows — 2026-11-27
 
 - User: *"In the default search window, in down arrow of the search section, I right-click a row, and I get only
