@@ -77,11 +77,16 @@ class MenuHoverPopupTest {
             assertEquals(1, arrows.size, "one arrow, on the entry with a pop-up: $arrows")
             assertTrue(kotlin.math.abs(arrows.single().center.y - centerOf("add…").y) < 4f, "the arrow is on the add… row: $arrows")
 
+            // User rule 2026-11-27: *"Rows that open a window when hovered over must now open it only when the arrow is
+            // hovered over."* The row's name hovered shows nothing; its arrow hovered shows the pop-up.
             moveTo(centerOf("add…"))
             frames(6)
-            assertTrue(popupText in texts(), "the hover shows the entry's pop-up")
+            assertFalse(popupText in texts(), "a hover of the row off its arrow shows nothing")
+            moveTo(arrows.single().center)
+            frames(6)
+            assertTrue(popupText in texts(), "the hover of the arrow shows the entry's pop-up")
 
-            // Off the entry and its pop-up, onto empty space: past the crossing's grace, the pop-up is gone.
+            // Off the arrow and its pop-up, onto empty space: past the crossing's grace, the pop-up is gone.
             val away = Offset(950f, 30f)
             moveTo(away)
             frames(4)

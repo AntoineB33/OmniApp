@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A hover pop-up opens from its arrow alone, and hangs from it — 2026-11-27
+
+- User rule: *"Rows that open a window when hovered over must now open it only when the arrow is hovered over. The
+  caller is the arrow, so be careful that the opened window always appears sticking to the caller."* A menu entry with a
+  pop-up (`HoverPopupRow`: the calendar's "add…", "edit…", the view parts, "Deep copy") and a configurations tree's
+  category opened on a hover of the whole row and hung the pop-up from the row, off its list. Now the row's
+  `HoverPopupArrow` is the caller (`HoverPopupCaller`): only its hover opens the pop-up, which is composed inside it and
+  placed with no caller list, so `menuFit` sticks it to the arrow. A click on the row still opens it pinned; the
+  click-only blank child row keeps its row anchor. `MenuHoverPopupTest`; `popups.md`.
+
 ### Random requests 1–2: what was checked when, and what a context lists — 2026-11-27
 
 - Request 1: *"all the rows with a check box the user checked on a Sunday"*. A check box was no row of the account and

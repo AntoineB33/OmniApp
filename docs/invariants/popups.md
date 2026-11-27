@@ -478,6 +478,14 @@ means.
     a row shows a window when hovered over, there must be an arrow indicating it."*; `HoverPopupArrow`, the one drawing):
     a tree's category at its end, a menu entry before its name (the option row's `leading` mark) — the menu's rows are
     laid wider than the menu, and an arrow at their far end stood out of view (`MenuHoverPopupTest`).
+    **Only the ARROW opens it, and the arrow is its caller** (user rule 2026-11-27: *"Rows that open a window when
+    hovered over must now open it only when the arrow is hovered over. The caller is the arrow, so be careful that the
+    opened window always appears sticking to the caller."*; `HoverPopupCaller`, `LocalHoverPopupCaller`): the row hands
+    its `HoverPopupArrow` the hover, the hover branch and the pop-up, which is composed inside the arrow — so the
+    desktop's menu anchors on the arrow — with no caller list (as the ▾'s tree), so `menuFit` places it against the
+    arrow itself, even over the list. A hover of the rest of the row opens nothing; a click on the row still opens it
+    pinned (a finger's way). A row drawing no arrow (`opensOnHover` false: the blank child row) hangs it from itself,
+    off its list, as before.
   - **A PRESS ON WHAT OPENS A POP-UP IS ITS CLICK'S TO ANSWER — never the outside press's, never the keyboard's loss**
     (anomaly 2026-11-20: *"Often when I rapidly click on a down arrow, it appears and disappears in a blink. It also
     happens for rows that show a window when hovering over it."*; `ui/PopupOpener.kt`, `PopupOpenerTest`,

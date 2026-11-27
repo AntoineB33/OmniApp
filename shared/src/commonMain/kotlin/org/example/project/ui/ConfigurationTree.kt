@@ -649,18 +649,17 @@ private fun TreeColumn(
                     // User 2026-11-27: a result row of the Search window it is in ([TreeRows]) — a category is a search
                     // configuration too (user rule 2026-11-16), its description the bubble of its name. A category of the
                     // root's flat list is that category again ([SearchDomain.configurationElementOf]).
-                    Box(
-                        Modifier
-                            .reportsHover(branch)
-                            .popupOpener(rowOpener, revealing)
-                            .onHoverEnter { if (MenuHoverTracker.hoverActs(around)) reveal() },
-                    ) {
-                        // Its pop-up hangs from the row (the Box), never from the column; the row, and the menu it opens, drawn
-                        // after it, so that menu stands over it.
+                    // User rule 2026-11-27: *"Rows that open a window when hovered over must now open it only when the arrow
+                    // is hovered over. The caller is the arrow"* — the row's [HoverPopupArrow] reads the hover and hosts the
+                    // pop-up, which hangs from it, stuck to it, even over this column ([HoverPopupCaller]). A row not drawing
+                    // its arrow hangs it from itself, off the column, as before.
+                    val caller = remember(branch, around) { HoverPopupCaller(branch, around) }
+                    val fromArrow = caller.arrows > 0
+                    val shown: @Composable (Boolean) -> Unit = { onArrow ->
                         if (revealing) {
                             androidx.compose.runtime.CompositionLocalProvider(
                                 LocalMenuSides provides MenuSide.SUBMENU,
-                                LocalCallerList provides { columnBounds[0] },
+                                LocalCallerList provides if (onArrow) null else { { columnBounds[0] } },
                                 LocalMenuHover provides branch,
                                 LocalPopupOpener provides rowOpener,
                                 // The arrow in this pop-up's bar opens a tree standing at this category.
@@ -717,6 +716,18 @@ private fun TreeColumn(
                                 }
                             }
                         }
+                    }
+                    caller.onHover = reveal
+                    caller.popup = { shown(true) }
+                    Box(
+                        Modifier
+                            .then(if (fromArrow) Modifier else Modifier.reportsHover(branch))
+                            .popupOpener(rowOpener, revealing),
+                    ) {
+                        // Hung from the row (no arrow drawn): from the Box, never from the column; drawn before the row,
+                        // so that menu stands over it.
+                        if (!fromArrow) shown(false)
+                        androidx.compose.runtime.CompositionLocalProvider(LocalHoverPopupCaller provides caller) {
                         rows.row(
                             TreeRowSpec(
                                 item = SearchDomain.configurationElementOf(node),
@@ -734,6 +745,7 @@ private fun TreeColumn(
                                 leading = { HoverPopupArrow() },
                             ),
                         )
+                        }
                     }
                 }
                 // A row of another type its own search checks too: a result row of its kind, no control of its own.
