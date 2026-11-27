@@ -165,6 +165,8 @@ internal fun SettingEditor(
             CompactSwitch(checked = config.dropButtons, onCheckedChange = { onChange(config.copy(dropButtons = it)) })
         SearchDomain.Setting.Entries ->
             EntriesEditor(config.entries) { onChange(config.copy(entries = it)) }
+        SearchDomain.Setting.RightClickChecksAlone ->
+            CompactSwitch(checked = config.rightClickChecksAlone, onCheckedChange = { onChange(config.copy(rightClickChecksAlone = it)) })
         SearchDomain.Setting.Separators ->
             CompactSwitch(checked = config.separators, onCheckedChange = { onChange(config.copy(separators = it)) })
         SearchDomain.Setting.ButtonFollowsExpansion ->

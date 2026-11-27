@@ -87,7 +87,7 @@ object PressDomain {
     fun behaviours(kind: Kind, contextId: String, config: SearchDomain.Config): List<Behaviour> {
         val place = placeOf(contextId)
         if (kind == Kind.Action) return actionRow()
-        if (place != Place.SearchWindow && SearchDomain.isPickedRow(kind)) return pickedRow(kind, place)
+        if (place != Place.SearchWindow && SearchDomain.isPickedRow(kind)) return pickedRow(kind, place, config.rightClickChecksAlone)
         val arranging = config.menuCustomizing && place == Place.SearchWindow
         return elementRow(kind, arranging)
     }
@@ -115,7 +115,7 @@ object PressDomain {
     )
 
     /** A right-click menu's entry, or a drop-down's option or integer. */
-    private fun pickedRow(kind: Kind, place: Place): List<Behaviour> {
+    private fun pickedRow(kind: Kind, place: Place, rightClickChecksAlone: Boolean): List<Behaviour> {
         val act = when {
             place == Place.Menu -> "runs the entry, at the release"
             kind == Kind.Integer -> "picks the number, at the release"
@@ -127,7 +127,13 @@ object PressDomain {
             Behaviour(Press.CtrlClick, "the same as a click"),
             Behaviour(Press.ShiftClick, "the same as a click"),
             Behaviour(Press.DoubleClick, "nothing more than its click"),
-            Behaviour(Press.RightClick, "opens the row menu: add, copy id, copy path, and \"check only this\" where it has a check box"),
+            Behaviour(
+                Press.RightClick,
+                if (rightClickChecksAlone && place != Place.Menu) {
+                    "checks it and unchecks every other one, where it has a check box (\"Right-click checks it alone\"); " +
+                        "Shift + right-click opens the row menu"
+                } else "opens the row menu: add, copy id, copy path, and \"check only this\" where it has a check box",
+            ),
             Behaviour(Press.Enter, if (place == Place.Menu) "runs the selected entry" else "picks the selected row"),
             Behaviour(Press.HeldPress, "nothing until the release, which is its click"),
             Behaviour(Press.Hover, if (place == Place.Menu) "shows the entry's own list, where it has one" else "shows the option's pop-up, where it has one"),

@@ -57,6 +57,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.composed
+import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.draw.clip
@@ -2235,6 +2236,11 @@ fun SearchWindow(
                                                 actOnOption(result.id)
                                             }
                                         },
+                                        // User rule 2026-11-27, "Right-click checks it alone": a check box's row checked alone at the
+                                        // release, every other unchecked; Shift + right-click still opens its menu.
+                                        onSecondaryRelease = option?.takeIf {
+                                            config.rightClickChecksAlone && it.checked != null && !selectAll && result.id != SearchDomain.CREATE_OPTION
+                                        }?.let { o -> { o.onSolo(result.id) } },
                                         onOpen = { openers.open(state, result) },
                                         // User rule 2026-10-01: a double-click ADDS the element (a task row's enters
                                         // Edit Mode, the tree's rule) — never opens another window on it. A "creation"
@@ -4025,6 +4031,8 @@ private fun Modifier.pickOnRelease(
                     if (press.type != PointerEventType.Press) continue
                     if (press.changes.any { skipped(it.position) }) continue
                     val act = when {
+                        // Shift + right-click is the row's menu, whatever the right-click alone does.
+                        press.buttons.isSecondaryPressed && press.keyboardModifiers.isShiftPressed -> null
                         press.buttons.isSecondaryPressed -> secondary
                         press.buttons.isPrimaryPressed -> primary
                         else -> null

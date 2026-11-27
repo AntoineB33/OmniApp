@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Right-click checks it alone"; the ▾ tree keeps a row's state by what it is — 2026-11-27
+
+- Anomaly: *"down arrow > 'Types' > 'Types' field, then I click on 'deselect all', but the window disappears."* Types
+  turning on put "Currently on" above the leaf; the tree's column composed its rows by place, so the open list went with
+  the row's state. Rows are keyed by `configurationRowId` (`TypesDeselectAllKeepsListTest`).
+- User: a configuration for the right-click to check a row alone. `Config.rightClickChecksAlone` ("Right-click checks it
+  alone", Display), off by default in every context: on, a check box's row is checked alone at the right-click's release;
+  Shift + right-click still opens the row menu, so nothing it offers is out of reach. "Clicks and keys" says it per
+  context (`RightClickChecksAloneTest`). Local view state / context default; an older stored configuration reads as off.
+
 ### A row's one date, and "Dated on" a weekday — 2026-11-27
 
 - Random request: *every change made to a task on a Sunday, newest first*. Nothing filtered by weekday but an alarm's

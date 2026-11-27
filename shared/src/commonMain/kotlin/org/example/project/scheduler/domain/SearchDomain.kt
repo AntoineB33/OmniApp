@@ -1036,6 +1036,11 @@ object SearchDomain {
          */
         val separators: Boolean = false,
         /**
+         * User rule 2026-11-27, a search configuration ([Setting.RightClickChecksAlone]): **a right-click on a row with a check
+         * box checks it and unchecks every other one of the list**, the row menu opened by Shift + right-click instead.
+         */
+        val rightClickChecksAlone: Boolean = false,
+        /**
          * User rule 2026-11-25, a search configuration ([Setting.Entries]): *"one search configuration that basically just
          * set the elements in the right place"* — **the entries a menu lists, by id, in this order**; an entry the code
          * gives and this does not name is not listed. Empty: every entry the code gives, in its order.
@@ -1217,6 +1222,7 @@ object SearchDomain {
                     dropButtons = dropButtons,
                     buttonFollowsExpansion = buttonFollowsExpansion,
                     separators = separators,
+                    rightClickChecksAlone = rightClickChecksAlone,
                     entries = entries,
                     taskRowLayout = taskRowLayout.map { it.name },
                     actionSearch = actionSearch,
@@ -1373,6 +1379,7 @@ object SearchDomain {
                     dropButtons = stored.dropButtons,
                     buttonFollowsExpansion = stored.buttonFollowsExpansion,
                     separators = stored.separators,
+                    rightClickChecksAlone = stored.rightClickChecksAlone,
                     entries = healedEntries(stored.entries),
                     taskRowLayout = TaskRowPart.decode(stored.taskRowLayout),
                     actionSearch = stored.actionSearch,
@@ -2329,6 +2336,8 @@ object SearchDomain {
         ButtonFollowsExpansion(null, "Button saves open rows"),
         /** User rule 2026-11-25: the horizontal separators between groups of rows ([Config.separators]). */
         Separators(null, "Separators between groups"),
+        /** User rule 2026-11-27: a right-click checks a row alone ([Config.rightClickChecksAlone]). */
+        RightClickChecksAlone(null, "Right-click checks it alone"),
         /** User rule 2026-11-25: the entries a menu lists, in order ([Config.entries]). */
         Entries(null, "Entries, in order"),
         TaskSort(Kind.Task, "Sort by", sorts = true),
@@ -2444,7 +2453,8 @@ object SearchDomain {
             setting.sorts || setting == Setting.SearchSortsOnly -> SettingRole.Sort
             setting == Setting.GroupByAddedElements || setting == Setting.ExpandResults -> SettingRole.Children
             setting == Setting.DropButtons || setting == Setting.CompletionList || setting == Setting.MenuCustomizing ||
-                setting == Setting.ButtonFollowsExpansion || setting == Setting.TaskRowLayout || setting == Setting.Separators || setting == Setting.Entries -> SettingRole.Display
+                setting == Setting.ButtonFollowsExpansion || setting == Setting.TaskRowLayout || setting == Setting.Separators || setting == Setting.Entries ||
+                setting == Setting.RightClickChecksAlone -> SettingRole.Display
             setting == Setting.ResetSearch -> null
             else -> SettingRole.Filter
         }
@@ -2524,6 +2534,7 @@ object SearchDomain {
             Setting.DropButtons.takeIf { config.dropButtons },
             Setting.ButtonFollowsExpansion.takeIf { config.buttonFollowsExpansion },
             Setting.Separators.takeIf { config.separators },
+            Setting.RightClickChecksAlone.takeIf { config.rightClickChecksAlone },
             Setting.Entries.takeIf { config.entries.isNotEmpty() },
             Setting.TaskRowLayout.takeIf { config.taskRowLayout.isNotEmpty() },
         )
@@ -3108,6 +3119,9 @@ object SearchDomain {
             Setting.Entries ->
                 "The entries the menu lists, by name, in this order: one the menu has and this does not name is not listed. " +
                     "Empty: every entry the menu has, in its own order."
+            Setting.RightClickChecksAlone ->
+                "In a list with check boxes, a right-click on a row checks it and unchecks every other one; " +
+                    "Shift + right-click opens the row's menu. Off: the right-click opens the menu, whose \"check only this\" does it."
             Setting.Separators ->
                 "A horizontal line between groups of rows: in a background menu, between the window's own options and those of " +
                     "the section right-clicked (its actions or its added elements)."
@@ -3379,6 +3393,8 @@ object SearchDomain {
         val buttonFollowsExpansion: Boolean = false,
         /** New 2026-11-25: absent = no separator ([Config.separators]). */
         val separators: Boolean = false,
+        /** New 2026-11-27: absent = the right-click opens the row menu ([Config.rightClickChecksAlone]). */
+        val rightClickChecksAlone: Boolean = false,
         /** New 2026-11-25: absent = every entry the code gives ([Config.entries]). */
         val entries: List<String> = emptyList(),
         /** New 2026-11-22: absent = the default task row ([Config.taskRowLayout]); a part this build does not know is skipped. */

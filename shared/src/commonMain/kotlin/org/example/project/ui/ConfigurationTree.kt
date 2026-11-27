@@ -591,6 +591,9 @@ private fun TreeColumn(
         // The rows, measured whole: the tree's own height ([onFit]).
         Column(Modifier.onSizeChanged { if (it.height != contentPx) contentPx = it.height }) {
         for (node in nodes) {
+            // Anomaly 2026-11-27 ("Types › Types", "Deselect all": the list went): each row keeps its state by what it is,
+            // not by its place — "Currently on" appearing above it moved every row, and an open drop-down with it.
+            androidx.compose.runtime.key(SearchDomain.configurationRowId(node)) {
             when (node) {
                 is SearchDomain.ConfigurationCategory -> {
                     val revealing = path.getOrNull(depth) == node.id
@@ -747,6 +750,7 @@ private fun TreeColumn(
                         leaf(node, kindWidth, kindShown)
                     }
                 }
+            }
             }
         }
         }
