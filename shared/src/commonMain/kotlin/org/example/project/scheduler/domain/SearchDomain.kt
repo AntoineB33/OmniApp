@@ -12,6 +12,7 @@ import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.NotificationSource
 import org.example.project.scheduler.state.ChangedElement
 import org.example.project.scheduler.state.changedElements
+import org.example.project.scheduler.state.changedConfigurations
 import kotlinx.datetime.number
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.TimeZone
@@ -875,7 +876,12 @@ object SearchDomain {
      * [fieldsMatch]): its id ([keyOf] without its kind), its name, its description ([descriptionOf]), the labels of
      * its buttons ([buttonLabelsOf]).
      */
-    enum class SearchField { Id, Name, Description, Buttons }
+    /**
+     * What of a row the bars are matched against. [Facts] (user rule 2026-11-27, *"can you guarantee that any random request
+     * … the user will be able to get the result list?"*): each "label: value" line the row's deep copy writes ([factsOf]) —
+     * so the bars, their formula (AND, OR, NOT) and a regular expression reach every fact the app has of a row.
+     */
+    enum class SearchField { Id, Name, Description, Buttons, Facts }
 
     /** [Filters.childDistance] for every level below a row: its children, theirs, and so on ("any"). */
     const val CHILD_DISTANCE_ANY: Int = 0
@@ -1761,11 +1767,13 @@ object SearchDomain {
                 Setting.SearchInName -> SearchField.Name in searchIn
                 Setting.SearchInDescription -> SearchField.Description in searchIn
                 Setting.SearchInButtons -> SearchField.Buttons in searchIn
+                Setting.SearchInFacts -> SearchField.Facts in searchIn
                 Setting.SearchInChildren -> searchChildren
                 Setting.ChildSearchInId -> SearchField.Id in childSearchIn
                 Setting.ChildSearchInName -> SearchField.Name in childSearchIn
                 Setting.ChildSearchInDescription -> SearchField.Description in childSearchIn
                 Setting.ChildSearchInButtons -> SearchField.Buttons in childSearchIn
+                Setting.ChildSearchInFacts -> SearchField.Facts in childSearchIn
                 else -> null
             }
 
@@ -1777,11 +1785,13 @@ object SearchDomain {
                 Setting.SearchInName -> copy(searchIn = searchIn.with(SearchField.Name))
                 Setting.SearchInDescription -> copy(searchIn = searchIn.with(SearchField.Description))
                 Setting.SearchInButtons -> copy(searchIn = searchIn.with(SearchField.Buttons))
+                Setting.SearchInFacts -> copy(searchIn = searchIn.with(SearchField.Facts))
                 Setting.SearchInChildren -> copy(searchChildren = on)
                 Setting.ChildSearchInId -> copy(childSearchIn = childSearchIn.with(SearchField.Id))
                 Setting.ChildSearchInName -> copy(childSearchIn = childSearchIn.with(SearchField.Name))
                 Setting.ChildSearchInDescription -> copy(childSearchIn = childSearchIn.with(SearchField.Description))
                 Setting.ChildSearchInButtons -> copy(childSearchIn = childSearchIn.with(SearchField.Buttons))
+                Setting.ChildSearchInFacts -> copy(childSearchIn = childSearchIn.with(SearchField.Facts))
                 else -> this
             }
         }
@@ -2237,12 +2247,14 @@ object SearchDomain {
         SearchInName(null, "Search in names"),
         SearchInDescription(null, "Search in descriptions"),
         SearchInButtons(null, "Search in buttons"),
+        SearchInFacts(null, "Search in facts"),
         SearchInChildren(null, "Search in children"),
         ChildSearchInId(null, "Search in children's ids"),
         ChildDistance(null, "Children's parent distance"),
         ChildSearchInName(null, "Search in children's names"),
         ChildSearchInDescription(null, "Search in children's descriptions"),
         ChildSearchInButtons(null, "Search in children's buttons"),
+        ChildSearchInFacts(null, "Search in children's facts"),
         /** User rule 2026-11-06: the search bars added to the window's own, and their formula ([Config.extraQueries]). */
         SearchBars(null, "Search bars"),
         Types(null, "Types"),
@@ -2526,8 +2538,9 @@ object SearchDomain {
 
     /** "Where to search"'s configurations, in the tree's order ([TreeSubNode.WhereToSearch]). */
     val WHERE_SETTINGS: List<Setting> = listOf(
-        Setting.SearchInId, Setting.SearchInName, Setting.SearchInDescription, Setting.SearchInButtons, Setting.SearchInChildren,
-        Setting.ChildSearchInId, Setting.ChildDistance, Setting.ChildSearchInName, Setting.ChildSearchInDescription, Setting.ChildSearchInButtons,
+        Setting.SearchInId, Setting.SearchInName, Setting.SearchInDescription, Setting.SearchInButtons, Setting.SearchInFacts,
+        Setting.SearchInChildren, Setting.ChildSearchInId, Setting.ChildDistance, Setting.ChildSearchInName,
+        Setting.ChildSearchInDescription, Setting.ChildSearchInButtons, Setting.ChildSearchInFacts,
     )
 
     /**
@@ -2947,9 +2960,10 @@ object SearchDomain {
     fun subNodeOf(setting: Setting): TreeSubNode? =
         when (setting) {
             Setting.MatchCase, Setting.WholeWord, Setting.Regex -> TreeSubNode.Matching
-            Setting.SearchInId, Setting.SearchInName, Setting.SearchInDescription, Setting.SearchInButtons -> TreeSubNode.WhereToSearch
+            Setting.SearchInId, Setting.SearchInName, Setting.SearchInDescription, Setting.SearchInButtons, Setting.SearchInFacts,
+            -> TreeSubNode.WhereToSearch
             Setting.SearchInChildren, Setting.ChildSearchInId, Setting.ChildDistance, Setting.ChildSearchInName,
-            Setting.ChildSearchInDescription, Setting.ChildSearchInButtons,
+            Setting.ChildSearchInDescription, Setting.ChildSearchInButtons, Setting.ChildSearchInFacts,
             -> TreeSubNode.WhereChildren
             else -> null
         }
@@ -2975,6 +2989,7 @@ object SearchDomain {
             Setting.SearchInName, Setting.ChildSearchInName -> "Name"
             Setting.SearchInDescription, Setting.ChildSearchInDescription -> "Description"
             Setting.SearchInButtons, Setting.ChildSearchInButtons -> "Buttons"
+            Setting.SearchInFacts, Setting.ChildSearchInFacts -> "Facts"
             Setting.SearchInChildren -> "Search the children"
             Setting.ChildDistance -> "Parent distance"
             else -> setting.label
@@ -3033,12 +3048,16 @@ object SearchDomain {
             Setting.SearchInName -> "The bars are matched against each row's name — the only part searched by default."
             Setting.SearchInDescription -> "The bars are matched against each row's description, the text of its info bubble."
             Setting.SearchInButtons -> "The bars are matched against the labels of what can be pressed on each row."
+            Setting.SearchInFacts ->
+                "The bars are matched against each fact of a row, one \"label: value\" line each, as its deep copy writes them " +
+                    "(a history unit's \"Device: …\", \"Changed configuration: …\", \"Time: 2026-10-04 13:20\")."
             Setting.SearchInChildren -> "A row is also found by its children: those at the parent distance below, by the parts checked here."
             Setting.ChildSearchInId -> "A row is found by its children's ids."
             Setting.ChildDistance -> "How far below a row its children are read: any, every level; 1, its direct children; 2, their children alone…"
             Setting.ChildSearchInName -> "A row is found by its children's names."
             Setting.ChildSearchInDescription -> "A row is found by its children's descriptions."
             Setting.ChildSearchInButtons -> "A row is found by the labels of what can be pressed on its children."
+            Setting.ChildSearchInFacts -> "A row is found by its children's facts."
             Setting.SearchBars -> "More bars beside the window's own, and the formula that puts them together (AND, OR, NOT)."
             Setting.Types -> "The types of element the window lists."
             Setting.PageTypes -> "The type selector offers only the types of the window's feature page."
@@ -4244,7 +4263,10 @@ object SearchDomain {
                                     }
                                 }
                             }
-                            val answers = { row: Result, bar: String -> fieldsMatch(row, bar, filters, childrenOf, claudeLogs) }
+                            // A row's facts are read once, whatever the number of bars ([factsOf]).
+                            val factMemo = HashMap<String, List<Pair<String, String>>>()
+                            val facts = { row: Result -> factMemo.getOrPut(keyOf(row)) { factsOf(state, row, nowMillis, timeZone) } }
+                            val answers = { row: Result, bar: String -> fieldsMatch(row, bar, filters, childrenOf, claudeLogs, facts) }
                             if (severalBars) rows.filter { row -> SearchBarFormula.evaluate(queryFormula, bars.size) { i -> answers(row, bars[i]) } }
                             else rows.filter { answers(it, query) }
                         }
@@ -4955,7 +4977,12 @@ object SearchDomain {
      * The texts of [row] the bars are matched against, by the parts [fields] checks ([SearchField]): its id (its key
      * without its kind), its name (a log entry's whole text), its description, its buttons.
      */
-    fun searchTexts(row: Result, fields: Set<SearchField>, claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY): List<String> =
+    fun searchTexts(
+        row: Result,
+        fields: Set<SearchField>,
+        claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+        facts: (Result) -> List<Pair<String, String>> = { emptyList() },
+    ): List<String> =
         buildList {
             if (SearchField.Id in fields) add(keyOf(row).substringAfter('/'))
             if (SearchField.Name in fields) {
@@ -4964,6 +4991,7 @@ object SearchDomain {
             }
             if (SearchField.Description in fields) descriptionOf(row)?.let(::add)
             if (SearchField.Buttons in fields) addAll(buttonLabelsOf(row))
+            if (SearchField.Facts in fields) facts(row).forEach { (label, value) -> add("$label: $value") }
         }
 
     /**
@@ -4979,12 +5007,13 @@ object SearchDomain {
         filters: Filters,
         children: (Result) -> List<Result>,
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
+        facts: (Result) -> List<Pair<String, String>> = { emptyList() },
     ): Boolean {
         if (query.isBlank()) return true
         val match = filters.queryOptions
-        if (searchTexts(row, filters.searchIn, claudeLogs).any { textAnswers(it, query, match) }) return true
+        if (searchTexts(row, filters.searchIn, claudeLogs, facts).any { textAnswers(it, query, match) }) return true
         if (!filters.searchChildren) return false
-        return children(row).any { child -> searchTexts(child, filters.childSearchIn, claudeLogs).any { textAnswers(it, query, match) } }
+        return children(row).any { child -> searchTexts(child, filters.childSearchIn, claudeLogs, facts).any { textAnswers(it, query, match) } }
     }
 
     /**
@@ -6536,7 +6565,7 @@ object SearchDomain {
             // User rule 2026-11-27 (*"I want the app to easily get the user any info they want"*): the element's state, each
             // action of its kind holding a value a line ([elementStateLines]) — a copy naming an alarm says when it rings.
             if (includeTitles) rowOf(key)?.let { row ->
-                for ((label, value) in elementStateLines(state, row) + moreLines(row)) {
+                for ((label, value) in factsOf(state, row) + moreLines(row)) {
                     repeat(depth + 1) { sb.append(TAB) }
                     sb.append("- ").append(label).append(": ")
                         .append(value.replace("\n", "\n" + TAB.toString().repeat(depth + 2))).append(NEWLINE)
@@ -6554,6 +6583,55 @@ object SearchDomain {
      * and its md elements, as [actionValueText] says them; none that only repeats its name. What a deep copy writes under
      * an element, so the text handed to Claude Code says what the app shows of it.
      */
+    /**
+     * User rule 2026-11-27 (*"can you guarantee that any random request I will give you the user will be able to get the
+     * result list?"*): **every fact the app has of [row], as "label: value" lines** — the one list both its deep copy
+     * ([elementsCopyText]) and the bars' "Where to search › Facts" ([SearchField.Facts]) read, so what can be copied of a
+     * row can be searched, and the bars' formula (AND, OR, NOT) and regular expressions combine any of it. Its state
+     * ([elementStateLines]); a history unit's own: when, on which device, what it changed and which search configuration
+     * where ([historyUnitFacts]).
+     */
+    fun factsOf(
+        state: SchedulerState,
+        row: Result,
+        nowMillis: Long = org.example.project.time.SystemAppClock.nowMillis(),
+        timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    ): List<Pair<String, String>> =
+        elementStateLines(state, row, nowMillis) +
+            (if (row.kind == Kind.HistoryUnit) (row as? ItemResult)?.id?.let { historyUnitOf(state, it) }?.let { historyUnitFacts(state, it, timeZone) }.orEmpty() else emptyList())
+
+    /**
+     * What the app knows of a device by its id, beside its id — "phone", "desktop" — read off its sessions by `App`
+     * ([org.example.project.scheduler.persistence.ActiveSessionRecord.kind]); empty where none is known. A history unit's
+     * "Device" fact says it, so a unit made on the phone is found by "Device: phone".
+     */
+    @Volatile
+    var deviceKinds: () -> Map<String, String> = { emptyMap() }
+
+    /** A history unit's facts the state holds ([factsOf]): its time, its device, what it changed and which configuration where. */
+    fun historyUnitFacts(state: SchedulerState, unit: HistoryUnit, timeZone: TimeZone): List<Pair<String, String>> {
+        val t = Instant.fromEpochMilliseconds(unit.timeMillis).toLocalDateTime(timeZone)
+        fun two(n: Int) = n.toString().padStart(2, '0')
+        val time = "${t.year}-${two(t.month.number)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)} ${t.dayOfWeek.name.lowercase()}"
+        val me = org.example.project.scheduler.state.SchedulerReducer.deviceId()
+        val device = listOfNotNull(
+            unit.deviceId.ifEmpty { "(not recorded)" },
+            deviceKinds()[unit.deviceId]?.takeIf { it.isNotBlank() },
+            "this device".takeIf { unit.deviceId.isNotEmpty() && unit.deviceId == me },
+        ).joinToString(", ")
+        val changed = unit.delta.changedElements
+        return buildList {
+            add("Time" to time)
+            add("Device" to device)
+            if (changed.isNotEmpty()) {
+                val keys = changed.map { it.key }
+                val names = resolve(state, keys, { emptyMap() }).associate { keyOf(it) to it.name }
+                add("Changed elements" to keys.joinToString(", ") { k -> names[k]?.let { "$it ($k)" } ?: k })
+            }
+            for (configuration in unit.delta.changedConfigurations) add("Changed configuration" to configuration)
+        }
+    }
+
     fun elementStateLines(state: SchedulerState, row: Result, nowMillis: Long = org.example.project.time.SystemAppClock.nowMillis()): List<Pair<String, String>> =
         (AddedAction.entries.filter { it.section == row.kind && it != AddedAction.ActionContexts } + AddedAction.ElementMd)
             .mapNotNull { action -> actionValueText(state, action, row, nowMillis)?.takeIf { it != row.name }?.let { action.label to it } }

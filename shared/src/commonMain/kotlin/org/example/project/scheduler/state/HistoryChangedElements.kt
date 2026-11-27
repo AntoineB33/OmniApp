@@ -173,6 +173,42 @@ val Delta.changedElements: Set<ChangedElement>
         }
     }
 
+/**
+ * User rule 2026-11-27 (*"history units … that changed 'default search window > down arrow > Sorting > Sort by'"*): **the
+ * search configurations this unit changed, and where** — "<where> › <configuration>": a context's default ([ContextDefaultsDelta],
+ * where = the context's title, a context absent on one side being the code's default) or a Search window's own configuration
+ * ([ExternalKeys.SEARCH], where = its frame id). A configuration changed is one whose being on or its value
+ * ([SearchDomain.settingValue]) differs. Read off the delta, never stored.
+ */
+val Delta.changedConfigurations: List<String>
+    get() {
+        fun diff(where: String, before: SearchDomain.Config?, after: SearchDomain.Config?): List<String> {
+            if (before == null || after == null) return emptyList()
+            val on = SearchDomain.activeSettings(before).toSet() to SearchDomain.activeSettings(after).toSet()
+            return SearchDomain.Setting.entries.filter { s ->
+                (s in on.first) != (s in on.second) || SearchDomain.settingValue(before, s) != SearchDomain.settingValue(after, s)
+            }.map { s -> "$where › ${SearchDomain.homePathOf(s).plus(s.label).joinToString(" › ")}" }
+        }
+        return when (val delta = this) {
+            is ContextDefaultsDelta -> delta.changes.touched.flatMap { id ->
+                val context = org.example.project.scheduler.domain.ContextDomain.context(id)
+                val default = context?.default ?: SearchDomain.Config()
+                fun side(map: Map<String, org.example.project.scheduler.domain.ContextDefault>) =
+                    map[id]?.let { SearchDomain.Config.decode(it.config) } ?: default
+                diff(context?.title ?: id, side(delta.changes.before), side(delta.changes.after))
+            }
+            is ExternalDelta ->
+                if (delta.key.startsWith(ExternalKeys.SEARCH)) {
+                    diff(
+                        delta.key.removePrefix(ExternalKeys.SEARCH),
+                        delta.before?.let { SearchDomain.Config.decode(it) } ?: SearchDomain.Config(),
+                        delta.after?.let { SearchDomain.Config.decode(it) } ?: SearchDomain.Config(),
+                    )
+                } else emptyList()
+            else -> emptyList()
+        }
+    }
+
 /** A tree diff keeps only what differs: the tasks in it, and the tasks the cells that changed point at. */
 private fun MutableSet<ChangedElement>.addTasksOf(diff: TreeDiff) {
     diff.tasks.touched.forEach { add(ChangedElement(SearchDomain.Kind.Task, it.value)) }

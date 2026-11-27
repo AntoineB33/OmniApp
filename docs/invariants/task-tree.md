@@ -1164,6 +1164,12 @@ suggestions before it was ever entered.
   pair and its "states" row say the state whatever its type (`SubRowSpec.copyDetail`). An action given a state
   `actionStateOf` groups by must have its text there (`AnyInfoTest`'s guard); a title says nothing, the row's name does.
   "State in each context" tells contexts apart by the setting's value too, not on / off alone (`SearchDomain.settingValue`).
+- **What can be copied of a row can be searched** (user 2026-11-27, *"can you guarantee that any random request … the user
+  will be able to get the result list?"*): `SearchDomain.factsOf` is the one list of a row's facts ("label: value"), read
+  by its deep copy and by "Where to search › Facts" (`SearchField.Facts`); the bars' formula and regular expressions
+  combine them. A new fact goes there, never into a filter of its own beside it. A history unit's: its time, its device
+  (kind from `SearchDomain.deviceKinds`), what it changed, and each search configuration it changed and where
+  (`Delta.changedConfigurations`, derived). Not answered: counting or grouping rows, a fact never recorded (`FactsSearchTest`).
 - **A task row is a tree cell to the user.** Its menu is built for the path the right-click landed on (the row, its
   path box, or a line of its list of paths): deep copy acts on THAT occurrence (`SearchDomain.occurrenceAtPath`,
   walked on the right-click, never per keystroke), and "copy path" copies that path.

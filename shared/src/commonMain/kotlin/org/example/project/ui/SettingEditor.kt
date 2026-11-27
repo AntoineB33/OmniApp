@@ -139,6 +139,7 @@ internal fun SettingEditor(
         SearchDomain.Setting.SearchInId, SearchDomain.Setting.SearchInName, SearchDomain.Setting.SearchInDescription,
         SearchDomain.Setting.SearchInButtons, SearchDomain.Setting.SearchInChildren, SearchDomain.Setting.ChildSearchInId,
         SearchDomain.Setting.ChildSearchInName, SearchDomain.Setting.ChildSearchInDescription, SearchDomain.Setting.ChildSearchInButtons,
+        SearchDomain.Setting.SearchInFacts, SearchDomain.Setting.ChildSearchInFacts,
         -> CompactSwitch(checked = f.searches(setting) == true, onCheckedChange = { filters(f.withSearches(setting, it)) })
         SearchDomain.Setting.ChildDistance ->
             Choices(

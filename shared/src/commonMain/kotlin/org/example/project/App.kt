@@ -1333,6 +1333,12 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // (hover bubble + dashed separators) and to re-derive the display Inactivity bands over any focused past
         // week (PRD §12/§15 — the engine's own [inactivityGaps] only reaches back 168h).
         val activeSessions by engine.activeSessions.collectAsState()
+        // User rule 2026-11-27: a history unit's "Device" fact names the device's kind ("phone"), read off its sessions.
+        androidx.compose.runtime.LaunchedEffect(engine) {
+            SearchDomain.deviceKinds = {
+                engine.activeSessions.value.filter { it.kind.isNotBlank() }.associate { it.deviceId to it.kind }
+            }
+        }
         // PRD §15: whether the user declared they are away from THIS device (left-menu "I'm away" button).
         val userAway by engine.userAway.collectAsState()
         // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: and whether any OTHER device of the account

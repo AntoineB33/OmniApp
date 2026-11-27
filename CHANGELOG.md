@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### What can be copied of a row can be searched: "Where to search › Facts" — 2026-11-27
+
+- User: *"What if the user wants … all the history units of user actions that changed 'default search window > down arrow
+  > Sorting > Sort by', sorted from recent to old, excluding all those made from a specific phone, and excluding those
+  made the 4th of october of every year?"*, then *"can you guarantee that any random request … the user will be able to
+  get the result list?"*. Three parts could not be said: what a unit changed stopped at the context, no filter read the
+  device, and history units had no date filter.
+- No filter of its own for each: **every fact of a row is one "label: value" line** (`SearchDomain.factsOf`, the funnel the
+  deep copy reads too), and a new place to search, **Facts** (`SearchField.Facts`, `Setting.SearchInFacts` /
+  `ChildSearchInFacts`), lets the bars match them; the bars' formula (AND, OR, NOT) and regular expressions already
+  combine them. A history unit's facts: "Time" (`2026-10-04 13:20 sunday`), "Device" (its id, its kind read off its
+  sessions — `SearchDomain.deviceKinds`, set by `App` — and "this device"), "Changed elements", and one "Changed
+  configuration" per search configuration it changed, where (`Delta.changedConfigurations`: a context's default, a Search
+  window's own; read off the delta, never stored).
+- The request: kinds = history unit; Where to search › Facts; bar 1 `"Changed configuration: default of a Search window
+  › … › Sort by"`, bar 2 `Device phone`, bar 3 `Time -10-04`; formula `1 AND NOT 2 AND NOT 3`; Sort by history unit date,
+  descending (`FactsSearchTest`).
+- What it cannot answer: a question that counts or groups rows, and a fact the app never recorded.
+
 ### Every deep copy says what the rows hold, not only their titles — 2026-11-27
 
 - User: *"I want the app to easily get the user any info they want"* — the example *"for any row, the user wants to see

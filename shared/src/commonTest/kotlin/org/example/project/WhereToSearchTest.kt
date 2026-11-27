@@ -78,9 +78,9 @@ class WhereToSearchTest {
         val search = tree.filterIsInstance<ConfigurationCategory>().single { it.id == SearchDomain.TreeGroup.Bar.id }
         assertEquals(listOf("Where to search", "Matching"), search.children.filterIsInstance<ConfigurationCategory>().map { it.label }.take(2))
         val where = search.children.first() as ConfigurationCategory
-        assertEquals(listOf("Id", "Name", "Description", "Buttons", "Children"), where.children.map { it.label })
+        assertEquals(listOf("Id", "Name", "Description", "Buttons", "Facts", "Children"), where.children.map { it.label })
         val children = where.children.last() as ConfigurationCategory
-        assertEquals(listOf("Search the children", "Id", "Parent distance", "Name", "Description", "Buttons"), children.children.map { it.label })
+        assertEquals(listOf("Search the children", "Id", "Parent distance", "Name", "Description", "Buttons", "Facts"), children.children.map { it.label })
         assertEquals(listOf("Search", "Where to search", "Children"), SearchDomain.homePathOf(Setting.ChildDistance))
         // The flat list names them by their path.
         assertTrue(tree.any { it.label == "Search › Where to search › Children › Parent distance" })

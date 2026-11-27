@@ -177,5 +177,7 @@ internal fun elementInfoLines(state: org.example.project.scheduler.state.Schedul
     if (row.kind != SearchDomain.Kind.HistoryUnit) return emptyList()
     val id = (row as? SearchDomain.ItemResult)?.id ?: return emptyList()
     val entry = historyUnitEntryOfSearchId(state, id) ?: return emptyList()
-    return historyEntryInfos(entry).map { it.label to it.value }
+    // Those the state holds are said by [SearchDomain.factsOf] already (its time among them): said once.
+    val said = SearchDomain.factsOf(state, row).mapTo(HashSet()) { it.first }
+    return historyEntryInfos(entry).map { it.label to it.value }.filter { it.first !in said }
 }
