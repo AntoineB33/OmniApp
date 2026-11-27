@@ -95,6 +95,7 @@ object PopupOpeners {
      * else when it comes ([answered]). Returns a handle to [expire] if it waits, null when answered now.
      */
     fun keyboardLeft(opener: PopupOpener?, lost: () -> Unit, kept: () -> Unit = {}): Any? {
+        trace("keyboardLeft opener=${opener?.hashCode()} under=${under?.hashCode()} open=${opener?.isOpen?.invoke()} recent=${opener?.recentAnswer()}")
         if (opener == null || opener !== under) {
             lost()
             return null
@@ -123,11 +124,16 @@ object PopupOpeners {
         if (openAfter) mine.forEach { it.kept() }
     }
 
+    // TEMPORARY [popup] trace (anomaly 2026-11-27, a ▾ pop-up shown a blink).
+    internal fun trace(what: String) = org.example.project.scheduler.platform.Diagnostics.log("[popup] opener $what")
+
     internal fun entered(opener: PopupOpener) {
+        trace("enter ${opener.hashCode()} (was ${under?.hashCode()})")
         under = opener
     }
 
     internal fun exited(opener: PopupOpener) {
+        trace("exit ${opener.hashCode()} (under ${under?.hashCode()})")
         if (under === opener) under = null
         // The pointer gone from the control before any click: the press was no click on it.
         val mine = waiting.filter { it.opener === opener }
@@ -151,13 +157,14 @@ fun Modifier.popupOpener(opener: PopupOpener, isOpen: Boolean): Modifier =
     composed {
         val open by rememberUpdatedState(isOpen)
         opener.isOpen = { open }
-        DisposableEffect(opener) { onDispose { PopupOpeners.exited(opener) } }
+        DisposableEffect(opener) { onDispose { PopupOpeners.trace("disposed ${opener.hashCode()}"); PopupOpeners.exited(opener) } }
         pointerInput(opener) {
             awaitPointerEventScope {
                 while (true) {
                     when (awaitPointerEvent(PointerEventPass.Initial).type) {
                         PointerEventType.Enter -> PopupOpeners.entered(opener)
                         PointerEventType.Exit -> PopupOpeners.exited(opener)
+                        PointerEventType.Press -> PopupOpeners.trace("press ${opener.hashCode()} (under ${PopupOpeners.under?.hashCode()})")
                         else -> Unit
                     }
                 }
