@@ -2966,7 +2966,13 @@ object SearchDomain {
         windows: List<WindowEntry> = emptyList(),
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
     ): List<ConfigurationNode> {
-        val tree = rows.of(level)
+        // User rule 2026-11-27 (anomaly the same day: *"Make sure there are not lots of elements in one node"* — the root
+        // listed some 140 rows of its flat list under its categories): **the root's flat list is there to be typed into**,
+        // so it is listed only while a bar holds text; with none, the root is its categories alone.
+        val typed = search.query.isNotBlank() || search.extraQueries.any { it.isNotBlank() }
+        // "Tree to navigate" off, the flat list is all there is: listed as it is.
+        val shownLevel = if (root && !typed && search.navigationTree) level.filterNot(::isFlatEntry) else level
+        val tree = rows.of(shownLevel)
         val found = results(
             state, search.searchedKinds, search.query,
             filters = search.filters, sorts = search.sorts, windows = windows, claudeLogs = claudeLogs,
@@ -2974,9 +2980,16 @@ object SearchDomain {
             given = if (root) null else tree.rows,
             configurationRows = tree,
         )
-        val byRow = level.associateBy(::configurationRowId)
+        val byRow = shownLevel.associateBy(::configurationRowId)
         return found.map { row -> (row as? ItemResult)?.takeIf { it.kind == Kind.SearchConfiguration }?.let { byRow[it.id] } ?: ConfigurationOther(row) }
     }
+
+    /**
+     * A row of the root's flat list ([configurationTree]): a category named by its path ([FLAT_NODE_PREFIX]) or a
+     * configuration standing at the root, which is only ever there as part of that list.
+     */
+    fun isFlatEntry(node: ConfigurationNode): Boolean =
+        node is ConfigurationLeaf || (node is ConfigurationCategory && node.id.startsWith(FLAT_NODE_PREFIX))
 
     /** A category of configurations, which reveals [children] on hover. [id] is unique in the tree. */
     data class ConfigurationCategory(val id: String, override val label: String, val children: List<ConfigurationNode>) : ConfigurationNode

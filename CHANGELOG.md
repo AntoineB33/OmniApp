@@ -20,8 +20,10 @@ Check here before assuming the code matches the docs.
   groups, the types, "Other feature pages", then the flat list); off, every configuration flat in the tree's order. On by
   default in the ▾'s context alone (`CONFIGURATION_TREE_CONTEXT`); the page Search button keeps everything off.
 - Measured before: "Recent" held 113 rows, "Sorting" 29, the Task Scheduler's root 23 categories. Now
-  `MAX_TREE_NODE_ROWS` = 15 for every node but the root's flat list (`NavigationTreeTest` reads every node of every
-  page's tree, a full one included): a page of more than 6 types lists them by **family** (`TypeFamily`: Tasks, Calendar,
+  `MAX_TREE_NODE_ROWS` = 15 for every node, the root included (`NavigationTreeTest` reads every node of every page's
+  tree, a full one included, and what the first pop-up lists). The root's flat list is listed only while a bar holds
+  text — the first build of this change listed its ~140 rows under the root's categories (the user, the same day: *"Are
+  you sure you satisfied my prompt?"*), which was the long node the rule is about. Then: a page of more than 6 types lists them by **family** (`TypeFamily`: Tasks, Calendar,
   Alarms and timers, App, Claude Code logs, Settings), "Sorting" holds the order of every row then one node per family,
   "Recent" holds "Here", "Elsewhere" and "Every configuration, last changed first", cut into parts "1–15", "16–30"…
   (`bounded`, the net under every node: rank parts where the order is the point, else "first – last" parts).

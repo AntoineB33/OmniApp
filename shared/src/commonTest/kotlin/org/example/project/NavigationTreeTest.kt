@@ -57,6 +57,31 @@ class NavigationTreeTest {
         }
     }
 
+    /**
+     * Anomaly 2026-11-27 (*"I rebuilt and opened the down arrow of the default search window … Are you sure you satisfied my
+     * prompt?"*): the first pop-up listed its flat list, some 140 rows, under its categories. What the pop-up LISTS — the
+     * one funnel, [SearchDomain.shownConfigurationNodes] — is bounded with nothing typed; a name typed finds its row there.
+     */
+    @Test
+    fun the_first_pop_up_lists_its_categories_alone_until_a_name_is_typed() {
+        val state = org.example.project.scheduler.state.SchedulerState.empty()
+        for (page in SearchDomain.FEATURE_PAGES) {
+            for (tree in listOf(fullTree(page), SearchDomain.configurationTree(SearchDomain.pageDefaultConfig(page.id)))) {
+                val rows = SearchDomain.ConfigurationTreeRows(tree)
+                val shown = SearchDomain.shownConfigurationNodes(state, tree, root = true, rows, SearchDomain.CONFIGURATION_SEARCH)
+                assertTrue(shown.size <= max, "the root of '${page.label}' lists ${shown.size}: ${shown.map { it.label }}")
+                assertTrue(shown.none(SearchDomain::isFlatEntry))
+                // Typed, the configuration is right there, at the root.
+                val typed = SearchDomain.shownConfigurationNodes(state, tree, root = true, rows, SearchDomain.CONFIGURATION_SEARCH.copy(query = "Match case"))
+                assertTrue(typed.any { it is ConfigurationLeaf && it.setting == Setting.MatchCase }, typed.map { it.label }.toString())
+            }
+        }
+        // "Tree to navigate" off: every configuration, flat.
+        val flat = SearchDomain.flatConfigurationList()
+        val off = SearchDomain.shownConfigurationNodes(state, flat, root = true, SearchDomain.ConfigurationTreeRows(flat), SearchDomain.CONFIGURATION_SEARCH.copy(navigationTree = false))
+        assertEquals(Setting.entries.size, off.size)
+    }
+
     @Test
     fun every_configuration_is_still_reached_through_the_structure() {
         for (page in SearchDomain.FEATURE_PAGES) {

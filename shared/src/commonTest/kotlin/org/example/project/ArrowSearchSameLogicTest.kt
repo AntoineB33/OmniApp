@@ -45,10 +45,12 @@ class ArrowSearchSameLogicTest {
         val tree = SearchDomain.configurationTree(SearchDomain.Config())
         val rows = SearchDomain.ConfigurationTreeRows(tree)
         val shown = SearchDomain.shownConfigurationNodes(SchedulerState.empty(), tree, root = true, rows, arrow)
-        assertEquals(tree, shown, "the tree's own order")
+        // Nothing typed, the root's flat list is not listed (anomaly 2026-11-27: the root held some 140 rows of it).
+        val navigated = tree.filterNot(SearchDomain::isFlatEntry)
+        assertEquals(navigated, shown, "the tree's own order")
         // Sorted by name, the list obeys: what the ▾ ▾ sets acts on the ▾.
         val byName = SearchDomain.shownConfigurationNodes(SchedulerState.empty(), tree, root = true, rows, arrow.copy(sorts = listOf(SortMethod(null, SortKey.Name))))
-        assertEquals(tree.map { it.label.lowercase() }.sorted(), byName.map { it.label.lowercase() })
+        assertEquals(navigated.map { it.label.lowercase() }.sorted(), byName.map { it.label.lowercase() })
     }
 
     @Test

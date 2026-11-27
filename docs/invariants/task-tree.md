@@ -1952,8 +1952,10 @@ suggestions before it was ever entered.
   intuitive tree structure … Make sure there are not lots of elements in one node"*; `Config.navigationTree`,
   `Setting.NavigationTree`, `MAX_TREE_NODE_ROWS`, `TypeFamily`, `bounded`, `NavigationTreeTest`). **"Tree to navigate"**
   lays the ▾'s rows out as the tree above; off, every configuration flat. It is on in the ▾'s context
-  (`CONFIGURATION_TREE_CONTEXT`), off in a page's Search button. **No category holds more than 15 rows**, the root's flat
-  list alone excepted: what can be grouped by meaning is — a page of more than 6 types lists them by family (Tasks,
+  (`CONFIGURATION_TREE_CONTEXT`), off in a page's Search button. **No category holds more than 15 rows, the root
+  included**: the root's flat list is listed only while a bar holds text (`shownConfigurationNodes`, `isFlatEntry`;
+  anomaly 2026-11-27, *"Are you sure you satisfied my prompt?"* — it listed some 140 rows under the root's categories),
+  so a name typed in the first pop-up still finds its row right there. What can be grouped by meaning is — a page of more than 6 types lists them by family (Tasks,
   Calendar, Alarms and timers, App, Claude Code logs, Settings), "Sorting" the order of every row then a node per family,
   "Recent" its "Here", "Elsewhere" and "Every configuration, last changed first" — and `bounded` cuts what is still too
   long into parts in its order ("1–15" where the order is the point, else "first – last"). A new node or configuration
