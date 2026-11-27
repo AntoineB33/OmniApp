@@ -106,7 +106,10 @@ internal fun DeepCopyActionEditor(
             val count = cells.size + others.size
             FrameButton(if (count == 1) "Copy" else "Copy $count", enabled = count > 0 && depth >= 1) {
                 val text = SchedulerDomain.copyCellsText(state, cells, depth, options) +
-                    SearchDomain.elementsCopyText(state, others, depth, options.includeIds, options.excludeTitle, includeTitles = options.includeTitles)
+                    SearchDomain.elementsCopyText(
+                        state, others, depth, options.includeIds, options.excludeTitle, includeTitles = options.includeTitles,
+                        moreLines = { row -> elementInfoLines(state, row) },
+                    )
                 if (text.isNotEmpty()) writeSystemClipboardText(text)
             }
         }
@@ -164,3 +167,15 @@ internal val SUB_ROW_DEEP_COPY_ACTIONS: List<SearchDomain.AddedAction> =
 /** The added elements a deep copy copies by their children ([SearchDomain.elementsCopyText]): every one but a task. */
 private fun copiedElements(added: List<SearchDomain.Result>): List<String> =
     added.filter { it.kind != SearchDomain.Kind.Task && SearchDomain.deepCopyable(it.kind) }.map(SearchDomain::keyOf)
+
+/**
+ * User rule 2026-11-27 (*"I want the app to easily get the user any info they want"*): what the UI alone says of an element,
+ * for its deep copy ([SearchDomain.elementsCopyText]'s `moreLines`) — a history unit's facts, the very list its
+ * "Information" action and the History window show ([historyEntryInfos]).
+ */
+internal fun elementInfoLines(state: org.example.project.scheduler.state.SchedulerState, row: SearchDomain.Result): List<Pair<String, String>> {
+    if (row.kind != SearchDomain.Kind.HistoryUnit) return emptyList()
+    val id = (row as? SearchDomain.ItemResult)?.id ?: return emptyList()
+    val entry = historyUnitEntryOfSearchId(state, id) ?: return emptyList()
+    return historyEntryInfos(entry).map { it.label to it.value }
+}

@@ -150,15 +150,21 @@ object ContextDomain {
     fun configOf(state: SchedulerState, id: String): SearchDomain.Config = configOf(state.contextDefaults, id)
 
     /** One group of [groups]: whether [setting] is on in its [contexts]. */
-    data class StateGroup(val on: Boolean, val contexts: List<SearchContext>)
+    /** [value]: what the setting holds in these contexts where it is on ([SearchDomain.settingValue]) as text; null where none. */
+    data class StateGroup(val on: Boolean, val contexts: List<SearchContext>, val value: String? = null)
 
     /**
      * User rule 2026-11-25: **a search configuration's state in each context, grouped by state** — the contexts where it is
-     * on, then those where it is off; a group with no context is not listed. Off everywhere: one group.
+     * on, then those where it is off; a group with no context is not listed. Off everywhere: one group. User rule
+     * 2026-11-27: on, the contexts are also told apart **by the value it holds there** ([SearchDomain.settingValue]) — a
+     * parent distance of 1 in one and 3 in another are two groups, never one showing the first one's value for both.
      */
     fun groups(defaults: List<ContextDefault>, setting: SearchDomain.Setting): List<StateGroup> {
-        val (on, off) = CONTEXTS.partition { setting in SearchDomain.activeSettings(configOf(defaults, it.id)) }
-        return listOfNotNull(StateGroup(true, on).takeIf { on.isNotEmpty() }, StateGroup(false, off).takeIf { off.isNotEmpty() })
+        val configs = CONTEXTS.associate { it.id to configOf(defaults, it.id) }
+        val (on, off) = CONTEXTS.partition { setting in SearchDomain.activeSettings(configs.getValue(it.id)) }
+        val onGroups = on.groupBy { SearchDomain.settingValue(configs.getValue(it.id), setting) }
+            .map { (value, contexts) -> StateGroup(true, contexts, value?.let(SearchDomain::valueText)) }
+        return onGroups + listOfNotNull(StateGroup(false, off).takeIf { off.isNotEmpty() })
     }
 
     /**

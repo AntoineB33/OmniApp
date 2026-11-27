@@ -1811,6 +1811,60 @@ object SearchDomain {
          * count above and by the Configuration Search window's "filters that are on". A setting that is not a
          * filter (the search text, the types, a Sort by) is never on.
          */
+        /**
+         * User rule 2026-11-27: **what [setting] holds here** — the field(s) [isOn] reads, so two contexts where it is on
+         * with different values are told apart ([settingValue]). Null: none here.
+         */
+        fun valueOf(setting: Setting): Any? =
+            when (setting) {
+                Setting.ListedFrom -> listedFrom
+                Setting.CalendarAdd -> calendarAddAt
+                Setting.CalendarAt -> calendarAt
+                Setting.TaskInTree -> taskInTree
+                Setting.TaskTreeRoot -> taskTreeRoot
+                Setting.TaskSchedulable -> taskSchedulable
+                Setting.TaskCategory -> taskCategory
+                Setting.CategoryHasRules -> categoryHasRules
+                Setting.PeriodOriginSetting -> periodOrigin
+                Setting.PeriodDrawingSetting -> periodDrawing
+                Setting.PeriodResilienceSetting -> periodResilience to periodResilienceTask
+                Setting.AlarmStateSetting -> alarmState
+                Setting.AlarmDays -> alarmDays
+                Setting.TimerStateSetting -> timerState
+                Setting.ChronoStateSetting -> chronoState
+                Setting.QuotaRepeatsSetting -> quotaRepeats
+                Setting.ReminderRepeatsSetting -> reminderRepeats
+                Setting.HistoryCategorySetting -> historyCategory
+                Setting.HistoryWindowSetting -> madeIn
+                Setting.HistoryUndoneSetting -> historyUndone
+                Setting.HistoryChangedKindsSetting -> historyChangedKinds
+                Setting.HistoryChangedElementSetting -> historyChangedElement
+                Setting.RelationSectionSetting -> relationSection
+                Setting.ShortcutReboundSetting -> shortcutRebound
+                Setting.WindowStatusSetting -> windowStatus
+                Setting.WindowDuplicatesSetting -> windowDuplicates
+                Setting.WindowListedKindsSetting -> windowListedKinds
+                Setting.HistoryMadeInWindowSetting -> historyMadeInWindow
+                Setting.TaskOnCalendar -> taskOnCalendar
+                Setting.TaskBoxesFrom -> taskBoxesFrom
+                Setting.TaskBoxesUntil -> taskBoxesUntil
+                Setting.PeriodOnCalendar -> periodOnCalendar
+                Setting.PeriodBoxesFrom -> periodBoxesFrom
+                Setting.PeriodBoxesUntil -> periodBoxesUntil
+                Setting.BlockElements -> blocksOf
+                Setting.ExcludedElements -> excludedElements
+                Setting.IncludedElements -> includedElements
+                Setting.NoParentOfKinds -> noParentOfKinds
+                Setting.ParentsOf -> parentsOf
+                Setting.InvolvementOf -> involvementOf
+                Setting.ParentDistance -> parentDistance
+                Setting.NotificationSourceSetting -> notificationSources
+                Setting.PromptProject, Setting.AnswerProject, Setting.ReasoningProject -> claudeProject
+                Setting.PromptFrom, Setting.AnswerFrom, Setting.ReasoningFrom -> claudeFrom
+                Setting.PromptUntil, Setting.AnswerUntil, Setting.ReasoningUntil -> claudeUntil
+                else -> null
+            }
+
         fun isOn(setting: Setting): Boolean =
             when (setting) {
                 Setting.ListedFrom -> listedFrom != null
@@ -2384,6 +2438,24 @@ object SearchDomain {
         config ?: return emptyList()
         return (filtersOn(config) + ownSettingsOn(config)).distinct()
     }
+
+    /**
+     * User rule 2026-11-27 (*"for any row, the user wants to see its state everywhere in the app"*): **what [setting] holds in
+     * [config]** where it is on — its filter's fields ([Filters.valueOf]), or the window's own field ([ownSettingsOn]'s).
+     * Null where being on is all there is to it. What "State in each context" groups the contexts by, beside on / off.
+     */
+    fun settingValue(config: Config, setting: Setting): Any? =
+        when (setting) {
+            Setting.Types -> config.kinds.toSet()
+            Setting.PageTypes -> config.kinds.toSet()
+            Setting.SortResults -> config.sorts.filter { it.kind == null }
+            Setting.CompletionList -> config.completion
+            Setting.Entries -> config.entries
+            Setting.TaskRowLayout -> config.taskRowLayout
+            else ->
+                if (setting.sorts && setting.section != null) config.sorts.filter { it.kind == setting.section }
+                else config.filters.valueOf(setting)
+        }
 
     /** The filters [config] sets, "Where to search" included: what [activeSettings] and [contextSettings] both read. */
     private fun filtersOn(config: Config): List<Setting> =
@@ -5839,6 +5911,90 @@ object SearchDomain {
         }
     }
 
+    /**
+     * User rule 2026-11-27 (*"I want the app to easily get the user any info they want"*, the example *"for any row, the user
+     * wants to see its state everywhere in the app"*, handed to Claude Code by a deep copy): **what [action] holds for [row],
+     * as the text a row says beside its title and a deep copy writes** — the one funnel for it: an element's deep copy
+     * ([elementsCopyText]), an action row's ([actionRowValues]) and a context-state pair's state all read it here, never a
+     * copy of their own. Null where there is nothing to say: a command, a title (the row's name says it already), or an
+     * action whose state is not read off the element.
+     */
+    fun actionValueText(
+        state: SchedulerState,
+        action: AddedAction,
+        row: Result,
+        nowMillis: Long = org.example.project.time.SystemAppClock.nowMillis(),
+    ): String? {
+        val id = (row as? ItemResult)?.id
+        fun names(keys: Collection<String>): String =
+            if (keys.isEmpty()) "none"
+            else resolve(state, keys.toList(), { emptyMap() }).joinToString(", ") { it.name.ifBlank { keyOf(it) } }
+        return when (action) {
+            AddedAction.ElementParents -> names(ElementTree.parentsOf(state, keyOf(row)))
+            AddedAction.ElementMd -> MdDomain.associatedWith(state, keyOf(row)).takeIf { it.isNotEmpty() }
+                ?.joinToString(", ") { md -> md.text.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: md.id }
+            AddedAction.AlarmTitle, AddedAction.TimerTitle, AddedAction.ChronoTitle, AddedAction.QuotaTitle,
+            AddedAction.ReminderTitle, AddedAction.CategoryName -> null
+            AddedAction.TaskMinimumTime -> (row as? TaskResult)?.let { state.tasks[it.taskId] }?.let { "${it.minimumMinutes} min" }
+            AddedAction.AlarmTime -> state.alarms.firstOrNull { it.id == id }?.let { a ->
+                hhmm(a.timeOfDayMinutes) + (a.onlyOnEpochDay?.let { " on " + LocalDate.fromEpochDays(it.toInt()) } ?: "")
+            }
+            AddedAction.ReminderTime -> state.chores.firstOrNull { it.id.ifEmpty { it.title } == id }?.let { hhmm(it.timeOfDayMinutes) }
+            AddedAction.AlarmRingsFor -> state.alarms.firstOrNull { it.id == id }?.let { "${it.soundSeconds} s" }
+            AddedAction.TimerRingsFor -> state.timers.firstOrNull { it.id == id }?.let { "${it.soundSeconds} s" }
+            AddedAction.TimerDuration -> state.timers.firstOrNull { it.id == id }?.let { durationText(it.durationSeconds * 1000L) }
+            // Where it stands now (what the row shows first, [LEADING_ACTIONS]): read at the state's own instant.
+            AddedAction.TimerRun -> state.timers.firstOrNull { it.id == id }?.let { t ->
+                val left = t.endsAtMillis?.let { it - nowMillis } ?: t.remainingMillis ?: (t.durationSeconds * 1000L)
+                (if (t.endsAtMillis != null) "running" else if (t.remainingMillis != null) "paused" else "idle") + ", " + durationText(left) + " left"
+            }
+            AddedAction.ChronoRun -> state.chronos.firstOrNull { it.id == id }?.let { c ->
+                val count = c.bankedMillis + (c.startedAtMillis?.let { nowMillis - it } ?: 0L)
+                (if (c.running) "running" else if (c.paused) "paused" else "idle") + ", " + durationText(count)
+            }
+            AddedAction.ReminderEvery -> state.chores.firstOrNull { it.id.ifEmpty { it.title } == id }?.let { reminderDetail(it).substringBefore(" · ") }
+            AddedAction.MdText -> state.mdElements.firstOrNull { it.id == id && row.kind == Kind.Md }?.text
+            AddedAction.TaskPresenceFormula, AddedAction.TaskMinimumFormula ->
+                (ownActionState(state, action, row) as? Set<*>)?.let { ids -> names(ids.map { "${if (action == AddedAction.TaskPresenceFormula) Kind.PresenceEvolution else Kind.MinimumEvolution}/$it" }) }
+            AddedAction.ReminderConstraint -> state.chores.firstOrNull { it.id.ifEmpty { it.title } == id }
+                ?.constrainedToReminderId?.takeIf { it.isNotEmpty() }?.let { names(listOf("${Kind.Reminder}/$it")) } ?: "none"
+            else -> ownActionState(state, action, row)?.takeIf { it != Unit }?.let(::valueText)
+        }
+    }
+
+    /**
+     * [actionValueText] of every element of [members]: one value where they all hold it (the row says it beside its title),
+     * else each element's name and value (rows under it). Empty where no element has one.
+     */
+    fun actionRowValues(state: SchedulerState, action: AddedAction, members: List<Result>): List<Pair<String, String>> {
+        val now = org.example.project.time.SystemAppClock.nowMillis()
+        val values = members.mapNotNull { m -> actionValueText(state, action, m, now)?.let { m.name to it } }
+        if (values.isEmpty()) return emptyList()
+        return if (values.size == members.size && values.map { it.second }.distinct().size == 1) listOf("" to values.first().second) else values
+    }
+
+    /** A value read off an element ([ownActionState]) as text: a switch on/off, a list or a map its items, a pair both. */
+    fun valueText(value: Any?): String = when (value) {
+        null -> "none"
+        is Boolean -> if (value) "on" else "off"
+        is String -> value.ifEmpty { "none" }
+        is Enum<*> -> value.name
+        is Double -> formatNumber(value)
+        is Map<*, *> -> if (value.isEmpty()) "none" else value.entries.joinToString(", ") { (k, v) -> "${valueText(k)}: ${valueText(v)}" }
+        is Collection<*> -> if (value.isEmpty()) "none" else value.joinToString(", ") { valueText(it) }
+        is Pair<*, *> -> listOfNotNull(value.first, value.second).joinToString(" ") { valueText(it) }
+        else -> value.toString()
+    }
+
+    private fun durationText(millis: Long): String {
+        val negative = millis < 0
+        var s = kotlin.math.abs(millis) / 1000
+        val h = s / 3600; s %= 3600
+        val m = s / 60; s %= 60
+        val text = (if (h > 0) "${h}h " else "") + (if (h > 0 || m > 0) "${m}min " else "") + "${s}s"
+        return if (negative) "-$text" else text
+    }
+
     /** One write of a context-state's state ([contextPairsOutcome]): [command] over the elements [to]. */
     data class StateWrite(val to: List<Result>, val command: AddedCommand)
 
@@ -6355,11 +6511,17 @@ object SearchDomain {
         excludeTitle: String,
         claudeLogs: ClaudeLogCatalog = ClaudeLogCatalog.EMPTY,
         includeTitles: Boolean = true,
+        /**
+         * What else the app shows of an element, said by the surface that shows it (a history unit's facts, which its
+         * "Information" lists — the History window's own list, drawn in the UI): more "label: value" lines.
+         */
+        moreLines: (Result) -> List<Pair<String, String>> = { emptyList() },
     ): String {
         if (maxDepth < 1) return ""
-        val names = HashMap<String, String>()
-        fun nameOf(key: String): String =
-            names.getOrPut(key) { resolve(state, listOf(key), { emptyMap() }, claudeLogs = claudeLogs).firstOrNull()?.name ?: key.substringAfter('/') }
+        val rows = HashMap<String, Result?>()
+        fun rowOf(key: String): Result? =
+            rows.getOrPut(key) { resolve(state, listOf(key), { emptyMap() }, claudeLogs = claudeLogs).firstOrNull() }
+        fun nameOf(key: String): String = rowOf(key)?.name ?: key.substringAfter('/')
         val sb = StringBuilder()
         fun walk(key: String, depth: Int, path: Set<String>) {
             val name = nameOf(key)
@@ -6371,12 +6533,30 @@ object SearchDomain {
                 repeat(depth + 1) { sb.append(TAB) }
                 sb.append("- id: ").append(copiedId(key)).append(NEWLINE)
             }
+            // User rule 2026-11-27 (*"I want the app to easily get the user any info they want"*): the element's state, each
+            // action of its kind holding a value a line ([elementStateLines]) — a copy naming an alarm says when it rings.
+            if (includeTitles) rowOf(key)?.let { row ->
+                for ((label, value) in elementStateLines(state, row) + moreLines(row)) {
+                    repeat(depth + 1) { sb.append(TAB) }
+                    sb.append("- ").append(label).append(": ")
+                        .append(value.replace("\n", "\n" + TAB.toString().repeat(depth + 2))).append(NEWLINE)
+                }
+            }
             if (depth + 1 >= maxDepth) return
             for (child in ElementTree.childrenOf(state, key, claudeLogs)) if (child !in path) walk(child, depth + 1, path + child)
         }
         for (key in keys) walk(key, 0, setOf(key))
         return sb.toString()
     }
+
+    /**
+     * User rule 2026-11-27: **the state of [row] as "label: value" lines** — each action of its kind ([AddedAction.section])
+     * and its md elements, as [actionValueText] says them; none that only repeats its name. What a deep copy writes under
+     * an element, so the text handed to Claude Code says what the app shows of it.
+     */
+    fun elementStateLines(state: SchedulerState, row: Result, nowMillis: Long = org.example.project.time.SystemAppClock.nowMillis()): List<Pair<String, String>> =
+        (AddedAction.entries.filter { it.section == row.kind && it != AddedAction.ActionContexts } + AddedAction.ElementMd)
+            .mapNotNull { action -> actionValueText(state, action, row, nowMillis)?.takeIf { it != row.name }?.let { action.label to it } }
 
     private const val TAB: Char = '\t'
     private const val NEWLINE: Char = '\n'

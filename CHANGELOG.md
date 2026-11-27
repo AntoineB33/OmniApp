@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every deep copy says what the rows hold, not only their titles — 2026-11-27
+
+- User: *"I want the app to easily get the user any info they want"* — the example *"for any row, the user wants to see
+  its state everywhere in the app"*, handed to Claude Code by a row's deep copy, generalized. Checked against the code, the
+  copy carried titles alone: an alarm copied as "Wake", an action row "Minimum time" without its minutes, and a
+  "Contexts and states" pair said its state only for a number, a switch or an enum (an alarm's time, its days, a
+  resilience, a text: nothing), its "states" row nothing at all.
+- One funnel says what an action holds for an element as text (`SearchDomain.actionValueText`, `valueText`). An
+  element's deep copy writes each value of its kind under it as "- label: value" lines (`elementStateLines`; its md
+  elements included; a timer's or chrono's run read at the copy's instant); an action row's deep copy says its value
+  beside it, or one row per element where they differ (`actionRowValues`, `actionRowTree`'s `state`); a pair's row and
+  its "states" row say the state whatever its type (`SubRowSpec.copyDetail`: copied, not drawn twice beside the editor).
+- "State in each context" grouped the contexts by on / off alone: a parent distance of 2 in one context and 3 in another
+  were one "on" group whose editor showed the first one's value for both. The contexts are now also told apart by the value
+  (`SearchDomain.settingValue`, `Filters.valueOf`, `ContextDomain.StateGroup.value`), said beside "on".
+- `AnyInfoTest`: questions a user could ask (when does this alarm ring, how much is left on this timer, what is every
+  task's minimum time, which notes are attached, where is this setting on and to what), each answered by one deep copy;
+  its guard fails for any state "Contexts and states" groups by that no copy can say (it found a task's tree name).
+
 ### A pop-up comes back as it was left for the same caller; always stuck to it — 2026-11-27
 
 - User: *"The added elements list, the position of the section separators, wether the header/search/actions/added

@@ -166,10 +166,12 @@ class RowMenuTest {
         )
         val tab = 9.toChar()
         val nl = 10.toChar()
-        assertEquals("P${nl}${tab}A${nl}", SearchDomain.elementsCopyText(s, listOf(key("p")), 2, includeIds = false, excludeTitle = ""))
-        assertEquals("P${nl}${tab}A${nl}${tab}${tab}B${nl}", SearchDomain.elementsCopyText(s, listOf(key("p")), 9, includeIds = false, excludeTitle = ""))
-        assertEquals("P${nl}${tab}- id: Chrono/p${nl}", SearchDomain.elementsCopyText(s, listOf(key("p")), 1, includeIds = true, excludeTitle = ""))
-        assertEquals("P${nl}", SearchDomain.elementsCopyText(s, listOf(key("p")), 9, includeIds = false, excludeTitle = "A"))
+        // User rule 2026-11-27: each element says its state under it ([SearchDomain.elementStateLines]) — an idle chrono's run.
+        fun run(depth: Int) = "${tab.toString().repeat(depth + 1)}- Run: idle, 0s${nl}"
+        assertEquals("P${nl}${run(0)}${tab}A${nl}${run(1)}", SearchDomain.elementsCopyText(s, listOf(key("p")), 2, includeIds = false, excludeTitle = ""))
+        assertEquals("P${nl}${run(0)}${tab}A${nl}${run(1)}${tab}${tab}B${nl}${run(2)}", SearchDomain.elementsCopyText(s, listOf(key("p")), 9, includeIds = false, excludeTitle = ""))
+        assertEquals("P${nl}${tab}- id: Chrono/p${nl}${run(0)}", SearchDomain.elementsCopyText(s, listOf(key("p")), 1, includeIds = true, excludeTitle = ""))
+        assertEquals("P${nl}${run(0)}", SearchDomain.elementsCopyText(s, listOf(key("p")), 9, includeIds = false, excludeTitle = "A"))
         assertEquals(listOf("P", "A", "B"), SearchDomain.elementsDeepestPath(s, listOf(key("p")), 9))
         // The deep copy rows are offered for it, those only a task carries not.
         val rows = SearchDomain.resolve(s, listOf(key("p")), { emptyMap() })

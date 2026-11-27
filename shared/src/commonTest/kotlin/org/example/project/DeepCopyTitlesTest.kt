@@ -72,6 +72,9 @@ class DeepCopyTitlesTest {
             "Chrono/p$nl${tab}Chrono/a$nl",
             SearchDomain.elementsCopyText(s, listOf(key("p")), 9, includeIds = true, excludeTitle = "", includeTitles = false),
         )
-        assertEquals("P$nl${tab}A$nl", SearchDomain.elementsCopyText(s, listOf(key("p")), 9, includeIds = false, excludeTitle = ""))
+        assertEquals(
+            "P$nl$tab- Run: idle, 0s$nl${tab}A$nl$tab$tab- Run: idle, 0s$nl",
+            SearchDomain.elementsCopyText(s, listOf(key("p")), 9, includeIds = false, excludeTitle = ""),
+        )
     }
 }

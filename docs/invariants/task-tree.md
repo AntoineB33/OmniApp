@@ -1156,6 +1156,14 @@ suggestions before it was ever entered.
   Ctrl+C in a Search list copies the ids of the selected children, else of the selected rows. **A menu's entry is such a
   row** (anomaly 2026-11-25): its "add" puts it in that menu's own added elements, kept by its NAME
   (`SearchDomain.optionKey`, `elementKeyOf`: an entry's row id is its place in the menu).
+- **A deep copy says what the rows HOLD, not only their titles** (user rule 2026-11-27, *"I want the app to easily get
+  the user any info they want"*, the example *"for any row, the user wants to see its state everywhere in the app"*,
+  handed to Claude Code by a deep copy): **`SearchDomain.actionValueText` is the one funnel** saying what an action holds
+  for an element as text. An element's copy writes its kind's values under it ("- label: value", `elementStateLines`),
+  an action row's says its value beside it or a row per element where they differ (`actionRowValues`), a context-state
+  pair and its "states" row say the state whatever its type (`SubRowSpec.copyDetail`). An action given a state
+  `actionStateOf` groups by must have its text there (`AnyInfoTest`'s guard); a title says nothing, the row's name does.
+  "State in each context" tells contexts apart by the setting's value too, not on / off alone (`SearchDomain.settingValue`).
 - **A task row is a tree cell to the user.** Its menu is built for the path the right-click landed on (the row, its
   path box, or a line of its list of paths): deep copy acts on THAT occurrence (`SearchDomain.occurrenceAtPath`,
   walked on the right-click, never per keystroke), and "copy path" copies that path.

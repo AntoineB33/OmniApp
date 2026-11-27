@@ -621,7 +621,7 @@ private fun AddedActionList(
                 deepCopyOf = { row ->
                     val root = deepCopies[row.id]
                     if (root != null) { { SubRowDeepCopy(root, state, onIntent) } }
-                    else { { SubRowDeepCopy(remember(row.id, groups, config) { actionRowTree(SearchDomain.actionListRows(groups, config, expandAll = true), row) }, state, onIntent) } }
+                    else { { SubRowDeepCopy(remember(row.id, groups, config) { actionRowTree(SearchDomain.actionListRows(groups, config, expandAll = true), row, state) }, state, onIntent) } }
                 },
             ),
             modifier = modifier,
@@ -783,6 +783,11 @@ internal class SubRowSpec(
     val content: (@Composable () -> Unit)? = null,
     /** The elements the row stands for, by key — a pair's contexts: what its deep copy's "Copy the ids" writes under it. */
     val ids: List<String> = emptyList(),
+    /**
+     * User rule 2026-11-27: what its deep copy writes beside its title ([subRowsCopyText]) — [detail], or, for a row whose
+     * controls show its value, that value as text, which the row does not draw twice.
+     */
+    val copyDetail: String = detail,
 ) {
     /** User 2026-11-26: its controls on the row itself, after its title ([SearchDomain.SubRow.inline]) — none under it. */
     val inline: Boolean get() = content != null && children.isEmpty()
@@ -844,7 +849,7 @@ internal fun subRowsCopyText(root: SubRowSpec, maxDepth: Int, includeIds: Boolea
         if (idsOnly) sb.append(spec.ids.joinToString(", ") { SearchDomain.copiedId(it) })
         else {
             sb.append(spec.title)
-            if (spec.detail.isNotEmpty()) sb.append(" — ").append(spec.detail)
+            if (spec.copyDetail.isNotEmpty()) sb.append(" — ").append(spec.copyDetail.replace("\n", "\n" + "\t".repeat(depth + 1)))
         }
         sb.append('\n')
         if (includeIds && !idsOnly) for (key in spec.ids) {
@@ -884,20 +889,29 @@ private fun subRowCopies(parent: SearchDomain.ActionListRow, specs: List<SubRowS
  * User 2026-11-27: **the deep copy of the actions section's row [row]** — it and every row under it in [all] (the section's
  * rows, every one open: [SearchDomain.actionListRows]' `expandAll`), a level further per level. Its ids ([actionRowIds]).
  */
-internal fun actionRowTree(all: List<SearchDomain.ActionListRow>, row: SearchDomain.ActionListRow): SubRowSpec {
+internal fun actionRowTree(all: List<SearchDomain.ActionListRow>, row: SearchDomain.ActionListRow, state: SchedulerState? = null): SubRowSpec {
+    // User rule 2026-11-27 (*"I want the app to easily get the user any info they want"*): an action row's copy says what it
+    // holds for its elements ([SearchDomain.actionRowValues]) — beside it where they all hold the same, else a row each.
+    fun spec(r: SearchDomain.ActionListRow, below: List<SubRowSpec>): SubRowSpec {
+        val values = if (state != null && r.action != null) SearchDomain.actionRowValues(state, r.action, r.group.members) else emptyList()
+        val shared = values.singleOrNull()?.takeIf { it.first.isEmpty() }?.second
+        val detail = listOf(r.detail, shared.orEmpty()).filter { it.isNotEmpty() }.joinToString(" — ")
+        val each = if (shared != null) emptyList() else values.mapIndexed { i, (name, value) -> SubRowSpec("value$i", name, value) }
+        return SubRowSpec(r.id, r.title, detail, each + below, ids = actionRowIds(r))
+    }
     val start = all.indexOfFirst { it.id == row.id }
-    if (start < 0) return SubRowSpec(row.id, row.title, row.detail, ids = actionRowIds(row))
+    if (start < 0) return spec(row, emptyList())
     var i = start + 1
     fun children(depth: Int): List<SubRowSpec> {
         val out = ArrayList<SubRowSpec>()
         while (i < all.size && all[i].depth > depth) {
             val r = all[i++]
-            out += SubRowSpec(r.id, r.title, r.detail, children(r.depth), ids = actionRowIds(r))
+            out += spec(r, children(r.depth))
         }
         return out
     }
     val top = all[start]
-    return SubRowSpec(top.id, top.title, top.detail, children(top.depth), ids = actionRowIds(top))
+    return spec(top, children(top.depth))
 }
 
 /** What a row of the actions section stands for, by key: an action itself (as "copy id" names it), a group its elements. */
@@ -935,7 +949,7 @@ private fun contextPairSpecs(model: ContextPairs): List<SubRowSpec> =
             stateSaid(pair, model),
             listOf(
                 SubRowSpec("context", "context", content = { ContextPairContext(model, index) }),
-                SubRowSpec("states", "states", content = { ContextPairStates(model, index) }),
+                SubRowSpec("states", "states", content = { ContextPairStates(model, index) }, copyDetail = stateSaid(pair, model).takeIf { pair.stated }.orEmpty()),
             ),
             ids = model.keysOf(pair),
         )
@@ -958,10 +972,9 @@ private fun pairTitle(pair: SearchDomain.ContextPair, model: ContextPairs): Stri
 private fun stateSaid(pair: SearchDomain.ContextPair, model: ContextPairs): String {
     if (!pair.stated) return "no state"
     val first = model.valuesOf(pair).firstOrNull { model.kind == null || it.kind == model.kind } ?: return ""
-    return when (val value = SearchDomain.actionStateOf(model.host.state, model.action, first)) {
-        is Number, is Boolean, is Enum<*> -> value.toString()
-        else -> ""
-    }
+    // User rule 2026-11-27: every state said, through the one funnel ([SearchDomain.actionValueText]) — a list, a time, a
+    // text included, not a number alone, so the pair's deep copy carries it.
+    return SearchDomain.actionValueText(model.host.state, model.action, first).orEmpty()
 }
 
 /** A pair's "context" row: the field opening pop-up window B, every context in its results, the pair's added. */
@@ -3055,10 +3068,11 @@ private fun configurationContextStateRows(
             SubRowSpec(
                 "group$index",
                 contextsNamed(group.contexts),
-                if (group.on) "on" else "off",
+                // User rule 2026-11-27: the value it holds there beside "on" ([ContextDomain.StateGroup.value]).
+                if (group.on) listOfNotNull("on", group.value).joinToString(": ") else "off",
                 listOf(
                     SubRowSpec("context", "context", content = { ContextsLink(ids, onOpenSearch) }),
-                    SubRowSpec("state", "state", content = {
+                    SubRowSpec("state", "state", copyDetail = if (group.on) listOfNotNull("on", group.value).joinToString(": ") else "off", content = {
                         val shown = contexts.configOf(state.contextDefaults, group.contexts.first().id)
                         SettingEditor(state, setting, shown, null, { next ->
                             var defaults = state.contextDefaults
@@ -3135,7 +3149,7 @@ private fun optionPresenceRows(
                 listOfNotNull(
                     SubRowSpec("context", "context", content = { ContextsLink(ids, onOpenSearch) }),
                     on?.let {
-                        SubRowSpec("state", "state", content = {
+                        SubRowSpec("state", "state", copyDetail = if (on) "on" else "off", content = {
                             CompactSwitch(checked = on, onCheckedChange = { next ->
                                 val defaults = contexts.withEntry(state.contextDefaults, ids, entry, next)
                                 if (defaults != state.contextDefaults) onIntent(SchedulerIntent.SetContextDefaults(defaults))
