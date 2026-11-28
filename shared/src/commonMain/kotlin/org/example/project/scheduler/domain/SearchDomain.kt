@@ -12,6 +12,8 @@ import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.NotificationSource
 import org.example.project.scheduler.state.ChangedElement
 import org.example.project.scheduler.state.changedElements
+import org.example.project.scheduler.state.windowChanges
+import org.example.project.scheduler.persistence.WindowChange
 import org.example.project.scheduler.state.configurationChanges
 import kotlinx.datetime.number
 import kotlinx.datetime.toLocalDateTime
@@ -1337,6 +1339,7 @@ object SearchDomain {
                     historyEngine = filters.historyEngine.name,
                     historyChangedKinds = Kind.entries.filter { it in filters.historyChangedKinds }.map { it.name },
                     historyChangedElement = filters.historyChangedElement,
+                    windowChanges = WindowChange.entries.filter { it in filters.windowChanges }.map { it.name },
                     relationSection = filters.relationSection?.name,
                     shortcutRebound = filters.shortcutRebound.name,
                     windowStatus = filters.windowStatus?.name,
@@ -1472,6 +1475,7 @@ object SearchDomain {
                         historyEngine = enumNamed(stored.historyEngine, Tri.Any),
                         historyChangedKinds = kindsNamed(stored.historyChangedKinds).filterTo(HashSet()) { it in HISTORY_CHANGED_KINDS },
                         historyChangedElement = stored.historyChangedElement?.takeIf { it.isNotBlank() },
+                        windowChanges = stored.windowChanges.mapNotNullTo(HashSet()) { n -> WindowChange.entries.firstOrNull { it.name == n } },
                         relationSection =
                             TaskRelationsDomain.Section.entries.firstOrNull { it.name == stored.relationSection },
                         shortcutRebound = enumNamed(stored.shortcutRebound, Tri.Any),
@@ -1665,6 +1669,12 @@ object SearchDomain {
     enum class Tri(val label: String) { Any("any"), Yes("yes"), No("no") }
 
     /**
+     * User request 2026-11-28 (walked: *"the tasks I deleted"*): "In a task tree"'s choices as drawn — its "no" says
+     * what such a task is, so a new user who thinks "deleted" recognizes it, and the ▾'s bar finds it by that word.
+     */
+    fun taskInTreeLabel(choice: Tri): String = if (choice == Tri.No) "no (deleted)" else choice.label
+
+    /**
      * The "Default periods" filter: whether a restrictive period is one the app ships (named by its fixed id,
      * `PeriodKinds.isUserDefined` false) or one of the account's own. Stored by the entries' names, which are kept as
      * they were under the filter's first label ("Origin": built-in / yours).
@@ -1768,6 +1778,11 @@ object SearchDomain {
          * element deleted since is still one to look for.
          */
         val historyChangedElement: String? = null,
+        /**
+         * User request 2026-11-28 (*"the history units about window opening or closing"*): empty = any; else only the
+         * units that did one of these to a window ([org.example.project.scheduler.state.windowChanges]).
+         */
+        val windowChanges: Set<WindowChange> = emptySet(),
         /** Null = any of the Task relations window's four sections. */
         val relationSection: TaskRelationsDomain.Section? = null,
         /** Yes = bound to another chord than the one it ships with. */
@@ -1995,8 +2010,8 @@ object SearchDomain {
          * Anomaly 2026-11-15 (*"Root of a tree to yes, and the search result list of the original window shows elements
          * that are not task. Fix those kinds of errors all around the app"*): **a filter of one type, on, keeps the
          * elements of that type alone** — the types of every such filter that is on, or null where none is ([isOn],
-         * [Setting.section]). Until that day another type's elements passed it untouched. A "creation" row is no
-         * element and stays. Not while the calendar's instant is a filter ([calendarAt], [calendarAddAt]): that one
+         * [Setting.section]). Until that day another type's elements passed it untouched. A "creation" row stays
+         * where it creates one of those types (user 2026-11-28), and goes with the others. Not while the calendar's instant is a filter ([calendarAt], [calendarAddAt]): that one
          * answers for every type, and the calendar's "edit…" sets the task's and the period's box bounds beside it
          * ([calendarAtConfig]) while the alarms, timers and reminders there stay listed.
          */
@@ -2047,6 +2062,7 @@ object SearchDomain {
                 Setting.HistoryUndoneSetting -> historyUndone
                 Setting.HistoryChangedKindsSetting -> historyChangedKinds
                 Setting.HistoryChangedElementSetting -> historyChangedElement
+                Setting.HistoryWindowChangeSetting -> windowChanges
                 Setting.RelationSectionSetting -> relationSection
                 Setting.ShortcutReboundSetting -> shortcutRebound
                 Setting.WindowStatusSetting -> windowStatus
@@ -2103,6 +2119,7 @@ object SearchDomain {
                 Setting.HistoryUndoneSetting -> historyUndone != Tri.Any
                 Setting.HistoryChangedKindsSetting -> historyChangedKinds.isNotEmpty()
                 Setting.HistoryChangedElementSetting -> historyChangedElement != null
+                Setting.HistoryWindowChangeSetting -> windowChanges.isNotEmpty()
                 Setting.RelationSectionSetting -> relationSection != null
                 Setting.ShortcutReboundSetting -> shortcutRebound != Tri.Any
                 Setting.WindowStatusSetting -> windowStatus != null
@@ -2607,6 +2624,11 @@ object SearchDomain {
         HistoryUndoneSetting(Kind.HistoryUnit, "Undone"),
         HistoryChangedKindsSetting(Kind.HistoryUnit, "Changed element types"),
         HistoryChangedElementSetting(Kind.HistoryUnit, "Changed element"),
+        /**
+         * User request 2026-11-28 (*"the sorted history units about window opening or closing"*, walked as a new user
+         * would): only the units that opened, closed, minimized… a window, as checked ([Filters.windowChanges]).
+         */
+        HistoryWindowChangeSetting(Kind.HistoryUnit, "What was done to a window"),
         /** What the notification came from ([Filters.notificationSources]). */
         NotificationSourceSetting(Kind.Notification, "From"),
         RelationSectionSetting(Kind.TaskRelation, "Section"),
@@ -3133,9 +3155,15 @@ object SearchDomain {
                 type(
                     Kind.HistoryUnit, "History",
                     Setting.HistorySort, Setting.HistoryCategorySetting, Setting.HistoryWindowSetting, Setting.HistoryMadeInWindowSetting, Setting.HistoryUndoneSetting,
-                    Setting.HistoryChangedKindsSetting, Setting.HistoryChangedElementSetting, Setting.DatedOnDays, Setting.CheckedOnDays,
+                    Setting.HistoryWindowChangeSetting, Setting.HistoryChangedKindsSetting, Setting.HistoryChangedElementSetting, Setting.DatedOnDays,
+                    Setting.CheckedOnDays,
                 ),
-                type(Kind.Window, "Windows", Setting.WindowSort, Setting.WindowStatusSetting, Setting.WindowDuplicatesSetting, Setting.WindowListedKindsSetting),
+                // "What was done to a window" here too: a user after the windows' history looks under Windows as well.
+                type(
+                    Kind.Window, "Windows",
+                    Setting.WindowSort, Setting.WindowStatusSetting, Setting.WindowDuplicatesSetting, Setting.WindowListedKindsSetting,
+                    Setting.HistoryWindowChangeSetting,
+                ),
                 type(Kind.Shortcut, "Keyboard shortcuts", Setting.ShortcutSort, Setting.ShortcutReboundSetting),
                 type(Kind.Md, "Markdown elements", Setting.MdSort),
                 type(Kind.SearchConfiguration, "Search configurations", Setting.SearchConfigurationSort),
@@ -3493,7 +3521,7 @@ object SearchDomain {
                     "rows it last saved; its right-click \"Update\" saves them, with the rest of the window."
             // Anomaly 2026-11-19 (*"Add description bubble info for all the search configuration elements as well"*): each
             // type's filter says what it keeps; it read "Keeps the tasks by 'In a task tree'", its own name again.
-            Setting.TaskInTree -> "Yes: only the tasks a task tree holds. No: only the tasks no tree holds any more, kept for what was done."
+            Setting.TaskInTree -> "Yes: only the tasks a task tree holds. No: only the tasks deleted from every tree, kept for what was done."
             Setting.TaskTreeRoot -> "Yes: only the tasks at the root of a task tree, directly under \"Task trees\". No: every other task."
             Setting.TaskSchedulable -> "Yes: only the tasks the scheduler can place — a task with no sub-task, still in a tree. No: the others."
             Setting.TaskCategory -> "Only the tasks carrying the category chosen."
@@ -3514,11 +3542,15 @@ object SearchDomain {
             Setting.QuotaRepeatsSetting -> "Yes: only the quotas whose loop repeats. No: only those that run once."
             Setting.ReminderRepeatsSetting -> "Only the one-off reminders, or only the repeating ones."
             Setting.BlockElements -> "Only the calendar blocks of the elements chosen."
-            Setting.HistoryCategorySetting -> "Only the history units of one stack: edits, selections, the calendar, the main one, window moves."
+            Setting.HistoryCategorySetting ->
+                "Only the history units of one undo list: edits, selections, the calendar, the main one, the moves of the focus between windows. " +
+                    "A window opened or closed: \"What was done to a window\"."
             Setting.HistoryWindowSetting -> "Only the history units made in the window chosen, or by the scheduler engine."
             Setting.HistoryUndoneSetting -> "Yes: only the history units undone on their device (still redoable there). No: those not undone."
             Setting.HistoryChangedKindsSetting -> "Only the history units that changed an element of one of the types checked."
             Setting.HistoryChangedElementSetting -> "Only the history units that changed the element chosen, even one deleted since."
+            Setting.HistoryWindowChangeSetting ->
+                "Only the history units that did what is checked to a window: opened it, closed it, minimized it, brought it back, moved it…"
             Setting.NotificationSourceSetting -> "Only the notifications that came from what is checked: a task to do now, a screen break, an alarm…"
             Setting.RelationSectionSetting -> "Only the task relations of one section of the task relations list."
             Setting.ShortcutReboundSetting -> "Yes: only the keyboard shortcuts bound to another chord than the one they come with. No: the others."
@@ -3687,6 +3719,8 @@ object SearchDomain {
         val historyChangedKinds: List<String> = emptyList(),
         /** New 2026-10-03: absent = any element. */
         val historyChangedElement: String? = null,
+        /** New 2026-11-28: absent from an older build's = any change. */
+        val windowChanges: List<String> = emptyList(),
         val relationSection: String? = null,
         val shortcutRebound: String? = null,
         /** New 2026-09-26: absent from what an older build stored, which reads as any. */
@@ -4682,9 +4716,10 @@ object SearchDomain {
                     }
                 }
                 .let { rows ->
-                    // Anomaly 2026-11-15: a filter of a type keeps that type's elements alone.
+                    // Anomaly 2026-11-15: a filter of a type keeps that type's elements alone — and the creation rows of
+                    // those types alone (user 2026-11-28: the window-opening history units came with eleven "add …" rows).
                     val only = filters.onlyKinds ?: return@let rows
-                    rows.filter { it.kind in only || it.kind == Kind.Creation }
+                    rows.filter { it.kind in only || (it.kind == Kind.Creation && Kind.entries.firstOrNull { k -> k.name == (it as? ItemResult)?.id } in only) }
                 }
                 .let { rows ->
                     val windowsById = if (!filters.isOn(Setting.WindowListedKindsSetting)) emptyMap() else windows.associateBy { it.id }
@@ -5009,7 +5044,8 @@ object SearchDomain {
                     if (isSchedulerRunId(result.id)) {
                         return tri(filters.historyEngine, true) && filters.historyCategory == null &&
                             filters.historyWindow == null && filters.historyMadeInWindow == null && filters.historyUndone != Tri.Yes &&
-                            !filters.isOn(Setting.HistoryChangedKindsSetting) && filters.historyChangedElement == null
+                                    !filters.isOn(Setting.HistoryChangedKindsSetting) && filters.historyChangedElement == null &&
+                            !filters.isOn(Setting.HistoryWindowChangeSetting)
                     }
                     if (!tri(filters.historyEngine, false)) return false
                     val unit = historyUnitOf(state, result.id) ?: return true
@@ -5017,7 +5053,8 @@ object SearchDomain {
                         (filters.historyWindow == null || unit.window == filters.historyWindow) &&
                         (filters.historyMadeInWindow == null || madeInWindow(unit) == filters.historyMadeInWindow) &&
                         tri(filters.historyUndone, unit.undone) &&
-                        historyChangeMatches(unit.delta.changedElements, filters)
+                        historyChangeMatches(unit.delta.changedElements, filters) &&
+                        (!filters.isOn(Setting.HistoryWindowChangeSetting) || unit.delta.windowChanges.any { it in filters.windowChanges })
                 }
                 Kind.TaskRelation ->
                     filters.relationSection == null ||
@@ -5505,7 +5542,8 @@ object SearchDomain {
     fun settingButtonLabels(setting: Setting): List<String> {
         fun <T> labels(entries: List<T>, label: (T) -> String) = entries.map(label)
         return when (setting) {
-            Setting.TaskInTree, Setting.TaskTreeRoot, Setting.TaskSchedulable, Setting.TaskOnCalendar, Setting.CategoryHasRules,
+            Setting.TaskInTree -> labels(Tri.entries, ::taskInTreeLabel)
+            Setting.TaskTreeRoot, Setting.TaskSchedulable, Setting.TaskOnCalendar, Setting.CategoryHasRules,
             Setting.PeriodOnCalendar, Setting.QuotaRepeatsSetting, Setting.HistoryUndoneSetting,
             Setting.ShortcutReboundSetting,
             -> labels(Tri.entries) { it.label }
@@ -5524,10 +5562,14 @@ object SearchDomain {
             Setting.CalendarAdd, Setting.CalendarAt -> listOf("Now")
             // The text's choices as drawn, then each box by its place ("5th letter"), so a bar finds it by the request's words.
             Setting.LettersAt -> LETTERS_IN_OPTIONS.map(::lettersInLabel) + (1..LETTER_PLACES).map { "${ordinal(it)} letter" } + "starts with"
+            // Each box of the drop-down, so a bar finds it by the request's words ("window opened", "closed").
+            Setting.HistoryWindowChangeSetting -> labels(WindowChange.entries) { it.label }
+            // Every method it offers ("date", "time"), so "sort by date" finds the sorts that can (user 2026-11-28).
+            Setting.SortResults -> listOf("Default") + sortKeysOf(null).map { it.label }
             Setting.SearchBars -> listOf("Add a search bar")
             Setting.ResetSearch -> listOf("Reset")
-            Setting.SortResults -> listOf("Default")
-            else -> emptyList()
+            // A type's own methods (not the relevance and name every list has), so "sort by date" finds its sorts alone.
+            else -> if (setting.sorts && setting.section != null) SortKey.entries.filter { it.kind == setting.section }.map { it.label } else emptyList()
         }
     }
 
@@ -7159,6 +7201,7 @@ object SearchDomain {
             Setting.Types to Kind.entries,
             Setting.NoParentOfKinds to NO_PARENT_OF_KIND_OPTIONS,
             Setting.HistoryChangedKindsSetting to HISTORY_CHANGED_KINDS,
+            Setting.HistoryWindowChangeSetting to WindowChange.entries,
             Setting.NotificationSourceSetting to org.example.project.scheduler.state.NotificationSource.entries,
             Setting.WindowListedKindsSetting to WINDOW_LISTED_KIND_OPTIONS,
         )
@@ -7188,6 +7231,7 @@ object SearchDomain {
         when (item) {
             is Kind -> item.label
             is org.example.project.scheduler.state.NotificationSource -> item.label
+            is WindowChange -> item.label
             is Enum<*> -> item.name
             else -> item.toString()
         }

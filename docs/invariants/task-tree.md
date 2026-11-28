@@ -1960,6 +1960,13 @@ suggestions before it was ever entered.
   `NavigationTreeTest` until it is placed. Each category ends with its own "Default for this" where some of it is on by
   default. The groups ("Search", "Sorting", "Parents and children"…), their sub-categories and the type families of
   2026-11-27 are gone with it. The sections above that describe the groups describe the tree before this.
+- **A FILTER IS NAMED BY WHAT THE USER IS AFTER, AND NO CHOICE LOOKS LIKE AN ANSWER IT IS NOT** (user request
+  2026-11-28, walked on *"the sorted history units about window opening or closing"*): App & history › History (or ›
+  Windows) › **What was done to a window** › opened, closed; History › Sort by › date. What a window's layout change was
+  is said once (`WindowChange` in `persistence/WindowLayoutText.kt`), read by the unit's label and by the filter. A
+  choice that only resembles the request ("window navigation", the focus moves) says what it holds; a choice the user
+  thinks of by another word says it ("no (deleted)"). The ▾'s bar reads a "Sort by" by its methods. A filter of one type
+  keeps the creation rows of that type alone. `RandomRequestsTest`.
 - **A QUESTION A NEW USER ASKS IS ANSWERED BY TICKS ALONG THE TREE, NOT BY A TYPED RECIPE** (user rule 2026-11-28:
   *"very intuitive navigation for a new user … They don't know in advance where to look, and they don't necessarily read
   fast"*). Walked on *"the rows with a check box the user checked on a Sunday"*: Search › ▾ › Which elements › Date &

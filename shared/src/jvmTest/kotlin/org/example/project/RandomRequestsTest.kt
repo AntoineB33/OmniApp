@@ -14,6 +14,7 @@ import org.example.project.scheduler.domain.SearchDomain.SortMethod
 import org.example.project.scheduler.model.AlarmEntry
 import org.example.project.scheduler.state.ExternalDelta
 import org.example.project.scheduler.state.ExternalKeys
+import org.example.project.scheduler.state.changedElements
 import org.example.project.scheduler.state.HistoryCategory
 import org.example.project.scheduler.state.HistoryUnit
 import org.example.project.scheduler.state.SchedulerHistory
@@ -217,5 +218,70 @@ class RandomRequestsTest {
         assertEquals(listOf(SearchDomain.Setting.LettersAt), typed("5th letter").distinct())
         assertEquals(true, SearchDomain.Setting.LettersAt in typed("starts with"))
         assertEquals(true, SearchDomain.Setting.LettersAt in typed("letter"))
+    }
+
+    /**
+     * User 2026-11-28: *"Start with getting the sorted history units about window opening or closing"*, walked as a new
+     * user would: Search › ▾ › App & history › History › **What was done to a window** › opened, closed; then History ›
+     * Sort by › date, newest first. Nothing typed, no type chosen. A move is not listed, and one action that closed a
+     * window and opened another (the bar's Reset) is.
+     */
+    @Test
+    fun history_units_that_opened_or_closed_a_window_newest_first() {
+        fun layout(visible: Boolean, x: Float = 0f) =
+            org.example.project.scheduler.persistence.WindowLayoutText.write(org.example.project.scheduler.persistence.WindowPlacement(x = x, y = 0f, visible = visible))
+        fun unit(time: Long, key: String, before: String?, after: String?, label: String) =
+            HistoryUnit(timeMillis = time, delta = ExternalDelta(key, before, after, label), deviceId = "desk", deviceSeq = time)
+        val t = at(2026, 11, 20)
+        val units = listOf(
+            unit(t, ExternalKeys.WINDOW + "Calendar", layout(false), layout(true), "Open window"),
+            unit(t + 1, ExternalKeys.WINDOW + "Calendar", layout(true), layout(true, x = 40f), "Move window"),
+            unit(t + 2, ExternalKeys.WINDOW + "Calendar", layout(true, x = 40f), layout(false, x = 40f), "Close window"),
+            unit(
+                t + 3, ExternalKeys.WINDOWS,
+                org.example.project.scheduler.persistence.WindowLayoutText.writeMany(mapOf("History" to layout(true), "Calendar" to layout(false))),
+                org.example.project.scheduler.persistence.WindowLayoutText.writeMany(mapOf("History" to layout(false), "Calendar" to layout(true))),
+                "Reset",
+            ),
+            change(t + 4, SearchDomain.Config(kinds = setOf(Kind.Task)), SearchDomain.Config(kinds = setOf(Kind.Alarm))),
+        )
+        val state = withUnits(units)
+        val config = SearchDomain.pageDefaultConfig("scheduler").let {
+            it.copy(
+                filters = it.filters.copy(
+                    windowChanges = setOf(org.example.project.scheduler.persistence.WindowChange.Opened, org.example.project.scheduler.persistence.WindowChange.Closed),
+                ),
+                sorts = listOf(SortMethod(Kind.HistoryUnit, SortKey.HistoryDate, descending = true)),
+            )
+        }
+        fun key(i: Int) = Kind.HistoryUnit.name + "/" + SearchDomain.historyUnitId(HistoryCategory.Main, units[i])
+        assertEquals(listOf(key(3), key(2), key(0)), search(state, config).map(SearchDomain::keyOf))
+        // The bar's Reset now says the windows it changed, so "Changed element" finds it too.
+        assertEquals(
+            setOf("Window/History", "Window/Calendar"),
+            units[3].delta.changedElements.map { it.key }.toSet(),
+        )
+        // Where a new user looks: under History first, and under Windows too.
+        assertEquals(listOf("App & history", "History"), SearchDomain.homePathOf(SearchDomain.Setting.HistoryWindowChangeSetting))
+        val app = SearchDomain.CONFIGURATION_LAYOUT.first { it.id == "app" }
+        assertEquals(true, SearchDomain.Setting.HistoryWindowChangeSetting in app.items.filterIsInstance<SearchDomain.LayoutNode>().first { it.label == "Windows" }.items)
+        // Stored and read back; an older build's shape reads as any change.
+        assertEquals(config.filters.windowChanges, SearchDomain.Config.decode(config.encode())!!.filters.windowChanges)
+        assertEquals(emptySet(), SearchDomain.Config.decode(SearchDomain.Config(kinds = setOf(Kind.Task)).encode().replace(Regex(""","?windowChanges":\[[^\]]*\]"""), ""))!!.filters.windowChanges)
+    }
+
+    /** The ▾'s bar finds the same rows by the request's own words: "window opened", "sort by date", "deleted". */
+    @Test
+    fun the_arrow_bar_finds_the_window_history_and_the_date_sorts_by_the_words_of_the_request() {
+        val tree = SearchDomain.configurationTree(SearchDomain.Config(kinds = Kind.entries.toSet()))
+        val rows = SearchDomain.ConfigurationTreeRows(tree)
+        fun typed(q: String) = SearchDomain.shownConfigurationNodes(SchedulerState.empty(), tree, root = true, rows, SearchDomain.CONFIGURATION_SEARCH.copy(query = q))
+            .filterIsInstance<SearchDomain.ConfigurationLeaf>().map { it.setting }.toSet()
+        assertEquals(true, SearchDomain.Setting.HistoryWindowChangeSetting in typed("window opened"), typed("window opened").toString())
+        assertEquals(true, SearchDomain.Setting.HistoryWindowChangeSetting in typed("closed"))
+        val byDate = typed("sort by date")
+        assertEquals(true, byDate.containsAll(setOf(SearchDomain.Setting.SortResults, SearchDomain.Setting.HistorySort, SearchDomain.Setting.NotificationSort)), byDate.toString())
+        assertEquals(false, SearchDomain.Setting.AlarmSort in byDate)
+        assertEquals(true, SearchDomain.Setting.TaskInTree in typed("deleted"), typed("deleted").toString())
     }
 }

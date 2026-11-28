@@ -21,8 +21,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
 import androidx.compose.runtime.CompositionLocalProvider
-import kotlinx.serialization.builtins.nullable
-import kotlinx.serialization.builtins.serializer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.draw.clipToBounds
@@ -338,32 +336,14 @@ private const val SEARCH_KEY: String = org.example.project.scheduler.state.Exter
 private const val SEARCH_TEXT_KEY: String = ExternalKeys.SEARCH_TEXT
 private const val WINDOW_KEY: String = org.example.project.scheduler.state.ExternalKeys.WINDOW
 
-/** A window's layout as its unit holds it — its row without the configuration, which has a unit of its own. */
-private fun layoutText(p: WindowPlacement): String =
-    listOf(p.x, p.y, p.width, p.height, p.visible, p.fillWidth, p.fillHeight, p.minimized).joinToString(";")
+/** A window's layout as its unit holds it ([WindowLayoutText], the one statement of it). */
+private fun layoutText(p: WindowPlacement): String = org.example.project.scheduler.persistence.WindowLayoutText.write(p)
 
-private fun layoutOf(text: String): WindowPlacement? {
-    val parts = text.split(';')
-    if (parts.size != 8) return null
-    return runCatching {
-        WindowPlacement(
-            x = parts[0].toFloat(), y = parts[1].toFloat(), width = parts[2].toFloat(), height = parts[3].toFloat(),
-            visible = parts[4].toBooleanStrict(), fillWidth = parts[5].toBooleanStrict(), fillHeight = parts[6].toBooleanStrict(),
-            minimized = parts[7].toBooleanStrict(),
-        )
-    }.getOrNull()
-}
+private fun layoutOf(text: String): WindowPlacement? = org.example.project.scheduler.persistence.WindowLayoutText.read(text)
 
-/** What a window's layout change was, as the History window names it. */
+/** What a window's layout change was, as the History window names it ([WindowChange], what its filter reads too). */
 private fun layoutChangeLabel(before: WindowPlacement, after: WindowPlacement): String =
-    when {
-        !before.visible && after.visible -> "Open window"
-        before.visible && !after.visible -> "Close window"
-        before.minimized != after.minimized -> if (after.minimized) "Reduce window" else "Bring window back"
-        before.fillWidth != after.fillWidth || before.fillHeight != after.fillHeight -> "Fill window"
-        before.width != after.width || before.height != after.height -> "Resize window"
-        else -> "Move window"
-    }
+    org.example.project.scheduler.persistence.WindowChange.of(before, after).unitLabel
 
 /** What a Search window's configuration change was, as the History window names it. */
 private fun searchChangeLabel(before: SearchDomain.Config, after: SearchDomain.Config): String =
@@ -472,17 +452,11 @@ private class ViewHistoryRecorder {
     }
 }
 
-/** How [windowsText] writes several windows' layouts. */
-private val WINDOWS_SERIALIZER: kotlinx.serialization.KSerializer<Map<String, String?>> =
-    kotlinx.serialization.builtins.MapSerializer(String.serializer(), String.serializer().nullable)
-
 /** Several windows' layouts ([layoutText]) by frame id, as one [ExternalKeys.WINDOWS] value. */
-private fun windowsText(layouts: Map<String, String?>): String =
-    kotlinx.serialization.json.Json.encodeToString(WINDOWS_SERIALIZER, layouts)
+private fun windowsText(layouts: Map<String, String?>): String = org.example.project.scheduler.persistence.WindowLayoutText.writeMany(layouts)
 
 /** [windowsText]'s reverse; empty for nothing readable. */
-private fun windowsOf(text: String?): Map<String, String?> =
-    text?.let { runCatching { kotlinx.serialization.json.Json.decodeFromString(WINDOWS_SERIALIZER, it) }.getOrNull() }.orEmpty()
+private fun windowsOf(text: String?): Map<String, String?> = org.example.project.scheduler.persistence.WindowLayoutText.readMany(text)
 
 /** The calendar's chrome after the window bar's Reset: maximized, not reduced (user rule 2026-10-01). */
 

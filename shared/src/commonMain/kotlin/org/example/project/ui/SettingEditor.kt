@@ -225,7 +225,7 @@ internal fun SettingEditor(
                 InstantButtons(rightClickEnabled = f.calendarAtMillis != config.calendarClickMillis) { filters(f.copy(calendarAtMillis = it)) }
             }
         SearchDomain.Setting.TaskInTree ->
-            Choices(SearchDomain.Tri.entries, f.taskInTree, { it.label }) { filters(f.copy(taskInTree = it)) }
+            Choices(SearchDomain.Tri.entries, f.taskInTree, SearchDomain::taskInTreeLabel) { filters(f.copy(taskInTree = it)) }
         SearchDomain.Setting.TaskTreeRoot ->
             Choices(SearchDomain.Tri.entries, f.taskTreeRoot, { it.label }) { filters(f.copy(taskTreeRoot = it)) }
         SearchDomain.Setting.QuotaRepeatsSetting ->
@@ -375,6 +375,16 @@ internal fun SettingEditor(
                 face = changedKindsFace(f.historyChangedKinds),
                 label = { it.label },
                 onChange = { filters(f.copy(historyChangedKinds = it)) },
+            )
+        // User request 2026-11-28: what the unit did to a window — opened, closed… several can be ticked.
+        SearchDomain.Setting.HistoryWindowChangeSetting ->
+            CheckBoxDropDown(setting.name,
+                options = org.example.project.scheduler.persistence.WindowChange.entries,
+                checked = f.windowChanges,
+                face = if (f.windowChanges.isEmpty()) "anything"
+                else org.example.project.scheduler.persistence.WindowChange.entries.filter { it in f.windowChanges }.joinToString(", ") { it.label },
+                label = { it.label },
+                onChange = { filters(f.copy(windowChanges = it)) },
             )
         SearchDomain.Setting.NotificationSourceSetting ->
             CheckBoxDropDown(setting.name,
@@ -678,7 +688,7 @@ private fun historyCategoryLabel(category: HistoryCategory): String =
         HistoryCategory.Selection -> "selection"
         HistoryCategory.Calendar -> "calendar"
         HistoryCategory.Main -> "main"
-        HistoryCategory.WindowNav -> "window navigation"
+        HistoryCategory.WindowNav -> "focus moves between windows"
         HistoryCategory.SearchText -> "search text"
     }
 

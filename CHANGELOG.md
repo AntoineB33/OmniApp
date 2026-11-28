@@ -11,6 +11,25 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "What was done to a window": the window-opening history found along the ▾ — 2026-11-28
+
+- User: *"Start with getting the sorted history units about window opening or closing"*, walked as a new user would. The
+  walk stopped at App & history › History: "Changed element types › window" also listed every move and resize, and
+  "Category › window navigation" looked like the answer but holds the moves of the focus. A unit of the window bar's
+  Reset (key `windows`) named no window at all.
+- New search configuration **"What was done to a window"** (`Setting.HistoryWindowChangeSetting`,
+  `Filters.windowChanges`): opened, closed, minimized, brought back, filled, resized, moved, read off the unit's layouts
+  (`Delta.windowChanges`). Under History and under Windows. The change is named in ONE place
+  (`persistence/WindowLayoutText.kt`: `WindowChange`, the layout text), which `App` now reads to name the unit it records.
+  A `windows` unit now says each window it changed ("Changed element").
+- The ▾'s bar finds a "Sort by" by its methods ("sort by date": the whole list's, the history's, the notifications'), the
+  new filter by its boxes ("window opened"), and "In a task tree" by "deleted" (its "no" now reads "no (deleted)").
+  History "Category"'s `WindowNav` choice reads "focus moves between windows".
+- A filter of one type keeps the "New …" creation rows of that type alone (they were all kept: eleven of them under the
+  history units).
+- Persisted shape: one optional field on a stored configuration (`windowChanges`); absent = any (`RandomRequestsTest`).
+  Client rebuild only.
+
 ### "Letters at places": a context's 3rd row starting with d, h fifth, found by boxes along the ▾ — 2026-11-28
 
 - User: *"Tell me the actions … of a new user that wants to get the list of every context where search configurations

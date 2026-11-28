@@ -3,6 +3,8 @@ package org.example.project.scheduler.state
 import org.example.project.scheduler.domain.PeriodKinds
 import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.domain.SearchDomain
+import org.example.project.scheduler.persistence.WindowChange
+import org.example.project.scheduler.persistence.WindowLayoutText
 import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.platform.GlobalShortcut
 import org.example.project.scheduler.platform.GlobalShortcutBindings
@@ -168,10 +170,36 @@ val Delta.changedElements: Set<ChangedElement>
                         add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.CALENDAR)))
                     delta.key.startsWith(ExternalKeys.CONFIG_SEARCH) ->
                         add(ChangedElement(SearchDomain.Kind.Window, delta.key.removePrefix(ExternalKeys.CONFIG_SEARCH)))
+                    // One action on several windows (the bar's Reset, a close taking others with it): each window it changed.
+                    delta.key == ExternalKeys.WINDOWS ->
+                        windowLayoutsOf(delta).keys.forEach { add(ChangedElement(SearchDomain.Kind.Window, it)) }
                 }
             else -> Unit
         }
     }
+
+/** The windows [delta] changed the layout of, each with its layout before and after: none for another delta. */
+private fun windowLayoutsOf(delta: ExternalDelta): Map<String, Pair<String?, String?>> =
+    when {
+        delta.key == ExternalKeys.WINDOWS -> {
+            val before = WindowLayoutText.readMany(delta.before)
+            val after = WindowLayoutText.readMany(delta.after)
+            (before.keys + after.keys).associateWith { before[it] to after[it] }.filterValues { it.first != it.second }
+        }
+        delta.key.startsWith(ExternalKeys.WINDOW) && !delta.key.startsWith(ExternalKeys.WINDOW_TITLE) ->
+            mapOf(delta.key.removePrefix(ExternalKeys.WINDOW) to (delta.before to delta.after))
+        else -> emptyMap()
+    }
+
+/**
+ * User request 2026-11-28 (*"the sorted history units about window opening or closing"*): **what this unit did to the
+ * windows** — opened one, closed one, minimized, moved… ([WindowChange]), read off the layouts it holds, never stored. A
+ * unit of one action on several windows did what it did to each. The "What was done to a window" filter reads it.
+ */
+val Delta.windowChanges: Set<WindowChange>
+    get() = (this as? ExternalDelta)?.let { delta ->
+        windowLayoutsOf(delta).values.mapNotNullTo(LinkedHashSet()) { (before, after) -> WindowChange.of(before, after) }
+    }.orEmpty()
 
 val Delta.changedConfigurations: List<String>
     get() = configurationChanges.map { it.path }
