@@ -163,6 +163,14 @@ until `ruleline` covered what it did, then went (step 7). Order, from the depend
      and then better than every continuation the rule engine found. So the rule engine's search is wired only as an
      optional seed (`ScheduleFill.Input.ruleEngine`, off), and **the score's search stays the app's**: the rule
      engine's port of the score is a second copy, kept for the comparison and the reference's tests.
+   - **The breaks, measured** (`BreakRulesShadowTest`, 2026-11-28): `BreakMachine.predictExpected` and the rule
+     engine's `ScreenBreaks` over the real account's known "no screen" ahead (four nights, 96 h), from the same rested
+     start. The 5-min and 15-min breaks are identical (28/28 each, the pull to a period's start included). The 20 s
+     break differs after every night, by one rule: the reference bars a break kind for its pause after ANY "no screen"
+     as long as it, so no 20 s break for 20 min after waking; the app bars the 20 s only after a 20 s break (user rule
+     2026-10-05, `default_scheduler_rules.md`) and takes one on return. The reference is the one off the user's rules.
+     Open, not exercised by the account: `default_scheduler_rules.md` bars the 5-min break after "a 5min break or a
+     15 minute no screen", both engines after any 5 minutes of it. Not compared yet: the modes (the drags at the line).
    - **What is left is the model, not the search**: the task tree's relations and the default rules as element and
      mode rules, the breaks as constraints instead of `BreakMachine`, and the line as the reduction of the user's
      edits instead of stored panels — which changes what is persisted and synced (`persistence.md`,

@@ -11,6 +11,13 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The rule engine's breaks measured against BreakMachine — 2026-11-28
+
+- User: *"Yes, the breaks next"*. `BreakRulesShadowTest` (skipped unless `OMNIAPP_SHADOW_DB` names a copy) places the
+  three breaks both ways over the real account's next 96 h: 5- and 15-min identical; the 20 s differs only after each
+  night (the reference bars it after any 20 s of "no screen", the app only after a 20 s break, as the user's rules say).
+  ADR 0018 step 7. Test only: no deploy needed.
+
 ### The rule engine meets the app: measured on the real account; the optimizer improves two candidates — 2026-11-28
 
 - User: *"Yes, step 7"*. `scheduler/line/` removed (`ruleline` covers it; `Rational` moved there). `RuleEngineBridge`
