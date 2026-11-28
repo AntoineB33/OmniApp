@@ -224,7 +224,7 @@ private fun triggerOf(text: String): Trigger {
         if (n < 1) throw IllegalArgumentException("at least 1 mode transition")
         return TransitionCount(n)
     }
-    Regex("""the optimization score becomes less than (\S+)""").matchEntire(text)?.let { return ScoreBelow(number(it.groupValues[1])) }
+    Regex("""the optimization score becomes less than (\S+)""").matchEntire(text)?.let { return ScoreBelow(Num.Exact(number(it.groupValues[1]))) }
     Regex("""(\S+) ([^ %]+)% exceeds a presence ratio of (\S+) over the next (\S+) when the chip is in \[([^,]+), ([^,]+)\)(?: and mode is (\w+))?""").matchEntire(text)?.let { m ->
         val y = number(m.groupValues[3])
         val h = number(m.groupValues[4])

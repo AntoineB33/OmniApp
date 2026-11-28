@@ -24,8 +24,11 @@ are the reference's `SEMANTICS.md`; the names and the order of every decision fo
 
 → ADR 0018 § *2026-11-28*. The reference replaced `reverse_logic/` with `scripts/`; `ruleline` ports it layer by layer
 (positions x + kε, regions, the rule language, the solver and the sweep, the claims and line state, the resolution of
-edits so far), each layer held to `scripts/ruleline-golden.py`'s files (`RuleLineGoldenTest`, `RuleLanguageGoldenTest`,
-`SolverGoldenTest`, `LineStateGoldenTest`, `ResolveGoldenTest`, `GeneratorInputsGoldenTest`). Python's unbounded
+edits, the generator's inputs, the generator, the two schedulers and the simulation), each layer held to
+`scripts/ruleline-golden.py`'s files (`RuleLineGoldenTest`, `RuleLanguageGoldenTest`, `SolverGoldenTest`,
+`LineStateGoldenTest`, `ResolveGoldenTest`, `GeneratorInputsGoldenTest`, `LastLayerGoldenTest`). A random choice of
+the reference is drawn by `PyRandom` (CPython's generator) from the same seed, and a number keeps Python's promotion
+(`Num`: exact until a float joins), so the same inputs answer the same. Python's unbounded
 integers are `Long` here: where the reference relies on growing past 2^63, the port must say how it stops instead
 (`ScreenBreaks.around`). Where the reference breaks a tie by Python's set order,
 the port uses a fixed order; the edit cases are kept only when the reference gives the same answer under two hash

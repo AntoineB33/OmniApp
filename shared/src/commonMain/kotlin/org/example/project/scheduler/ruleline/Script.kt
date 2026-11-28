@@ -25,6 +25,8 @@ const val ON_VIEW = "the view script"
 internal fun fmtNum(x: Any): String = when (x) {
     is Pos -> x.toString()
     is Rational -> if (x.isInfinite) (if (x.sign > 0) "+inf" else "-inf") else x.toString()
+    is Num.Exact -> fmtNum(x.r)
+    is Num.Real -> if (x.d.isInfinite()) (if (x.d > 0) "+inf" else "-inf") else exactRational(x.d).toString() // (Fraction(float), exact)
     else -> x.toString()
 }
 
@@ -36,10 +38,10 @@ class NowContext(override val c: Pos) : ProblemContext {
 }
 
 /** The optimization score of the line, in (0, 1]: 1 when the targets are reached. */
-fun score(problems: List<Pair<OptProblem, Rational>>, state: LineState, chip: Pos): Rational {
-    var err = Rational.ZERO
-    for ((p, w) in problems) if (w.sign != 0) err += w * p.error(NowContext(chip), state)
-    return Rational.ONE / (Rational.ONE + err)
+fun score(problems: List<Pair<OptProblem, Rational>>, state: LineState, chip: Pos): Num {
+    var err: Num = Num.ZERO
+    for ((p, w) in problems) if (w.sign != 0) err += p.error(NowContext(chip), state) * w
+    return Num.ONE / (Num.ONE + err)
 }
 
 sealed interface Trigger
@@ -116,7 +118,7 @@ data class PresenceAbove(val kind: String, val value: Rational, val y: Rational,
 }
 
 /** The optimization score ([score]) is below z. */
-data class ScoreBelow(val z: Rational) : Trigger {
+data class ScoreBelow(val z: Num) : Trigger {
     override fun toString() = "the optimization score becomes less than ${fmtNum(z)}"
 }
 

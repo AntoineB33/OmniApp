@@ -139,7 +139,16 @@ until `ruleline` covers what it does, then goes. Order, from the dependency grap
    …") nor an edit "from the chip, …" — what generated scripts write for pushes — and after a refused `every 0 s:`
    line an event line raises `KeyError`. Reported to the user; the port reproduces the reference.
 6. `score.py`, `score_search.py`, `ratio_plan.py`, `instant.py`, `pace.py`, `probability.py`, `generator.py`,
-   `simulation.py` (the generator, the two schedulers, the paces, the probability finder).
+   `simulation.py` → `Score.kt`, `ScoreSearch.kt`, `RatioPlan.kt`, `Instant.kt`, `Pace.kt`, `Probability.kt`,
+   `Generator.kt`, `Simulation.kt` (+ `PyNum.kt`: Python's number promotion, exact unless a float joins;
+   `PyRandom.kt`: CPython's Mersenne Twister, so a seed draws what it draws in the reference) — **done**
+   (`LastLayerGoldenTest`: 265 cases — CPython's random draws, mode models and their scenarios, `turns`, `Plan` and `Fill` on random lines, the score and its targets within 1e-9 with the instant schedule, 40 whole generator runs (its search among the predictions and placements reached) and 25 simulations whose logs hold the script's, the mode rules' and the user's changes, refusals and reruns; under two hash seeds). What runs on a time budget — the score search's improving
+   and deepening, the pace's steps, the generator at q = 1 or paced — is ported but held to the reference only where
+   it does not depend on the clock: a golden answer never may. Not ported: `script_python.py` (a script written as
+   Python source and executed: Kotlin has no such evaluation; a script is the data of `Script.kt`), the worker
+   processes (`edit_worker.py`, `generator_worker.py`: Kotlin runs these on threads, hooks `Simulation.calculate`
+   and `aheadJobs`). The generator's interface is `Generating` (the rules generator and the pace's `Stepped`). This
+   is the second copy of the score beside OmniApp's own scheduler (`docs/scheduler_score.md`): step 7 must leave one.
 7. Wiring: the calendar's elements and the default rules (`docs/scheduler/default_scheduler_rules.md`) written as rules,
    the scheduler replaced, `scheduler/line/` removed.
 

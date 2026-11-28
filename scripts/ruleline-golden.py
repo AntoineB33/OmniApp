@@ -176,7 +176,7 @@ def main():
     print(f"wrote {OUT} ({len(data['intervals'])} interval cases, {len(data['regions'])} region cases)")
 
 
-if __name__ == "__main__" and "--resolve-eval" not in sys.argv:
+if __name__ == "__main__" and "--resolve-eval" not in sys.argv and "--layer6" not in sys.argv:
     main()
 
 
@@ -343,7 +343,7 @@ def main_rules():
     print(f"wrote {RULES_OUT} ({len(singles)} texts, {len(sets)} sets, {len(data['lhs'])} left sides)")
 
 
-if __name__ == "__main__" and "--resolve-eval" not in sys.argv:
+if __name__ == "__main__" and "--resolve-eval" not in sys.argv and "--layer6" not in sys.argv:
     main_rules()
 
 
@@ -444,7 +444,7 @@ def main_solve():
     print(f"wrote {SOLVE_OUT} ({len(cases)} cases, {dropped} dropped as too slow): {kinds_out}")
 
 
-if __name__ == "__main__" and "--resolve-eval" not in sys.argv:
+if __name__ == "__main__" and "--resolve-eval" not in sys.argv and "--layer6" not in sys.argv:
     main_solve()
 
 
@@ -493,7 +493,7 @@ def main_line_state():
     print(f"wrote {LINE_OUT} ({len(out)} cases)")
 
 
-if __name__ == "__main__" and "--resolve-eval" not in sys.argv:
+if __name__ == "__main__" and "--resolve-eval" not in sys.argv and "--layer6" not in sys.argv:
     main_line_state()
 
 
@@ -929,11 +929,245 @@ def main_layer5():
 
 
 
+LAYER6_OUT = OUT.parent / "last-layer-golden.json"
+
+
+def _sched_text(d):
+    return " ; ".join(f"{k}: " + ",".join(f"{a}-{b}" for a, b in v) for k, v in sorted(d.items()) if v)
+
+
+def _score_of(case):
+    from score import Score, Settings, Task
+    tasks = {}
+    for name, pr, mn, mx, res in case["tasks"]:
+        tasks[name] = Task(F(pr), float(mn), math.inf if mx is None else float(mx), {k: float(v) for k, v in res.items()})
+    return Score(tasks, Settings(compensation=float(case["lam"])))
+
+
+def _problems(case):
+    from problems import MinimumLengthProblem, PresenceRatioProblem
+    out = []
+    if "ratio" in case["probs"]:
+        out.append((PresenceRatioProblem({k: F(v) for k, v in case["ratio"].items()}), F(1)))
+    if "length" in case["probs"]:
+        out.append((MinimumLengthProblem({k: F(v) for k, v in case["length"].items()}), F(1, 2)))
+    return out
+
+
+def layer6_eval(case):
+    import time as _time
+    from modes import ModeTimeline
+    from solver import limited
+    t0 = _time.monotonic()
+    out = {}
+
+    def put(name, f):
+        try:
+            with limited(3.0):
+                out[name] = f()
+        except Exception as e:  # noqa: BLE001
+            out[name] = "error " + type(e).__name__ + (": " + str(e) if type(e).__name__ in ("Refused", "ValueError", "NoBestScript") else "")
+    k = case["k"]
+    if k == "random":
+        r = random.Random(case["seed"])
+        out["floats"] = [repr(r.random()) for _ in range(5)]
+        out["ints"] = [r.randint(0, case["n"]) for _ in range(5)] + [r.randrange(case["n"] + 1) for _ in range(3)] + [r.getrandbits(31) for _ in range(2)]
+        return {"out": out, "seconds": 0}
+    if k == "probability":
+        from probability import ProbabilityFinder
+        tl = ModeTimeline(F(0), "1", [(F(t), m) for t, m in case["modes"]])
+        kn = tl.known(F(case["frontier"]))
+        m = ProbabilityFinder().fit(kn)
+        out["rules"] = m.rules()
+
+        def sc():
+            done, res = m.scenarios(kn, F(case["until"]), case["max"])
+            return "\n".join(f"{s.probability}: " + " ; ".join(f"{mm} {s.cover[mm]}" for mm in sorted(s.cover)) + f" / {s.uncovered}" for s in done) + f"\nleft {res}"
+        put("scenarios", sc)
+        return {"out": out, "seconds": _time.monotonic() - t0}
+    if k == "turns":
+        from ratio_plan import turns
+        free = _region_of(case["free"])
+
+        def tu():
+            r = turns(free, F(case["start"]), case["order"], {a: F(b) for a, b in case["lengths"].items()},
+                      {a: F(b) for a, b in case["minimum"].items()})
+            return "None" if r is None else " ; ".join(f"{a}: {g}" for a, g in sorted(r.items()))
+        put("turns", tu)
+        return {"out": out, "seconds": _time.monotonic() - t0}
+    try:
+        rs, st = _state_of(case["texts"], case["claims"])
+    except Exception as e:  # noqa: BLE001
+        return {"out": {"state": "error " + type(e).__name__}, "seconds": 0}
+    out["state"] = str(st.claims) + "\n--\n" + str(st.line)
+    c = F(case["chip"])
+    if k == "plan":
+        from ratio_plan import Fill, Plan, check_best_exists, exclusions
+        probs = _problems(case)
+
+        def exc():
+            e = exclusions(rs)
+            return "None" if e is None else " | ".join(sorted(",".join(sorted(x)) for x in e))
+        put("exclusions", exc)
+        put("best", lambda: str(check_best_exists(rs, probs)))
+        bound = lambda: [(q.with_window(F(case["H"])), w) for q, w in probs]  # noqa: E731
+
+        def plan():
+            p = Plan(rs, bound(), (), case["seed"])
+            if not p.ok:
+                return "False"
+            o = p.ops(st, c)
+            return "True " + ("None" if o is None else _ops_text(o))
+        put("plan", plan)
+
+        def fill():
+            f = Fill(bound())
+            if not f.ok:
+                return "False"
+            o = f.ops(rs, st, c, F(case["H"]))
+            return "True " + ("None" if o is None else _ops_text(o))
+        put("fill", fill)
+    elif k == "score":
+        from instant import Instant
+        score = _score_of(case)
+        end = c + F(case["H"])
+        pre = {i: st.claims.owned(i, "user") for i in score.tasks}
+
+        def ev():
+            r = score.evaluate(st.line, c, end, pre)
+            return [r.D, r.J, r.J1, r.J2, r.J3]
+        put("evaluate", ev)
+        put("target", lambda: [[i, v] for i, v in sorted(score.target(st.line, c, pre).items())])
+        inst = Instant(rs, score)
+        put("schedule", lambda: _sched_text(inst.schedule(st, c, end)))
+        put("schedule_start", lambda: _sched_text(inst.schedule(st, c, end, start=c + 1)))
+    elif k in ("generator", "simulation"):
+        from generator import RulesGenerator
+        probs = _problems(case)
+        tl = ModeTimeline(F(0), "1", [(F(t), m) for t, m in case["modes"]])
+
+        def gen():
+            return RulesGenerator(rs, probs, case["q"], constraints=(), seed=case["seed"], window=F(case["H"]), shortcuts=case["shortcuts"])
+        if k == "generator":
+            def run():
+                s, stats = gen().run(st, c, tl.known(c))
+                return s.text() + f"\n--\n{stats.chosen} | {stats.valid} | {stats.definitive} | {stats.final} | {stats.constraints}"
+            put("run", run)
+        else:
+            from line import Op
+            from simulation import Chip, Simulation, UserEdit
+
+            def sim():
+                edits = [UserEdit(F(t), [Op.put(kk, _region_of(g))]) for t, kk, g in case["edits"]]
+                sm = Simulation(st, gen(), Chip([(F(a), F(b)) for a, b in case["chip_path"]]), tl, edits)
+                log = sm.run(F(case["end"]))
+                ch = "\n".join(f"{x.time} {x.chip} {x.source}: {x.after.line}" for x in log.changes)
+                rf = "\n".join(f"{t} {s}: {w}" for t, s, w in log.refused)
+                return ch + "\n####\n" + rf + "\n####\n" + "\n".join(f"{r[0]} {r[1]} {r[2]}" for r in log.runs) + f"\n{sm.script.text()}"
+            put("sim", sim)
+    return {"out": out, "seconds": _time.monotonic() - t0}
+
+
+def main_layer6():
+    import os
+    import subprocess
+    import tempfile
+    cases = []
+    R.seed(20261129)  # (the same cases whether the other layers ran first or not)
+
+    def rclaims(kinds, n, lo=-10, hi=40):
+        out = []
+        for _ in range(n):
+            g = Region.of(rset(R.randint(1, 2), lo, hi))
+            if g.is_empty():
+                continue
+            out.append((R.choice(kinds), R.choice(["user", "user", "generated"]), region_json(g)))
+        return out
+
+    def rmodes(n, hi=30):
+        ts = sorted(R.sample(range(1, hi), n))
+        modes, prev = [], "1"
+        for t in ts:
+            m = R.choice([x for x in ("1", "2", "3") if x != prev])
+            modes.append((t, m))
+            prev = m
+        return modes
+    for _ in range(20):
+        cases.append({"k": "random", "seed": R.randrange(2 ** 40), "n": R.choice([1, 6, 100, 2 ** 20])})
+    for _ in range(40):
+        cases.append({"k": "probability", "modes": rmodes(R.randint(0, 12)), "frontier": str(R.randint(0, 30)), "until": str(R.randint(31, 60)),
+                      "max": R.choice([2, 8])})
+    for _ in range(40):
+        lengths = {"A": str(R.choice([1, 2, 3])), "B": str(R.choice([1, 2])), "C": str(R.choice([1, 4]))}
+        cases.append({"k": "turns", "free": region_json(Region.of(rset(R.randint(1, 3), 0, 30))), "start": str(R.randint(-2, 10)),
+                      "order": R.sample(["A", "B", "C"], R.randint(1, 3)), "lengths": lengths, "minimum": {"A": "1", "B": "1", "C": str(R.choice([1, 2]))}})
+    plan_sets = [["A → no B"], ["A → no B", "A → no C", "B → no C"], ["A → B"], [], ["mode 1 → no A"]]
+    for _ in range(50):
+        cases.append({"k": "plan", "texts": R.choice(plan_sets), "claims": rclaims(["A", "B", "C"], R.randint(0, 3), -5, 25),
+                      "chip": str(R.randint(-2, 6)), "probs": R.sample(["ratio", "length"], R.randint(1, 2)),
+                      "ratio": R.choice([{"A": "1/2", "B": "1/2"}, {"A": "1/3", "B": "1/3", "C": "1/3"}, {"A": "1/4", "B": "3/4"}]),
+                      "length": R.choice([{"A": "2"}, {"A": "1", "B": "3"}]), "H": str(R.choice([6, 12])), "seed": R.randrange(1000)})
+    for _ in range(50):
+        res = R.choice([{}, {"N": R.choice([0, 0.5])}])
+        tasks = [["A", str(R.choice([1, 2, 3])), R.choice([300, 600]), R.choice([None, 1800]), res],
+                 ["B", str(R.choice([1, 2])), R.choice([300, 900]), None, {}]]
+        if R.random() < 0.5:
+            tasks.append(["C", "1", 600, None, {"N": 0}])
+        cases.append({"k": "score", "texts": ["N → no A", "A → no B"] if R.random() < 0.5 else [],
+                      "claims": rclaims(["A", "B", "C", "N"], R.randint(0, 4), -3600, 4 * 3600),
+                      "chip": str(R.randint(0, 3600)), "H": str(R.choice([3600, 3 * 3600])), "tasks": tasks, "lam": R.choice([3600, 4 * 3600])})
+    gen_sets = [["A → no B"], ["mode 1 → A 50% or B", "A is always 100%"], ["A → no B", "mode 2 → no A"], []]
+    for kk, n in (("generator", 40), ("simulation", 25)):
+        for _ in range(n):
+            case = {"k": kk, "texts": R.choice(gen_sets), "claims": rclaims(["A", "B"], R.randint(0, 2), -5, 20), "chip": "0",
+                    "probs": R.sample(["ratio", "length"], R.randint(1, 2)),
+                    "ratio": R.choice([{"A": "1/2", "B": "1/2"}, {"A": "1/3", "B": "2/3"}]), "length": R.choice([{"A": "2"}, {"B": "1"}]),
+                    "H": str(R.choice([4, 8])), "seed": R.randrange(1000), "q": R.choice([0.0, 0.1, 0.3]), "shortcuts": R.random() < 0.5,
+                    "modes": rmodes(R.randint(0, 3), 15)}
+            if kk == "simulation":
+                pts, t, x = [("0", "0")], 0, 0
+                for _ in range(R.randint(1, 3)):
+                    t += R.randint(1, 5)
+                    x += R.choice([0, 1, 3])
+                    pts.append((str(t), str(x)))
+                case["chip_path"] = pts
+                case["end"] = str(t + R.randint(0, 3))
+                edits = [(str(R.randint(0, t)), R.choice(["A", "B"]), region_json(Region.of(rset(1, 0, 15)))) for _ in range(R.randint(0, 2))]
+                case["edits"] = [e for e in edits if not _region_of(e[2]).is_empty()]
+            cases.append(case)
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "in.json").write_text(json.dumps(cases, ensure_ascii=False), encoding="utf-8")
+    runs = []
+    for seed in ("1", "2"):
+        env = dict(os.environ, PYTHONHASHSEED=seed)
+        subprocess.run([sys.executable, "-I", __file__, "--resolve-eval", str(REF), str(tmp / "in.json"), str(tmp / f"o{seed}.json"), "layer6"],
+                       env=env, check=True, timeout=3000)
+        runs.append(json.loads((tmp / f"o{seed}.json").read_text(encoding="utf-8")))
+    kept, unstable, slow = [], 0, 0
+    for case, a, b in zip(cases, *runs):
+        if max(a["seconds"], b["seconds"]) > 2:
+            slow += 1
+            continue
+        if a["out"] != b["out"]:
+            unstable += 1
+            continue
+        kept.append({**case, "expected": a["out"]})
+    LAYER6_OUT.write_text(json.dumps({"cases": kept}, ensure_ascii=False, indent=0), encoding="utf-8")
+    errs = sum(1 for c in kept for v in c["expected"].values() if isinstance(v, str) and v.startswith("error"))
+    by = {}
+    for c in kept:
+        by[c["k"]] = by.get(c["k"], 0) + 1
+    print(f"wrote {LAYER6_OUT} ({len(kept)} cases {by}; {unstable} unstable, {slow} slow; {errs} error answers)")
+
+
 if __name__ == "__main__" and "--resolve-eval" in sys.argv:
     i = sys.argv.index("--resolve-eval")
     cases_in = json.loads(Path(sys.argv[i + 2]).read_text(encoding="utf-8"))
-    ev = layer5_eval if sys.argv[i + 4:i + 5] == ["layer5"] else resolve_eval
+    ev = {"layer5": layer5_eval, "layer6": layer6_eval}.get((sys.argv[i + 4:i + 5] or [""])[0], resolve_eval)
     Path(sys.argv[i + 3]).write_text(json.dumps([ev(c) for c in cases_in], ensure_ascii=False), encoding="utf-8")
+elif __name__ == "__main__" and "--layer6" in sys.argv:
+    main_layer6()
 elif __name__ == "__main__":
     main_resolve()
     main_layer5()
+    main_layer6()

@@ -28,7 +28,19 @@ interface OptProblem {
     val window: Rational?
     fun withWindow(h: Rational): OptProblem
     fun hasTargets(): Boolean
-    fun error(ctx: ProblemContext, s: LineState): Rational
+    fun error(ctx: ProblemContext, s: LineState): Num
+
+    /** What its quantities by a date miss, before anything else; null: it has none (`score.ScoreProblem`). */
+    fun shortfall(ctx: ProblemContext, s: LineState): Num? = null
+
+    /** How far shorter stretches from the chip are from its targets; null: no such measure. */
+    fun stretchError(ctx: ProblemContext, s: LineState): Rational? = null
+
+    /** Its presence ratio targets, if any. */
+    val targets: Map<String, Rational> get() = emptyMap()
+
+    /** Its minimum lengths, if any. */
+    val lengths: Map<String, Rational> get() = emptyMap()
     fun proposals(ctx: ProblemContext, pred: String, strategy: String): List<Op>
     fun extra(ctx: ProblemContext): List<Pair<String, List<Op>>>
 }
@@ -60,7 +72,7 @@ private fun windowSet(c: Pos, h: Rational): IntervalSet = IntervalSet.of(Interva
 
 /** Targets r_K in [0, 1] for the presence ratio (1/H) ∫_W s_K(x)/100 dx of each kind. */
 class PresenceRatioProblem(targets: Map<String, Rational>, override val window: Rational? = null) : OptProblem {
-    val targets: Map<String, Rational> = LinkedHashMap(targets)
+    override val targets: Map<String, Rational> = LinkedHashMap(targets)
 
     init {
         require(this.targets.values.all { it >= Rational.ZERO && it <= Rational.ONE }) { "targets in [0, 1]" }
@@ -75,14 +87,14 @@ class PresenceRatioProblem(targets: Map<String, Rational>, override val window: 
 
     override fun hasTargets() = targets.isNotEmpty()
 
-    override fun error(ctx: ProblemContext, s: LineState): Rational {
+    override fun error(ctx: ProblemContext, s: LineState): Num {
         val h = window!!
         val w = windowSet(ctx.c, h)
-        return targets.entries.fold(Rational.ZERO) { acc, (k, r) -> acc + (ctx.expected(s, k, ctx.weightsFull, w) / h - r).abs() }
+        return Num.Exact(targets.entries.fold(Rational.ZERO) { acc, (k, r) -> acc + (ctx.expected(s, k, ctx.weightsFull, w) / h - r).abs() })
     }
 
     /** How far shorter stretches from the chip are from the targets (the earlier first). */
-    fun stretchError(ctx: ProblemContext, s: LineState): Rational {
+    override fun stretchError(ctx: ProblemContext, s: LineState): Rational {
         val h = window!!
         var out = Rational.ZERO
         for (j in 1..STRETCH_SCALES) {
@@ -157,7 +169,7 @@ private fun placeIn(free: IntervalSet, amount: Rational, strategy: String, c: Po
 
 /** A minimum length L_K > 0 for the intervals of each kind. */
 class MinimumLengthProblem(lengths: Map<String, Rational>, override val window: Rational? = null) : OptProblem {
-    val lengths: Map<String, Rational> = LinkedHashMap(lengths)
+    override val lengths: Map<String, Rational> = LinkedHashMap(lengths)
 
     init {
         require(this.lengths.values.all { it.sign > 0 }) { "minimum lengths > 0" }
@@ -173,7 +185,7 @@ class MinimumLengthProblem(lengths: Map<String, Rational>, override val window: 
     override fun hasTargets() = lengths.isNotEmpty()
 
     /** An interval that reaches the stage's frontier (ctx.openEnd) can still grow: its shortfall does not count yet. */
-    override fun error(ctx: ProblemContext, s: LineState): Rational {
+    override fun error(ctx: ProblemContext, s: LineState): Num {
         val end = ctx.openEnd
         var out = Rational.ZERO
         for ((k, l) in lengths) {
@@ -183,7 +195,7 @@ class MinimumLengthProblem(lengths: Map<String, Rational>, override val window: 
             }
             out += sum / l
         }
-        return out
+        return Num.Exact(out)
     }
 
     /** Each interval that falls short grows by its shortfall, on the free positions after the chip. */

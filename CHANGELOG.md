@@ -11,6 +11,17 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The rule engine: the generator, the two schedulers, the simulation — 2026-11-28
+
+- User: *"Yes, last layer"*. `scheduler/ruleline/` gains OmniApp's score on a line and its search (`Score.kt`,
+  `ScoreSearch.kt`), the best line at once where the definitions allow it (`RatioPlan.kt`: turns, `Plan`, `Fill`, the
+  check that a best script exists), the instant schedule (`Instant.kt`), the pace's steps (`Pace.kt`, `Stepped`), the
+  probability finder (`Probability.kt`), the rules generator and its scripts (`Generator.kt`, `Generating`) and the
+  world they run in (`Simulation.kt`: the chip, the modes revealed, the user's edits, background runs published at
+  the pace). `PyNum.kt` and `PyRandom.kt` keep Python's numbers and random draws. Held to the reference by
+  `LastLayerGoldenTest` (265 cases, under two hash seeds). Not ported: `script_python.py` (executes Python source), the worker
+  processes. Not wired to the app yet (ADR 0018 step 7). No deploy needed.
+
 ### The rule engine: the generator's inputs — constraints, problems, mode rules, the generated script — 2026-11-28
 
 - User: *"Yes, next layer"*. `scheduler/ruleline/` gains the constraints the generator keeps (`Constraints.kt`:

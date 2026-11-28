@@ -15,21 +15,27 @@ object Watch {
     const val MOST = 32
 
     /** f linear between the sorted points: the first position after points[0] where f > level changes; null if not. */
-    fun crossing(f: (Pos) -> Rational, points: List<Pos>, level: Rational): Pos? {
+    fun crossing(f: (Pos) -> Num, points: List<Pos>, level: Num): Pos? {
         var a = points[0]
         var fa = f(a)
         val above = fa > level
         for (b in points.drop(1)) {
             val fb = f(b)
             if ((fb > level) != above) {
-                val x = a + (b - a).x * ((level - fa) / (fb - fa))
-                return if (above) x else x + minOf(TINY, (b - x).x / 2)
+                val x = Num.Exact(a.x) + Num.Exact((b - a).x) * ((level - fa) / (fb - fa))
+                val out = if (above) x else x + minNum(Num.Exact(TINY), (Num.Exact(b.x) - x) / Num.Exact(Rational.of(2)))
+                return Pos(when (out) {
+                    is Num.Exact -> out.r
+                    is Num.Real -> exactRational(out.d) // (a float position in the reference)
+                })
             }
             a = b
             fa = fb
         }
         return null
     }
+
+    private fun minNum(a: Num, b: Num) = if (b < a) b else a
 
     /** The positions of (a, b) where the measure of these regions on (x, x + H] changes slope. */
     private fun ends(regions: List<Region>, a: Pos, b: Pos, h: Rational): Set<Pos> {
@@ -40,7 +46,7 @@ object Watch {
         return out
     }
 
-    private fun search(f: (Pos) -> Rational, a: Pos, b: Pos, level: Rational, more: Set<Pos> = emptySet()): Pos {
+    private fun search(f: (Pos) -> Num, a: Pos, b: Pos, level: Num, more: Set<Pos> = emptySet()): Pos {
         val points = (setOf(a, b) + more).sorted().take(MOST)
         return crossing(f, points, level) ?: points.last()
     }
@@ -77,11 +83,11 @@ object Watch {
             val r = state.line.vals[trigger.kind]?.get(trigger.value) ?: return Pos.INF
             val h = trigger.h
             val top = min(trigger.hi, c + h)
-            val ratio = { x: Pos -> r.measureOn(IntervalSet.of(Interval.of(x, x + h, false, true))) / h }
-            return search(ratio, c, top, trigger.y, ends(listOf(r), c, top, h))
+            val ratio = { x: Pos -> Num.Exact(r.measureOn(IntervalSet.of(Interval.of(x, x + h, false, true))) / h) }
+            return search(ratio, c, top, Num.Exact(trigger.y), ends(listOf(r), c, top, h))
         }
         val sb = trigger as ScoreBelow
-        if (sb.z.sign <= 0) return Pos.INF
+        if (sb.z <= Num.ZERO) return Pos.INF
         val pr = problems.map { (p, w) -> (p as PresenceRatioProblem) to w }
         val h = pr.maxOf { it.first.window!! }
         val kinds = pr.flatMap { it.first.targets.keys }
@@ -89,11 +95,11 @@ object Watch {
         val regions = kinds.flatMap { state.line.vals[it].orEmpty().values }
         val points = (setOf(c, top) + ends(regions, c, top, h)).sorted().take(MOST)
         val error = { x: Pos ->
-            var e = Rational.ZERO
-            for ((p, w) in problems) if (w.sign != 0) e += w * p.error(NowContext(x), state)
+            var e: Num = Num.ZERO
+            for ((p, w) in problems) if (w.sign != 0) e += p.error(NowContext(x), state) * w
             e
         }
-        return search(error, points[0], points.last(), Rational.ONE / sb.z - Rational.ONE, points.toSet() + kinks(pr, state, points))
+        return search(error, points[0], points.last(), Num.ONE / sb.z - Num.ONE, points.toSet() + kinks(pr, state, points))
     }
 
     /** (the next position where the trigger can change, what it reads then); null if it is read at each instant. */

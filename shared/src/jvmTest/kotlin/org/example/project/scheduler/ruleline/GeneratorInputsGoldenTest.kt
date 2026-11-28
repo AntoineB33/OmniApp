@@ -142,7 +142,7 @@ class GeneratorInputsGoldenTest {
                 for ((name, trig) in listOf(
                     "chipin" to ChipIn(Pos.of(2), Pos.of(9), "1"),
                     "above" to PresenceAbove("A", Rational.of(100), Rational.of(1, 3), Rational.of(6), Pos.of(-5), Pos.of(30)),
-                    "scorebelow" to ScoreBelow(Rational.of(1, 2)),
+                    "scorebelow" to ScoreBelow(Num.Exact(Rational.of(1, 2))),
                 )) {
                     put("look_$name") { Watch.look(trig, st, chip, "1", probs)!!.first.let { if (it == Pos.INF) "inf" else it.toString() } }
                 }
