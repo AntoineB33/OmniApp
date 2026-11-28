@@ -71,10 +71,10 @@ class ArrowSearchSameLogicTest {
     fun a_category_is_found_by_what_it_holds_at_any_depth() {
         val tree = SearchDomain.configurationTree(SearchDomain.Config())
         val found = idsOf(tree.filterConfigurationNodes("Use regular expression"))
-        assertTrue(SearchDomain.TreeGroup.Bar.id in found, "Search, two levels above it: $found")
+        assertTrue("find" in found, "Find by text, two levels above it: $found")
         // At distance 1 alone, not.
         val near = idsOf(tree.filterConfigurationNodes("Use regular expression", arrow.filters.copy(childDistance = 1)))
-        assertTrue(SearchDomain.TreeGroup.Bar.id !in near, near.toString())
+        assertTrue("find" !in near, near.toString())
     }
 
     @Test

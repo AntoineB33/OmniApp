@@ -96,30 +96,21 @@ class NavigationTreeTest {
         }
     }
 
+    /**
+     * User rule 2026-11-28: the layout the user gave ([SearchDomain.CONFIGURATION_LAYOUT]) holds every configuration but
+     * Reset, and the path a configuration listed away from its place shows is its first place there.
+     */
     @Test
-    fun the_task_schedulers_types_stand_by_family() {
-        val tree = SearchDomain.configurationTree(SearchDomain.Config(page = ""))
-        val labels = tree.filterIsInstance<ConfigurationCategory>().filterNot(::isFlat).map { it.label }
-        for (family in listOf("Tasks", "Calendar", "Alarms and timers", "App")) assertTrue(family in labels, "$family not at the root: $labels")
-        assertFalse(Kind.Alarm.label in labels, "the alarm type still at the root: $labels")
-        val alarms = tree.filterIsInstance<ConfigurationCategory>().first { it.label == "Alarms and timers" }
-        assertTrue(alarms.children.any { it.label == Kind.Alarm.label })
-        // The path a configuration listed away from its place shows leads through its family.
-        val alarmSetting = Setting.entries.first { it.section == Kind.Alarm && !it.sorts }
-        assertEquals(listOf("Alarms and timers", SearchDomain.treeNameOf(Kind.Alarm)), SearchDomain.homePathOf(alarmSetting))
-        // A page of few types keeps them one hover from the root.
-        val logs = SearchDomain.configurationTree(SearchDomain.Config(page = SearchDomain.CLAUDE_LOGS_PAGE))
-        assertTrue(logs.any { it.label == Kind.ClaudePrompt.label }, logs.map { it.label }.toString())
-    }
-
-    @Test
-    fun sorting_lists_every_types_order_by_family() {
-        val sorting = SearchDomain.configurationTree(SearchDomain.Config(page = "")).filterIsInstance<ConfigurationCategory>().first { it.id == "sort" }
-        assertTrue(sorting.children.size <= max)
-        val families = sorting.children.filterIsInstance<ConfigurationCategory>().map { it.label }
-        // This page's families first, then the others'.
-        assertEquals("Tasks", families.first())
-        assertTrue(families.indexOf("Claude Code logs") > families.indexOf("App"), families.toString())
+    fun the_layout_holds_every_configuration_and_says_its_home() {
+        val placed = SearchDomain.CONFIGURATION_LAYOUT.flatMap { it.settings }.toSet()
+        assertEquals((Setting.entries - Setting.ResetSearch).toSet(), placed)
+        assertEquals(listOf("Alarms, timers & alerts", "Alarms"), SearchDomain.homePathOf(Setting.AlarmStateSetting))
+        assertEquals(listOf("Which elements", "Date & calendar"), SearchDomain.homePathOf(Setting.CalendarAt))
+        assertEquals(listOf("Other pages", "Claude Code logs", "Prompts"), SearchDomain.homePathOf(Setting.PromptProject))
+        assertEquals(emptyList(), SearchDomain.homePathOf(Setting.ResetSearch))
+        // Every category says what it holds (its info bubble).
+        fun walk(n: SearchDomain.LayoutNode): List<SearchDomain.LayoutNode> = listOf(n) + n.items.filterIsInstance<SearchDomain.LayoutNode>().flatMap(::walk)
+        for (n in SearchDomain.CONFIGURATION_LAYOUT.flatMap(::walk)) assertTrue(SearchDomain.nodeDescription(n.id) != null, n.id)
     }
 
     @Test
@@ -128,7 +119,7 @@ class NavigationTreeTest {
         assertTrue(Setting.NavigationTree in SearchDomain.activeSettings(SearchDomain.CONFIGURATION_SEARCH))
         assertFalse(SearchDomain.pageDefaultConfig("").navigationTree)
         assertFalse(Setting.NavigationTree in SearchDomain.activeSettings(SearchDomain.pageDefaultConfig("")))
-        assertEquals(SearchDomain.TreeGroup.Parents, SearchDomain.treeGroupOf(Setting.NavigationTree))
+        assertEquals(listOf("Display"), SearchDomain.homePathOf(Setting.NavigationTree))
         // Off, the ▾ lists every configuration flat.
         assertEquals(Setting.entries.toSet(), SearchDomain.flatConfigurationList().map { (it as ConfigurationLeaf).setting }.toSet())
     }

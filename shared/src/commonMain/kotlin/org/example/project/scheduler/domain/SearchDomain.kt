@@ -2750,7 +2750,7 @@ object SearchDomain {
         Setting.ChildSearchInFacts,
     )
 
-    /** "Where to search"'s configurations, in the tree's order ([TreeSubNode.WhereToSearch]). */
+    /** "Where to search"'s configurations ([CONFIGURATION_LAYOUT]'s "find/where"). */
     val WHERE_SETTINGS: List<Setting> = listOf(
         Setting.SearchInId, Setting.SearchInName, Setting.SearchInDescription, Setting.SearchInButtons, Setting.SearchInFacts,
         Setting.SearchInChildren, Setting.ChildSearchInId, Setting.ChildDistance, Setting.ChildSearchInName,
@@ -2995,45 +2995,151 @@ object SearchDomain {
     data class ConfigurationCategory(val id: String, override val label: String, val children: List<ConfigurationNode>) : ConfigurationNode
 
     /**
-     * User rule 2026-11-14: **the groups of the configurations about every row** — what "General" held in one list of
-     * twenty-five, by what the user is after: what the bar holds, which types, the order, who stands above or under
-     * whom, the other filters, how a row is drawn. [treeGroupOf] is the one statement of where a configuration stands.
+     * User rule 2026-11-28 (the tree the user gave, designed from `search-configurations-for-tree.md`): **one category of
+     * the ▾ tree's layout** ([CONFIGURATION_LAYOUT]) — its [id], its name, its info bubble ([nodeDescription]; null: the
+     * one its id says, a type's or a page's), and what it holds in order: configurations ([Setting]) and categories.
      */
-    enum class TreeGroup(val id: String, val label: String) {
-        /** User rule 2026-11-16: "Search" — what the bar holds and how it is matched ([MATCHING_NODE]). */
-        Bar("bar", "Search"),
-        Types("types", "Types"),
-        Sorting("sort", "Sorting"),
-        Parents("parents", "Parents and children"),
-        Filters("filters", "Filters on every type"),
-        Display("display", "Display"),
+    class LayoutNode(val id: String, val label: String, val description: String?, val items: List<Any>) {
+        /** Every configuration under it, at any depth, each once, in the layout's order. */
+        val settings: List<Setting> by lazy {
+            items.flatMap { if (it is Setting) listOf(it) else (it as LayoutNode).settings }.distinct()
+        }
     }
 
+    private fun node(id: String, label: String, description: String?, vararg items: Any) = LayoutNode(id, label, description, items.toList())
+
+    private fun type(kind: Kind, label: String, vararg items: Any) = LayoutNode("kind/" + kind.name, label, null, items.toList())
+
     /**
-     * The group of [setting] ([TreeGroup]); null for one that stands elsewhere — a type's own filter, under its
-     * type, and Reset, a command: a row of the root alone. One named here is where the user looks for it; any other, and
-     * so any added later, goes by what it does ([roleOf]).
+     * User rule 2026-11-28: **the ▾ tree's categories, between "Default for this" and the flat list — the one statement of
+     * where each configuration stands** ([configurationTree], [homePathOf], [nodeDescription]). A configuration may stand in
+     * several places, wherever a user could look for it; its first place is its home. Every configuration but Reset stands
+     * here (`NavigationTreeTest`), and no category holds more than [MAX_TREE_NODE_ROWS] rows.
      */
-    fun treeGroupOf(setting: Setting): TreeGroup? =
-        when (setting) {
-            Setting.SearchText, Setting.MatchCase, Setting.WholeWord, Setting.Regex, Setting.SearchBars,
-            Setting.CompletionList, Setting.SearchSortsOnly,
-            -> TreeGroup.Bar
-            in WHERE_SETTINGS -> TreeGroup.Bar
-            Setting.Types, Setting.PageTypes -> TreeGroup.Types
-            Setting.NoParentOfKinds, Setting.ParentsOf, Setting.ParentDistance -> TreeGroup.Parents
-            else -> {
-                val role = roleOf(setting)
-                when {
-                    // Every type's order stands with the order of every row.
-                    role == SettingRole.Sort -> TreeGroup.Sorting
-                    role == null || setting.section != null -> null
-                    role == SettingRole.Children -> TreeGroup.Parents
-                    role == SettingRole.Filter -> TreeGroup.Filters
-                    else -> TreeGroup.Display
-                }
-            }
+    val CONFIGURATION_LAYOUT: List<LayoutNode> by lazy {
+        listOf(
+            node(
+                "find", "Find by text", "What the bars hold, what of a row they are matched against, and how.",
+                Setting.SearchText, Setting.SearchBars,
+                node("find/matching", "Matching", "How the bars match: case, whole words, regular expressions.", Setting.MatchCase, Setting.WholeWord, Setting.Regex),
+                node(
+                    "find/where", "Where to search", "What of a row the bars are matched against: its name, description, facts, buttons, id, children.",
+                    Setting.SearchInName, Setting.SearchInDescription, Setting.SearchInFacts, Setting.SearchInButtons, Setting.SearchInId,
+                    node(
+                        "find/where/children", "In children", "A row found by its children: which of them, and what of them is read.",
+                        Setting.SearchInChildren, Setting.ChildDistance, Setting.ChildSearchInName, Setting.ChildSearchInDescription, Setting.ChildSearchInFacts,
+                        Setting.ChildSearchInButtons, Setting.ChildSearchInId,
+                    ),
+                ),
+                Setting.SearchSortsOnly, Setting.CompletionList,
+            ),
+            node(
+                "which", "Which elements", "Which elements the window lists: their types, the ones taken in or left out, when, and under whom.",
+                Setting.Types, Setting.PageTypes,
+                node("which/include", "Include & exclude", "The elements listed whatever else is set, and those never listed.", Setting.ListedFrom, Setting.IncludedElements, Setting.ExcludedElements),
+                node("which/dates", "Date & calendar", "The elements of a day, or of a moment of the calendar.", Setting.DatedOnDays, Setting.CalendarAt, Setting.CalendarAdd),
+                node("which/parents", "By parent", "The parents of some elements, or the elements with no parent of some types.", Setting.ParentsOf, Setting.ParentDistance, Setting.NoParentOfKinds),
+            ),
+            node(
+                "order", "Order", "The order of the rows: of every row, and by hand.",
+                Setting.SortResults, Setting.SearchSortsOnly, Setting.InvolvementOf, Setting.MenuCustomizing, Setting.Entries,
+            ),
+            node(
+                "display", "Display", "How the window and its rows are drawn, and what pressing them does.",
+                Setting.Size, Setting.ExpandResults, Setting.NavigationTree, Setting.GroupByAddedElements, Setting.Separators,
+                node(
+                    "display/interaction", "Interaction & menus", "What a press, a right-click or a drag does on a row, and what a menu lists.",
+                    Setting.MenuCustomizing, Setting.DropButtons, Setting.RightClickChecksAlone, Setting.ButtonFollowsExpansion, Setting.Entries, Setting.CompletionList,
+                ),
+            ),
+            node(
+                "tasks", "Tasks & targets", "The tasks, their categories and relations, the quotas, and the targets that evolve over time.",
+                type(
+                    Kind.Task, "Tasks",
+                    Setting.TaskSort, Setting.TaskRowLayout, Setting.TaskInTree, Setting.TaskTreeRoot, Setting.TaskSchedulable, Setting.TaskCategory, Setting.TaskOnCalendar,
+                    Setting.TaskBoxesFrom, Setting.TaskBoxesUntil,
+                ),
+                type(Kind.Category, "Task categories", Setting.CategorySort, Setting.CategoryHasRules),
+                type(Kind.TaskRelation, "Task relations", Setting.RelationSort, Setting.RelationSectionSetting),
+                type(Kind.Quota, "Quotas", Setting.QuotaSort, Setting.QuotaRepeatsSetting),
+                type(Kind.PresenceEvolution, "Presence ratio evolutions", Setting.PresenceEvolutionSort, Setting.InvolvementOf),
+                type(Kind.MinimumEvolution, "Minimum length evolutions", Setting.MinimumEvolutionSort, Setting.InvolvementOf),
+            ),
+            node(
+                "calendar", "Calendar", "What is on the calendar, its blocks, its periods and the tasks it places.",
+                Setting.CalendarAt, Setting.CalendarAdd, Setting.DatedOnDays,
+                type(Kind.CalendarBlock, "Calendar blocks", Setting.BlockSort, Setting.BlockElements),
+                type(Kind.Calendar, "Calendars", Setting.CalendarSort),
+                type(
+                    Kind.RestrictivePeriod, "Restrictive periods",
+                    Setting.PeriodSort, Setting.PeriodOriginSetting, Setting.PeriodDrawingSetting, Setting.PeriodResilienceSetting, Setting.PeriodOnCalendar,
+                    Setting.PeriodBoxesFrom, Setting.PeriodBoxesUntil,
+                ),
+                node("calendar/tasks", "Tasks on calendar", "The tasks the calendar places, and between which days.", Setting.TaskOnCalendar, Setting.TaskBoxesFrom, Setting.TaskBoxesUntil),
+            ),
+            node(
+                "alerts", "Alarms, timers & alerts", "The alarms, timers, chronos and reminders, and the notifications they gave.",
+                type(Kind.Alarm, "Alarms", Setting.AlarmSort, Setting.AlarmStateSetting, Setting.AlarmDays),
+                type(Kind.Timer, "Timers", Setting.TimerSort, Setting.TimerStateSetting),
+                type(Kind.Chrono, "Chronos", Setting.ChronoSort, Setting.ChronoStateSetting),
+                type(Kind.Reminder, "Reminders", Setting.ReminderSort, Setting.ReminderRepeatsSetting),
+                type(Kind.Notification, "Notifications", Setting.NotificationSort, Setting.NotificationSourceSetting, Setting.DatedOnDays),
+            ),
+            node(
+                "app", "App & history", "The history of changes, the windows, the keyboard shortcuts and the app's own elements.",
+                type(
+                    Kind.HistoryUnit, "History",
+                    Setting.HistorySort, Setting.HistoryCategorySetting, Setting.HistoryWindowSetting, Setting.HistoryMadeInWindowSetting, Setting.HistoryUndoneSetting,
+                    Setting.HistoryChangedKindsSetting, Setting.HistoryChangedElementSetting, Setting.DatedOnDays,
+                ),
+                type(Kind.Window, "Windows", Setting.WindowSort, Setting.WindowStatusSetting, Setting.WindowDuplicatesSetting, Setting.WindowListedKindsSetting),
+                type(Kind.Shortcut, "Keyboard shortcuts", Setting.ShortcutSort, Setting.ShortcutReboundSetting),
+                type(Kind.Md, "Markdown elements", Setting.MdSort),
+                type(Kind.SearchConfiguration, "Search configurations", Setting.SearchConfigurationSort),
+                type(Kind.Action, "Actions", Setting.ActionSort),
+                type(Kind.Creation, "Creations", Setting.CreationSort),
+                type(Kind.Option, "Options", Setting.OptionSort),
+                type(Kind.Integer, "Integers", Setting.IntegerSort),
+            ),
+            node(
+                OTHER_PAGES_NODE, "Other pages", null,
+                node(
+                    "page/$CLAUDE_LOGS_PAGE", "Claude Code logs", null,
+                    type(Kind.ClaudePrompt, "Prompts", Setting.PromptSort, Setting.PromptProject, Setting.PromptFrom, Setting.PromptUntil),
+                    type(Kind.ClaudeAnswer, "Answers", Setting.AnswerSort, Setting.AnswerProject, Setting.AnswerFrom, Setting.AnswerUntil),
+                    type(Kind.ClaudeReasoning, "Reasoning chains", Setting.ReasoningSort, Setting.ReasoningProject, Setting.ReasoningFrom, Setting.ReasoningUntil),
+                    Setting.DatedOnDays,
+                ),
+                node(
+                    "page/$SETTINGS_PAGE", "Settings", null,
+                    type(Kind.AppSetting, "App settings", Setting.AppSettingSort),
+                    type(Kind.WorkplaceSetup, "Workplace setups", Setting.WorkplaceSetupSort),
+                ),
+            ),
+        )
+    }
+
+    /** Every category of [CONFIGURATION_LAYOUT], by id. */
+    private val LAYOUT_BY_ID: Map<String, LayoutNode> by lazy {
+        val out = LinkedHashMap<String, LayoutNode>()
+        fun walk(n: LayoutNode) {
+            out[n.id] = n
+            n.items.filterIsInstance<LayoutNode>().forEach(::walk)
         }
+        CONFIGURATION_LAYOUT.forEach(::walk)
+        out
+    }
+
+    /** Each configuration's home in [CONFIGURATION_LAYOUT]: the names of the categories above its first place, root first. */
+    private val HOME_PATHS: Map<Setting, List<String>> by lazy {
+        val out = LinkedHashMap<Setting, List<String>>()
+        fun walk(n: LayoutNode, above: List<String>) {
+            val path = above + n.label
+            for (item in n.items) if (item is Setting) { if (item !in out) out[item] = path } else walk(item as LayoutNode, path)
+        }
+        CONFIGURATION_LAYOUT.forEach { walk(it, emptyList()) }
+        out
+    }
 
     /**
      * User rule 2026-11-04: **the configurations tree** the arrow beside the Search window's bar opens; rethought
@@ -3047,11 +3153,11 @@ object SearchDomain {
      * 4. **"Default for this"** — what is on by default in this window ([contextSettings] of what it was opened on), and
      *    in each group the part of it in that group (user rule 2026-11-16: *"if somewhere in the app the search bar by
      *    default matches case, then in down arrow > search > matching > default for this, the user can find match case"*).
-     * 5. The groups of what is about every row ([TreeGroup]) — "Search" first, its "Matching" under it; "Sorting" holds
-     *    every type's order too.
-     * 6. **The types of the window's own page** ([Config.page]), each holding its filters and its order — one hover
-     *    from the root, no page node above them. A type with an order and no filter has no node: its order is in "Sorting".
-     * 7. **"Other feature pages"** — each other page, its types under it.
+     * 5. **The categories of [CONFIGURATION_LAYOUT]** (user rule 2026-11-28, the tree the user gave): "Find by text",
+     *    "Which elements", "Order", "Display", "Tasks & targets", "Calendar", "Alarms, timers & alerts", "App & history",
+     *    each category ending with its own "Default for this" where some of it is on by default.
+     * 6. On another page than the Task Scheduler, **that page's own category**, out of "Other pages".
+     * 7. **"Other pages"** — the other feature pages, their types under them.
      * 8. **The flat list**, after all the other rows (user rule 2026-11-14: *"It allowed me to directly get the search
      *    configuration I want by typing its name in the first pop-up"*): every category below the root, named by its
      *    path (user rule 2026-11-16: *"including those that just redirect to children search configurations"*), then every
@@ -3073,72 +3179,33 @@ object SearchDomain {
     ): List<ConfigurationNode> {
         fun qualified(settings: List<Setting>) = settings.map { ConfigurationLeaf(it, qualified = true) }
         fun pathed(settings: List<Setting>) = settings.map { ConfigurationLeaf(it, pathed = true) }
-        fun typesOf(page: FeaturePage) =
-            Kind.entries.filter { it in page.kinds }.mapNotNull { kind ->
-                // What is kept first, then how it is laid out.
-                Setting.entries.filter { it.section == kind }.sortedBy { it.sorts }
-                    .takeIf { settings -> settings.any { !it.sorts } }
-                    ?.let { settings -> ConfigurationCategory("kind/" + kind.name, kind.label, settings.map { ConfigurationLeaf(it) }) }
-            }
-        val own = FEATURE_PAGES.firstOrNull { it.id == config.page }
-        val ownKinds = own?.kinds.orEmpty().toSet()
-        // User rule 2026-11-27 (*"Make sure there are not lots of elements in one node"*): a page of many types lists them
-        // by family ([TypeFamily]), one hover more, never fourteen side by side.
-        fun familied(types: List<ConfigurationCategory>, idPrefix: String): List<ConfigurationNode> {
-            if (types.size <= TYPES_WITHOUT_FAMILY) return types
-            val byFamily = types.groupBy { TypeFamily.of(Kind.valueOf(it.id.removePrefix("kind/"))) }
-            return TypeFamily.entries.mapNotNull { family ->
-                val members = byFamily[family] ?: return@mapNotNull null
-                members.singleOrNull() ?: ConfigurationCategory(idPrefix + "family/" + family.id, family.label, members)
-            }
-        }
         // What this window holds by default: what it was opened on, else what its page's Search button opens.
         val defaultList = contextSettings(opened ?: pageDefaultConfig(config.page))
         val defaults = defaultList.toSet()
-        // A group's "Default for this": what of [defaults] stands in it, under [id]; none where nothing does.
+        // A category's "Default for this": what of [defaults] stands in it, under [id]; none where nothing does.
         fun defaultsOf(id: String, settings: List<Setting>) =
             settings.filter { it in defaults }.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("$id/default", DEFAULT_NODE_LABEL, qualified(it)) }
         val changedHere = Setting.entries.filter { it in config.settingsChangedAt }.sortedByDescending { config.settingsChangedAt.getValue(it) }
         val on = activeSettings(config).takeIf { it.isNotEmpty() }?.let { ConfigurationCategory(ON_NODE, "Currently on", pathed(it)) }
         val about = relevant.distinct().takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("context", RELEVANT_NODE_LABEL, pathed(it)) }
         val byDefault = defaultList.takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("default", DEFAULT_NODE_LABEL, pathed(it)) }
-        val groups = TreeGroup.entries.mapNotNull { group ->
-            val settings = Setting.entries.filter { treeGroupOf(it) == group }
-                // The order of every row, then of this page's types, then of the others'.
-                .sortedBy { if (it.section == null) 0 else if (it.section in ownKinds) 1 else 2 }
-            if (settings.isEmpty()) return@mapNotNull null
-            // Its sub-categories first ("Where to search", "Matching"), then its configurations, then what of it is on by
-            // default; a sub-category its configurations first ("Where to search": Id … then "Children").
-            fun under(sub: TreeSubNode): List<Setting> =
-                settings.filter { subNodeOf(it) == sub } + TreeSubNode.entries.filter { it.parent == sub }.flatMap(::under)
-            fun subNode(sub: TreeSubNode): ConfigurationCategory =
-                ConfigurationCategory(
-                    sub.id, sub.label,
-                    qualified(WHERE_SETTINGS.filter { subNodeOf(it) == sub } + settings.filter { subNodeOf(it) == sub && it !in WHERE_SETTINGS }) +
-                        TreeSubNode.entries.filter { it.parent == sub }.map(::subNode) +
-                        listOfNotNull(defaultsOf(sub.id, under(sub))),
-                )
-            val subs = TreeSubNode.entries.filter { it.group == group && it.parent == null }.map(::subNode)
-            val direct = settings.filter { subNodeOf(it) == null }
-            // User rule 2026-11-27: "Sorting" held every type's "Sort by" side by side (29 rows): the order of every row,
-            // then each family of types in a node of its own, this page's families first.
-            val leaves: List<ConfigurationNode> =
-                if (group != TreeGroup.Sorting || direct.size <= MAX_TREE_NODE_ROWS) qualified(direct)
-                else qualified(direct.filter { it.section == null }) +
-                    direct.filter { it.section != null }.groupBy { TypeFamily.of(it.section!!) }.entries
-                        .sortedWith(compareBy({ (_, members) -> if (members.any { it.section in ownKinds }) 0 else 1 }, { (family, _) -> family.ordinal }))
-                        .map { (family, members) -> ConfigurationCategory("${group.id}/family/${family.id}", family.label, qualified(members)) }
-            ConfigurationCategory(
-                group.id, group.label,
-                subs + leaves + listOfNotNull(defaultsOf(group.id, settings)),
-            )
+        // User rule 2026-11-28: the categories as the layout gives them; two configurations of one category that read the
+        // same say their type.
+        fun built(n: LayoutNode): ConfigurationCategory {
+            val children = n.items.map { if (it is Setting) ConfigurationLeaf(it) else built(it as LayoutNode) }
+            val twice = children.filterIsInstance<ConfigurationLeaf>().groupBy { it.label }.filterValues { it.size > 1 }.keys
+            val named = children.map { if (it is ConfigurationLeaf && it.label in twice) it.copy(qualified = true) else it }
+            return ConfigurationCategory(n.id, n.label, named + listOfNotNull(defaultsOf(n.id, n.settings)))
         }
-        val others = FEATURE_PAGES.filter { it != own }
-            .mapNotNull { page -> typesOf(page).takeIf { it.isNotEmpty() }?.let { ConfigurationCategory("page/" + page.id, page.label, familied(it, "page/${page.id}/")) } }
-            .takeIf { it.isNotEmpty() }
-            ?.let { ConfigurationCategory(OTHER_PAGES_NODE, "Other feature pages", it) }
-        val structure = (groups + own?.let { familied(typesOf(it), "") }.orEmpty() + listOfNotNull(others))
-            .map { if (it is ConfigurationCategory) bounded(it, ranked = false) else it }
+        // The window's own page, if it is another than the Task Scheduler, stands at the root, out of "Other pages".
+        val ownPage = "page/" + config.page
+        val layout = CONFIGURATION_LAYOUT.flatMap { top ->
+            if (top.id != OTHER_PAGES_NODE) return@flatMap listOf(top)
+            val own = top.items.filterIsInstance<LayoutNode>().filter { it.id == ownPage }
+            val rest = top.items.filterNot { it is LayoutNode && it.id == ownPage }
+            own + listOfNotNull(LayoutNode(top.id, top.label, top.description, rest).takeIf { rest.isNotEmpty() })
+        }
+        val structure: List<ConfigurationNode> = layout.map { bounded(built(it), ranked = false) }
         // Every category, by its path, as it stands away from its place: what only leads to other configurations is
         // found by its name too, in the root's flat list (those below the root) and in "Recent › Elsewhere".
         fun nested(nodes: List<ConfigurationNode>, above: List<String>): List<Pair<Boolean, ConfigurationCategory>> =
@@ -3194,46 +3261,6 @@ object SearchDomain {
      */
     const val MAX_TREE_NODE_ROWS: Int = 15
 
-    /** A page of more types than this lists them by family ([TypeFamily]). */
-    const val TYPES_WITHOUT_FAMILY: Int = 6
-
-    /**
-     * The types the tree lists under a family ([homePathOf]): those of a page with more than [TYPES_WITHOUT_FAMILY] types
-     * of a node of their own (a filter of their own: a type with an order alone has its node in "Sorting" only).
-     */
-    private val FAMILIED_KINDS: Set<Kind> by lazy {
-        FEATURE_PAGES.flatMapTo(HashSet()) { page ->
-            val noded = page.kinds.filter { kind -> Setting.entries.any { it.section == kind && !it.sorts } }
-            if (noded.size > TYPES_WITHOUT_FAMILY) noded else emptyList()
-        }
-    }
-
-    /**
-     * User rule 2026-11-27: **the families of types**, by what the user is after — what a page of many types (the Task
-     * Scheduler's fourteen) and "Sorting" list them under. Every type is in one ([of]); one added later goes to "App"
-     * until it is named here.
-     */
-    enum class TypeFamily(val id: String, val label: String) {
-        Tasks("tasks", "Tasks"),
-        Calendar("calendar", "Calendar"),
-        AlarmsAndTimers("alarms", "Alarms and timers"),
-        App("app", "App"),
-        ClaudeLogs("claude", "Claude Code logs"),
-        Settings("settings", "Settings");
-
-        companion object {
-            fun of(kind: Kind): TypeFamily =
-                when (kind) {
-                    Kind.Task, Kind.Category, Kind.TaskRelation, Kind.PresenceEvolution, Kind.MinimumEvolution, Kind.Md -> Tasks
-                    Kind.Calendar, Kind.CalendarBlock, Kind.RestrictivePeriod -> Calendar
-                    Kind.Alarm, Kind.Timer, Kind.Chrono, Kind.Reminder, Kind.Notification -> AlarmsAndTimers
-                    in CLAUDE_KINDS -> ClaudeLogs
-                    in SETTINGS_KINDS -> Settings
-                    else -> App
-                }
-        }
-    }
-
     /**
      * [node] with no category holding more than [MAX_TREE_NODE_ROWS] rows: one that does has its rows cut, in their
      * order, into consecutive parts, each a category of its own — named by its ranks where the order is the point
@@ -3285,35 +3312,11 @@ object SearchDomain {
         return !(own == RECENT_NODE || own.startsWith("$RECENT_NODE/") || own == ON_NODE || own == "context" || own == "default" || own.endsWith("/default"))
     }
 
-    /** User rule 2026-11-16: a category of a [TreeGroup]'s own, holding part of it ("Search › Matching"). */
-    enum class TreeSubNode(val group: TreeGroup, val id: String, val label: String, val parent: TreeSubNode? = null) {
-        WhereToSearch(TreeGroup.Bar, "bar/where", "Where to search"),
-        WhereChildren(TreeGroup.Bar, "bar/where/children", "Children", WhereToSearch),
-        Matching(TreeGroup.Bar, "bar/matching", "Matching"),
-    }
-
-    /** The sub-category of its group [setting] stands in ([TreeSubNode]); null: right under the group. */
-    fun subNodeOf(setting: Setting): TreeSubNode? =
-        when (setting) {
-            Setting.MatchCase, Setting.WholeWord, Setting.Regex -> TreeSubNode.Matching
-            Setting.SearchInId, Setting.SearchInName, Setting.SearchInDescription, Setting.SearchInButtons, Setting.SearchInFacts,
-            -> TreeSubNode.WhereToSearch
-            Setting.SearchInChildren, Setting.ChildSearchInId, Setting.ChildDistance, Setting.ChildSearchInName,
-            Setting.ChildSearchInDescription, Setting.ChildSearchInButtons, Setting.ChildSearchInFacts,
-            -> TreeSubNode.WhereChildren
-            else -> null
-        }
-
     /**
-     * The categories above [setting]'s own place in the tree, root first ([ConfigurationLeaf.path]): a type's own
-     * configuration under its type, any other under its group and sub-category; none for Reset, a row of the root alone.
+     * The categories above [setting]'s own place in the tree, root first ([ConfigurationLeaf.path]): its first place in
+     * [CONFIGURATION_LAYOUT]; none for Reset, a row of the root alone.
      */
-    fun homePathOf(setting: Setting): List<String> {
-        // User rule 2026-11-27: a type of a page listing its types by family stands under that family ([TypeFamily]).
-        setting.section?.let { kind -> return listOfNotNull(TypeFamily.of(kind).label.takeIf { kind in FAMILIED_KINDS }, treeNameOf(kind)) }
-        val group = treeGroupOf(setting) ?: return emptyList()
-        return listOf(group.label) + generateSequence(subNodeOf(setting)) { it.parent }.toList().asReversed().map { it.label }
-    }
+    fun homePathOf(setting: Setting): List<String> = HOME_PATHS[setting].orEmpty()
 
     /**
      * User rule 2026-11-16 (the sketch: *"where to search: id, name, description, buttons, children"*): what a
@@ -3495,29 +3498,10 @@ object SearchDomain {
     fun nodeDescription(id: String): String? {
         if (id.endsWith("/default") || id == "default") return "The configurations on by default in this window" +
             (if (id == "default") "." else ", among those of this category.")
-        TreeGroup.entries.firstOrNull { it.id == id }?.let { group ->
-            return when (group) {
-                TreeGroup.Bar -> "What the bars hold, what of a row they are matched against, and how."
-                TreeGroup.Types -> "Which types of element the window lists."
-                TreeGroup.Sorting -> "The order of the rows: of every row, then of each type's."
-                TreeGroup.Parents -> "Who stands above or under whom: parents, children, and how the rows open."
-                TreeGroup.Filters -> "What keeps rows of any type out of the list."
-                TreeGroup.Display -> "How every row is drawn and what pressing it does."
-            }
-        }
-        TreeSubNode.entries.firstOrNull { it.id == id }?.let { sub ->
-            return when (sub) {
-                TreeSubNode.WhereToSearch -> "What of a row the bars are matched against: its id, name, description, buttons, children."
-                TreeSubNode.WhereChildren -> "A row found by its children: which of them, and what of them is read."
-                TreeSubNode.Matching -> "How the bars match: case, whole words, regular expressions."
-            }
-        }
-        // User rule 2026-11-27: the parts a long category is cut into ([bounded]), the families of types ([TypeFamily]).
+        // User rule 2026-11-28: a category of the layout says what it holds ([CONFIGURATION_LAYOUT]).
+        LAYOUT_BY_ID[id]?.description?.let { return it }
+        // User rule 2026-11-27: the parts a long category is cut into ([bounded]).
         if ("/part" in id) return "Part of a category too long to read at a glance: its rows in their order, from the first named to the last."
-        if (id.substringAfterLast("/") in TypeFamily.entries.map { it.id } && "family/" in id) {
-            val family = TypeFamily.entries.first { it.id == id.substringAfterLast("/") }
-            return "The configurations of the types of the family \"${family.label}\", type by type."
-        }
         if (id == "$RECENT_NODE/all") return "Every configuration, the last changed here or in another ▾ tree first."
         if (id.startsWith("kind/")) {
             val kind = Kind.entries.firstOrNull { it.name == id.removePrefix("kind/") } ?: return null

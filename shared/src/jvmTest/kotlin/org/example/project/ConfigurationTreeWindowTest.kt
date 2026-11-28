@@ -99,7 +99,7 @@ class ConfigurationTreeWindowTest {
                         .mapNotNull { n -> n.config.getOrNull(SemanticsProperties.EditableText)?.text }
             }
             // The tree, narrowed by the pop-up's own search.
-            assertTrue("Sorting" in texts, "the tree's 'Sorting' category, which its search 'sort' finds: $texts")
+            assertTrue("Order" in texts, "the tree's 'Order' category, which its search 'sort' finds: $texts")
             assertTrue("sort" in texts, "its bar holds what was typed in the pop-up's: $texts")
             assertFalse("Display" in texts, "the pop-up's search narrows it, as it narrowed the pop-up: $texts")
             // Not the configurations window by group and type.

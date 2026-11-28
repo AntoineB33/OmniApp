@@ -1894,7 +1894,7 @@ suggestions before it was ever entered.
   configuration is ONE row, a result row tall (`RESULT_ROW_HEIGHT`, since 2026-11-27: it is a result row), as it opens;
   what the user adds to it (a search bar, the formula) adds rows of a task cell's height to its control, the row growing
   with it. Three things hold it, and the test renders every configuration off screen and measures:
-  **(1) a pop-up is as wide as its column** — a column holding a configuration is `TREE_LEAF_CONTENT_WIDTH` (512 dp since 2026-11-27, 520 until 2026-11-16:
+  **(1) a pop-up is as wide as its column** — a column holding a configuration is `TREE_LEAF_CONTENT_WIDTH` (564 dp since 2026-11-28, its label column 260 dp to hold the layout's longest path above a name; 512 dp from 2026-11-27, 520 until 2026-11-16:
   the longest label on one line, `TREE_LABEL_WIDTH`, and the widest control), one of categories alone 200 dp; the
   root's is always the wide one, so it never changes width as one types (anomaly 2026-11-14: a column asked for 600 dp
   inside a pop-up 200 or 320 dp wide, got some 55 dp per control, and every text wrapped a word a line).
@@ -1947,6 +1947,19 @@ suggestions before it was ever entered.
   the way to it** — "Recent", "Currently on", "Relevant here", "Default for this", the flat list — drawn small above
   its name (`ConfigurationLeaf.pathed`, `homePathOf`: *"This search configuration will show in its row the path
   search > where to search"*). Reset is one of those rows alone.
+- **THE ▾'S CATEGORIES ARE THE LAYOUT THE USER GAVE** (user rule 2026-11-28, designed from
+  `search-configurations-for-tree.md`; `SearchDomain.CONFIGURATION_LAYOUT`, `LayoutNode`, `homePathOf`,
+  `NavigationTreeTest`, `ConfigurationTreeTest`). Between "Default for this" and the flat list, the root holds: **Find by
+  text** (Matching; Where to search › In children), **Which elements** (Include & exclude; Date & calendar; By parent),
+  **Order**, **Display** (Interaction & menus), **Tasks & targets**, **Calendar**, **Alarms, timers & alerts**, **App &
+  history** — each type under one of these four by its plural name — and **Other pages** (Claude Code logs, Settings);
+  a window of another page has its own page's category at the root, out of "Other pages". **The layout is the one
+  statement of where a configuration stands**: the tree, the path a row shows away from its place (its first place in the
+  layout) and the categories' info bubbles are read from it. A configuration may stand in several places (Order and
+  Display both hold "Arrange by dragging"); every one but Reset stands somewhere, and a new one fails
+  `NavigationTreeTest` until it is placed. Each category ends with its own "Default for this" where some of it is on by
+  default. The groups ("Search", "Sorting", "Parents and children"…), their sub-categories and the type families of
+  2026-11-27 are gone with it. The sections above that describe the groups describe the tree before this.
 - **THE ▾'S TREE IS A SEARCH CONFIGURATION, AND NO NODE OF IT IS LONG** (user rule 2026-11-27: *"set to on (and add if
   didn't exist) search configurations for some contexts, so that in some contexts the elements are organized in an
   intuitive tree structure … Make sure there are not lots of elements in one node"*; `Config.navigationTree`,

@@ -71,19 +71,19 @@ class WhereToSearchTest {
         assertEquals(setOf(Setting.TimerStateSetting, Setting.ChronoStateSetting), rows.mapNotNullTo(HashSet(), SearchDomain::settingOf))
     }
 
-    /** User rule 2026-11-16: the ▾ tree's place for them — "Search › Where to search", its "Children" last. */
+    /** User rule 2026-11-28 (the layout the user gave): their place — "Find by text › Where to search", "In children" last. */
     @Test
-    fun where_to_search_stands_under_search_in_the_sketch_order() {
+    fun where_to_search_stands_under_find_by_text_in_the_layouts_order() {
         val tree = SearchDomain.configurationTree(SearchDomain.Config())
-        val search = tree.filterIsInstance<ConfigurationCategory>().single { it.id == SearchDomain.TreeGroup.Bar.id }
-        assertEquals(listOf("Where to search", "Matching"), search.children.filterIsInstance<ConfigurationCategory>().map { it.label }.take(2))
-        val where = search.children.first() as ConfigurationCategory
-        assertEquals(listOf("Id", "Name", "Description", "Buttons", "Facts", "Children"), where.children.map { it.label })
+        val find = tree.filterIsInstance<ConfigurationCategory>().single { it.id == "find" }
+        assertEquals(listOf("Matching", "Where to search"), find.children.filterIsInstance<ConfigurationCategory>().map { it.label })
+        val where = find.children.filterIsInstance<ConfigurationCategory>().single { it.label == "Where to search" }
+        assertEquals(listOf("Name", "Description", "Facts", "Buttons", "Id", "In children"), where.children.map { it.label })
         val children = where.children.last() as ConfigurationCategory
-        assertEquals(listOf("Search the children", "Id", "Parent distance", "Name", "Description", "Buttons", "Facts"), children.children.map { it.label })
-        assertEquals(listOf("Search", "Where to search", "Children"), SearchDomain.homePathOf(Setting.ChildDistance))
+        assertEquals(listOf("Search the children", "Parent distance", "Name", "Description", "Facts", "Buttons", "Id"), children.children.map { it.label })
+        assertEquals(listOf("Find by text", "Where to search", "In children"), SearchDomain.homePathOf(Setting.ChildDistance))
         // The flat list names them by their path.
-        assertTrue(tree.any { it.label == "Search › Where to search › Children › Parent distance" })
+        assertTrue(tree.any { it.label == "Find by text › Where to search › In children › Parent distance" })
     }
 
     /** What is on by default (the name) is no news in "Currently on"; what is set otherwise is. */

@@ -40,7 +40,7 @@ class SearchConfigurationStatesTest {
         assertEquals(SearchDomain.CONFIGURATION_NODE_PREFIX + "recent", recent.id)
         assertEquals("group", recent.detail)
         val groups = rows().filter { it.detail == "group" }.map { it.name }
-        assertTrue(groups.containsAll(listOf("Recent", "Search", "Matching", "Sorting", "Other feature pages", "Task Scheduler", "Claude Code logs", "task", "prompt")), groups.toString())
+        assertTrue(groups.containsAll(listOf("Recent", "Find by text", "Matching", "Order", "Other pages", "Claude Code logs", "Tasks", "Prompts")), groups.toString())
         // Every configuration that changes something is still a row, with one of the four.
         // ...and each check box of a check-box configuration (user request 2026-11-27).
         assertEquals(Setting.entries.size + SearchDomain.checkBoxOptionRows().size, rows().count { it.detail != "group" })
@@ -48,18 +48,16 @@ class SearchConfigurationStatesTest {
 
     @Test
     fun aNodeHasItsSearchConfigurationsAsChildren() {
-        val general = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "parents"))
-        assertTrue(key(Setting.ParentDistance.name) in general)
-        assertEquals(Setting.entries.count { SearchDomain.treeGroupOf(it) == SearchDomain.TreeGroup.Parents }, general.size)
-        // A page holds its types' nodes, which hold their configurations.
-        val page = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "page/"))
-        // User rule 2026-11-27: the Task Scheduler's fourteen types by family ([SearchDomain.TypeFamily]).
-        assertTrue(key(SearchDomain.CONFIGURATION_NODE_PREFIX + "page//family/tasks") in page)
-        assertTrue(key(SearchDomain.CONFIGURATION_NODE_PREFIX + "kind/Task") in ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "page//family/tasks")))
+        // User rule 2026-11-28: "Which elements › By parent" ([SearchDomain.CONFIGURATION_LAYOUT]).
+        val general = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "which/parents"))
+        assertEquals(listOf(Setting.ParentsOf, Setting.ParentDistance, Setting.NoParentOfKinds).map { key(it.name) }, general)
+        // A category holds its types' nodes, which hold their configurations.
+        val tasks = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "tasks"))
+        assertTrue(key(SearchDomain.CONFIGURATION_NODE_PREFIX + "kind/Task") in tasks)
         assertTrue(key(Setting.TaskSchedulable.name) in ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "kind/Task")))
         // One that changes something has none; and what the tree makes a child is not taken out.
         assertEquals(emptyList(), ElementTree.childrenOf(empty, key(Setting.ParentDistance.name)))
-        assertFalse(ElementTree.canUnlink(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "parents"), key(Setting.ParentDistance.name)))
+        assertFalse(ElementTree.canUnlink(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "which/parents"), key(Setting.ParentDistance.name)))
         // Every child is a row the list can show.
         assertEquals(general.size, SearchDomain.resolve(empty, general, { emptyMap() }).size)
     }

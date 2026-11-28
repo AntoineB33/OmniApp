@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The ▾ tree is the layout the user gave — 2026-11-28
+
+- The user had every configuration with a state listed (`search-configurations-for-tree.md`, generated from the code:
+  113 configurations, Reset left out), had a tree designed from it elsewhere, and gave it back. It is now
+  `SearchDomain.CONFIGURATION_LAYOUT`, the one statement of where a configuration stands: "Find by text", "Which
+  elements", "Order", "Display", "Tasks & targets", "Calendar", "Alarms, timers & alerts", "App & history", "Other
+  pages", between "Default for this" and the flat list. Every id was checked against the code; all 113 are reached.
+- Replaced: the groups (`TreeGroup`, `treeGroupOf`), their sub-categories (`TreeSubNode`, `subNodeOf`) and the type
+  families (`TypeFamily`) of the day before. A row's path away from its place (`homePathOf`) and the categories' info
+  bubbles (`nodeDescription`) read the layout. A window of the logs or the Settings page has its own page at the root.
+- The tree's label column is 260 dp (208 before): the longest path drawn above a name, "Other pages › Claude Code logs ›
+  Reasoning chains", wrapped otherwise, and no text is cut by "…" (`SettingRowHeightTest`; 248 dp still wrapped it). The
+  configurations tree window opens 604 dp wide (552).
+- Persisted shape unchanged. The ids of the ▾'s categories changed ("bar" → "find", "sort" → "order"…): a pop-up a
+  window kept open under an old id, and an old "Looked into the children" entry, are no longer found and drop out.
+
 ### "Tree to navigate", and no node of the ▾ tree holds more than 15 rows — 2026-11-27
 
 - User: *"you should set to on (and add if didn't exist) search configurations for some contexts, so that in some contexts

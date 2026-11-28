@@ -118,7 +118,7 @@ class TreeRowMenuTest {
     }
 
     @Test
-    fun a_category_of_the_tree_has_the_one_row_menu() = assertTheOneRowMenu(menuOf("Sorting", "sort"))
+    fun a_category_of_the_tree_has_the_one_row_menu() = assertTheOneRowMenu(menuOf("Order", "sort"))
 
     @Test
     fun a_configuration_of_the_tree_has_the_one_row_menu() = assertTheOneRowMenu(menuOf("Match case", "match case"))

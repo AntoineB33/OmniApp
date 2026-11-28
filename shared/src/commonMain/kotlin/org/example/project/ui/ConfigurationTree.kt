@@ -777,8 +777,12 @@ private val TREE_CATEGORY_COLUMN_WIDTH = 190.dp
 /** A column of categories named by their path: the longest ("Other feature pages › Claude Code logs › reasoning chain") on one line. */
 private val TREE_PATH_CATEGORY_COLUMN_WIDTH = 380.dp
 
-/** A configuration's label column in the tree: the longest label on one line ("history: Changed element types"). */
-internal val TREE_LABEL_WIDTH = 208.dp
+/**
+ * A configuration's label column in the tree: the longest label on one line ("history: Changed element types"), and the
+ * longest path above a name ("Other pages › Claude Code logs › Reasoning chains", user rule 2026-11-28: the layout the
+ * user gave; 208 dp until then). Measured by `SettingRowHeightTest`: 248 dp wrapped that path.
+ */
+internal val TREE_LABEL_WIDTH = 260.dp
 
 /** The room a configuration's row has in the tree: its label, and the widest control one has, on one line. */
 // User rule 2026-11-16 (*"the pop-up windows are a little too wide"*): 520 until then, 490 until 2026-11-27, when the row

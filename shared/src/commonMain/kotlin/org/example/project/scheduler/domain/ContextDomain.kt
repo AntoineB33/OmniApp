@@ -205,7 +205,7 @@ object ContextDomain {
         Triple("Categories", "the categories window", SearchDomain.WindowSize(460, 520)),
         Triple("Category", "a category's window", SearchDomain.WindowSize(420, 620)),
         // The tree's column as `TREE_ROOT_POPUP_WIDTH` lays it (`ContextCatalogTest` holds the two together).
-        Triple("Configurations tree", "the configurations tree window", SearchDomain.WindowSize(552, 600)),
+        Triple("Configurations tree", "the configurations tree window", SearchDomain.WindowSize(604, 600)),
         Triple("Default sub-tree", "the default sub-tree window", SearchDomain.WindowSize(560, 560)),
         Triple("Notice", "a notice", SearchDomain.WindowSize(420, 200)),
         Triple("Keyboard shortcuts", "the keyboard shortcuts window", SearchDomain.WindowSize(470, 620)),

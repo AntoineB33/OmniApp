@@ -28,7 +28,7 @@ class RecentElsewhereTest {
         assertEquals("Here", here.label)
         val leaf = here.children.single() as ConfigurationLeaf
         assertEquals(Setting.SearchInId, leaf.setting)
-        assertEquals(listOf("Search", "Where to search"), leaf.path)
+        assertEquals(listOf("Find by text", "Where to search"), leaf.path)
         assertEquals("Id", leaf.name)
     }
 
@@ -41,7 +41,7 @@ class RecentElsewhereTest {
                     SearchDomain.Config(settingsChangedAt = mapOf(Setting.Regex to 200L)),
                 ),
             ),
-            looked = mapOf("bar/where/children" to 250L, "sort" to 50L, "no-such-node" to 400L),
+            looked = mapOf("find/where/children" to 250L, "order" to 50L, "no-such-node" to 400L),
         )
         assertEquals(mapOf(Setting.SearchInId to 300L, Setting.Regex to 200L), elsewhere.changed, "the last time any did")
         val recent = recentOf(SearchDomain.configurationTree(SearchDomain.Config(), elsewhere = elsewhere))
@@ -54,11 +54,11 @@ class RecentElsewhereTest {
         val looked = node.children[1] as ConfigurationCategory
         assertEquals("Looked into the children", looked.label)
         // A node the tree no longer has is not listed; one that is opens as itself, named by its path.
-        assertEquals(listOf("Search › Where to search › Children", "Sorting"), looked.children.map { it.label })
+        assertEquals(listOf("Find by text › Where to search › In children", "Order"), looked.children.map { it.label })
         assertEquals("Search the children", ((looked.children.first() as ConfigurationCategory).children.first() as ConfigurationLeaf).name)
         // Then both, the last first.
         assertEquals(
-            listOf("Search › Where to search › Id", "Search › Where to search › Children", "Search › Matching › Use regular expression", "Sorting"),
+            listOf("Find by text › Where to search › Id", "Find by text › Where to search › In children", "Find by text › Matching › Use regular expression", "Order"),
             node.children.drop(2).map { it.label },
         )
         // "Recent"'s own list: the last changed anywhere first.
