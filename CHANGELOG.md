@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The task tree for a new user: a task's actions in categories, the row menu's own edits — 2026-11-28
+
+- User: *"Start with adjusting the task tree with particular situations"* (`docs/new-user-walks.md` § *The task
+  tree*, 24 walks, `TaskActionsTreeTest`).
+  - A task's "edit task" window listed 32 actions in one column. They now stand under seven categories
+    (`SearchDomain.TASK_ACTION_CATEGORIES`): Open & go to, Calendar (with Checked blocks), How long it takes, Priority,
+    Sub-tasks & place in the tree, Categories, Copy & create (with Deep copy). The top reads ten rows.
+  - The tree row's right-click menu gains **rename (enter)**, **add a sub-task** (new `SchedulerIntent.AddSubTask`) and
+    **delete (del)**, before "edit task".
+  - "Md elements" reads "Notes (md elements)".
+- Nothing persisted changes shape. A row of the actions section pinned under its old place opens closed. Client rebuild
+  only.
+
 ### The walks' three known gaps: Children of, Has a category, Changed from / until — 2026-11-28
 
 - User: *"Yes, fix the gaps"* (`docs/new-user-walks.md` § *Known gaps*). New search configurations:

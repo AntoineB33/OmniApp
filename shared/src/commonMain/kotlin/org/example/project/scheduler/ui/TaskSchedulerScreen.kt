@@ -738,6 +738,11 @@ internal fun CellListSection(
                             } else {
                                 null
                             },
+                        // User 2026-11-28: the tree's own edits, named. Not the root row's: it is no task to rename or delete.
+                        onRename = if (isRootRow) null else ({ onIntent(SchedulerIntent.BeginEdit(cellId, mode = CellEditMode.Rename)) }),
+                        onAddSubTask = { onIntent(SchedulerIntent.AddSubTask(cellId)) },
+                        // The right-click selected the row (or kept the selection it is in): Delete's own intent.
+                        onDelete = if (isRootRow) null else ({ onIntent(SchedulerIntent.EmptySelectedCells) }),
                     )
                 }
             }
@@ -3419,6 +3424,10 @@ internal fun taskCellMenuActions(cellMenu: TaskCellMenuActions): List<org.exampl
         // ... and the same, emptying the added elements first: they become what this adds (user rule 2026-10-01).
         cellMenu.onAddReplacing?.let { add(org.example.project.ui.MenuAction(ADD_REPLACING_LABEL, onClick = it)) }
         addAll(cellMenu.extra)
+        // User 2026-11-28: what a new user right-clicks a task for first, each naming the key that does it in the tree.
+        cellMenu.onRename?.let { add(org.example.project.ui.MenuAction(RENAME_LABEL, onClick = it)) }
+        cellMenu.onAddSubTask?.let { add(org.example.project.ui.MenuAction(ADD_SUB_TASK_LABEL, onClick = it)) }
+        cellMenu.onDelete?.let { add(org.example.project.ui.MenuAction(DELETE_LABEL, onClick = it)) }
         // PRD §13: named "edit task" — the calendar's panel menu offers the very same window beside its own panel "Edit"
         // (PRD §8), so the two surfaces must not call it two things.
         cellMenu.onEdit?.let { add(org.example.project.ui.MenuAction("edit task", onClick = it)) }
@@ -3471,6 +3480,11 @@ const val COPY_PATH_LABEL: String = "copy path"
 const val DEEP_COPY_LABEL: String = "deep copy"
 const val COLLAPSE_LABEL: String = "collapse"
 
+/** User 2026-11-28: the tree row's own edits, where its keys alone did them (Enter, the arrow, Delete). */
+const val RENAME_LABEL: String = "rename (enter)"
+const val ADD_SUB_TASK_LABEL: String = "add a sub-task"
+const val DELETE_LABEL: String = "delete (del)"
+
 /**
  * PRD §13 the actions of a row's right-click contextual menu ([taskCellMenuActions]). Bundled so a row either has the
  * whole menu or none of it. A null action is an entry greyed (or, for [onStartNow] and [onEdit], absent).
@@ -3518,6 +3532,12 @@ internal class TaskCellMenuActions(
      * copy of its own — its title and the keys it stands for; "deep copy" then shows the "Deep copy" rows over it alone.
      */
     val self: (() -> org.example.project.ui.SubRowSpec)? = null,
+    /** User 2026-11-28 **"rename (enter)"**: the row in Edit Mode, renaming its task. Null (absent) where the row has none. */
+    val onRename: (() -> Unit)? = null,
+    /** User 2026-11-28 **"add a sub-task"** ([SchedulerIntent.AddSubTask]). Null (absent) where the row has none. */
+    val onAddSubTask: (() -> Unit)? = null,
+    /** User 2026-11-28 **"delete (del)"**: what Delete does to the selection ([SchedulerIntent.EmptySelectedCells]). */
+    val onDelete: (() -> Unit)? = null,
 )
 
 

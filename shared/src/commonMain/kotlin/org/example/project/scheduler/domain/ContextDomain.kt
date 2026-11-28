@@ -70,7 +70,7 @@ object ContextDomain {
     val ROW_MENU_ENTRIES: List<String> = listOf(
         "start this task now", "add", "add and remove the others", "remove", "remove the others", "show only its actions", "pin",
         "check only this", "open in Task relations", "open in Keyboard shortcuts", "show window", "create", "apply",
-        "edit task", "copy id (ctrl c)", "copy path", "deep copy", "collapse",
+        "rename (enter)", "add a sub-task", "delete (del)", "edit task", "copy id (ctrl c)", "copy path", "deep copy", "collapse",
     )
 
     /** The right-click menus that are a row's: they list [ROW_MENU_ENTRIES] by default. */

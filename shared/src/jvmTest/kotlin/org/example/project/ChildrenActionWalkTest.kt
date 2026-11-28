@@ -65,8 +65,7 @@ class ChildrenActionWalkTest {
         val added = SearchDomain.resolve(start, listOf(key), { emptyMap() })
         val sections = SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added)
         val base = SearchDomain.Config(kinds = setOf(Kind.Chrono), added = listOf(key), actionsExpanded = true, actionSearch = "children")
-        val group = SearchDomain.shownActionGroups(sections, added, base).first { SearchDomain.AddedAction.TaskChildren in it.actions }
-        val opened = base.copy(toggledActionRows = setOf(SearchDomain.microGroupId(group, SearchDomain.AddedAction.TaskChildren)))
+        val opened = withActionRowOpen(base, sections, added, SearchDomain.AddedAction.TaskChildren)
 
         var live = start
         val scene = onEdt {

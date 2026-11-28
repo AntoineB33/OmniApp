@@ -693,6 +693,16 @@ drawings have it.
   one such reveal, and a press on a copy that is already the main selection bumps the reveal's key itself,
   because it changes no selection.
 
+### The row menu names the tree's own edits
+
+User 2026-11-28: a new user right-clicks a task to rename it, add under it or delete it, and the keys alone did those.
+The tree row's menu (`taskCellMenuActions`) has **"rename (enter)"** (Edit Mode in Rename), **"add a sub-task"**
+(`SchedulerIntent.AddSubTask`: the row opened through `reduceToggleExpand` — so the default sub-tree it owes is paid —
+then its sub-list's trailing empty row in Edit Mode through `reduceBeginEdit`) and **"delete (del)"** (Delete's own
+`EmptySelectedCells`: a blank title is what deletes). Not on the root row; a read-only Search sub-tree refuses
+AddSubTask as it refuses BeginEdit. In `ContextDomain.ROW_MENU_ENTRIES` before "edit task": a menu whose "Entries, in
+order" the user changed lists them only once added there.
+
 ### Find & replace (Ctrl+F)
 
 → PRD §4. `TaskTreeSearch` is the whole of it; the bar (`ui/TaskTreeFindBar.kt`) is Compose-only state, like
@@ -1444,6 +1454,14 @@ suggestions before it was ever entered.
     `CalendarNotificationsTest`). A set action, so it stands once, in the widest group of notifications — the group
     of every element when they are all notifications — and reads its notifications off that group's members. The
     calendar already showing exactly those is brought back; else a new calendar window opens (`popups.md`).
+  - **A TASK'S ACTIONS ARE A TREE OF PLAIN CATEGORIES** (user 2026-11-28, *"a new user … They don't know in advance
+    where to look, and they don't necessarily read fast"*; `SearchDomain.TASK_ACTION_CATEGORIES`, `withDeepCopyGroup`,
+    `TaskActionsTreeTest`): in a group about tasks (one task's, or the kind's of several), its actions stand under Open
+    & go to, Calendar, How long it takes, Priority, Sub-tasks & place in the tree, Categories, Copy & create — tagged
+    groups like "Deep copy", which stands inside Copy & create, as "Checked blocks" stands inside Calendar. A category
+    that would hold one row is not made: the row stays where it was. Every node holds at most 15 rows; the top about
+    ten. The actions' search bar still finds a row inside a category (`shownActionGroups` filters inner groups). A
+    new task action goes in a category, or the test lists it as reached by none.
   - **Two sorts of action** (`SearchDomain.isSetAction`): about a SET as such — the general ones, New / Duplicate /
     Delete, the bulk commands (`SET_ACTIONS`), an app setting's — and an element's OWN configuration (its title, where
     it stands, its settings). A set action is listed once, in the widest group it applies to; an own one in each

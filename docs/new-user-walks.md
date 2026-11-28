@@ -118,6 +118,48 @@ date") stood only under that type. Both now write the one list of methods. The �
 | --- | --- | --- |
 | my Claude prompts in one project | "Not the scheduler: another page." | Other pages › Claude Code logs › Prompts › **Project** |
 
+## The task tree
+
+User 2026-11-28: *"Start with adjusting the task tree with particular situations."* These walks start on the Task
+Scheduler's tree, where a new user's first move on a task is a **right-click** on its row (*"what can I do with
+this?"*). The menu reads, from the top: start this task now, **rename (enter)**, **add a sub-task**, **delete (del)**,
+edit task, copy id, copy path, deep copy, collapse. **edit task** opens the task's own window, whose actions read as a
+handful of categories, each a click to open: Open or remove from the list, Notes (md elements), Clicks and keys,
+**Open & go to**, **Calendar**, **How long it takes**, **Priority**, **Sub-tasks & place in the tree**, **Categories**,
+**Copy & create**. `TaskActionsTreeTest` holds every walk below.
+
+| Situation and request | Thinking | Clicks |
+| --- | --- | --- |
+| a new tree, first task "Dentist": give it a step "Book it" | "Something *under* it. Right-click." | right-click Dentist › **add a sub-task**, type "Book it", Enter |
+| a typo in "Dentsit" | "Rename. Right-click." | right-click › **rename (enter)** (also: Enter on the selected row) |
+| a task no longer wanted | "Delete. Right-click." | right-click › **delete (del)** (also: Delete on the selected row) |
+| the dentist takes at least 45 min | "How long… it's the task's own setting: edit it." | right-click › edit task › **How long it takes** › Minimum time |
+| a 10-min warm-up, then the run | "Splitting its time." | edit task › How long it takes › **Schedule unit** |
+| do it right now | "Right-click shows it first." | right-click › **start this task now** (or edit task › Calendar › Start now) |
+| put it on Thursday at 6 pm | "The calendar." | edit task › **Calendar** › Add to the calendar |
+| may it happen during Sleep? | "When it can be placed: the calendar." | edit task › Calendar › **Resilience** |
+| move its blocks already placed | "The calendar, its blocks." | edit task › Calendar › **Checked blocks** |
+| where is it on the calendar? | "Go there." | edit task › **Open & go to** › Go to calendar |
+| a task found in a Search window: where is it in the tree? | "Go there." | edit task › Open & go to › **Go to task tree** |
+| it should count more than its siblings | "How much it counts: priority." | edit task › **Priority** › Priority weights |
+| how important is it overall? | "Priority." | edit task › Priority › **Relative priority** |
+| running also counts for Health | "It counts for another task." | edit task › Priority › **Set of tasks** |
+| "Groceries" also belongs under Home | "A second place in the tree." | edit task › **Sub-tasks & place in the tree** › Add under |
+| a task mirrored in three places: which? | "Its places." | edit task › Sub-tasks & place in the tree › **Paths** |
+| give it my usual sub-steps | "Its sub-tasks." | edit task › Sub-tasks & place in the tree › **Add default sub-tree** |
+| a tree 6 levels deep, everything opened: tidy up | "Close what's under it." | right-click › **collapse** (level 0 closes all, 1 keeps its children) |
+| label it urgent | "A label is a category." | edit task › **Categories** › Add a category |
+| a second gym task like this one | "A copy." | edit task › **Copy & create** › Duplicate |
+| send the branch as text | "Copy, with what's under it." | right-click › **deep copy** (or edit task › Copy & create › Deep copy) |
+| write why I do it | "A note." | edit task › **Notes (md elements)** |
+| 300 tasks: where is "dentist"? | "Lists are made in Search." | left-side menu **Search**, type "dentist": each row says its path (or Ctrl+F in the tree) |
+| a word typed anywhere in the actions | "I'll type what I want." | edit task, type "minimum" in the actions' bar: its category opens on it |
+
+*Fixed 2026-11-28:* a task's window listed its 32 actions in one column, past the 15 rows a node may hold: they are
+under the categories above (`SearchDomain.TASK_ACTION_CATEGORIES`, the same funnel as "Deep copy" and "Checked
+blocks", which now stand inside Copy & create and Calendar). Renaming, adding a sub-task and deleting were keys alone
+(Enter, the arrow then a click, Delete): the right-click names them. "Md elements" reads "Notes (md elements)".
+
 ## Known gaps, not fixed yet
 
 - **Conditions across types are two walks, not one.** "The alarms changed on a day a timer ran" reads the day off the
@@ -125,3 +167,7 @@ date") stood only under that type. Both now write the one list of methods. The �
 - **Children of** lists the direct children; their children are not listed (a "child distance" would).
 - **The ▾'s bar reads no info bubble** (measured: too many answers); a request worded only like a description is
   found by its category instead.
+- **A task's colour** is the app's (every task its own, `TaskColorSpace`): a request to "make it red" has no action.
+- **"Clicks and keys"** stays a top row of a task's actions, a category of one; a new user rarely needs it first.
+- **The Search window's task rows** keep their own menu (add, add and remove the others…): rename, add a sub-task and
+  delete are the tree's rows' alone.

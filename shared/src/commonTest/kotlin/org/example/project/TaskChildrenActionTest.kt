@@ -26,7 +26,8 @@ class TaskChildrenActionTest {
     @Test
     fun a_task_elements_actions_hold_its_children() {
         val one = groups(listOf(task("a")))
-        assertTrue(one.any { SearchDomain.AddedAction.TaskChildren in it.actions }, "listed for an added task")
+        fun all(g: SearchDomain.ActionGroup): List<SearchDomain.AddedAction> = g.actions + g.inner.flatMap(::all)
+        assertTrue(one.any { SearchDomain.AddedAction.TaskChildren in all(it) }, "listed for an added task")
         // One block per task: in each element's own group, never folded into one field over several.
         assertTrue(SearchDomain.AddedAction.TaskChildren in SearchDomain.PER_ELEMENT_ACTIONS)
         val alarm = groups(listOf(SearchDomain.ItemResult(Kind.Alarm, "x", "x", "")))

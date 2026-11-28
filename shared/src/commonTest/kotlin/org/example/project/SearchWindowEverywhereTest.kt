@@ -43,15 +43,15 @@ class SearchWindowEverywhereTest {
     fun the_deep_copy_window_is_a_group_of_rows() {
         val added = listOf(task("a"))
         val groups = groupsOf(added)
-        val deep = groups.flatMap { it.inner }.single { it.tag == SearchDomain.DEEP_COPY_GROUP }
+        val deep = groups.flatMap(::innerAll).single { it.tag == SearchDomain.DEEP_COPY_GROUP }
         assertEquals(SearchDomain.DEEP_COPY_TITLE, deep.title)
         // Every control of the window is a row of its own, the copy among them, and none stands outside the group.
         assertEquals(SearchDomain.DEEP_COPY_ACTIONS, deep.actions)
-        assertTrue(groups.none { g -> g.actions.any { it in SearchDomain.DEEP_COPY_ACTIONS } })
+        assertTrue((groups + groups.flatMap(::innerAll)).none { g -> g.tag != SearchDomain.DEEP_COPY_GROUP && g.actions.any { it in SearchDomain.DEEP_COPY_ACTIONS } })
         assertEquals(deep.id, SearchDomain.deepCopyGroupId(added))
         // Several tasks: one group, in the widest group, acting on them all.
         val two = listOf(task("a"), task("b"))
-        val wide = groupsOf(two).flatMap { it.inner }.filter { it.tag == SearchDomain.DEEP_COPY_GROUP }
+        val wide = groupsOf(two).flatMap(::innerAll).filter { it.tag == SearchDomain.DEEP_COPY_GROUP }
         assertEquals(1, wide.size)
         assertEquals(two, wide.single().members)
     }
@@ -63,8 +63,8 @@ class SearchWindowEverywhereTest {
         val copy = assertNotNull(SearchDomain.actionRowId(added, AddedAction.TaskDeepCopy))
         val config = SearchDomain.withActionRowPinned(SearchDomain.Config(), copy)
         val path = assertNotNull(SearchDomain.actionRowPath(groups, config, copy))
-        // The element's group, the Deep copy group, the row.
-        assertEquals(3, path.size)
+        // The element's group, its category (Copy & create), the Deep copy group, the row.
+        assertEquals(4, path.size)
         assertEquals(copy, path.last().first)
         val opened = assertNotNull(SearchDomain.withPinnedActionRowOpen(config, groups))
         val rows = SearchDomain.actionListRows(groups, opened)
@@ -87,7 +87,8 @@ class SearchWindowEverywhereTest {
         val groups = groupsOf(added, config)
         val copy = assertNotNull(SearchDomain.actionRowId(added, AddedAction.TaskDeepCopy))
         val path = assertNotNull(SearchDomain.actionRowPath(groups, config, copy))
-        assertEquals(2, path.size)
+        // Copy & create, the Deep copy group, the row.
+        assertEquals(3, path.size)
         assertTrue(path.first().second)
     }
 
@@ -199,4 +200,7 @@ class SearchWindowEverywhereTest {
         assertEquals(pinned, SearchDomain.Config.decode(pinned.encode()))
         assertTrue(SearchDomain.Config.decode(SearchDomain.Config().encode())!!.pinOpenedRows.isEmpty())
     }
+
+    /** Every group inside [group], at any depth: a task's actions stand inside categories (2026-11-28). */
+    private fun innerAll(group: SearchDomain.ActionGroup): List<SearchDomain.ActionGroup> = group.inner + group.inner.flatMap(::innerAll)
 }

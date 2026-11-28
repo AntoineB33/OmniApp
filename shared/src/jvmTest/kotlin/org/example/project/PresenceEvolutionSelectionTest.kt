@@ -79,8 +79,7 @@ class PresenceEvolutionSelectionTest {
         val added = SearchDomain.resolve(start, listOf(childKey), { emptyMap() })
         val sections = SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added)
         val base = SearchDomain.Config(kinds = setOf(Kind.Task), added = listOf(childKey), actionsExpanded = true, actionSearch = "presence ratio target")
-        val group = SearchDomain.shownActionGroups(sections, added, base).first { SearchDomain.AddedAction.TaskPresenceFormula in it.actions }
-        val opened = base.copy(toggledActionRows = setOf(SearchDomain.microGroupId(group, SearchDomain.AddedAction.TaskPresenceFormula)))
+        val opened = withActionRowOpen(base, sections, added, SearchDomain.AddedAction.TaskPresenceFormula)
         val popups = FieldSearchPopupHost()
         val menus = org.example.project.ui.TransientMenuHost()
         val frames = org.example.project.ui.WindowFrameHost()

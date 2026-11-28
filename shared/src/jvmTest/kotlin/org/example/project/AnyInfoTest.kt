@@ -76,8 +76,8 @@ class AnyInfoTest {
     @Test
     fun which_notes_are_attached_to_this_alarm() {
         val text = copyOf("Alarm/w")
-        assertTrue("- Md elements: Why I wake early" in text, text)
-        assertTrue("Md elements" !in copyOf("Alarm/n"), "nothing said where none is attached")
+        assertTrue("- Notes (md elements): Why I wake early" in text, text)
+        assertTrue("md elements" !in copyOf("Alarm/n"), "nothing said where none is attached")
     }
 
     /** What only the UI says of an element (a history unit's facts) joins its lines, multi-line values indented under it. */

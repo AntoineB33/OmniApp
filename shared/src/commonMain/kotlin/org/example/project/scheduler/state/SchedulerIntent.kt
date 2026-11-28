@@ -64,6 +64,13 @@ sealed interface SchedulerIntent {
     data class ToggleExpand(val cellId: CellId) : SchedulerIntent
 
     /**
+     * The row menu's **"add a sub-task"** (user 2026-11-28, a new user's first look for it is the right-click): [cellId]
+     * opened ([ToggleExpand]'s own reduction, the default sub-tree it owes paid) and its sub-list's trailing empty row in
+     * Edit Mode ([BeginEdit]) — the arrow then a click on that row, as one gesture. A no-op where the task has no sub-list.
+     */
+    data class AddSubTask(val cellId: CellId) : SchedulerIntent
+
+    /**
      * The row menu's "collapse" (user 2026-11-26): the [keepLevels] first levels from [cellId] left as they are ([cellId]
      * itself is 0, its children 1), every open cell from there down closed — 0: [cellId] and all under it, 1: [cellId]
      * stays open on its children, which close. Recorded as one expansion-set delta.

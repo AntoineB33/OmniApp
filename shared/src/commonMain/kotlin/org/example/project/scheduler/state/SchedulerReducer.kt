@@ -324,6 +324,7 @@ object SchedulerReducer {
             SchedulerIntent.EmptySelectedCells -> reduceEmptySelected(state)
             is SchedulerIntent.ExitEdit -> reduceExitEdit(state, intent.navigation)
             is SchedulerIntent.ToggleExpand -> reduceToggleExpand(state, intent.cellId)
+            is SchedulerIntent.AddSubTask -> reduceAddSubTask(state, intent.cellId)
             is SchedulerIntent.CollapseSubtrees -> reduceCollapseSubtrees(state, intent.cellId, intent.keepLevels)
             is SchedulerIntent.RevealCell -> reduceRevealCell(state, intent.cellId, intent.ancestors)
             is SchedulerIntent.ReplaceTaskTitles -> reduceReplaceTaskTitles(state, intent.titles)
@@ -2012,7 +2013,7 @@ object SchedulerReducer {
         ) {
             return state
         }
-        if (readOnly && inner is SchedulerIntent.BeginEdit) return state
+        if (readOnly && (inner is SchedulerIntent.BeginEdit || inner is SchedulerIntent.AddSubTask)) return state
         if (state.lists[listId] == null) return state
         val projected = state.projectSearchSubtree(listId, window)
         val reduced = reduceIntent(projected, inner)
@@ -2274,6 +2275,15 @@ object SchedulerReducer {
      * toggle is applied wherever the forced exit did not already leave the cell in the state the click asked
      * for, and never on a cell the post-edit cleanup has just removed.
      */
+    /** [SchedulerIntent.AddSubTask]: the two gestures it stands for, each through its own reduction. */
+    private fun reduceAddSubTask(state: SchedulerState, cellId: CellId): SchedulerState {
+        val opened = if (cellId !in state.expanded) reduceToggleExpand(state, cellId) else if (state.editSession != null) endEditSession(state) else state
+        val list = opened.cells[cellId]?.taskId?.let { opened.tasks[it]?.childListId } ?: return opened
+        val last = opened.lists[list]?.cellIds?.lastOrNull() ?: return opened
+        if (!SchedulerDomain.isTextuallyEmptyCell(opened, last)) return opened
+        return reduceBeginEdit(opened, SchedulerIntent.BeginEdit(last))
+    }
+
     private fun reduceToggleExpand(state: SchedulerState, cellId: CellId): SchedulerState {
         if (state.editSession == null) return commitDelta(paidDefaultSubtree(state, cellId), ToggleExpandDelta(cellId))
         val wantExpanded = cellId !in state.expanded

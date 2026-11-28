@@ -6093,7 +6093,7 @@ object SearchDomain {
          * The md elements associated with the added elements, each edited in place and dissociated by its ✕, and the
          * button adding a new one associated with them all ([MdDomain]). No parent and no child: an association.
          */
-        ElementMd(null, "Md elements"),
+        ElementMd(null, "Notes (md elements)"),
         /**
          * User rule 2026-11-26 (*"each element has in the action section the behavior of when [it] is clicked, when it is
          * double-clicked etc…"*): **what each press does on a row of the added elements' kinds, in each context**
@@ -7480,9 +7480,71 @@ object SearchDomain {
             made += ActionGroup(group.kind, group.members, taken, heading = title, tag = tag)
             actions = actions.filterNot { it in taken }
         }
-        if (made.isEmpty()) return if (inner == group.inner) group else group.copy(inner = inner)
-        return group.copy(actions = actions, inner = made + inner)
+        // User 2026-11-28: a task's actions as a tree of what a new user is after — a task's own group, a kind's of tasks.
+        val categories = ArrayList<ActionGroup>()
+        if (group.kind == Kind.Task && group.heading == null && group.tag == null && !group.contents) {
+            for (category in TASK_ACTION_CATEGORIES) {
+                val taken = category.actions.filter { it in actions }
+                val groups = made.filter { it.tag in category.groups }
+                // A category of one row is a click for nothing: the row stays where it was.
+                if (taken.size + groups.size < 2) continue
+                categories += ActionGroup(group.kind, group.members, taken, inner = groups, heading = category.title, tag = category.tag)
+                actions = actions.filterNot { it in taken }
+                made.removeAll(groups)
+            }
+        }
+        if (made.isEmpty() && categories.isEmpty()) return if (inner == group.inner) group else group.copy(inner = inner)
+        return group.copy(actions = actions, inner = categories + made + inner)
     }
+
+    /** One category of a task's actions ([TASK_ACTION_CATEGORIES]): its tag, its title, its rows, and the tagged groups it holds. */
+    class ActionCategory(val tag: String, val title: String, val actions: List<AddedAction>, val groups: Set<String> = emptySet())
+
+    /**
+     * User 2026-11-28 (*"proper tree architectures … a new user … They don't know in advance where to look, and they don't
+     * necessarily read fast"*): **a task's actions under a few plain categories, in order**, where they stood as 32 rows
+     * in one list. Each names what the user is after, never how the app stores it: where the task is, when it is done,
+     * how long it takes, how much it counts, what is under it, its labels, its copies. `TaskActionsTreeTest` walks them.
+     */
+    val TASK_ACTION_CATEGORIES: List<ActionCategory> = listOf(
+        ActionCategory(
+            "task-goto", "Open & go to",
+            listOf(AddedAction.TaskGoToTree, AddedAction.TaskGoToCalendar, AddedAction.TaskEdit),
+        ),
+        ActionCategory(
+            "task-calendar", "Calendar",
+            listOf(AddedAction.TaskStartNow, AddedAction.PlaceOnCalendar, AddedAction.DragOnCalendar, AddedAction.TaskResilience),
+            groups = setOf(BLOCKS_GROUP),
+        ),
+        ActionCategory(
+            "task-length", "How long it takes",
+            listOf(AddedAction.TaskMinimumTime, AddedAction.TaskMinimumFormula, AddedAction.TaskScheduleUnit),
+        ),
+        ActionCategory(
+            "task-priority", "Priority",
+            listOf(
+                AddedAction.TaskRelativePriority, AddedAction.TaskPriorityWeights, AddedAction.TaskPresenceFormula,
+                AddedAction.TaskFulfilment, AddedAction.TaskFulfilledBy,
+            ),
+        ),
+        ActionCategory(
+            "task-tree", "Sub-tasks & place in the tree",
+            listOf(
+                AddedAction.TaskChildren, AddedAction.TaskPaths, AddedAction.ElementParents, AddedAction.TaskAddUnder,
+                AddedAction.TaskTreeName, AddedAction.TaskCollapseSubtrees, AddedAction.TaskAddDefaultSubtree,
+                AddedAction.TaskDefaultSubtree,
+            ),
+        ),
+        ActionCategory(
+            "task-categories", "Categories",
+            listOf(AddedAction.TaskCellCategories, AddedAction.TaskAddCategory, AddedAction.TaskRemoveCategory),
+        ),
+        ActionCategory(
+            "task-copy", "Copy & create",
+            listOf(AddedAction.TaskNew, AddedAction.TaskDuplicate, AddedAction.TaskCopyIds),
+            groups = setOf(DEEP_COPY_GROUP),
+        ),
+    )
 
     /**
      * User rule 2026-11-25: **the groups made of a window's controls** — each a tag, its title and its rows, in order:

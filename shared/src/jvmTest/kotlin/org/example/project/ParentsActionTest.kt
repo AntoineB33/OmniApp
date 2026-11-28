@@ -82,8 +82,7 @@ class ParentsActionTest {
         val added = SearchDomain.resolve(start, listOf(childKey), { emptyMap() })
         val sections = SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added)
         val base = SearchDomain.Config(kinds = setOf(Kind.Chrono), added = listOf(childKey), actionsExpanded = true, actionSearch = "parents")
-        val group = SearchDomain.shownActionGroups(sections, added, base).first { SearchDomain.AddedAction.ElementParents in it.actions }
-        val opened = base.copy(toggledActionRows = setOf(SearchDomain.microGroupId(group, SearchDomain.AddedAction.ElementParents)))
+        val opened = withActionRowOpen(base, sections, added, SearchDomain.AddedAction.ElementParents)
         val popups = FieldSearchPopupHost()
         // What `App` puts around every window: the one outside-press observer and the frames' focus, a press on the
         // background dropping it ([org.example.project.ui.WindowFrameHost.blur]).
@@ -279,17 +278,25 @@ class ParentsActionTest {
                 }
                 val parentsRows = texts().count { it == "Parents" }
                 openLast("Task: New task 2")
-                // The pop-up is short: its actions list scrolled down to the action.
-                val over = find("Children")
-                repeat(60) {
-                    if (texts().count { it == "Parents" } > parentsRows) return@repeat
-                    onEdt {
-                        time += 100L
-                        scene.sendPointerEvent(PointerEventType.Move, over, timeMillis = time)
-                        scene.sendPointerEvent(PointerEventType.Scroll, over, scrollDelta = Offset(0f, 1f), timeMillis = time)
+                // The pop-up is short: its actions list scrolled down to the row looked for.
+                // One point of the list, the rows scrolling under it.
+                val over = find("Open or remove from the list")
+                fun scrollTo(text: String, before: Int) {
+                    repeat(60) {
+                        if (texts().count { it == text } > before) return@repeat
+                        onEdt {
+                            time += 100L
+                            scene.sendPointerEvent(PointerEventType.Move, over, timeMillis = time)
+                            scene.sendPointerEvent(PointerEventType.Scroll, over, scrollDelta = Offset(0f, 1f), timeMillis = time)
+                        }
+                        frames(3)
                     }
-                    frames(3)
                 }
+                // A task's Parents stands in its category (2026-11-28): opened first, as a user would.
+                val category = "Sub-tasks & place in the tree"
+                scrollTo(category, texts().count { it == category })
+                openLast(category)
+                scrollTo("Parents", parentsRows)
                 assertTrue(texts().count { it == "Parents" } > parentsRows, "the group opened: ${texts()}")
                 openLast("Parents")
                 assertTrue(texts().count { it == "list of parents" } >= 2, "the nested field shows: ${texts()}")
