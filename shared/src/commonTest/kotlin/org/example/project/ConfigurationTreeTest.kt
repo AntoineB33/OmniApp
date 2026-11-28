@@ -122,7 +122,7 @@ class ConfigurationTreeTest {
         assertEquals(listOf("Matching"), places(Setting.MatchCase))
         assertEquals(listOf("Which elements"), places(Setting.Types))
         // "The parents of these elements"; "what is on the calendar on Monday": in each place a user would look.
-        assertEquals(listOf("By parent"), places(Setting.ParentDistance))
+        assertEquals(listOf("By parent or child"), places(Setting.ParentDistance))
         assertEquals(listOf("Date & calendar", "Calendar"), places(Setting.CalendarAt))
         assertEquals(listOf("Tasks", "Tasks on calendar"), places(Setting.TaskOnCalendar))
         for (setting in Setting.entries - Setting.ResetSearch) {

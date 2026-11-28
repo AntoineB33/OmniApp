@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The walks' three known gaps: Children of, Has a category, Changed from / until — 2026-11-28
+
+- User: *"Yes, fix the gaps"* (`docs/new-user-walks.md` § *Known gaps*). New search configurations:
+  - **"Children of"** (`Setting.ChildrenOf`, `Filters.childrenOf`): the direct children of the elements given, read off
+    the one parent index (`ElementTree.parentIndex`). In Which elements › **By parent or child** (was "By parent") and
+    Tasks & targets › Tasks.
+  - **"Has a category"** (`Setting.TaskHasCategory`, `Filters.taskHasCategory`): yes / no, beside Tasks › Category.
+  - **"Changed from" / "Changed until"** (`Setting.ChangedFrom`/`ChangedUntil`, `Filters.changedFrom`/`changedUntil`):
+    the elements a history unit changed in the span, one index built once per histories value (`changeTimesOf`, the
+    reverse of "Changed element"). In Which elements › Date & calendar; the span drop-down as "Dated from"'s
+    (`SpanFromField`). A request across two types is two walks: the day off one's history, then this over the other.
+- Persisted shape: four optional fields on a stored configuration (`childrenOf`, `taskHasCategory`, `changedFromMillis`,
+  `changedUntilMillis`); absent = any (`NewUserWalksTest`). Client rebuild only.
+
 ### New-user walks: a batch over the whole ▾ tree, and what it found — 2026-11-28
 
 - User: *"start walks"* — a batch of 34 requests, at least one per top category, each walked as a new user would

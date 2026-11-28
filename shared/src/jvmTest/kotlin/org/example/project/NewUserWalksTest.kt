@@ -41,7 +41,12 @@ class NewUserWalksTest {
         Walk("everything but one task", listOf("Which elements", "Include & exclude"), Setting.ExcludedElements),
         Walk("what I changed yesterday", listOf("Which elements", "Date & calendar"), Setting.DatedFrom),
         Walk("what is on my calendar tomorrow at 3 pm", listOf("Which elements", "Date & calendar"), Setting.CalendarAt),
-        Walk("the tasks with no parent task", listOf("Which elements", "By parent"), Setting.NoParentOfKinds),
+        Walk("the tasks with no parent task", listOf("Which elements", "By parent or child"), Setting.NoParentOfKinds),
+        Walk("the subtasks of Work", listOf("Which elements", "By parent or child"), Setting.ChildrenOf),
+        Walk("the subtasks of Work, looked for under Tasks", listOf("Tasks & targets", "Tasks"), Setting.ChildrenOf),
+        // Two steps across types: the day a timer ran, from its history; then the alarms changed that day.
+        Walk("the alarms changed on a day a timer ran, step 1", listOf("App & history", "History"), Setting.HistoryChangedElementSetting),
+        Walk("the alarms changed on a day a timer ran, step 2", listOf("Which elements", "Date & calendar"), Setting.ChangedFrom),
         // Order
         Walk("everything by name", listOf("Order"), Setting.SortResults),
         Walk("the alarms by their time, looked for under Order", listOf("Order"), Setting.SortResults),
@@ -53,6 +58,7 @@ class NewUserWalksTest {
         Walk("the tasks I deleted", listOf("Tasks & targets", "Tasks"), Setting.TaskInTree),
         Walk("the tasks the scheduler can place", listOf("Tasks & targets", "Tasks"), Setting.TaskSchedulable),
         Walk("the tasks of one category", listOf("Tasks & targets", "Tasks"), Setting.TaskCategory),
+        Walk("the tasks with no category", listOf("Tasks & targets", "Tasks"), Setting.TaskHasCategory),
         // Calendar
         Walk("the restrictive periods I made myself", listOf("Calendar", "Restrictive periods"), Setting.PeriodOriginSetting),
         Walk("the periods never put on the calendar", listOf("Calendar", "Restrictive periods"), Setting.PeriodOnCalendar),
@@ -161,5 +167,59 @@ class NewUserWalksTest {
         val found = SearchDomain.results(state, config.searchedKinds, "", filters = config.filters, sorts = config.sorts, timeZone = zone)
             .filter { it.kind == Kind.Alarm }.map { (it as SearchDomain.ItemResult).id }
         assertEquals(listOf("b", "a"), found)
+    }
+
+    /** "The subtasks of Work": Children of › Work — its direct children alone, not theirs. */
+    @Test
+    fun children_of_one_element() {
+        val alarms = listOf(AlarmEntry(id = "a", label = "Work"), AlarmEntry(id = "b", label = "Child"), AlarmEntry(id = "c", label = "Grandchild"))
+        val state = SchedulerState.empty().copy(
+            alarms = alarms,
+            elementLinks = listOf(
+                org.example.project.scheduler.domain.ElementLink("l1", "Alarm/a", "Alarm/b"),
+                org.example.project.scheduler.domain.ElementLink("l2", "Alarm/b", "Alarm/c"),
+            ),
+        )
+        val config = SearchDomain.Config(kinds = setOf(Kind.Alarm), filters = SearchDomain.Filters(childrenOf = setOf("Alarm/a")))
+        val found = SearchDomain.results(state, config.searchedKinds, "", filters = config.filters, sorts = config.sorts, timeZone = zone)
+        assertEquals(listOf("Alarm/b"), found.map(SearchDomain::keyOf))
+        assertEquals(config.filters.childrenOf, SearchDomain.Config.decode(config.encode())!!.filters.childrenOf)
+    }
+
+    /** "The tasks with no category": Tasks › Has a category › no. */
+    @Test
+    fun tasks_with_no_category() {
+        val with = org.example.project.scheduler.model.Task(id = org.example.project.scheduler.model.TaskId("t-with"), title = "With", categoryIds = listOf(org.example.project.scheduler.model.CategoryId("c")))
+        val without = org.example.project.scheduler.model.Task(id = org.example.project.scheduler.model.TaskId("t-without"), title = "Without")
+        val state = SchedulerState.empty().let { it.copy(tasks = it.tasks + (with.id to with) + (without.id to without)) }
+        fun found(tri: SearchDomain.Tri) = SearchDomain.Config(kinds = setOf(Kind.Task), filters = SearchDomain.Filters(taskHasCategory = tri)).let { c ->
+            SearchDomain.results(state, c.searchedKinds, "", filters = c.filters, sorts = c.sorts, timeZone = zone).map(SearchDomain::keyOf)
+        }
+        assertTrue(SearchDomain.taskKey(without.id) in found(SearchDomain.Tri.No) && SearchDomain.taskKey(with.id) !in found(SearchDomain.Tri.No))
+        assertTrue(SearchDomain.taskKey(with.id) in found(SearchDomain.Tri.Yes) && SearchDomain.taskKey(without.id) !in found(SearchDomain.Tri.Yes))
+        val stored = SearchDomain.Config(kinds = setOf(Kind.Task), filters = SearchDomain.Filters(taskHasCategory = SearchDomain.Tri.No))
+        assertEquals(SearchDomain.Tri.No, SearchDomain.Config.decode(stored.encode())!!.filters.taskHasCategory)
+        assertEquals(SearchDomain.Tri.Any, SearchDomain.Config.decode(SearchDomain.Config(kinds = setOf(Kind.Task)).encode().replace(Regex(""","?taskHasCategory":("[^"]*"|null)"""), ""))!!.filters.taskHasCategory)
+    }
+
+    /** "The alarms changed on a day a timer ran", step 2: Changed from › the day — the alarm changed then, not the one changed before. */
+    @Test
+    fun alarms_changed_on_a_day() {
+        val wake = AlarmEntry(id = "wake", label = "Wake up")
+        val gym = AlarmEntry(id = "gym", label = "Gym")
+        fun unit(time: Long, before: List<AlarmEntry>, after: List<AlarmEntry>) =
+            HistoryUnit(timeMillis = time, delta = org.example.project.scheduler.state.AlarmsDelta(before, after), deviceId = "desk", deviceSeq = time)
+        val units = listOf(
+            unit(at(2026, 11, 20), emptyList(), listOf(gym)),
+            unit(at(2026, 11, 25), listOf(gym), listOf(gym, wake)),
+        )
+        val state = SchedulerState.empty().let { s ->
+            s.copy(alarms = listOf(gym, wake), histories = s.histories.withCategory(HistoryCategory.Main, SchedulerHistory(pointer = units.size - 1, units = units)))
+        }
+        val day = at(2026, 11, 25, 0) to at(2026, 11, 26, 0) - 1
+        val config = SearchDomain.Config(kinds = setOf(Kind.Alarm), filters = SearchDomain.Filters(changedFrom = day.first, changedUntil = day.second))
+        val found = SearchDomain.results(state, config.searchedKinds, "", filters = config.filters, sorts = config.sorts, timeZone = zone)
+        assertEquals(listOf("Alarm/wake"), found.map(SearchDomain::keyOf))
+        assertEquals(day, SearchDomain.Config.decode(config.encode())!!.filters.let { it.changedFrom to it.changedUntil })
     }
 }

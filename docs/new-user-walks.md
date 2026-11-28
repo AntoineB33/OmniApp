@@ -29,7 +29,14 @@ first, then added to the test and here.
 | everything but one task | "Leave one out." | Which elements › Include & exclude › **Excluded elements** |
 | what I changed yesterday | "A day. Date & calendar." | Which elements › Date & calendar › **Dated from** › span *yesterday* |
 | what is on my calendar tomorrow at 3 pm | "The calendar, at a moment." | Which elements › Date & calendar › **Is on the calendar at** |
-| the tasks with no parent task | "Parents." | Which elements › By parent › **Has no parent of the types** › task |
+| the tasks with no parent task | "Parents." | Which elements › By parent or child › **Has no parent of the types** › task |
+| the subtasks of Work | "Children of something." | Which elements › By parent or child › **Children of** › Work |
+| the alarms changed on a day a timer ran | "Two things: first, when did the timer run?" | App & history › History › **Changed element** › the timer: its units give the day. Then a new list: Which elements › Types › alarm; Date & calendar › **Changed from** › that day (and **Changed until**) |
+
+*Fixed 2026-11-28:* "the subtasks of Work" had no filter ("By parent" listed parents only): **Children of** lists the
+direct children, here and under Tasks. A request across types had no path: **Changed from / Changed until** lists the
+elements a history unit changed in a span, so the day one thing happened is read off its history, then asked of another
+type.
 
 *Fixed 2026-11-28:* "yesterday" had only **Dated on**'s weekday chips, which also list the same weekday of every other
 week. **Dated from** has today, yesterday, the last 7 and 30 days in a drop-down beside its field, which fill it and
@@ -61,6 +68,10 @@ date") stood only under that type. Both now write the one list of methods. The �
 | the tasks I deleted | "Tasks." | Tasks & targets › Tasks › **In a task tree** › *no (deleted)* |
 | the tasks the scheduler can place | "Tasks." | Tasks & targets › Tasks › **Schedulable** › yes |
 | the tasks of one category | "Tasks." | Tasks & targets › Tasks › **Category** |
+| the tasks with no category | "Tasks." | Tasks & targets › Tasks › **Has a category** › no |
+| the subtasks of Work | "Tasks, under one." | Tasks & targets › Tasks › **Children of** › Work |
+
+*Fixed 2026-11-28:* the category filter picks one category and has no "none": **Has a category** › no.
 
 *Fixed 2026-11-28:* "In a task tree › no" never said *deleted*; it reads "no (deleted)", and the ▾'s bar finds it by
 "deleted".
@@ -109,9 +120,8 @@ date") stood only under that type. Both now write the one list of methods. The �
 
 ## Known gaps, not fixed yet
 
-- **The children of one element as a list.** "Subtasks of Work" is answered by typing "Work" and opening its row
-  (Display › Expand the results), not by a filter of its own; "By parent" lists parents only.
-- **The tasks with no category.** Tasks › Category picks one category; "none" is not a choice.
-- **Conditions across types** ("the alarms changed on a day a timer ran") have no path.
+- **Conditions across types are two walks, not one.** "The alarms changed on a day a timer ran" reads the day off the
+  timer's history, then asks Changed from / until of the alarms; no one configuration joins two types.
+- **Children of** lists the direct children; their children are not listed (a "child distance" would).
 - **The ▾'s bar reads no info bubble** (measured: too many answers); a request worded only like a description is
   found by its category instead.

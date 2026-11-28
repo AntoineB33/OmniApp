@@ -1318,6 +1318,7 @@ object SearchDomain {
                     taskTreeRoot = filters.taskTreeRoot.name,
                     taskSchedulable = filters.taskSchedulable.name,
                     taskCategory = filters.taskCategory?.value,
+                    taskHasCategory = filters.taskHasCategory.name,
                     categoryHasRules = filters.categoryHasRules.name,
                     periodOrigin = filters.periodOrigin.name,
                     periodDrawing = filters.periodDrawing?.name,
@@ -1401,6 +1402,9 @@ object SearchDomain {
                     includedElements = filters.includedElements.sorted(),
                     noParentOfKinds = Kind.entries.filter { it in filters.noParentOfKinds }.map { it.name },
                     parentsOf = filters.parentsOf.sorted(),
+                    childrenOf = filters.childrenOf.sorted(),
+                    changedFromMillis = filters.changedFrom,
+                    changedUntilMillis = filters.changedUntil,
                     involvementOf = filters.involvementOf.sorted(),
                     parentDistance = filters.parentDistance,
                     searchIn = SearchField.entries.filter { it in filters.searchIn }.map { it.name }.takeIf { filters.searchIn != DEFAULT_SEARCH_IN },
@@ -1453,6 +1457,7 @@ object SearchDomain {
                         taskTreeRoot = enumNamed(stored.taskTreeRoot, Tri.Any),
                         taskSchedulable = enumNamed(stored.taskSchedulable, Tri.Any),
                         taskCategory = stored.taskCategory?.let { CategoryId(it) },
+                        taskHasCategory = enumNamed(stored.taskHasCategory, Tri.Any),
                         categoryHasRules = enumNamed(stored.categoryHasRules, Tri.Any),
                         periodOrigin = enumNamed(stored.periodOrigin, PeriodOrigin.Any),
                         periodDrawing = stored.periodDrawing?.let { name -> PeriodDrawing.entries.firstOrNull { it.name == name } },
@@ -1510,6 +1515,9 @@ object SearchDomain {
                         includedElements = stored.includedElements.toSet(),
                         noParentOfKinds = kindsNamed(stored.noParentOfKinds),
                         parentsOf = stored.parentsOf.toSet(),
+                        childrenOf = stored.childrenOf.toSet(),
+                        changedFrom = stored.changedFromMillis,
+                        changedUntil = stored.changedUntilMillis,
                         involvementOf = stored.involvementOf.toSet(),
                         parentDistance = stored.parentDistance.coerceAtLeast(PARENT_DISTANCE_HIGHEST),
                         searchIn = stored.searchIn?.let { names -> SearchField.entries.filterTo(HashSet()) { it.name in names } } ?: DEFAULT_SEARCH_IN,
@@ -1744,6 +1752,8 @@ object SearchDomain {
         val taskSchedulable: Tri = Tri.Any,
         /** Null = any category. */
         val taskCategory: CategoryId? = null,
+        /** User request 2026-11-28 (walked: *"the tasks with no category"*): Yes, only the tasks carrying a category; No, those with none. */
+        val taskHasCategory: Tri = Tri.Any,
         val categoryHasRules: Tri = Tri.Any,
         val periodOrigin: PeriodOrigin = PeriodOrigin.Any,
         /**
@@ -1932,6 +1942,18 @@ object SearchDomain {
          */
         val parentsOf: Set<String> = emptySet(),
         /**
+         * User request 2026-11-28 (walked: *"the subtasks of Work"*): **only the direct children of these elements**, by key
+         * - the rows one of whose parents ([ElementTree.parentIndex]) is one of them; empty = any.
+         */
+        val childrenOf: Set<String> = emptySet(),
+        /**
+         * User request 2026-11-28 (walked: *"the alarms changed on a day a timer ran"*): **only the elements a history unit
+         * changed** ([org.example.project.scheduler.state.changedElements]) in `[changedFrom, changedUntil]` ([changeTimesOf]);
+         * a null bound asks nothing on its side, both null = any.
+         */
+        val changedFrom: Long? = null,
+        val changedUntil: Long? = null,
+        /**
          * User rule 2026-11-13, the **parent distance**: how far above the elements of [parentsOf] a parent stands to be
          * listed — 1, the direct parents (the default); 2, their parents alone, not the direct ones (anomaly 2026-11-16)…
          * ([ElementTree.parentsWithin]); [PARENT_DISTANCE_HIGHEST], the highest distance there is. Asks nothing while
@@ -2073,6 +2095,7 @@ object SearchDomain {
                 Setting.TaskTreeRoot -> taskTreeRoot
                 Setting.TaskSchedulable -> taskSchedulable
                 Setting.TaskCategory -> taskCategory
+                Setting.TaskHasCategory -> taskHasCategory
                 Setting.CategoryHasRules -> categoryHasRules
                 Setting.PeriodOriginSetting -> periodOrigin
                 Setting.PeriodDrawingSetting -> periodDrawing
@@ -2111,6 +2134,9 @@ object SearchDomain {
                 Setting.IncludedElements -> includedElements
                 Setting.NoParentOfKinds -> noParentOfKinds
                 Setting.ParentsOf -> parentsOf
+                Setting.ChildrenOf -> childrenOf
+                Setting.ChangedFrom -> changedFrom
+                Setting.ChangedUntil -> changedUntil
                 Setting.InvolvementOf -> involvementOf
                 Setting.ParentDistance -> parentDistance
                 Setting.NotificationSourceSetting -> notificationSources
@@ -2132,6 +2158,7 @@ object SearchDomain {
                 Setting.TaskTreeRoot -> taskTreeRoot != Tri.Any
                 Setting.TaskSchedulable -> taskSchedulable != Tri.Any
                 Setting.TaskCategory -> taskCategory != null
+                Setting.TaskHasCategory -> taskHasCategory != Tri.Any
                 Setting.CategoryHasRules -> categoryHasRules != Tri.Any
                 Setting.PeriodOriginSetting -> periodOrigin != PeriodOrigin.Any
                 Setting.PeriodDrawingSetting -> periodDrawing != null
@@ -2170,6 +2197,9 @@ object SearchDomain {
                 Setting.IncludedElements -> includedElements.isNotEmpty()
                 Setting.NoParentOfKinds -> noParentOfKinds.isNotEmpty()
                 Setting.ParentsOf -> parentsOf.isNotEmpty()
+                Setting.ChildrenOf -> childrenOf.isNotEmpty()
+                Setting.ChangedFrom -> changedFrom != null
+                Setting.ChangedUntil -> changedUntil != null
                 Setting.InvolvementOf -> involvementOf.isNotEmpty()
                 Setting.ParentDistance -> parentsOf.isNotEmpty() && parentDistance != 1
                 Setting.NotificationSourceSetting -> notificationSources.narrows(org.example.project.scheduler.state.NotificationSource.entries)
@@ -2580,6 +2610,14 @@ object SearchDomain {
         NoParentOfKinds(null, "Has no parent of the types"),
         /** User rule 2026-11-12: only the parents of the given elements ([Filters.parentsOf]): the "List of parents". */
         ParentsOf(null, "Parents of"),
+        /** User request 2026-11-28: only the direct children of the given elements ([Filters.childrenOf]). */
+        ChildrenOf(null, "Children of"),
+        /**
+         * User request 2026-11-28: only the elements a history unit changed from / until an instant ([Filters.changedFrom],
+         * [Filters.changedUntil]) - its drop-down fills both with a span, as "Dated from"'s does.
+         */
+        ChangedFrom(null, "Changed from"),
+        ChangedUntil(null, "Changed until"),
         /** User rule 2026-11-13: how far above those elements a parent may stand ([Filters.parentDistance]): an integer. */
         ParentDistance(null, "Parent distance"),
         /** User rule 2026-11-20: the tasks the evolutions' "involvement" order is measured against ([Filters.involvementOf]). */
@@ -2648,6 +2686,8 @@ object SearchDomain {
         TaskTreeRoot(Kind.Task, "Root of a tree"),
         TaskSchedulable(Kind.Task, "Schedulable"),
         TaskCategory(Kind.Task, "Category"),
+        /** User request 2026-11-28: whether the task carries a category at all ([Filters.taskHasCategory]). */
+        TaskHasCategory(Kind.Task, "Has a category"),
         TaskOnCalendar(Kind.Task, "On the calendar"),
         TaskBoxesFrom(Kind.Task, "Every box from"),
         TaskBoxesUntil(Kind.Task, "Every box until"),
@@ -3152,9 +3192,13 @@ object SearchDomain {
                 node("which/include", "Include & exclude", "The elements listed whatever else is set, and those never listed.", Setting.ListedFrom, Setting.IncludedElements, Setting.ExcludedElements),
                 node(
                     "which/dates", "Date & calendar", "The elements of a day (dated on it, or checked on it), or of a moment of the calendar.",
-                    Setting.DatedFrom, Setting.DatedUntil, Setting.DatedOnDays, Setting.CheckedOnDays, Setting.CalendarAt, Setting.CalendarAdd,
+                    Setting.DatedFrom, Setting.DatedUntil, Setting.DatedOnDays, Setting.ChangedFrom, Setting.ChangedUntil, Setting.CheckedOnDays,
+                    Setting.CalendarAt, Setting.CalendarAdd,
                 ),
-                node("which/parents", "By parent", "The parents of some elements, or the elements with no parent of some types.", Setting.ParentsOf, Setting.ParentDistance, Setting.NoParentOfKinds),
+                node(
+                    "which/parents", "By parent or child", "The children or the parents of some elements, or the elements with no parent of some types.",
+                    Setting.ChildrenOf, Setting.ParentsOf, Setting.ParentDistance, Setting.NoParentOfKinds,
+                ),
             ),
             node(
                 "order", "Order", "The order of the rows: of every row, and by hand.",
@@ -3172,7 +3216,8 @@ object SearchDomain {
                 "tasks", "Tasks & targets", "The tasks, their categories and relations, the quotas, and the targets that evolve over time.",
                 type(
                     Kind.Task, "Tasks",
-                    Setting.TaskSort, Setting.TaskRowLayout, Setting.TaskInTree, Setting.TaskTreeRoot, Setting.TaskSchedulable, Setting.TaskCategory, Setting.TaskOnCalendar,
+                    Setting.TaskSort, Setting.TaskRowLayout, Setting.TaskInTree, Setting.TaskTreeRoot, Setting.TaskSchedulable, Setting.TaskCategory, Setting.TaskHasCategory,
+                    Setting.ChildrenOf, Setting.TaskOnCalendar,
                     Setting.TaskBoxesFrom, Setting.TaskBoxesUntil,
                 ),
                 type(Kind.Category, "Task categories", Setting.CategorySort, Setting.CategoryHasRules),
@@ -3545,6 +3590,11 @@ object SearchDomain {
             Setting.IncludedElements -> "Elements always in the list, whatever else narrows it."
             Setting.NoParentOfKinds -> "Only the elements with no parent of the types checked."
             Setting.ParentsOf -> "Only the parents of the elements given."
+            Setting.ChildrenOf -> "Only the direct children of the elements given: the subtasks of a task, the tasks of a category..."
+            Setting.ChangedFrom ->
+                "Only the elements a history unit changed from this instant on. Its drop-down fills it and \"Changed until\" with a " +
+                    "span: today, yesterday, the last 7 or 30 days. The day something else happened: list its history first."
+            Setting.ChangedUntil -> "Only the elements a history unit changed until this instant."
             Setting.InvolvementOf -> "The tasks the order involvement puts first: the evolutions given to them, then those relative to them, then the rest."
             Setting.ParentDistance -> "How far above those elements a parent stands to be listed: 1, the direct parents; 2, their parents alone…"
             Setting.GroupByAddedElements -> "The actions grouped by the added elements they act on."
@@ -3581,6 +3631,7 @@ object SearchDomain {
             Setting.TaskTreeRoot -> "Yes: only the tasks at the root of a task tree, directly under \"Task trees\". No: every other task."
             Setting.TaskSchedulable -> "Yes: only the tasks the scheduler can place — a task with no sub-task, still in a tree. No: the others."
             Setting.TaskCategory -> "Only the tasks carrying the category chosen."
+            Setting.TaskHasCategory -> "Yes: only the tasks carrying a category. No: only the tasks with none."
             Setting.TaskOnCalendar -> "Yes: only the tasks with at least one block on the calendar. No: the tasks with none."
             Setting.TaskBoxesFrom -> "Only the tasks with a block on the calendar still running at this instant (with \"until\", one block doing both)."
             Setting.TaskBoxesUntil -> "Only the tasks with a block on the calendar starting by this instant (with \"from\", one block doing both)."
@@ -3744,6 +3795,8 @@ object SearchDomain {
         /** New 2026-10-01: absent from an older build's = any. */
         val taskSchedulable: String? = null,
         val taskCategory: String? = null,
+        /** New 2026-11-28: absent = any. */
+        val taskHasCategory: String? = null,
         val categoryHasRules: String? = null,
         val periodOrigin: String? = null,
         /** New 2026-10-11: absent from an older build's = any drawing, no resilience asked. */
@@ -3889,6 +3942,10 @@ object SearchDomain {
         val noParentOfKinds: List<String> = emptyList(),
         /** New 2026-11-12: absent = the parents of nothing asked. */
         val parentsOf: List<String> = emptyList(),
+        /** New 2026-11-28: absent from an older build's = any. */
+        val childrenOf: List<String> = emptyList(),
+        val changedFromMillis: Long? = null,
+        val changedUntilMillis: Long? = null,
         /** New 2026-11-13: absent = the direct parents (1); 0 = at any distance. */
         val parentDistance: Int = 1,
         /** New 2026-11-20: absent = no task the evolutions' involvement order is measured against. */
@@ -4787,7 +4844,7 @@ object SearchDomain {
                 .let { rows ->
                     // User rule 2026-11-12: no parent of the checked kinds — every element's parents read once.
                     // ...and only the parents of the given elements.
-                    if (filters.noParentOfKinds.isEmpty() && filters.parentsOf.isEmpty()) return@let rows
+                    if (filters.noParentOfKinds.isEmpty() && filters.parentsOf.isEmpty() && filters.childrenOf.isEmpty()) return@let rows
                     val parents = ElementTree.parentIndex(state)
                     // ...as far above them as the parent distance says.
                     val wanted =
@@ -4795,7 +4852,8 @@ object SearchDomain {
                         else ElementTree.parentsWithin(parents, filters.parentsOf, filters.parentDistance.takeIf { it != PARENT_DISTANCE_HIGHEST })
                     rows.filter { row ->
                         val key = keyOf(row)
-                        (wanted == null || key in wanted) && parents[key].orEmpty().none { ElementTree.kindOf(it) in filters.noParentOfKinds }
+                        (wanted == null || key in wanted) && parents[key].orEmpty().none { ElementTree.kindOf(it) in filters.noParentOfKinds } &&
+                            (filters.childrenOf.isEmpty() || parents[key].orEmpty().any { it in filters.childrenOf })
                     }
                 }
                 .let { rows ->
@@ -4812,6 +4870,15 @@ object SearchDomain {
                     rows.filter { row ->
                         val at = dateOf(state, row) ?: return@filter false
                         (filters.datedFrom == null || at >= filters.datedFrom) && (filters.datedUntil == null || at <= filters.datedUntil)
+                    }
+                }
+                .let { rows ->
+                    // "Changed from" / "Changed until": the elements a unit changed in the span, read off the one index.
+                    if (!filters.isOn(Setting.ChangedFrom) && !filters.isOn(Setting.ChangedUntil)) return@let rows
+                    rows.filter { row ->
+                        changeTimesOf(state, keyOf(row)).any { at ->
+                            (filters.changedFrom == null || at >= filters.changedFrom) && (filters.changedUntil == null || at <= filters.changedUntil)
+                        }
                     }
                 }
                 .let { rows ->
@@ -5041,6 +5108,7 @@ object SearchDomain {
                     (filters.taskSchedulable == Tri.Any ||
                         tri(filters.taskSchedulable, SchedulerDomain.isPlaceableTask(state, result.taskId))) &&
                     (filters.taskCategory == null || task?.categoryIds?.contains(filters.taskCategory) == true) &&
+                    tri(filters.taskHasCategory, task?.categoryIds?.isNotEmpty() == true) &&
                     (calendar == null ||
                         calendar.passes(
                             calendar.ofTask(result.taskId), filters.taskOnCalendar, filters.taskBoxesFrom, filters.taskBoxesUntil,
@@ -5610,7 +5678,7 @@ object SearchDomain {
         fun <T> labels(entries: List<T>, label: (T) -> String) = entries.map(label)
         return when (setting) {
             Setting.TaskInTree -> labels(Tri.entries, ::taskInTreeLabel)
-            Setting.TaskTreeRoot, Setting.TaskSchedulable, Setting.TaskOnCalendar, Setting.CategoryHasRules,
+            Setting.TaskTreeRoot, Setting.TaskSchedulable, Setting.TaskHasCategory, Setting.TaskOnCalendar, Setting.CategoryHasRules,
             Setting.PeriodOnCalendar, Setting.QuotaRepeatsSetting, Setting.HistoryUndoneSetting,
             Setting.ShortcutReboundSetting,
             -> labels(Tri.entries) { it.label }
@@ -5626,7 +5694,7 @@ object SearchDomain {
                 DayOfWeek.entries.sortedBy { it.isoDayNumber }.flatMap { listOf(it.name.take(2).lowercase().replaceFirstChar(Char::uppercase), it.name.lowercase()) } +
                     "any day"
             Setting.TaskBoxesFrom, Setting.TaskBoxesUntil, Setting.PeriodBoxesFrom, Setting.PeriodBoxesUntil -> listOf("any", "Pick", "Now")
-            Setting.DatedFrom -> DatedRange.entries.map { it.label }
+            Setting.DatedFrom, Setting.ChangedFrom -> DatedRange.entries.map { it.label }
             Setting.CalendarAdd, Setting.CalendarAt -> listOf("Now")
             // The text's choices as drawn, then each box by its place ("5th letter"), so a bar finds it by the request's words.
             Setting.LettersAt -> LETTERS_IN_OPTIONS.map(::lettersInLabel) + (1..LETTER_PLACES).map { "${ordinal(it)} letter" } + "starts with"
@@ -7255,6 +7323,26 @@ object SearchDomain {
             }.also { checkIndex = state.histories to it }
         return index[key].orEmpty()
     }
+
+    /**
+     * User request 2026-11-28: **when the element [key] was changed** - the time of every history unit whose
+     * [org.example.project.scheduler.state.changedElements] names it, the one index "Changed from" / "Changed until" read
+     * (the reverse of "Changed element"). Built once per histories value.
+     */
+    fun changeTimesOf(state: SchedulerState, key: String): List<Long> {
+        val cached = changeIndex
+        val index =
+            if (cached != null && cached.first === state.histories) cached.second
+            else HashMap<String, MutableList<Long>>().also { out ->
+                for (category in HistoryCategory.entries) for (unit in state.histories.forCategory(category).units) {
+                    for (element in unit.delta.changedElements) out.getOrPut(element.key, ::ArrayList) += unit.timeMillis
+                }
+            }.also { changeIndex = state.histories to it }
+        return index[key].orEmpty()
+    }
+
+    @Volatile
+    private var changeIndex: Pair<org.example.project.scheduler.state.SchedulerHistories, Map<String, List<Long>>>? = null
 
     @Volatile
     private var checkIndex: Pair<org.example.project.scheduler.state.SchedulerHistories, Map<String, List<Check>>>? = null

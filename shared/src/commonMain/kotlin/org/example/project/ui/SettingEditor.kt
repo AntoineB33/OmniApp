@@ -276,6 +276,17 @@ internal fun SettingEditor(
         // User rule 2026-11-12: only the parents of these elements (what the "List of parents" asks).
         SearchDomain.Setting.ParentsOf ->
             ElementsDropDown(setting.name, state, f.parentsOf, windows) { filters(f.copy(parentsOf = it)) }
+        // User request 2026-11-28: only the direct children of these elements.
+        SearchDomain.Setting.ChildrenOf ->
+            ElementsDropDown(setting.name, state, f.childrenOf, windows) { filters(f.copy(childrenOf = it)) }
+        SearchDomain.Setting.TaskHasCategory ->
+            Choices(SearchDomain.Tri.entries, f.taskHasCategory, { it.label }) { filters(f.copy(taskHasCategory = it)) }
+        SearchDomain.Setting.ChangedFrom ->
+            SpanFromField(setting.name, f.changedFrom, { from, until -> filters(f.copy(changedFrom = from, changedUntil = until)) }) {
+                filters(f.copy(changedFrom = it))
+            }
+        SearchDomain.Setting.ChangedUntil ->
+            BoxBoundField(f.changedUntil, { filters(f.copy(changedUntil = it)) }, onPick = null)
         // User rule 2026-11-20: the tasks the evolutions' "involvement" order is measured against.
         SearchDomain.Setting.InvolvementOf ->
             ElementsDropDown(setting.name, state, f.involvementOf, windows) { filters(f.copy(involvementOf = it)) }
@@ -344,23 +355,10 @@ internal fun SettingEditor(
             DayChips(f.checkedOnDays) { filters(f.copy(checkedOnDays = it)) }
         // User request 2026-11-28: from an instant — a span a new user thinks in (yesterday…) one pick away in the drop-down,
         // which fills "Dated until" too; one row, as every configuration's (`SettingRowHeightTest`).
-        SearchDomain.Setting.DatedFrom -> {
-            val now = LocalAppNowMillis.current
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                ChoiceDropDown(setting.name,
-                    options = SearchDomain.DatedRange.entries,
-                    selected = null,
-                    label = { it.label },
-                    onSelect = { range ->
-                        val (from, until) = SearchDomain.datedRangeOf(range, now(), kotlinx.datetime.TimeZone.currentSystemDefault())
-                        filters(f.copy(datedFrom = from, datedUntil = until))
-                    },
-                    modifier = Modifier.width(100.dp),
-                    placeholder = "span…",
-                )
-                BoxBoundField(f.datedFrom, { filters(f.copy(datedFrom = it)) }, onPick = null)
+        SearchDomain.Setting.DatedFrom ->
+            SpanFromField(setting.name, f.datedFrom, { from, until -> filters(f.copy(datedFrom = from, datedUntil = until)) }) {
+                filters(f.copy(datedFrom = it))
             }
-        }
         SearchDomain.Setting.DatedUntil ->
             BoxBoundField(f.datedUntil, { filters(f.copy(datedUntil = it)) }, onPick = null)
         SearchDomain.Setting.LettersAt ->
@@ -772,6 +770,29 @@ private val PERIOD_RESILIENCE_TASK_CELL = org.example.project.scheduler.model.Ce
 /** The ✕ beside a filter that is set: back to "any" — the app's one cross ([CrossButton]). */
 @Composable
 private fun ClearMark(onClear: () -> Unit) = CrossButton(onClick = onClear)
+
+/**
+ * User request 2026-11-28: a "from" bound with a span a new user thinks in (today, yesterday, the last 7 or 30 days) one
+ * pick away in its drop-down, which fills both bounds ([onSpan]); one row, as every configuration's (`SettingRowHeightTest`).
+ */
+@Composable
+private fun SpanFromField(name: String, from: Long?, onSpan: (Long, Long) -> Unit, onFrom: (Long?) -> Unit) {
+    val now = LocalAppNowMillis.current
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        ChoiceDropDown(name,
+            options = SearchDomain.DatedRange.entries,
+            selected = null,
+            label = { it.label },
+            onSelect = { range ->
+                val (start, end) = SearchDomain.datedRangeOf(range, now(), kotlinx.datetime.TimeZone.currentSystemDefault())
+                onSpan(start, end)
+            },
+            modifier = Modifier.width(100.dp),
+            placeholder = "span…",
+        )
+        BoxBoundField(from, onFrom, onPick = null)
+    }
+}
 
 /** The category filter's cell id: a cell of no tree. */
 private val CATEGORY_FILTER_CELL = org.example.project.scheduler.model.CellId("search/task-category-filter")

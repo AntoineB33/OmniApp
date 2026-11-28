@@ -50,7 +50,7 @@ class SearchConfigurationStatesTest {
     fun aNodeHasItsSearchConfigurationsAsChildren() {
         // User rule 2026-11-28: "Which elements › By parent" ([SearchDomain.CONFIGURATION_LAYOUT]).
         val general = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "which/parents"))
-        assertEquals(listOf(Setting.ParentsOf, Setting.ParentDistance, Setting.NoParentOfKinds).map { key(it.name) }, general)
+        assertEquals(listOf(Setting.ChildrenOf, Setting.ParentsOf, Setting.ParentDistance, Setting.NoParentOfKinds).map { key(it.name) }, general)
         // A category holds its types' nodes, which hold their configurations.
         val tasks = ElementTree.childrenOf(empty, key(SearchDomain.CONFIGURATION_NODE_PREFIX + "tasks"))
         assertTrue(key(SearchDomain.CONFIGURATION_NODE_PREFIX + "kind/Task") in tasks)
