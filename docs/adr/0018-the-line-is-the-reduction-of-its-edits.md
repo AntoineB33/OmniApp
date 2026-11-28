@@ -174,8 +174,10 @@ until `ruleline` covered what it did, then went (step 7). Order, from the depend
      after a K"), then ported. Measured again from a start at a screen (four nights): the first night's eve
      identical break for break; after each night every break 20 s later in the rule engine, which measures the
      5-min break's hour from the end of the 20 s break taken on return (it touches the night, and a break is "no
-     screen" there) where the app measures it from the night's end. Whether a break is "no screen" is the user's
-     call, with the 5-min question. Not ported: the frozen past's other kinds, for the joined rule (a 20 s that fell
+     screen" there) where the app measures it from the night's end. The user's call (2026-11-28): *"any screen break
+     -> 'no screen'"* — the rule engine was right, and `BreakMachine.enter` now continues the stretch a break touches:
+     167 of 167 breaks at the same instant over four nights. Still open: `default_scheduler_rules.md` bars the 5-min
+     break after "a 5min break or a 15 minute no screen", both engines after any 5 minutes of it. Not ported: the frozen past's other kinds, for the joined rule (a 20 s that fell
      due in a break ended before the chip).
      Open, not exercised by the account: `default_scheduler_rules.md` bars the 5-min break after "a 5min break or a
      15 minute no screen", both engines after any 5 minutes of it. Not compared yet: the modes (the drags at the line).

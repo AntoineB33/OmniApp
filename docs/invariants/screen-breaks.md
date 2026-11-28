@@ -70,6 +70,13 @@ persisted keys.
     to a screen. The poses that stretch took are barred from the line there (`switchMode`, and `absorbHistory` for a
     rest the line is still in), or they fall due again inside those twenty seconds and grow them into a pose that
     holds the line.
+  - **A break is "no screen"** (user rule 2026-11-28: *"any screen break -> 'no screen'"*), so a break that starts
+    where the last stretch ended CONTINUES it (`BreakMachine.enter`, `State.lastStretchEnd`): the 20 s break entered on
+    return from a night ends the rest, and the 5-min and 15-min bars run from the end of that break, not of the night
+    — as `absorbHistory` already read the record (breaks merged into the rests). Measured against the rule engine on
+    the real account (`BreakRulesShadowTest`): 167 breaks over four nights, every one at the same instant.
+  - **"No screen" itself** (user rule 2026-11-28): *("no computer unlocked" or "not on computer") and ("no phone
+    unlocked" or "not on phone") -> "no screen"* — `RuleEngineBridge.BREAK_RULES` in the rule language.
   - **A journey tells the machine each stretch's mode where the stretch STARTS** (`sweepNowLineTo`). The machine
     walks in the mode it holds and takes a new one at the line; told by the step that ended a stretch, it walked every
     stretch in the mode of the one before. A break falling due INSIDE a stretch is taken there

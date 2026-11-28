@@ -238,8 +238,11 @@ class BreakMachineTest {
         // (requirements 2026-10-05: only the end of a 20 s break does), so it falls due where the stretch ends.
         val after = placed.filter { it.startMillis >= night.endMillis }
         assertEquals(night.endMillis, after.first { it.label == LABEL_20S }.startMillis)
-        assertEquals(night.endMillis + HOUR, after.first { it.label == LABEL_5MIN }.startMillis)
-        assertEquals(night.endMillis + 2 * HOUR, after.first { it.label == LABEL_15MIN }.startMillis)
+        // A break is "no screen" (user rule 2026-11-28): that 20 s break ends the rest, so the hour and the two hours run
+        // from its end.
+        val rested = night.endMillis + len(LABEL_20S)
+        assertEquals(rested + HOUR, after.first { it.label == LABEL_5MIN }.startMillis)
+        assertEquals(rested + 2 * HOUR, after.first { it.label == LABEL_15MIN }.startMillis)
     }
 
     @Test

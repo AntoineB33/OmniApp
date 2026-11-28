@@ -41,6 +41,21 @@ import org.example.project.scheduler.ruleline.applyEdit
 internal object RuleEngineBridge {
     const val NOBODY = "nobody"
 
+    /**
+     * The user's rules about the screen (2026-11-28), in the rule language (its kinds are one word each): any screen
+     * break is "no screen", and "no screen" is *("no computer unlocked" or "not on computer") and ("no phone unlocked"
+     * or "not on phone")*. The four device kinds are what the modes stage will read from the devices; the breaks
+     * themselves are kept by `ScreenBreaks` over [NO_SCREEN] (`BreakRulesShadowTest`).
+     */
+    val BREAK_RULES: List<String> = listOf(
+        "(NoComputerUnlocked or NotOnComputer) and (NoPhoneUnlocked or NotOnPhone) → NoScreen",
+        "Break20s → NoScreen",
+        "Break5 → NoScreen",
+        "Break15 → NoScreen",
+    )
+
+    const val NO_SCREEN = "NoScreen"
+
     fun taskKind(id: TaskId) = "task:" + id.value
 
     fun periodKind(kind: String) = "period:$kind"

@@ -58,7 +58,7 @@ class BreakRulesShadowTest {
 
         // The rule engine's ScreenBreaks: each break is "no screen", positions in seconds after now.
         val kindOf = mapOf(DynamicPeriods.LABEL_20S to "Break20s", DynamicPeriods.LABEL_5MIN to "Break5", DynamicPeriods.LABEL_15MIN to "Break15")
-        val rules = ruleSetOf(specs.map { "${kindOf.getValue(it.label)} → NoScreen" })
+        val rules = ruleSetOf(org.example.project.scheduler.domain.RuleEngineBridge.BREAK_RULES)
         fun sec(ms: Long) = Rational.of(ms, 1000)
         val noScreen = (chains.map { sec(maxOf(it.startMillis, now - 900_000) - now) to sec(minOf(it.endMillis, until) - now) } + (sec(-900_000) to Rational.ZERO))
         val region = Region.of(IntervalSet.of(noScreen.filter { it.second > it.first }.map { (a, b) -> Interval.of(Pos(a), Pos(b), false, true) }))
@@ -74,7 +74,7 @@ class BreakRulesShadowTest {
         }
         val labelOf = kindOf.entries.associate { (k, v) -> v to k }
         val engineBreaks = kindOf.values.flatMap { k ->
-            engine.value.line.presence(k).on(Pos(Rational.ZERO), Pos(sec(until - now))).intervals.map {
+            engine.value.line.presence(k).on(Pos(Rational.ZERO), Pos(sec(until - now))).intervals.filter { it.hi > it.lo }.map {
                 Triple(labelOf.getValue(k), (it.lo.x * Rational.of(1000)).floor(), (it.hi.x * Rational.of(1000)).floor())
             }
         }

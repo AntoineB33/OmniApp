@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### A break is "no screen": the 20 s break taken on return ends the rest — 2026-11-28
+
+- User: *"any screen break -> 'no screen'"* and *("no computer unlocked" or "not on computer") and ("no phone
+  unlocked" or "not on phone") -> "no screen"*. `BreakMachine.enter`: a break that starts where the last stretch of
+  "no screen" ended continues it, so after a night the 5-min and 15-min bars run from the end of the 20 s break taken
+  on return (20 s later than before), as `absorbHistory` already read the record. Both rules are
+  `RuleEngineBridge.BREAK_RULES` in the rule language (`NoScreenRulesTest`). On the real account the app's and the rule
+  engine's breaks are now the same over four nights, 167 of 167 (`BreakRulesShadowTest`). Needs an app rebuild
+  (`scriptsccount3-deploy-windows.bat`).
+
 ### The rule engine's 20 s break follows the user's rule — 2026-11-28
 
 - User: *"Yes, fix the reference"*. `C:\code\line_manager\scripts\constraints.py`'s `ScreenBreaks` gains `own` (default

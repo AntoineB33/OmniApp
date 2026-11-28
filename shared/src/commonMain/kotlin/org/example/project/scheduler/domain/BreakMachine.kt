@@ -405,8 +405,12 @@ object BreakMachine {
         val atScreen = state.baseMode == MODE_AT_SCREEN
         val held = atScreen && (spec.label == LABEL_20S || conducted || policy == Policy.TAKE_POSES)
         val active = Active(spec.label, start, start + spec.durationMillis, members, held = held, conducted = conducted)
-        // A line at a screen entering a break is covered from its start: the stretch starts here.
-        val stretch = state.stretchStart ?: start
+        // A line at a screen entering a break is covered from its start: the stretch starts here — or goes on, when the
+        // break starts where the last stretch ended (the 20 s break taken on return from a night): a break is "no screen"
+        // (user rule 2026-11-28, "any screen break -> no screen"), so the rest is the night AND the break, and the bars it
+        // sets run from the break's end ([absorbHistory] reads the record the same way).
+        val resumed = state.lastStretchStart?.takeIf { state.lastStretchEnd?.let { it >= start } == true }
+        val stretch = state.stretchStart ?: resumed ?: start
         val byHand =
             state.placed.any { it.label in members && kotlin.math.abs(it.toMillis - start) <= HAND_PLACED_TOLERANCE_MILLIS }
         var s = spent(state, members, start).copy(active = active, drag = null, stretchStart = stretch)
