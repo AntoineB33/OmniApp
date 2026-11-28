@@ -157,4 +157,65 @@ class RandomRequestsTest {
         assertEquals(true, ids[0] in found && ids[1] in found && ids[2] !in found, found.toString())
         assertEquals(found.sortedBy { it.reversed() }, found)
     }
+
+    /**
+     * User 2026-11-28, the same request walked as a new user would, nothing typed but two letters: ▾ › Which elements ›
+     * Types › context; ▾ › Find by text › **Letters at places**, In "row 3 of its list", box 1 "d", box 5 "h"; ▾ › Order ›
+     * Sort by › "id, from its last character". The same contexts as the regular expression, any capitals; a context whose
+     * row 3 is "Dash" (too short) or "Delta" (no h fifth) is not listed; the setting survives its stored shape, and a shape
+     * stored before it reads as no letters asked.
+     */
+    @Test
+    fun contexts_whose_third_row_reads_d___h_by_boxes_of_the_tree() {
+        val alarms = listOf(AlarmEntry(id = "alarm-1", label = "Alpha"), AlarmEntry(id = "alarm-2", label = "Beta"), AlarmEntry(id = "alarm-3", label = "Death"))
+        val byName = SearchDomain.Config(kinds = setOf(Kind.Alarm), sorts = listOf(SortMethod(null, SortKey.Name)))
+        val ids = ContextDomain.CONTEXTS.map { it.id }.filter { it != ContextDomain.SEARCH_WINDOW }.take(3)
+        val state = SchedulerState.empty().copy(
+            alarms = alarms,
+            contextDefaults = listOf(
+                ContextDefault(ids[0], byName.encode()),
+                ContextDefault(ids[1], byName.encode()),
+                ContextDefault(ids[2], byName.copy(sorts = listOf(SortMethod(null, SortKey.Name, descending = true))).encode()),
+            ),
+        )
+        val boxes = SearchDomain.Config(
+            kinds = setOf(Kind.Context),
+            filters = SearchDomain.Filters(lettersIn = "row 3", letters = mapOf(1 to 'd', 5 to 'H')),
+            sorts = listOf(SortMethod(null, SortKey.IdFromEnd)),
+        )
+        val regex = SearchDomain.Config(
+            kinds = setOf(Kind.Context),
+            query = "^Row 3: d...h",
+            filters = SearchDomain.Filters(searchIn = setOf(SearchDomain.SearchField.Facts), regex = true),
+            sorts = listOf(SortMethod(null, SortKey.IdFromEnd)),
+        )
+        val found = search(state, boxes).map { (it as SearchDomain.ItemResult).id }
+        assertEquals(true, ids[0] in found && ids[1] in found && ids[2] !in found, found.toString())
+        assertEquals(search(state, regex).map { (it as SearchDomain.ItemResult).id }, found)
+        assertEquals(found.sortedBy { it.reversed() }, found)
+        // Each box at its place, any capitals; a text too short answers nothing.
+        assertEquals(true, SearchDomain.lettersAnswer(mapOf(1 to 'd', 5 to 'h'), "Death"))
+        assertEquals(false, SearchDomain.lettersAnswer(mapOf(1 to 'd', 5 to 'h'), "Dash"))
+        assertEquals(false, SearchDomain.lettersAnswer(mapOf(1 to 'd', 5 to 'h'), "Delta"))
+        // Where a new user looks: under "Find by text" first, and under "Which elements" beside Types.
+        assertEquals(listOf("Find by text"), SearchDomain.homePathOf(SearchDomain.Setting.LettersAt))
+        assertEquals(true, SearchDomain.Setting.LettersAt in SearchDomain.CONFIGURATION_LAYOUT.first { it.id == "which" }.items)
+        // Stored and read back; an older build's shape reads as no letters, its name.
+        val decoded = SearchDomain.Config.decode(boxes.encode())!!.filters
+        assertEquals("row 3" to mapOf(1 to 'd', 5 to 'H'), decoded.lettersIn to decoded.letters)
+        val old = SearchDomain.Config.decode(SearchDomain.Config(kinds = setOf(Kind.Task)).encode().replace(Regex(""","?"letters(In)?":(\{\}|null|"[^"]*")"""), ""))!!.filters
+        assertEquals(SearchDomain.LETTERS_IN_NAME to emptyMap(), old.lettersIn to old.letters)
+    }
+
+    /** The ▾'s bar finds "Letters at places" by the request's own words. */
+    @Test
+    fun the_arrow_bar_finds_letters_at_places_by_the_words_of_the_request() {
+        val tree = SearchDomain.configurationTree(SearchDomain.Config(kinds = Kind.entries.toSet()))
+        val rows = SearchDomain.ConfigurationTreeRows(tree)
+        fun typed(q: String) = SearchDomain.shownConfigurationNodes(SchedulerState.empty(), tree, root = true, rows, SearchDomain.CONFIGURATION_SEARCH.copy(query = q))
+            .filterIsInstance<SearchDomain.ConfigurationLeaf>().map { it.setting }
+        assertEquals(listOf(SearchDomain.Setting.LettersAt), typed("5th letter").distinct())
+        assertEquals(true, SearchDomain.Setting.LettersAt in typed("starts with"))
+        assertEquals(true, SearchDomain.Setting.LettersAt in typed("letter"))
+    }
 }

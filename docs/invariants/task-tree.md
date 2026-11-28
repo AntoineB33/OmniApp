@@ -1972,6 +1972,12 @@ suggestions before it was ever entered.
   words, so a bar's words are each found in any part of a row read (`SearchDomain.textsAnswer`: "Checked on" by its name,
   "sunday" by its chip), and "checked on sunday" lists "Checked on" alone. Info bubbles are not read by the ▾: measured,
   "checked" then answered 42 rows.
+  Walked again on *"every context whose list's 3rd row has a title starting with d and h as 5th letter, sorted by the
+  last character of their id"*: ▾ › Which elements › Types › context; ▾ › Find by text › **Letters at places** (also in
+  Which elements), In "row 3 of its list", box 1 `d`, box 5 `h`; ▾ › Order › Sort by › "id, from its last character".
+  Before it, the answer was the regular expression `^Row 3: d...h` over Facts. Numbered boxes, not a pattern: a slow
+  reader sees the places. Its "row N" reads the one `contextRowFacts`; the ▾'s bar finds it by "5th letter" or "starts
+  with" (its buttons). `RandomRequestsTest`.
 - **THE ▾'S TREE IS A SEARCH CONFIGURATION, AND NO NODE OF IT IS LONG** (user rule 2026-11-27: *"set to on (and add if
   didn't exist) search configurations for some contexts, so that in some contexts the elements are organized in an
   intuitive tree structure … Make sure there are not lots of elements in one node"*; `Config.navigationTree`,

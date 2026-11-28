@@ -1325,6 +1325,8 @@ object SearchDomain {
                     alarmDays = filters.alarmDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     datedOnDays = filters.datedOnDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     checkedOnDays = filters.checkedOnDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
+                    lettersIn = filters.lettersIn.takeIf { it != LETTERS_IN_NAME },
+                    letters = filters.letters.entries.sortedBy { it.key }.associate { it.key to it.value.toString() },
                     timerState = filters.timerState.name,
                     chronoState = filters.chronoState.name,
                     quotaRepeats = filters.quotaRepeats.name,
@@ -1458,6 +1460,8 @@ object SearchDomain {
                             .toSet(),
                         checkedOnDays = stored.checkedOnDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
                             .toSet(),
+                        lettersIn = stored.lettersIn?.takeIf { it in LETTERS_IN_OPTIONS } ?: LETTERS_IN_NAME,
+                        letters = stored.letters.mapNotNull { (at, letter) -> letter.firstOrNull()?.takeIf { at in 1..LETTER_PLACES }?.let { at to it } }.toMap(),
                         timerState = enumNamed(stored.timerState, TimerState.Any),
                         chronoState = enumNamed(stored.chronoState, TimerState.Any),
                         quotaRepeats = enumNamed(stored.quotaRepeats, Tri.Any),
@@ -1728,6 +1732,14 @@ object SearchDomain {
         val datedOnDays: Set<DayOfWeek> = emptySet(),
         /** User request 2026-11-28: empty = any; else only the rows whose check box was checked on one of these weekdays ([checksOf]). */
         val checkedOnDays: Set<DayOfWeek> = emptySet(),
+        /**
+         * User request 2026-11-28 (*"the 3rd row has a title that starts with d and the 5th letter is h"*, walked as a new
+         * user would): which text "Letters at places" reads ([LETTERS_IN_OPTIONS]) - a row's name, its id, or a context's
+         * row N of its list ([contextRowFacts]).
+         */
+        val lettersIn: String = LETTERS_IN_NAME,
+        /** User request 2026-11-28: empty = any; else only the rows whose [lettersIn] text has each letter at its place (1 = first), any case. */
+        val letters: Map<Int, Char> = emptyMap(),
         val timerState: TimerState = TimerState.Any,
         /** A chrono is idle, running or paused like a timer — the same filter, over its own rows. */
         val chronoState: TimerState = TimerState.Any,
@@ -2025,6 +2037,7 @@ object SearchDomain {
                 Setting.AlarmDays -> alarmDays
                 Setting.DatedOnDays -> datedOnDays
                 Setting.CheckedOnDays -> checkedOnDays
+                Setting.LettersAt -> lettersIn to letters
                 Setting.TimerStateSetting -> timerState
                 Setting.ChronoStateSetting -> chronoState
                 Setting.QuotaRepeatsSetting -> quotaRepeats
@@ -2080,6 +2093,7 @@ object SearchDomain {
                 Setting.AlarmDays -> alarmDays.isNotEmpty()
                 Setting.DatedOnDays -> datedOnDays.isNotEmpty()
                 Setting.CheckedOnDays -> checkedOnDays.isNotEmpty()
+                Setting.LettersAt -> letters.isNotEmpty()
                 Setting.TimerStateSetting -> timerState != TimerState.Any
                 Setting.ChronoStateSetting -> chronoState != TimerState.Any
                 Setting.QuotaRepeatsSetting -> quotaRepeats != Tri.Any
@@ -2483,6 +2497,12 @@ object SearchDomain {
          * only the rows whose check box was checked on one of the weekdays checked ([Filters.checkedOnDays], [checksOf]).
          */
         CheckedOnDays(null, "Checked on"),
+        /**
+         * User request 2026-11-28 (*"a title that starts with the letter d and the 5th letter is h"*, walked as a new user
+         * would): only the rows whose name, id or list row ([Filters.lettersIn]) has the letters typed in numbered boxes at
+         * their places ([Filters.letters], [lettersAnswer]) - no regular expression to know.
+         */
+        LettersAt(null, "Letters at places"),
         /** The elements kept out of the list ([Filters.excludedElements]) and those always in it ([Filters.includedElements]). */
         ExcludedElements(null, "Excluded elements"),
         /** User rule 2026-11-21: where the rows a caller gives come from ([Filters.listedFrom]). */
@@ -3051,11 +3071,11 @@ object SearchDomain {
                         Setting.ChildSearchInButtons, Setting.ChildSearchInId,
                     ),
                 ),
-                Setting.SearchSortsOnly, Setting.CompletionList,
+                Setting.LettersAt, Setting.SearchSortsOnly, Setting.CompletionList,
             ),
             node(
                 "which", "Which elements", "Which elements the window lists: their types, the ones taken in or left out, when, and under whom.",
-                Setting.Types, Setting.PageTypes,
+                Setting.Types, Setting.PageTypes, Setting.LettersAt,
                 node("which/include", "Include & exclude", "The elements listed whatever else is set, and those never listed.", Setting.ListedFrom, Setting.IncludedElements, Setting.ExcludedElements),
                 node(
                     "which/dates", "Date & calendar", "The elements of a day (dated on it, or checked on it), or of a moment of the calendar.",
@@ -3433,6 +3453,9 @@ object SearchDomain {
             Setting.DatedOnDays ->
                 "Only the rows dated on one of the days checked: a history unit, a notification, a log entry. When a box was checked: \"Checked on\"."
             Setting.CheckedOnDays -> "Only the rows with a check box checked on one of the days checked: a type, a notification source, any box of a list."
+            Setting.LettersAt ->
+                "Only the rows whose text has the letters typed in the numbered boxes at those places: box 1, the first letter (starts with); " +
+                    "box 5, the fifth. Upper or lower case alike. The text: the row's name, its id, or for a context the title of row 1, 2, 3... of the list it shows."
             Setting.ExcludedElements -> "Elements always kept out of the list."
             Setting.ListedFrom -> "Where the rows come from: what the window is given to list. The rest of its configuration narrows them."
             Setting.IncludedElements -> "Elements always in the list, whatever else narrows it."
@@ -3645,6 +3668,10 @@ object SearchDomain {
         val datedOnDays: List<Int> = emptyList(),
         /** New 2026-11-28: absent from an older build's = any day. */
         val checkedOnDays: List<Int> = emptyList(),
+        /** New 2026-11-28: absent from an older build's = the name. */
+        val lettersIn: String? = null,
+        /** New 2026-11-28: absent from an older build's = any letters. Place (1 = first) to its letter. */
+        val letters: Map<Int, String> = emptyMap(),
         val timerState: String? = null,
         /** New 2026-09-26: absent from what an older build stored, which reads as any. */
         val chronoState: String? = null,
@@ -4693,6 +4720,11 @@ object SearchDomain {
                     }
                 }
                 .let { rows ->
+                    // "Letters at places": the letters at their places in the text chosen ([lettersTextOf]).
+                    if (!filters.isOn(Setting.LettersAt)) return@let rows
+                    rows.filter { row -> lettersAnswer(filters.letters, lettersTextOf(state, row, filters.lettersIn, nowMillis, timeZone)) }
+                }
+                .let { rows ->
                     // The blocks of the given elements: each block's element read once, not once per row.
                     if (filters.blocksOf.isEmpty() || rows.none { it.kind == Kind.CalendarBlock }) return@let rows
                     val owners = calendarBlocks(state, timeZone).associate { it.id to it.owner }
@@ -5490,6 +5522,8 @@ object SearchDomain {
                     "any day"
             Setting.TaskBoxesFrom, Setting.TaskBoxesUntil, Setting.PeriodBoxesFrom, Setting.PeriodBoxesUntil -> listOf("any", "Pick", "Now")
             Setting.CalendarAdd, Setting.CalendarAt -> listOf("Now")
+            // The text's choices as drawn, then each box by its place ("5th letter"), so a bar finds it by the request's words.
+            Setting.LettersAt -> LETTERS_IN_OPTIONS.map(::lettersInLabel) + (1..LETTER_PLACES).map { "${ordinal(it)} letter" } + "starts with"
             Setting.SearchBars -> listOf("Add a search bar")
             Setting.ResetSearch -> listOf("Reset")
             Setting.SortResults -> listOf("Default")
@@ -7032,6 +7066,52 @@ object SearchDomain {
 
     /** How many of a context's rows its facts say ([contextRowFacts]). */
     const val CONTEXT_FACT_ROWS: Int = 10
+
+    /** "Letters at places" reads a row's name ([Filters.lettersIn]). */
+    const val LETTERS_IN_NAME: String = "name"
+
+    /** "Letters at places" reads a row's id. */
+    const val LETTERS_IN_ID: String = "id"
+
+    /** What "Letters at places" can read, in its drop-down's order: the name, the id, a context's list row N ("row 3"). */
+    val LETTERS_IN_OPTIONS: List<String> = listOf(LETTERS_IN_NAME, LETTERS_IN_ID) + (1..CONTEXT_FACT_ROWS).map { "row $it" }
+
+    /** How many numbered boxes "Letters at places" has. */
+    const val LETTER_PLACES: Int = 8
+
+    /** How a [Filters.lettersIn] reads in the drop-down: "its name", "its id", "row 3 of its list". */
+    fun lettersInLabel(lettersIn: String): String = when (lettersIn) {
+        LETTERS_IN_NAME -> "its name"
+        LETTERS_IN_ID -> "its id"
+        else -> "$lettersIn of its list"
+    }
+
+    /** "1st", "2nd", "3rd", "5th". */
+    fun ordinal(n: Int): String = n.toString() + when {
+        n % 100 in 11..13 -> "th"
+        n % 10 == 1 -> "st"
+        n % 10 == 2 -> "nd"
+        n % 10 == 3 -> "rd"
+        else -> "th"
+    }
+
+    /**
+     * The text "Letters at places" reads of [row]: its name, its id, or - a context's - the name of row N of the list its
+     * configuration shows, read through the one [contextRowFacts]; null where the row has none (another type's "row 3").
+     */
+    fun lettersTextOf(state: SchedulerState, row: Result, lettersIn: String, nowMillis: Long, timeZone: TimeZone): String? = when (lettersIn) {
+        LETTERS_IN_NAME -> row.name
+        LETTERS_IN_ID -> (row as? ItemResult)?.id
+        else -> {
+            val n = lettersIn.removePrefix("row ").toIntOrNull()
+            if (n == null || row.kind != Kind.Context) null
+            else contextRowFacts(state, (row as ItemResult).id, nowMillis, timeZone).getOrNull(n - 1)?.second
+        }
+    }
+
+    /** [text] has each of [letters] at its place (1 = first), any capitals; no text answers nothing. */
+    fun lettersAnswer(letters: Map<Int, Char>, text: String?): Boolean =
+        text != null && letters.all { (at, letter) -> text.getOrNull(at - 1)?.equals(letter, ignoreCase = true) == true }
 
     /**
      * User request 2026-11-27 (*"all the rows with a check box the user checked on a Sunday"*): **when each row was checked

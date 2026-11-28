@@ -342,6 +342,8 @@ internal fun SettingEditor(
             DayChips(f.datedOnDays) { filters(f.copy(datedOnDays = it)) }
         SearchDomain.Setting.CheckedOnDays ->
             DayChips(f.checkedOnDays) { filters(f.copy(checkedOnDays = it)) }
+        SearchDomain.Setting.LettersAt ->
+            LettersAtEditor(setting.name, f) { filters(it) }
         SearchDomain.Setting.TimerStateSetting ->
             Choices(SearchDomain.TimerState.entries, f.timerState, { it.label }) { filters(f.copy(timerState = it)) }
         SearchDomain.Setting.ChronoStateSetting ->
@@ -963,6 +965,42 @@ private val SIZE_PAIR = Regex("""(\d{1,5})\s*[xX×*]\s*(\d{1,5})""")
 
 /** How wide one field of [SizeEditor] is: "10000 x 10000". */
 private val SETTING_SIZE_FIELD_WIDTH = 104.dp
+
+/**
+ * User request 2026-11-28 (*"a title that starts with the letter d and the 5th letter is h"*): **"Letters at places"** —
+ * which text is read ("its name", "its id", "row 3 of its list"), then numbered boxes, one letter each: box 1 holds the
+ * first letter, box 5 the fifth; an empty box asks nothing. A slow reader sees the places, no pattern to write.
+ */
+@Composable
+private fun LettersAtEditor(name: String, f: SearchDomain.Filters, onChange: (SearchDomain.Filters) -> Unit) {
+    // One row, a task cell's height (`SettingRowHeightTest`): an empty box shows its place's number.
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("In", style = MaterialTheme.typography.labelSmall)
+        ChoiceDropDown(name,
+            options = SearchDomain.LETTERS_IN_OPTIONS,
+            selected = f.lettersIn,
+            label = SearchDomain::lettersInLabel,
+            onSelect = { onChange(f.copy(lettersIn = it)) },
+        )
+        for (at in 1..SearchDomain.LETTER_PLACES) {
+            OutlinedTextField(
+                value = f.letters[at]?.toString().orEmpty(),
+                onValueChange = { typed ->
+                    // The last letter typed is the box's: typing over a letter replaces it.
+                    val letter = typed.lastOrNull { !it.isWhitespace() }
+                    onChange(f.copy(letters = if (letter == null) f.letters - at else f.letters + (at to letter)))
+                },
+                singleLine = true,
+                placeholder = { Text(at.toString()) },
+                modifier = Modifier.width(LETTER_BOX_WIDTH),
+            )
+        }
+        if (f.letters.isNotEmpty()) ClearMark { onChange(f.copy(letters = emptyMap())) }
+    }
+}
+
+/** How wide one box of [LettersAtEditor] is: one letter. */
+private val LETTER_BOX_WIDTH = 34.dp
 
 /** The alarm's "Rings on" filter: no day ticked = any day; else it rings on at least one ticked day. */
 @Composable

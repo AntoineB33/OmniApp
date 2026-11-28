@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Letters at places": a context's 3rd row starting with d, h fifth, found by boxes along the ▾ — 2026-11-28
+
+- User: *"Tell me the actions … of a new user that wants to get the list of every context where search configurations
+  show a result list where the 3rd row has a title that starts with the letter d and the 5th letter is h, and sort them
+  by the last character of their id. Do the necessary fixes."* Types › context and Order › Sort by › "id, from its last
+  character" were reachable; the letters were not: the one answer was the regular expression `^Row 3: d...h` over Where
+  to search › Facts, which a new user neither knows nor finds.
+- New search configuration **"Letters at places"** (`Setting.LettersAt`, `Filters.lettersIn` + `Filters.letters`): a
+  drop-down "In" (its name, its id, row 1–10 of a context's list, read through `contextRowFacts`) and eight numbered
+  one-letter boxes, any capitals (`SearchDomain.lettersAnswer`). In Find by text and in Which elements. Its buttons
+  ("5th letter", "starts with") let the ▾'s bar find it. Stored config gains `lettersIn`/`letters`, absent = none asked.
+  Client rebuild only, no migration. `RandomRequestsTest`.
+
 ### "Checked on": a new user's question answered by ticks along the ▾ — 2026-11-28
 
 - User: *"Tell me the actions … and the thinking of a new user that wants to get the list of all the rows with a check box
