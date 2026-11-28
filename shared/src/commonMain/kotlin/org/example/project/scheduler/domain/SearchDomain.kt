@@ -1316,6 +1316,7 @@ object SearchDomain {
                     alarmState = filters.alarmState.name,
                     alarmDays = filters.alarmDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     datedOnDays = filters.datedOnDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
+                    checkedOnDays = filters.checkedOnDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     timerState = filters.timerState.name,
                     chronoState = filters.chronoState.name,
                     quotaRepeats = filters.quotaRepeats.name,
@@ -1446,6 +1447,8 @@ object SearchDomain {
                         alarmDays = stored.alarmDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
                             .toSet(),
                         datedOnDays = stored.datedOnDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
+                            .toSet(),
+                        checkedOnDays = stored.checkedOnDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
                             .toSet(),
                         timerState = enumNamed(stored.timerState, TimerState.Any),
                         chronoState = enumNamed(stored.chronoState, TimerState.Any),
@@ -1715,6 +1718,8 @@ object SearchDomain {
         val alarmDays: Set<DayOfWeek> = emptySet(),
         /** User rule 2026-11-27: empty = any; else only the rows dated ([dateOf]) on one of these weekdays. */
         val datedOnDays: Set<DayOfWeek> = emptySet(),
+        /** User request 2026-11-28: empty = any; else only the rows whose check box was checked on one of these weekdays ([checksOf]). */
+        val checkedOnDays: Set<DayOfWeek> = emptySet(),
         val timerState: TimerState = TimerState.Any,
         /** A chrono is idle, running or paused like a timer — the same filter, over its own rows. */
         val chronoState: TimerState = TimerState.Any,
@@ -2011,6 +2016,7 @@ object SearchDomain {
                 Setting.AlarmStateSetting -> alarmState
                 Setting.AlarmDays -> alarmDays
                 Setting.DatedOnDays -> datedOnDays
+                Setting.CheckedOnDays -> checkedOnDays
                 Setting.TimerStateSetting -> timerState
                 Setting.ChronoStateSetting -> chronoState
                 Setting.QuotaRepeatsSetting -> quotaRepeats
@@ -2065,6 +2071,7 @@ object SearchDomain {
                 Setting.AlarmStateSetting -> alarmState != AlarmState.Any
                 Setting.AlarmDays -> alarmDays.isNotEmpty()
                 Setting.DatedOnDays -> datedOnDays.isNotEmpty()
+                Setting.CheckedOnDays -> checkedOnDays.isNotEmpty()
                 Setting.TimerStateSetting -> timerState != TimerState.Any
                 Setting.ChronoStateSetting -> chronoState != TimerState.Any
                 Setting.QuotaRepeatsSetting -> quotaRepeats != Tri.Any
@@ -2463,6 +2470,11 @@ object SearchDomain {
         CalendarAt(null, "Is on the calendar at"),
         /** User rule 2026-11-27: only the rows dated on the weekdays checked ([Filters.datedOnDays], [dateOf]). */
         DatedOnDays(null, "Dated on"),
+        /**
+         * User request 2026-11-28 (*"the rows with a check box the user checked on a Sunday"*, walked as a new user would):
+         * only the rows whose check box was checked on one of the weekdays checked ([Filters.checkedOnDays], [checksOf]).
+         */
+        CheckedOnDays(null, "Checked on"),
         /** The elements kept out of the list ([Filters.excludedElements]) and those always in it ([Filters.includedElements]). */
         ExcludedElements(null, "Excluded elements"),
         /** User rule 2026-11-21: where the rows a caller gives come from ([Filters.listedFrom]). */
@@ -3037,7 +3049,10 @@ object SearchDomain {
                 "which", "Which elements", "Which elements the window lists: their types, the ones taken in or left out, when, and under whom.",
                 Setting.Types, Setting.PageTypes,
                 node("which/include", "Include & exclude", "The elements listed whatever else is set, and those never listed.", Setting.ListedFrom, Setting.IncludedElements, Setting.ExcludedElements),
-                node("which/dates", "Date & calendar", "The elements of a day, or of a moment of the calendar.", Setting.DatedOnDays, Setting.CalendarAt, Setting.CalendarAdd),
+                node(
+                    "which/dates", "Date & calendar", "The elements of a day (dated on it, or checked on it), or of a moment of the calendar.",
+                    Setting.DatedOnDays, Setting.CheckedOnDays, Setting.CalendarAt, Setting.CalendarAdd,
+                ),
                 node("which/parents", "By parent", "The parents of some elements, or the elements with no parent of some types.", Setting.ParentsOf, Setting.ParentDistance, Setting.NoParentOfKinds),
             ),
             node(
@@ -3090,7 +3105,7 @@ object SearchDomain {
                 type(
                     Kind.HistoryUnit, "History",
                     Setting.HistorySort, Setting.HistoryCategorySetting, Setting.HistoryWindowSetting, Setting.HistoryMadeInWindowSetting, Setting.HistoryUndoneSetting,
-                    Setting.HistoryChangedKindsSetting, Setting.HistoryChangedElementSetting, Setting.DatedOnDays,
+                    Setting.HistoryChangedKindsSetting, Setting.HistoryChangedElementSetting, Setting.DatedOnDays, Setting.CheckedOnDays,
                 ),
                 type(Kind.Window, "Windows", Setting.WindowSort, Setting.WindowStatusSetting, Setting.WindowDuplicatesSetting, Setting.WindowListedKindsSetting),
                 type(Kind.Shortcut, "Keyboard shortcuts", Setting.ShortcutSort, Setting.ShortcutReboundSetting),
@@ -3407,7 +3422,9 @@ object SearchDomain {
                 "The order of every row: the sorting methods checked, the first one dominant. " + SORT_KEY_HINTS
             Setting.CalendarAdd -> "Only what can be put on the calendar at the instant given."
             Setting.CalendarAt -> "Only what is on the calendar at the instant given."
-            Setting.DatedOnDays -> "Only the rows dated on one of the days checked: a history unit, a notification, a log entry."
+            Setting.DatedOnDays ->
+                "Only the rows dated on one of the days checked: a history unit, a notification, a log entry. When a box was checked: \"Checked on\"."
+            Setting.CheckedOnDays -> "Only the rows with a check box checked on one of the days checked: a type, a notification source, any box of a list."
             Setting.ExcludedElements -> "Elements always kept out of the list."
             Setting.ListedFrom -> "Where the rows come from: what the window is given to list. The rest of its configuration narrows them."
             Setting.IncludedElements -> "Elements always in the list, whatever else narrows it."
@@ -3618,6 +3635,8 @@ object SearchDomain {
         val alarmDays: List<Int> = emptyList(),
         /** New 2026-11-27: absent from an older build's = any day. */
         val datedOnDays: List<Int> = emptyList(),
+        /** New 2026-11-28: absent from an older build's = any day. */
+        val checkedOnDays: List<Int> = emptyList(),
         val timerState: String? = null,
         /** New 2026-09-26: absent from what an older build stored, which reads as any. */
         val chronoState: String? = null,
@@ -4659,6 +4678,13 @@ object SearchDomain {
                     }
                 }
                 .let { rows ->
+                    // "Checked on": the rows a check box of which was checked on one of the weekdays, read off the one index.
+                    if (!filters.isOn(Setting.CheckedOnDays)) return@let rows
+                    rows.filter { row ->
+                        checksOf(state, keyOf(row)).any { it.on && it.dayOfWeek(timeZone) in filters.checkedOnDays }
+                    }
+                }
+                .let { rows ->
                     // The blocks of the given elements: each block's element read once, not once per row.
                     if (filters.blocksOf.isEmpty() || rows.none { it.kind == Kind.CalendarBlock }) return@let rows
                     val owners = calendarBlocks(state, timeZone).associate { it.id to it.owner }
@@ -5441,7 +5467,7 @@ object SearchDomain {
             Setting.ReminderRepeatsSetting -> labels(ReminderRepeats.entries) { it.label }
             Setting.WindowDuplicatesSetting -> labels(WindowDuplicates.entries) { it.label }
             Setting.ChildDistance -> listOf("any", "1", "2", "3", "4", "5")
-            Setting.AlarmDays, Setting.DatedOnDays -> listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su", "any day")
+            Setting.AlarmDays, Setting.DatedOnDays, Setting.CheckedOnDays -> listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su", "any day")
             Setting.TaskBoxesFrom, Setting.TaskBoxesUntil, Setting.PeriodBoxesFrom, Setting.PeriodBoxesUntil -> listOf("any", "Pick", "Now")
             Setting.CalendarAdd, Setting.CalendarAt -> listOf("Now")
             Setting.SearchBars -> listOf("Add a search bar")
@@ -6993,23 +7019,35 @@ object SearchDomain {
      * ([org.example.project.scheduler.state.ConfigurationChange.checks]): an option of a check-box configuration by its row
      * ([checkedRowKey]), an element checked in a list of elements by its own. Built once per histories value.
      */
-    fun checkFacts(state: SchedulerState, key: String, timeZone: TimeZone): List<Pair<String, String>> {
+    fun checkFacts(state: SchedulerState, key: String, timeZone: TimeZone): List<Pair<String, String>> =
+        checksOf(state, key).map { "Checked" to "${if (it.on) "on" else "off"} · ${factTime(it.timeMillis, timeZone)} · ${it.path}" }
+
+    /** One check of a row ([checksOf]): when, whether it was checked (true) or unchecked, and where it was. */
+    data class Check(val timeMillis: Long, val on: Boolean, val path: String) {
+        fun dayOfWeek(timeZone: TimeZone): DayOfWeek = Instant.fromEpochMilliseconds(timeMillis).toLocalDateTime(timeZone).dayOfWeek
+    }
+
+    /**
+     * User requests 2026-11-27 and 2026-11-28: **every check and uncheck of the row [key]**, the one index both its facts
+     * ([checkFacts]) and "Checked on" ([Filters.checkedOnDays]) read, built once per histories value off every unit's
+     * [org.example.project.scheduler.state.ConfigurationChange.checks].
+     */
+    fun checksOf(state: SchedulerState, key: String): List<Check> {
         val cached = checkIndex
         val index =
-            if (cached != null && cached.first === state.histories && cached.second == timeZone) cached.third
-            else HashMap<String, MutableList<Pair<String, String>>>().also { out ->
+            if (cached != null && cached.first === state.histories) cached.second
+            else HashMap<String, MutableList<Check>>().also { out ->
                 for (category in HistoryCategory.entries) for (unit in state.histories.forCategory(category).units) {
                     for (change in unit.delta.configurationChanges) for ((item, on) in change.checks) {
-                        out.getOrPut(checkedRowKey(change.setting, item), ::ArrayList) +=
-                            "Checked" to "${if (on) "on" else "off"} · ${factTime(unit.timeMillis, timeZone)} · ${change.path}"
+                        out.getOrPut(checkedRowKey(change.setting, item), ::ArrayList) += Check(unit.timeMillis, on, change.path)
                     }
                 }
-            }.also { checkIndex = Triple(state.histories, timeZone, it) }
+            }.also { checkIndex = state.histories to it }
         return index[key].orEmpty()
     }
 
     @Volatile
-    private var checkIndex: Triple<org.example.project.scheduler.state.SchedulerHistories, TimeZone, Map<String, List<Pair<String, String>>>>? = null
+    private var checkIndex: Pair<org.example.project.scheduler.state.SchedulerHistories, Map<String, List<Check>>>? = null
 
     /**
      * User request 2026-11-27: **the check-box configurations and the items each one checks**, in their drop-down's order -

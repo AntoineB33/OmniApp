@@ -1960,6 +1960,13 @@ suggestions before it was ever entered.
   `NavigationTreeTest` until it is placed. Each category ends with its own "Default for this" where some of it is on by
   default. The groups ("Search", "Sorting", "Parents and children"…), their sub-categories and the type families of
   2026-11-27 are gone with it. The sections above that describe the groups describe the tree before this.
+- **A QUESTION A NEW USER ASKS IS ANSWERED BY TICKS ALONG THE TREE, NOT BY A TYPED RECIPE** (user rule 2026-11-28:
+  *"very intuitive navigation for a new user … They don't know in advance where to look, and they don't necessarily read
+  fast"*). Walked on *"the rows with a check box the user checked on a Sunday"*: Search › ▾ › Which elements › Date &
+  calendar › **Checked on** › Su — one category per thought ("which rows" → "when"), the filter named by the user's own
+  verb. Before it, the answer needed Types = search configuration, Where to search › Facts and the bar
+  `"Checked: on" sunday` (which also matched a box unchecked on a Sunday and checked another day). "Checked on" and a
+  row's "Checked" facts read the one index `SearchDomain.checksOf`. `RandomRequestsTest`.
 - **THE ▾'S TREE IS A SEARCH CONFIGURATION, AND NO NODE OF IT IS LONG** (user rule 2026-11-27: *"set to on (and add if
   didn't exist) search configurations for some contexts, so that in some contexts the elements are organized in an
   intuitive tree structure … Make sure there are not lots of elements in one node"*; `Config.navigationTree`,

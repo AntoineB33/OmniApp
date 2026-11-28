@@ -87,7 +87,32 @@ class RandomRequestsTest {
     }
 
     /**
-     * Iteration 2: *"every context where search configurations show a result list where the 3rd row has a title that starts
+     * User 2026-11-28, the same request walked as a new user would: ▾ › Which elements › Date & calendar › **Checked on**,
+     * Su ticked — nothing typed, no type chosen, no "Facts". A box unchecked on a Sunday, or checked on a Monday, is not
+     * listed; the setting survives its stored shape, and a shape stored before it reads as any day.
+     */
+    @Test
+    fun checked_on_a_sunday_is_one_tick_of_the_tree() {
+        val tasks = SearchDomain.Config(kinds = setOf(Kind.Task))
+        val withAlarms = tasks.copy(kinds = setOf(Kind.Task, Kind.Alarm))
+        val sunday = at(2026, 11, 22)
+        val monday = at(2026, 11, 23)
+        val state = withUnits(
+            listOf(
+                change(sunday, tasks, withAlarms),
+                change(monday, withAlarms, withAlarms.copy(kinds = withAlarms.kinds + Kind.Timer)),
+                change(sunday + 60_000, withAlarms.copy(filters = SearchDomain.Filters(noParentOfKinds = setOf(Kind.Task))), withAlarms),
+            ),
+        )
+        val config = SearchDomain.pageDefaultConfig("scheduler").let { it.copy(filters = it.filters.copy(checkedOnDays = setOf(kotlinx.datetime.DayOfWeek.SUNDAY))) }
+        assertEquals(listOf("SearchConfiguration/Types.Alarm"), search(state, config).map(SearchDomain::keyOf))
+        assertEquals(listOf("Which elements", "Date & calendar"), SearchDomain.homePathOf(SearchDomain.Setting.CheckedOnDays))
+        assertEquals(config.filters.checkedOnDays, SearchDomain.Config.decode(config.encode())!!.filters.checkedOnDays)
+        assertEquals(emptySet(), SearchDomain.Config.decode(SearchDomain.Config(kinds = setOf(Kind.Task)).encode().replace("\"checkedOnDays\":[]", ""))!!.filters.checkedOnDays)
+    }
+
+    /**
+     * Iteration 2:*"every context where search configurations show a result list where the 3rd row has a title that starts
      * with the letter d and the 5th letter is h, sorted by the last character of their id"*. A context's first rows are facts
      * of it ("Row 3: Death"). Types: context; Where to search › Facts; regular expression `^Row 3: d...h`; Sort by: id, from
      * its last character.

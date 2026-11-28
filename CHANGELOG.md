@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### "Checked on": a new user's question answered by ticks along the ▾ — 2026-11-28
+
+- User: *"Tell me the actions … and the thinking of a new user that wants to get the list of all the rows with a check box
+  the user checked on a Sunday. Do the necessary fixes."* The walk stopped at "Which elements › Date & calendar": "Dated
+  on" lists history units, notifications and log entries, never a check box, and the only answer was a typed recipe (Types
+  = search configuration, Where to search › Facts, bar `"Checked: on" sunday`), which no new user finds and which also
+  listed a box unchecked on a Sunday and checked on a Monday.
+- New search configuration **"Checked on"** (`Setting.CheckedOnDays`, `Filters.checkedOnDays`), weekday chips like "Dated
+  on", beside it in Which elements › Date & calendar and in App & history › History. The checks are one structured index
+  (`SearchDomain.checksOf`, built once per histories value), read by it and by the row's "Checked" facts (`checkFacts`).
+  "Dated on"'s info bubble points to it.
+- Persisted shape: one optional field on a stored configuration (`checkedOnDays`); absent = any day (`RandomRequestsTest`).
+  Client rebuild only.
+
 ### The ▾ tree is the layout the user gave — 2026-11-28
 
 - The user had every configuration with a state listed (`search-configurations-for-tree.md`, generated from the code:
