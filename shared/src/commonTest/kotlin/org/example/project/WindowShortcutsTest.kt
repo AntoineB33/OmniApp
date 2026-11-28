@@ -143,17 +143,17 @@ class WindowShortcutsTest {
         val window = SearchDomain.AddedAction.ShortcutWindow
         val delete = SearchDomain.AddedAction.ShortcutDelete
         // One shortcut element: its chord, its window, "New" and the bin.
-        val one = groups(listOf(mapped.first())).single().actions
+        val one = groups(listOf(mapped.first())).single().allActions()
         assertTrue(one.containsAll(listOf(chord, window, new, delete)), one.toString())
         // One of the app's own shortcuts has the same section ("New" among it).
-        assertTrue(groups(listOf(shortcuts.first { it.id == GlobalShortcut.ToggleAway.name })).single().actions.containsAll(listOf(chord, new)))
+        assertTrue(groups(listOf(shortcuts.first { it.id == GlobalShortcut.ToggleAway.name })).single().allActions().containsAll(listOf(chord, new)))
         // Several: "New" and the bin for all of them, the chord and the window each one's own.
         val several = groups(mapped)
-        assertTrue(several.first().actions.containsAll(listOf(new, delete)) && several.first().actions.none { it == chord || it == window })
-        assertTrue(several.drop(1).all { it.actions.containsAll(listOf(chord, window)) })
+        assertTrue(several.first().allActions().containsAll(listOf(new, delete)) && several.first().allActions().none { it == chord || it == window })
+        assertTrue(several.drop(1).all { it.allActions().containsAll(listOf(chord, window)) })
         // The creation row "New keyboard shortcut": "New", and nothing that needs a shortcut that exists.
         val creation = SearchDomain.ItemResult(SearchDomain.Kind.Creation, SearchDomain.Kind.Shortcut.name, "New keyboard shortcut", "")
-        val offered = groups(listOf(creation)).flatMap { it.actions }
+        val offered = groups(listOf(creation)).flatMap { it.allActions() }
         assertTrue(new in offered, offered.toString())
         assertTrue(offered.none { it == chord || it == window || it == delete })
     }

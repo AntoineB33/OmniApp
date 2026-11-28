@@ -123,7 +123,8 @@ class NewElementTimesTest {
         assertTrue(SearchDomain.microGroups(group, "").last() is SearchDomain.MicroGroup.Inner)
         // An action of it answers too, as a text inside it: after an action whose own title answers.
         val alert = SearchDomain.microGroups(group, "alert")
-        assertEquals(SearchDomain.MicroGroup.One(SearchDomain.AddedAction.AlarmAlert), alert[0])
+        // The alarm's own Alert first, in its category "How it rings" (2026-11-28).
+        assertTrue((alert[0] as SearchDomain.MicroGroup.Inner).group.actions.contains(SearchDomain.AddedAction.AlarmAlert), alert[0].toString())
         assertTrue(alert[1] is SearchDomain.MicroGroup.Inner)
     }
 
@@ -136,10 +137,10 @@ class NewElementTimesTest {
         val listed = SearchDomain.listedGroupIds(groups)
         val first = groups.first { it.element }
         val second = groups.last { it.element }
-        val time = SearchDomain.microGroupId(first, SearchDomain.AddedAction.AlarmTime)
+        val time = first.rowIdOf(SearchDomain.AddedAction.AlarmTime)
         // Each action's micro group has an arrow of its own, apart from the same action of another element.
         assertTrue(time in listed)
-        assertTrue(time != SearchDomain.microGroupId(second, SearchDomain.AddedAction.AlarmTime))
+        assertTrue(time != second.rowIdOf(SearchDomain.AddedAction.AlarmTime))
         var config = SearchDomain.withActionGroupToggled(SearchDomain.Config(), time, listed)
         config = SearchDomain.withActionGroupToggled(config, second.id, listed)
         assertEquals(setOf(time, second.id), config.toggledActionRows)

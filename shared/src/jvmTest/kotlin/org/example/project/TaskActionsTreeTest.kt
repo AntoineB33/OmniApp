@@ -94,12 +94,8 @@ class TaskActionsTreeTest {
         val two = groups(listOf(task("a", "gym"), task("b", "run")))
         val kindGroup = two.first { it.kind == Kind.Task && !it.element }
         assertTrue(kindGroup.inner.any { it.title == "How long it takes" }, "the fields over both tasks are grouped too")
-        // An alarm's group is as it was: the categories are a task's.
-        val alarm = SearchDomain.ItemResult(Kind.Alarm, "a1", "Wake up", "")
-        val alarmGroup = SearchDomain.actionGroups(
-            SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), setOf(Kind.Alarm)), listOf(alarm)), listOf(alarm),
-        ).single()
-        assertTrue(alarmGroup.inner.none { it.tag?.startsWith("task-") == true })
+        // An alarm has its own categories and the shared ones, never a task's.
+        assertTrue(groupOf(Kind.Alarm).inner.none { it.tag?.startsWith("task-") == true })
     }
 
     @Test
@@ -111,6 +107,60 @@ class TaskActionsTreeTest {
         )
         val rows = SearchDomain.actionListRows(shown, config, expandAll = true).map { it.title }
         assertTrue("Minimum time" in rows, rows.toString())
+    }
+
+    private fun groupOf(kind: Kind): SearchDomain.ActionGroup {
+        val row = SearchDomain.ItemResult(kind, "x1", "One " + kind.label, "")
+        return SearchDomain.actionGroups(
+            SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), setOf(kind)), listOf(row)), listOf(row),
+        ).single()
+    }
+
+    /** One request about an element of another type: its type, the categories opened, the action used. */
+    private data class KindWalk(val request: String, val kind: Kind, val path: List<String>, val action: AddedAction)
+
+    private val kindWalks = listOf(
+        KindWalk("my wake-up alarm on weekdays only", Kind.Alarm, listOf("When it rings"), AddedAction.AlarmDays),
+        KindWalk("the alarm at 6:45", Kind.Alarm, listOf("When it rings"), AddedAction.AlarmTime),
+        KindWalk("the alarm rings softer, no voice", Kind.Alarm, listOf("How it rings"), AddedAction.AlarmAlert),
+        KindWalk("turn the alarm off", Kind.Alarm, emptyList(), AddedAction.AlarmOnOff),
+        KindWalk("delete this alarm", Kind.Alarm, listOf("Copy, create & delete"), AddedAction.AlarmDelete),
+        KindWalk("start the timer", Kind.Timer, emptyList(), AddedAction.TimerRun),
+        KindWalk("the timer keeps counting past zero", Kind.Timer, listOf("How it rings"), AddedAction.TimerBelowZero),
+        KindWalk("water the plants every 3 days", Kind.Reminder, listOf("When it reminds"), AddedAction.ReminderEvery),
+        KindWalk("the quota restarts every week", Kind.Quota, listOf("Its loop"), AddedAction.QuotaLoop),
+        KindWalk("how far the quota is", Kind.Quota, emptyList(), AddedAction.QuotaProgress),
+        KindWalk("warn me 10 minutes before Sleep", Kind.RestrictivePeriod, listOf("Notifications"), AddedAction.PeriodNotices),
+        KindWalk("put the period on the calendar", Kind.RestrictivePeriod, listOf("Calendar"), AddedAction.PlaceOnCalendar),
+        KindWalk("rename the category", Kind.Category, emptyList(), AddedAction.CategoryName),
+        KindWalk("file the chrono under a category", Kind.Chrono, listOf("Categories, parents & notes"), AddedAction.ElementAddCategory),
+        KindWalk("a note on the shortcut", Kind.Shortcut, listOf("Categories, parents & notes"), AddedAction.ElementMd),
+    )
+
+    @Test
+    fun every_walk_over_another_type_leads_to_its_action() {
+        for (walk in kindWalks) assertEquals(walk.path, pathTo(groupOf(walk.kind), walk.action), walk.request)
+        // "Every new alarm rings 30 s": the default, a row of its own after the categories.
+        val defaults = groupOf(Kind.Alarm).inner.single { it.title == "Default configuration of a new alarm" }
+        assertTrue(AddedAction.AlarmRingsFor in defaults.actions)
+    }
+
+    @Test
+    fun every_type_reads_at_a_glance_and_loses_no_action() {
+        for (kind in Kind.entries.filter { it != Kind.Task }) {
+            val group = groupOf(kind)
+            fun check(g: SearchDomain.ActionGroup) {
+                assertTrue(g.actions.size + g.inner.size <= 15, "$kind › ${g.title}: ${g.actions.size + g.inner.size} rows")
+                g.inner.forEach(::check)
+            }
+            check(group)
+            assertTrue(group.actions.size + group.inner.size <= 11, "$kind top: ${group.actions.size + group.inner.size}")
+            val row = group.members.single()
+            val listed = SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), setOf(kind)), listOf(row))
+                .flatMap { it.second }.toSet()
+            fun all(g: SearchDomain.ActionGroup): Set<AddedAction> = g.actions.toSet() + g.inner.flatMap(::all)
+            assertEquals(emptySet(), listed - all(group), "$kind: listed but reached by no category")
+        }
     }
 
     private fun accountWithTask(): Pair<SchedulerState, org.example.project.scheduler.model.CellId> {

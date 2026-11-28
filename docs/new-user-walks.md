@@ -160,6 +160,39 @@ under the categories above (`SearchDomain.TASK_ACTION_CATEGORIES`, the same funn
 blocks", which now stand inside Copy & create and Calendar). Renaming, adding a sub-task and deleting were keys alone
 (Enter, the arrow then a click, Delete): the right-click names them. "Md elements" reads "Notes (md elements)".
 
+## Every other element's actions
+
+User 2026-11-28: *"Yes, next tree."* Every type's element opened (a row's "edit…", a double-click, "Open") listed its
+own settings, then a dozen rows every element has: New, Duplicate, Delete, Parents, Notes, Add / Remove a category,
+Add to the calendar, Deep copy, Checked blocks. An alarm read 21 rows. The shared rows now stand under three
+categories, **Calendar**, **Copy, create & delete** and **Categories, parents & notes**, and a type with many settings
+groups its own. What says what the element is (its state, title, run, progression) stays at the top. No type opens on
+more than 11 rows. `TaskActionsTreeTest` holds every walk below.
+
+| Request | Thinking | Clicks |
+| --- | --- | --- |
+| my wake-up alarm on weekdays only | "When it rings." | the alarm › **When it rings** › Days |
+| the alarm at 6:45 | "When it rings." | the alarm › When it rings › **Date and time** |
+| the alarm softer, no voice | "How it rings." | the alarm › **How it rings** › Alert |
+| turn the alarm off | "Its state, at the top." | the alarm › **State** |
+| delete this alarm | "The row says delete." | the alarm › **Copy, create & delete** › Delete |
+| every new alarm rings 30 s | "What a new one starts with." | the alarm › **Default configuration of a new alarm** › Rings for |
+| start the timer | "At the top." | the timer › **Run** |
+| the timer keeps counting past zero | "How it rings, when it's done." | the timer › How it rings › **Below zero** |
+| water the plants every 3 days | "When it reminds." | the reminder › **When it reminds** › Every |
+| the quota restarts every week | "Its loop." | the quota › **Its loop** › Loop |
+| how far the quota is | "At the top." | the quota › **Target progression** |
+| warn me 10 minutes before Sleep | "Notifications." | the period › **Notifications** › Notifications before |
+| put the period on the calendar | "Calendar." | the period › **Calendar** › Add to the calendar |
+| rename the category | "At the top." | the category › **Name** |
+| file the chrono under a category | "Categories." | the chrono › **Categories, parents & notes** › Add a category |
+| a note on the shortcut | "Notes." | the shortcut › Categories, parents & notes › **Notes (md elements)** |
+| add an alarm tomorrow at 7 | "Where it rings: the calendar." | right-click the calendar at 7 tomorrow › **add…** › alarm |
+
+*Fixed 2026-11-28:* alarm 21 rows, quota and reminder 19, restrictive period and timer 18 — past the 15 a node may
+hold. A creation row ("New alarm") keeps its few default rows flat, as the default configuration's group does. The
+calendar's own right-click menu (edit…, add…, day…, display…, lock…) was already short and is unchanged.
+
 ## Known gaps, not fixed yet
 
 - **Conditions across types are two walks, not one.** "The alarms changed on a day a timer ran" reads the day off the

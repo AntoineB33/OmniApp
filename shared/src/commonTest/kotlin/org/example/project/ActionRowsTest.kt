@@ -50,13 +50,19 @@ class ActionRowsTest {
         val all = SearchDomain.shownActionGroups(sections(SearchDomain.Config()), added, SearchDomain.Config())
         // Sorting: every group, every action, the answering one first.
         assertEquals(all.map { it.id }, sorted.map { it.id })
-        assertEquals(all.map { it.actions.toSet() }, sorted.map { it.actions.toSet() })
-        assertTrue(sorted.filter { SearchDomain.AddedAction.QuotaDuplicate in it.actions }.all { it.actions.first() == SearchDomain.AddedAction.QuotaDuplicate })
+        assertEquals(all.map { it.allActions().toSet() }, sorted.map { it.allActions().toSet() })
+        // The answering row first, or the category holding it.
+        assertTrue(sorted.filter { SearchDomain.AddedAction.QuotaDuplicate in it.allActions() }.all { g ->
+            when (val first = SearchDomain.microGroups(g, "duplicate").first()) {
+                is SearchDomain.MicroGroup.One -> first.action == SearchDomain.AddedAction.QuotaDuplicate
+                is SearchDomain.MicroGroup.Inner -> SearchDomain.AddedAction.QuotaDuplicate in first.group.allActions()
+            }
+        })
         // Filtering: only the actions answering, and only the groups holding one.
         val filtering = sorting.copy(actionSearchSortsOnly = false)
         val filtered = SearchDomain.shownActionGroups(sections(filtering), added, filtering)
         assertTrue(filtered.isNotEmpty())
-        assertTrue(filtered.all { g -> g.actions.isNotEmpty() && g.actions.all { SearchDomain.actionSearchRank(it, "duplicate") != null } }, filtered.toString())
+        assertTrue(filtered.all { g -> g.allActions().isNotEmpty() && g.allActions().all { SearchDomain.actionSearchRank(it, "duplicate") != null } }, filtered.toString())
         assertTrue(filtered.size <= all.size)
     }
 

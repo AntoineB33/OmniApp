@@ -1454,14 +1454,18 @@ suggestions before it was ever entered.
     `CalendarNotificationsTest`). A set action, so it stands once, in the widest group of notifications — the group
     of every element when they are all notifications — and reads its notifications off that group's members. The
     calendar already showing exactly those is brought back; else a new calendar window opens (`popups.md`).
-  - **A TASK'S ACTIONS ARE A TREE OF PLAIN CATEGORIES** (user 2026-11-28, *"a new user … They don't know in advance
-    where to look, and they don't necessarily read fast"*; `SearchDomain.TASK_ACTION_CATEGORIES`, `withDeepCopyGroup`,
-    `TaskActionsTreeTest`): in a group about tasks (one task's, or the kind's of several), its actions stand under Open
-    & go to, Calendar, How long it takes, Priority, Sub-tasks & place in the tree, Categories, Copy & create — tagged
-    groups like "Deep copy", which stands inside Copy & create, as "Checked blocks" stands inside Calendar. A category
-    that would hold one row is not made: the row stays where it was. Every node holds at most 15 rows; the top about
-    ten. The actions' search bar still finds a row inside a category (`shownActionGroups` filters inner groups). A
-    new task action goes in a category, or the test lists it as reached by none.
+  - **AN ELEMENT'S ACTIONS ARE A TREE OF PLAIN CATEGORIES** (user 2026-11-28, *"a new user … They don't know in
+    advance where to look, and they don't necessarily read fast"*; `SearchDomain.actionCategoriesOf`, `withDeepCopyGroup`,
+    `TaskActionsTreeTest`): in a group about one kind (one element's, or the kind's of several), its actions stand under
+    categories — tagged groups like "Deep copy". A task's are its own (`TASK_ACTION_CATEGORIES`: Open & go to, Calendar,
+    How long it takes, Priority, Sub-tasks & place in the tree, Categories, Copy & create). Any other kind's are its own
+    few where its settings are many (`KIND_ACTION_CATEGORIES`: When it rings, How it rings, When it reminds, Its loop,
+    Notifications), then the three every element shares (`SHARED_ACTION_CATEGORIES`: Calendar, holding Checked blocks;
+    Copy, create & delete, holding Deep copy; Categories, parents & notes). What says what the element is stays at the
+    top. A category that would hold one row is not made; a creation row's group and the default configuration's are
+    left flat. Every node holds at most 15 rows, every kind's top at most 11. The actions' search bar still finds a row
+    inside a category (`shownActionGroups` filters inner groups). A new action goes in a category, or the test lists it
+    as reached by none.
   - **Two sorts of action** (`SearchDomain.isSetAction`): about a SET as such — the general ones, New / Duplicate /
     Delete, the bulk commands (`SET_ACTIONS`), an app setting's — and an element's OWN configuration (its title, where
     it stands, its settings). A set action is listed once, in the widest group it applies to; an own one in each

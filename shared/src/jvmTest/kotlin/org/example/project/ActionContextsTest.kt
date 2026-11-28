@@ -114,7 +114,8 @@ class ActionContextsTest {
 
     private fun actionRows(added: List<SearchDomain.Result>, config: SearchDomain.Config): List<SearchDomain.ActionListRow> {
         val sections = SearchDomain.actionsFor(SearchDomain.addedActions(config.actionQuery, Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added)
-        return SearchDomain.actionListRows(SearchDomain.shownActionGroups(sections, added, config, ClaudeLogCatalog.EMPTY), config)
+        // Every row listed, open or not: "Parents" stands inside its category (2026-11-28).
+        return SearchDomain.actionListRows(SearchDomain.shownActionGroups(sections, added, config, ClaudeLogCatalog.EMPTY), config, expandAll = true)
     }
 
     /**
@@ -124,8 +125,14 @@ class ActionContextsTest {
     @Test
     fun the_section_shows_the_contexts_of_an_action_added_to_its_own_list() {
         val elements = listOf("a", "b", "c", "d", "e").map(::key)
-        val window = SearchDomain.Config(kinds = setOf(Kind.Chrono), added = elements, actionsExpanded = true)
-        val parents = actionRows(rows("a", "b", "c", "d", "e"), window).first { it.action == AddedAction.ElementParents && it.group.members.size == 5 }
+        val five = rows("a", "b", "c", "d", "e")
+        // "Parents" stands in "Categories, parents & notes" (2026-11-28): that row open, as a user opens it.
+        val window = withActionRowOpen(
+            SearchDomain.Config(kinds = setOf(Kind.Chrono), added = elements, actionsExpanded = true),
+            SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), SearchDomain.actionKindsOf(five)), five), five,
+            AddedAction.ElementParents,
+        )
+        val parents = actionRows(five, window).first { it.action == AddedAction.ElementParents && it.group.members.size == 5 }
         val ownAdded = listOf(SearchDomain.ItemResult(Kind.Action, parents.key, parents.title, parents.detail))
         val contextsRow = actionRows(ownAdded, window).first { it.action == AddedAction.ActionContexts }
         val own = ACTIONS_SECTION_OWN.copy(added = listOf(Kind.Action.name + "/" + parents.key), toggledActionRows = setOf(contextsRow.id))
@@ -143,8 +150,14 @@ class ActionContextsTest {
     @Test
     fun each_pair_is_a_row_with_its_context_and_states_rows() {
         val elements = listOf("a", "b", "c", "d", "e").map(::key)
-        val window = SearchDomain.Config(kinds = setOf(Kind.Chrono), added = elements, actionsExpanded = true)
-        val parents = actionRows(rows("a", "b", "c", "d", "e"), window).first { it.action == AddedAction.ElementParents && it.group.members.size == 5 }
+        val five = rows("a", "b", "c", "d", "e")
+        // "Parents" stands in "Categories, parents & notes" (2026-11-28): that row open, as a user opens it.
+        val window = withActionRowOpen(
+            SearchDomain.Config(kinds = setOf(Kind.Chrono), added = elements, actionsExpanded = true),
+            SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), SearchDomain.actionKindsOf(five)), five), five,
+            AddedAction.ElementParents,
+        )
+        val parents = actionRows(five, window).first { it.action == AddedAction.ElementParents && it.group.members.size == 5 }
         val ownAdded = listOf(SearchDomain.ItemResult(Kind.Action, parents.key, parents.title, parents.detail))
         val contextsRow = actionRows(ownAdded, window).first { it.action == AddedAction.ActionContexts }
         val own = ACTIONS_SECTION_OWN.copy(added = listOf(Kind.Action.name + "/" + parents.key), toggledActionRows = setOf(contextsRow.id))

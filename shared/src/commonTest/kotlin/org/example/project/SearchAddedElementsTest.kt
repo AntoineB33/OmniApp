@@ -392,34 +392,35 @@ class SearchAddedElementsTest {
         assertEquals(listOf(listOf(a, b), listOf(a), listOf(b)), two.map { it.members })
         assertEquals(listOf(false, true, true), two.map { it.element })
         assertEquals(listOf("Quota  ·  2", "Quota: Sport", "Quota: Reading"), two.map { it.title })
-        assertTrue(two[0].actions.containsAll(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.QuotaDuplicate, SearchDomain.AddedAction.QuotaDelete)))
+        assertTrue(two[0].allActions().containsAll(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaNew, SearchDomain.AddedAction.QuotaDuplicate, SearchDomain.AddedAction.QuotaDelete)))
         // "There must also be a title field to rename every added quota elements at the same time, among other
         // things": the fields that write to both — but not where each one stands, which is each one's.
-        assertTrue(two[0].actions.containsAll(listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop)))
-        assertTrue(two[0].actions.none { it in SearchDomain.PER_ELEMENT_ACTIONS })
-        assertTrue(two[0].actions.indexOf(SearchDomain.AddedAction.QuotaTitle) > two[0].actions.indexOf(SearchDomain.AddedAction.QuotaDelete))
+        assertTrue(two[0].allActions().containsAll(listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop)))
+        assertTrue(two[0].allActions().none { it in SearchDomain.PER_ELEMENT_ACTIONS })
+        // The bin is found at a glance (anomaly 2026-10-04): since 2026-11-28 a top row of the group names it, "Copy, create & delete".
+        assertTrue(two[0].inner.any { it.title == "Copy, create & delete" && SearchDomain.AddedAction.QuotaDelete in it.actions })
         // "The first group should have the configurations for the default configurations of the quota elements".
         // User 2026-11-26: beside it, the "Deep copy" group every element has.
-        val defaults = two[0].inner.single { it.tag == null }
+        val defaults = two[0].inner.single { it.tag == null && it.heading?.startsWith("Default configuration") == true }
         assertEquals("Default configuration of a new quota", defaults.title)
         assertEquals(SearchDomain.Kind.Creation to SearchDomain.Kind.Quota.name, (defaults.members.single() as SearchDomain.ItemResult).let { it.kind to it.id })
         assertEquals(
             listOf(SearchDomain.AddedAction.QuotaTitle, SearchDomain.AddedAction.QuotaAmount, SearchDomain.AddedAction.QuotaLoop, SearchDomain.AddedAction.QuotaRestarts, SearchDomain.AddedAction.QuotaResilience),
             defaults.actions,
         )
-        assertTrue(two.drop(1).all { g -> g.inner.all { it.tag == SearchDomain.DEEP_COPY_GROUP } })
+        assertTrue(two.drop(1).all { g -> g.inner.all { it.tag != null } })
         for (own in two.drop(1)) {
             assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaTitle), own.actions.take(3), "open / remove, where it stands, then what it is called")
-            assertTrue(SearchDomain.AddedAction.QuotaAmount in own.actions && SearchDomain.AddedAction.QuotaLoop in own.actions)
-            assertTrue(own.actions.drop(1).none(SearchDomain::isSetAction), "what is about both is said once, in their group")
+            assertTrue(SearchDomain.AddedAction.QuotaAmount in own.actions && SearchDomain.AddedAction.QuotaLoop in own.allActions())
+            assertTrue(own.allActions().drop(1).none(SearchDomain::isSetAction), "what is about both is said once, in their group")
         }
         // Nothing is lost.
         val listed =
             SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), setOf(SearchDomain.Kind.Quota)), listOf(a, b))
                 .flatMap { it.second }
         // The "Deep copy" rows are in a group of their own inside the group (user 2026-11-26: every element has them).
-        val deepCopy = two[0].inner.filter { it.tag == SearchDomain.DEEP_COPY_GROUP }.flatMap { it.actions }
-        assertEquals(listed.toSet(), (two[0].actions + two[1].actions + deepCopy).toSet())
+        // Since 2026-11-28, the rest stand inside categories: read down through them.
+        assertEquals(listed.toSet(), (two[0].allActions() + two[1].allActions()).toSet())
 
         // One quota: one group — "Open" and "Remove from list" (user rule 2026-10-13: the first micro group of EACH
         // macro group), its progression, its title, its other settings, then "New" and the rest.
@@ -427,9 +428,9 @@ class SearchAddedElementsTest {
         assertTrue(one.element)
         assertEquals("Quota: Sport", one.title)
         assertEquals(listOf(SearchDomain.AddedAction.OpenEach, SearchDomain.AddedAction.QuotaProgress, SearchDomain.AddedAction.QuotaTitle), one.actions.take(3))
-        assertTrue(one.actions.indexOf(SearchDomain.AddedAction.QuotaNew) > one.actions.indexOf(SearchDomain.AddedAction.QuotaLoops), "its own configuration before the buttons about quotas")
+        assertTrue(one.inner.indexOfFirst { SearchDomain.AddedAction.QuotaNew in it.actions } > one.inner.indexOfFirst { SearchDomain.AddedAction.QuotaLoops in it.actions }, "its own configuration before the buttons about quotas")
         assertEquals(1, one.actions.count { it == SearchDomain.AddedAction.OpenEach })
-        assertTrue(SearchDomain.AddedAction.QuotaDelete in one.actions)
+        assertTrue(SearchDomain.AddedAction.QuotaDelete in one.allActions())
 
         // Mixed: every element, then the kind holding several of them, then each element — the lone alarm's group
         // holding the alarms' own buttons too.
@@ -451,10 +452,10 @@ class SearchAddedElementsTest {
         assertEquals(SearchDomain.AddedAction.QuotaTitle, searched[1].actions.first(), "the quotas' title answers \"title\"")
         assertTrue(searched.all { SearchDomain.AddedAction.OpenEach in it.actions }, "sorted, never hidden")
         assertEquals(SearchDomain.AddedAction.OpenEach, SearchDomain.actionGroups(SearchDomain.actionsFor(SearchDomain.addedActions("", SearchDomain.Kind.entries.toSet(), SearchDomain.actionKindsOf(listOf(a, x, b))), listOf(a, x, b)), listOf(a, x, b), "remove from list")[1].actions.first())
-        assertTrue(SearchDomain.AddedAction.QuotaNew in mixed[1].actions && SearchDomain.AddedAction.QuotaNew !in mixed[2].actions)
+        assertTrue(SearchDomain.AddedAction.QuotaNew in mixed[1].allActions() && SearchDomain.AddedAction.QuotaNew !in mixed[2].allActions())
         assertTrue(SearchDomain.AddedAction.QuotaTitle in mixed[1].actions && mixed[1].inner.count { it.tag == null } == 1 && mixed[0].inner.none { it.tag == null })
         assertEquals(SearchDomain.AddedAction.AlarmOnOff, mixed[3].actions[1])
-        assertTrue(SearchDomain.AddedAction.AlarmNew in mixed[3].actions && SearchDomain.AddedAction.AlarmDelete in mixed[3].actions)
+        assertTrue(SearchDomain.AddedAction.AlarmNew in mixed[3].allActions() && SearchDomain.AddedAction.AlarmDelete in mixed[3].allActions())
 
         // A "New quota" creation row beside a quota: its own group edits the default configuration, nothing else.
         val creation = SearchDomain.ItemResult(SearchDomain.Kind.Creation, SearchDomain.Kind.Quota.name, "New quota", "")

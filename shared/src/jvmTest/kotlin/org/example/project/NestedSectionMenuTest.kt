@@ -51,14 +51,20 @@ class NestedSectionMenuTest {
 
     private fun actionRows(added: List<SearchDomain.Result>, config: SearchDomain.Config): List<SearchDomain.ActionListRow> {
         val sections = SearchDomain.actionsFor(SearchDomain.addedActions(config.actionQuery, Kind.entries.toSet(), SearchDomain.actionKindsOf(added)), added)
-        return SearchDomain.actionListRows(SearchDomain.shownActionGroups(sections, added, config, ClaudeLogCatalog.EMPTY), config)
+        // Every row listed, open or not: "Parents" stands inside its category (2026-11-28).
+        return SearchDomain.actionListRows(SearchDomain.shownActionGroups(sections, added, config, ClaudeLogCatalog.EMPTY), config, expandAll = true)
     }
 
     @Test
     fun the_background_of_an_actions_section_of_an_actions_section_has_three_groups() {
         val elements = listOf("Chrono/a", "Chrono/b")
-        val window = SearchDomain.Config(kinds = setOf(Kind.Chrono), added = elements, actionsExpanded = true)
         val rows = SearchDomain.resolve(account, elements, { emptyMap() })
+        // "Parents" stands in "Categories, parents & notes" (2026-11-28): that row open, as a user opens it.
+        val window = withActionRowOpen(
+            SearchDomain.Config(kinds = setOf(Kind.Chrono), added = elements, actionsExpanded = true),
+            SearchDomain.actionsFor(SearchDomain.addedActions("", Kind.entries.toSet(), SearchDomain.actionKindsOf(rows)), rows), rows,
+            AddedAction.ElementParents,
+        )
         val parents = actionRows(rows, window).first { it.action == AddedAction.ElementParents && it.group.members.size == 2 }
         val own = ACTIONS_SECTION_OWN.copy(added = listOf(Kind.Action.name + "/" + parents.key))
         val initial = window.copy(inside = mapOf("/actions" to own.encode()))

@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### Every element's actions in categories — 2026-11-28
+
+- User: *"Yes, next tree"* (`docs/new-user-walks.md` § *Every other element's actions*, 16 more walks in
+  `TaskActionsTreeTest`). Every kind's element listed a dozen shared rows after its own settings (alarm 21 rows, quota
+  and reminder 19, period and timer 18). They stand under **Calendar**, **Copy, create & delete** and **Categories,
+  parents & notes** (`SearchDomain.SHARED_ACTION_CATEGORIES`); alarms add When it rings / How it rings, timers How it
+  rings, reminders When it reminds, quotas Its loop, periods Notifications (`KIND_ACTION_CATEGORIES`). No kind opens
+  on more than 11 rows. A creation row's group stays flat.
+- Nothing persisted changes shape. Client rebuild only.
+
 ### The task tree for a new user: a task's actions in categories, the row menu's own edits — 2026-11-28
 
 - User: *"Start with adjusting the task tree with particular situations"* (`docs/new-user-walks.md` § *The task

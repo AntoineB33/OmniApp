@@ -7480,10 +7480,12 @@ object SearchDomain {
             made += ActionGroup(group.kind, group.members, taken, heading = title, tag = tag)
             actions = actions.filterNot { it in taken }
         }
-        // User 2026-11-28: a task's actions as a tree of what a new user is after — a task's own group, a kind's of tasks.
+        // User 2026-11-28: an element's actions as a tree of what a new user is after — its own group, a kind's of several.
         val categories = ArrayList<ActionGroup>()
-        if (group.kind == Kind.Task && group.heading == null && group.tag == null && !group.contents) {
-            for (category in TASK_ACTION_CATEGORIES) {
+        // Not a creation row's: what a new one starts with is a few rows, read as the default configuration's inner group is.
+        val creation = group.members.isNotEmpty() && group.members.all { it.kind == Kind.Creation }
+        if (group.kind != null && group.heading == null && group.tag == null && !group.contents && !creation) {
+            for (category in actionCategoriesOf(group.kind)) {
                 val taken = category.actions.filter { it in actions }
                 val groups = made.filter { it.tag in category.groups }
                 // A category of one row is a click for nothing: the row stays where it was.
@@ -7497,7 +7499,63 @@ object SearchDomain {
         return group.copy(actions = actions, inner = categories + made + inner)
     }
 
-    /** One category of a task's actions ([TASK_ACTION_CATEGORIES]): its tag, its title, its rows, and the tagged groups it holds. */
+    /**
+     * User 2026-11-28: **the categories an element's actions stand under** — a task's own ([TASK_ACTION_CATEGORIES]); any
+     * other kind's own few ([KIND_ACTION_CATEGORIES]), then the three every element shares ([SHARED_ACTION_CATEGORIES]).
+     * What says what the element IS (its state, title, run) stays at the top, where it was.
+     */
+    fun actionCategoriesOf(kind: Kind): List<ActionCategory> =
+        if (kind == Kind.Task) TASK_ACTION_CATEGORIES else KIND_ACTION_CATEGORIES[kind].orEmpty() + SHARED_ACTION_CATEGORIES
+
+    /** User 2026-11-28: a kind's own categories, where its own settings are many ([actionCategoriesOf]). */
+    val KIND_ACTION_CATEGORIES: Map<Kind, List<ActionCategory>> = mapOf(
+        Kind.Alarm to listOf(
+            ActionCategory(
+                "alarm-when", "When it rings",
+                listOf(AddedAction.AlarmTime, AddedAction.AlarmDays, AddedAction.AlarmRepeat, AddedAction.AlarmTimeNow),
+            ),
+            ActionCategory("alarm-how", "How it rings", listOf(AddedAction.AlarmRingsFor, AddedAction.AlarmAlert)),
+        ),
+        Kind.Timer to listOf(
+            ActionCategory("timer-how", "How it rings", listOf(AddedAction.TimerRingsFor, AddedAction.TimerBelowZero, AddedAction.TimerAlert)),
+        ),
+        Kind.Reminder to listOf(
+            ActionCategory(
+                "reminder-when", "When it reminds",
+                listOf(AddedAction.ReminderEvery, AddedAction.ReminderTime, AddedAction.ReminderTimeNow, AddedAction.ReminderConstraint),
+            ),
+        ),
+        Kind.Quota to listOf(
+            ActionCategory("quota-loop", "Its loop", listOf(AddedAction.QuotaLoop, AddedAction.QuotaRestarts, AddedAction.QuotaLoops)),
+        ),
+        Kind.RestrictivePeriod to listOf(
+            ActionCategory("period-notices", "Notifications", listOf(AddedAction.PeriodNotices, AddedAction.PeriodTellsTimeline)),
+        ),
+    )
+
+    /**
+     * User 2026-11-28: **the categories every element shares**, the rows that stood as a dozen after its own settings: put
+     * on the calendar; make, copy, delete; what it is filed under and what is written about it.
+     */
+    val SHARED_ACTION_CATEGORIES: List<ActionCategory> by lazy {
+        listOf(
+            ActionCategory(
+                "calendar", "Calendar", listOf(AddedAction.PlaceOnCalendar, AddedAction.DragOnCalendar), groups = setOf(BLOCKS_GROUP),
+            ),
+            ActionCategory(
+                "copy", "Copy, create & delete",
+                AddedAction.entries.filter { it.label == "New" || it.label == "Duplicate" || it.label == "Delete" } +
+                    AddedAction.PeriodReset,
+                groups = setOf(DEEP_COPY_GROUP),
+            ),
+            ActionCategory(
+                "filed", "Categories, parents & notes",
+                listOf(AddedAction.ElementAddCategory, AddedAction.ElementRemoveCategory, AddedAction.ElementParents, AddedAction.ElementMd),
+            ),
+        )
+    }
+
+    /** One category of an element's actions ([actionCategoriesOf]): its tag, its title, its rows, and the tagged groups it holds. */
     class ActionCategory(val tag: String, val title: String, val actions: List<AddedAction>, val groups: Set<String> = emptySet())
 
     /**
