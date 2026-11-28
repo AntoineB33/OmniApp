@@ -99,3 +99,33 @@ wanted, the scheduler's plan as a `rules_generation` text reversed on each re-pl
   a window of ~2 × radius lattice positions for every local check, thousands of times — 10–20 s for the worst of the
   property test's 30 cases (Python's whole suite is ~7 min). The window closure was moved to primitive flags (16 s →
   11.5 s on the worst case, same answers); the rest is algorithmic.
+
+## 2026-11-28: the reference grew; the port follows it (`scheduler/ruleline/`)
+
+The user asked that `docs/scheduler/scheduler_requirements.md` be satisfied, and chose to start the rule engine. Since the
+phase-1 port, `C:\code\line_manager` replaced `reverse_logic/` with `scripts/` (~15k lines): percentages and percentage
+rules, element rules anchored at p or at l, mode rules, positions x + kε with ε periods, lazy regions, the rules
+generator and its scripts, the instant schedule, the pace, the probability finder and the memory limit — the
+requirements' whole model, which OmniApp's scheduler only approximates by hand (`BreakMachine`, the fill).
+
+Decision: **port `scripts/` layer by layer into `shared/.../scheduler/ruleline/`, each layer held to golden files the
+reference writes** (`scripts/ruleline-golden.py`), the same discipline as phase 1. The old `scheduler/line/` port stays
+until `ruleline` covers what it does, then goes. Order, from the dependency graph of `scripts/`:
+
+1. `intervals.py`, `region.py` → `Positions.kt`, `Region.kt` — **done** (`RuleLineGoldenTest`).
+2. `rules.py` → `Rules.kt` — **done**, without `parse_rules`'s satisfiability check, which is the solver's
+   (`RuleLanguageGoldenTest`: the reference's 309 rule texts, random ones, rule sets, left sides read on values).
+3. `solver.py`, `sweep.py` (the line of a set of claims; the choices on lattices or by a sweep), then `line.py`.
+4. `resolve.py`, `guards.py`, `constraints.py`, `problems.py`, `state_delta.py` (user edits win, the fewest changed).
+5. `mode_rules.py`, `modes.py`, `script.py`, `script_text.py`, `script_python.py`, `watch.py` (the generated script).
+6. `score.py`, `score_search.py`, `ratio_plan.py`, `instant.py`, `pace.py`, `probability.py`, `generator.py`,
+   `simulation.py` (the generator, the two schedulers, the paces, the probability finder).
+7. Wiring: the calendar's elements and the default rules (`docs/scheduler/default_scheduler_rules.md`) written as rules,
+   the scheduler replaced, `scheduler/line/` removed.
+
+Where the two requirement files differ, OmniApp's is the one to satisfy; the reference's `requirement.md` still has the
+older wording of 2026-11-28's edits (positions over the reals; an "or" decided leftmost only when no optimization goal
+breaks the tie; randomness allowed in optimization; the switch to small intervals after N ε-steps or a cycle) and of the
+two schedulers. Those land in the reference first (`docs/invariants/line.md`), then in the port.
+
+Coordinates stay `Rational` over `Long` (throwing on overflow) where the reference has unbounded `Fraction`s.

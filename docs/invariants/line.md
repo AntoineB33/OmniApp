@@ -20,6 +20,13 @@ are the reference's `SEMANTICS.md`; the names and the order of every decision fo
 - **Coordinates are exact.** Never route a position through a `Double`: "move then move back" relies on
   `(x + d) - d == x`. `Rational` throws on `Long` overflow rather than wrapping.
 
+### The second port: `scheduler/ruleline/` (2026-11-28)
+
+→ ADR 0018 § *2026-11-28*. The reference replaced `reverse_logic/` with `scripts/`; `ruleline` ports it layer by layer
+(positions x + kε, regions, the rule language so far), each layer held to `scripts/ruleline-golden.py`'s files
+(`RuleLineGoldenTest`, `RuleLanguageGoldenTest`). The same rules as the first port: the reference decides, no fast path
+that answers differently, coordinates exact. `scheduler/line/` stays until `ruleline` covers it.
+
 ### The line is a function of the ordered active edits
 
 - **The line is never stored as truth**: it is recomputed from the active edits (§ 1 of `SEMANTICS.md`). Two

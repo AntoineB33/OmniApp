@@ -11,6 +11,19 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The rule engine: line_manager's current model ported, first layers — 2026-11-28
+
+- User: *"Make sure docs\scheduler_requirements.md is satisfied"*, then *"Start the rule engine"*. The audit found the
+  requirements' model (the line, element/percentage/mode rules, the generated script, the two schedulers, the
+  probability finder) is implemented in `C:\code\line_manager\scripts`, not in OmniApp: the app's scheduler is a
+  hand-made approximation and the `scheduler/line/` port is of the reference's older `reverse_logic`.
+- New `scheduler/ruleline/` (not wired yet): positions x + kε and interval sets (`Positions.kt`), regions with periodic
+  and ε-periodic tails, lazy when two tails repeat together only after a week (`Region.kt`), and the rule language —
+  percentage rules, element rules anchored at p or l, mode rules, the rule set's order, cycles and choice analysis
+  (`Rules.kt`). Held to the reference by `RuleLineGoldenTest` and `RuleLanguageGoldenTest` (golden files written by
+  `scripts/ruleline-golden.py`). Next: the solver and the sweep (ADR 0018 § *2026-11-28*).
+- Nothing persisted or synced. No deploy needed.
+
 ### Every element's actions in categories — 2026-11-28
 
 - User: *"Yes, next tree"* (`docs/new-user-walks.md` § *Every other element's actions*, 16 more walks in
