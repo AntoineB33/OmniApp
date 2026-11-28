@@ -11,6 +11,15 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The rule engine's 20 s break follows the user's rule — 2026-11-28
+
+- User: *"Yes, fix the reference"*. `C:\code\line_manager\scripts\constraints.py`'s `ScreenBreaks` gains `own` (default
+  `Break20s`): such a kind is barred for its pause only after a break of its own kind or one it fell due in (the
+  app's chain rule), never by other "no screen", so
+  a 20 s break comes on return from any absence (`default_scheduler_rules.md`, user rule 2026-10-05); its text is
+  "none within P after a K" (`script_text.py`, `script_python.py`). Ported to `ruleline` (`Constraints.kt`,
+  `ScriptText.kt`); golden files regenerated with `screen_own` cases. Not on any path of the app: no deploy needed.
+
 ### The rule engine's breaks measured against BreakMachine — 2026-11-28
 
 - User: *"Yes, the breaks next"*. `BreakRulesShadowTest` (skipped unless `OMNIAPP_SHADOW_DB` names a copy) places the

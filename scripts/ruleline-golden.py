@@ -701,6 +701,7 @@ def layer5_eval(case):
             "max": lambda: MaximumGap("B2", P, after="N", at_least=L),
             "breaks": lambda: Breaks("B3", "N", L, P),
             "screen": lambda: ScreenBreaks((("B1", L, P), ("B2", 2 * L, 3 * P), ("B3", 3 * L, 6 * P)), "N", ("B2", "B3")),
+            "screen_own": lambda: ScreenBreaks((("B1", L, P), ("B2", 2 * L, 3 * P), ("B3", 3 * L, 6 * P)), "N", ("B2", "B3"), own=("B1",)),
             "keep": lambda: KeepOn(Op.put("B1", Region.of(Interval(F(1), F(1) + L, False, True)))),
         }
         ks = list(expand([cons[n]() for n in case["cons"]]))
@@ -839,6 +840,7 @@ def _script_texts():
                          AsEarlyAsPossible("B1", F(2)), AsEarlyAsPossible("B2"), MaximumGap("B2", F(9), after="N", at_least=F(3)),
                          MaximumGap("B1", F(4), length=F(2)), Breaks("B3", "N", F(2), F(9)),
                          ScreenBreaks((("B1", F(1), F(4)), ("B2", F(3), F(12))), "N", ("B1", "B2")),
+                         ScreenBreaks((("B1", F(1), F(4)), ("B2", F(3), F(12))), "N", ("B2",), own=("B1",)),
                          KeepOn(Op.put("B1", Region.of(Interval(F(1), F(3), False, True))))], R.randint(0, 3))
         sc = Script.of(evs)
         sc = _replace(sc, constraints=tuple(cons), covered=[(Pos(F(R.randint(0, 5))), Pos(F(R.randint(6, 12))), R.choice([None, "1"]))],
@@ -872,8 +874,8 @@ def main_layer5():
                 continue
             out.append((R.choice(kinds), R.choice(["user", "user", "generated"]), region_json(g)))
         return out
-    for _ in range(60):
-        cons = R.sample(["min", "early", "max", "breaks", "screen", "keep"], R.randint(1, 3))
+    for _ in range(80):
+        cons = R.sample(["min", "early", "max", "breaks", "screen", "screen_own", "keep"], R.randint(1, 3))
         cases.append({"k": "constraints", "texts": BREAK_RULES, "claims": rclaims(["N", "B1", "B2"], R.randint(0, 4)),
                       "chip": str(R.randint(-2, 10)), "L": str(R.choice([1, 2, 3])), "P": str(R.choice([4, 6, 10])), "cons": cons,
                       "pull": R.random() < 0.5})

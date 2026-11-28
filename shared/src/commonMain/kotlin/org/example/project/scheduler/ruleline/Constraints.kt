@@ -981,8 +981,11 @@ class Breaks(val brk: String = "Break15", val ns: String = "NoScreen", val lengt
 /**
  * Several kinds of screen breaks, each (kind, length, pause), all with "no screen": one after the other, each as early
  * as allowed, the longer of two that could start at the same position; none of a kind within its pause after as
- * much "no screen"; a break never overlaps nor touches another or a ruled-out position; one that would start inside
- * a "no screen" period with no break yet starts at its start; [chain]: a chain of those kinds is its longest break.
+ * much "no screen" — a kind in [own] only after a break of its own kind or one it fell due in (it joined it: OmniApp's
+ * 20 s break, barred 20 minutes after a 20 s break or the 5min break it fell due during, and by nothing else, so one
+ * comes on return from any absence); a break never overlaps nor
+ * touches another or a ruled-out position; one that would start inside a "no screen" period with no break yet
+ * starts at its start; [chain]: a chain of those kinds is its longest break.
  */
 class ScreenBreaks(
     breaks: List<Triple<String, Rational, Rational>> = listOf(
@@ -993,9 +996,11 @@ class ScreenBreaks(
     val ns: String = "NoScreen",
     chain: Collection<String> = listOf("Break5", "Break15"),
     var rules: RuleSet? = null,
+    own: Collection<String> = listOf("Break20s"),
 ) : Constraint {
     val kindsOf: List<Triple<String, Rational, Rational>> = breaks.toList()
     val chain: Set<String> = chain.toSet()
+    val own: Set<String> = own.toSet() intersect kindsOf.map { it.first }.toSet()
 
     init {
         require(kindsOf.isNotEmpty() && kindsOf.none { it.second.sign <= 0 || it.third.sign < 0 }) { "breaks: (kind, length > 0, pause >= 0), at least one" }
@@ -1008,7 +1013,7 @@ class ScreenBreaks(
     }
 
     override fun toString(): String {
-        val parts = kindsOf.joinToString(", ") { (k, l, p) -> "$k of ${fmtNum(l)} (none within ${fmtNum(p)} after as much $ns)" }
+        val parts = kindsOf.joinToString(", ") { (k, l, p) -> "$k of ${fmtNum(l)} (none within ${fmtNum(p)} after " + (if (k in own) "a $k)" else "as much $ns)") }
         val ch = if (chain.isNotEmpty()) "; a chain of ${chain.sorted().joinToString(", ")} is its longest break" else ""
         return "keep $parts with $ns, as early as possible$ch"
     }
@@ -1074,15 +1079,22 @@ class ScreenBreaks(
             }
         }
         placed.sortBy { it.second }
-        val key = listOf(c, known, ruled, placed.toList())
-        breaksCache.firstOrNull { (k2, _) -> k2[0] == key[0] && k2[3] == key[3] && k2[1] == key[1] && k2[2] == key[2] }?.let { return it.second }
-        val v = sweep(c, known, ruled, placed)
+        // (an [own] kind: its breaks that ended before the chip, within its pause: what bars it there)
+        val past = ArrayList<Triple<Int, Pos, Pos>>()
+        for ((i, kk) in kindsOf.withIndex()) {
+            val (k, l, p) = kk
+            if (k !in own) continue
+            for (iv in state.line.presence(k).on(c - l - p - 1, c).intervals) if (!(iv.lo < c && c < iv.hi)) past.add(Triple(i, iv.lo, iv.hi))
+        }
+        val key = listOf(c, known, ruled, placed.toList(), past.toList())
+        breaksCache.firstOrNull { (k2, _) -> k2[0] == key[0] && k2[3] == key[3] && k2[4] == key[4] && k2[1] == key[1] && k2[2] == key[2] }?.let { return it.second }
+        val v = sweep(c, known, ruled, placed, past)
         breaksCache.add(0, key to v)
         while (breaksCache.size > CACHE) breaksCache.removeAt(breaksCache.size - 1)
         return v
     }
 
-    private fun sweep(cp: Pos, known: Region, ruled: List<Region>, placed: MutableList<Triple<Int, Pos, Pos>>): Map<String, Region> {
+    private fun sweep(cp: Pos, known: Region, ruled: List<Region>, placed: MutableList<Triple<Int, Pos, Pos>>, past: List<Triple<Int, Pos, Pos>> = emptyList()): Map<String, Region> {
         val k = kindsOf
         val c = cp
         val maxL = k.maxOf { it.second }
@@ -1143,19 +1155,34 @@ class ScreenBreaks(
         }
 
         fun allowed(i: Int, t0: Pos): Pos {
-            val (_, l, pp) = k[i]
+            val (kind, l, pp) = k[i]
+            val mine = kind in own
             var t = t0
             var changed = true
             while (changed) {
                 checkpoint()
                 changed = false
+                if (mine) { // (its pause: after a break of its own kind, or one it fell due in, and nothing else)
+                    for ((_, pa, pe) in past.filter { it.first == i } + recent(t - pp - 1).filter { it.first == i }) {
+                        if (pe <= t && t < pe + pp) {
+                            t = pe + pp
+                            changed = true
+                        }
+                    }
+                    for ((j, pa, pe) in recent(t)) {
+                        if (j != i && pa <= t && t <= pe) { // (due inside another break, or at its end: it joined it)
+                            t = pe + pp
+                            changed = true
+                        }
+                    }
+                }
                 for ((a, e) in periods(t - w, t + l + 1)) {
                     val lng = (e - a).x >= l
-                    if (lng && e < t && t < e + pp) {
+                    if (lng && e < t && t < e + pp && !mine) {
                         t = e + pp
                         changed = true
                     } else if (a < t && t <= e && recent(a).any { (_, pa, pe) -> a <= pa && pe <= e }) {
-                        t = if (lng) e + pp else e + Pos.EPS
+                        t = if (lng && !mine) e + pp else e + Pos.EPS
                         changed = true
                     }
                 }

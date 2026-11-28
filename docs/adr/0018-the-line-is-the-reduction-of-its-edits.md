@@ -168,7 +168,15 @@ until `ruleline` covered what it did, then went (step 7). Order, from the depend
      start. The 5-min and 15-min breaks are identical (28/28 each, the pull to a period's start included). The 20 s
      break differs after every night, by one rule: the reference bars a break kind for its pause after ANY "no screen"
      as long as it, so no 20 s break for 20 min after waking; the app bars the 20 s only after a 20 s break (user rule
-     2026-10-05, `default_scheduler_rules.md`) and takes one on return. The reference is the one off the user's rules.
+     2026-10-05, `default_scheduler_rules.md`) and takes one on return. The reference was the one off the user's rules;
+     fixed there at the user's word (`ScreenBreaks.own`: a kind whose pause follows only its own breaks, the frozen
+     past's included, or a break it fell due in — the app's chain rule; `Break20s` by default, written "none within P
+     after a K"), then ported. Measured again from a start at a screen (four nights): the first night's eve
+     identical break for break; after each night every break 20 s later in the rule engine, which measures the
+     5-min break's hour from the end of the 20 s break taken on return (it touches the night, and a break is "no
+     screen" there) where the app measures it from the night's end. Whether a break is "no screen" is the user's
+     call, with the 5-min question. Not ported: the frozen past's other kinds, for the joined rule (a 20 s that fell
+     due in a break ended before the chip).
      Open, not exercised by the account: `default_scheduler_rules.md` bars the 5-min break after "a 5min break or a
      15 minute no screen", both engines after any 5 minutes of it. Not compared yet: the modes (the drags at the line).
    - **What is left is the model, not the search**: the task tree's relations and the default rules as element and

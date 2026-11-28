@@ -139,22 +139,32 @@ private fun actionOf(text: String): Action {
 }
 
 private val SCREEN_RE = Regex("""keep (.+) with (\S+), as early as possible(?:; a chain of (.+) is its longest break)?""")
-private val SCREEN_KIND_RE = Regex("""(\S+) of (\S+) \(none within (\S+) after as much (\S+)\)""")
+private val SCREEN_KIND_RE = Regex("""(\S+) of (\S+) \(none within (\S+) after (?:as much (\S+)|a (\S+))\)""")
 
-/** keep K of L (none within P after as much NS), ... with NS, as early as possible[; a chain of K, ... is its longest break]. */
+/**
+ * keep K of L (none within P after as much NS | after a K), ... with NS, as early as possible[; a chain of K, ... is its
+ * longest break] ("after a K": K is [ScreenBreaks.own]).
+ */
 private fun screenBreaksOf(m: MatchResult, rules: RuleSet?): ScreenBreaks {
     val ns = m.groupValues[2]
     val breaks = ArrayList<Triple<String, Rational, Rational>>()
+    val own = ArrayList<String>()
     for (part in m.groupValues[1].split("), ")) {
         val k = SCREEN_KIND_RE.matchEntire(if (part.endsWith(")")) part else "$part)")
             ?: throw IllegalArgumentException("a break like 'Break5 of 300 (none within 3600 after as much $ns)' is expected, not ${pyRepr(part)}")
-        if (k.groupValues[4] != ns) throw IllegalArgumentException("the same kind is expected, not ${k.groupValues[4]} and $ns")
+        val ownOf = k.groups[5]?.value
+        if (ownOf != null) {
+            if (ownOf != k.groupValues[1]) throw IllegalArgumentException("a break's pause follows its own kind, not $ownOf")
+            own.add(k.groupValues[1])
+        } else if (k.groupValues[4] != ns) {
+            throw IllegalArgumentException("the same kind is expected, not ${k.groupValues[4]} and $ns")
+        }
         breaks.add(Triple(k.groupValues[1], number(k.groupValues[2]), number(k.groupValues[3])))
     }
     val chain = m.groups[3]?.value?.split(",")?.map { it.trim() } ?: emptyList()
     for (k in breaks.map { it.first } + ns + chain) if (rules != null && k !in rules.order) throw IllegalArgumentException("$k is not in the rules")
     if (!breaks.map { it.first }.containsAll(chain)) throw IllegalArgumentException("a chain is of the breaks kept")
-    return ScreenBreaks(breaks, ns, chain, rules = rules)
+    return ScreenBreaks(breaks, ns, chain, rules = rules, own = own)
 }
 
 private const val PULL = """(?:, a gap ending inside (\S+) ending at its start)?"""

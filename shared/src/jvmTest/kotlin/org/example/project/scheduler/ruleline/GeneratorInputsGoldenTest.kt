@@ -92,6 +92,7 @@ class GeneratorInputsGoldenTest {
                         "max" -> MaximumGap("B2", p, after = "N", atLeast = l)
                         "breaks" -> Breaks("B3", "N", l, p)
                         "screen" -> ScreenBreaks(listOf(Triple("B1", l, p), Triple("B2", l * 2, p * 3), Triple("B3", l * 3, p * 6)), "N", listOf("B2", "B3"))
+                        "screen_own" -> ScreenBreaks(listOf(Triple("B1", l, p), Triple("B2", l * 2, p * 3), Triple("B3", l * 3, p * 6)), "N", listOf("B2", "B3"), own = listOf("B1"))
                         else -> KeepOn(Op.put("B1", Region.of(Interval.of(Pos.ONE, Pos(Rational.ONE + l), false, true))))
                     }
                 }

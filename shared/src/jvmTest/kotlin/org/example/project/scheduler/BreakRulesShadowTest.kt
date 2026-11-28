@@ -25,7 +25,7 @@ import kotlin.time.measureTimedValue
 /**
  * ADR 0018 step 7, the breaks: OmniApp's `BreakMachine` and the rule engine's `ScreenBreaks` placing the account's three
  * screen breaks over the same environment — its real known "no screen" periods ahead, from the same rested start (a
- * 15-minute rest ending now, which is the machine's [BreakMachine.initial]). Skipped unless `OMNIAPP_SHADOW_DB` names a
+ * 15-minute rest and a 20 s break ending now, which is the machine's [BreakMachine.initial]). Skipped unless `OMNIAPP_SHADOW_DB` names a
  * COPY of a release DB. Prints where the two differ; asserts nothing yet.
  */
 class BreakRulesShadowTest {
@@ -38,12 +38,16 @@ class BreakRulesShadowTest {
             c.createStatement().executeQuery("SELECT payload FROM app_state").use { r -> r.next(); r.getString(1) }
         }
         val state = SchedulerStateCodec.decode(payload)!!
-        val now0 = System.currentTimeMillis()
-        val now = now0 - now0.mod(1000L)
+        val wall = System.currentTimeMillis()
         val hours = (System.getenv("OMNIAPP_SHADOW_HOURS") ?: "24").toLong()
-        val until = now + hours * 3_600_000
         val specs = SchedulerDomain.dynamicPeriodSpecs(state.screenBreaks.ifEmpty { SchedulerDomain.DEFAULT_SCREEN_BREAKS })
         println("breaks: " + specs.joinToString { "${it.label} ${it.durationMillis / 1000} s every ${it.cadenceMillis / 60_000} min" })
+        // The start is at a screen: where the "no screen" period the clock is in ends, if it is in one (a rested start
+        // inside a period means one thing to each).
+        val first = SchedulerDomain.breakEnvironment(state, wall, wall + (hours + 24) * 3_600_000, TimeZone.currentSystemDefault())
+        val at = BreakMachine.chainsOf(first.periods).firstOrNull { it.startMillis <= wall && wall < it.endMillis }?.endMillis ?: wall
+        val now = at - at.mod(1000L) + 1000
+        val until = now + hours * 3_600_000
         val env = SchedulerDomain.breakEnvironment(state, now, until, TimeZone.currentSystemDefault())
         val chains = BreakMachine.chainsOf(env.periods).filter { it.endMillis > now && it.startMillis < until }
         println("known no-screen ahead: " + chains.joinToString { "${(it.startMillis - now) / 60_000}..${(it.endMillis - now) / 60_000} min" })
@@ -58,7 +62,9 @@ class BreakRulesShadowTest {
         fun sec(ms: Long) = Rational.of(ms, 1000)
         val noScreen = (chains.map { sec(maxOf(it.startMillis, now - 900_000) - now) to sec(minOf(it.endMillis, until) - now) } + (sec(-900_000) to Rational.ZERO))
         val region = Region.of(IntervalSet.of(noScreen.filter { it.second > it.first }.map { (a, b) -> Interval.of(Pos(a), Pos(b), false, true) }))
-        val base = applyEdit(rules, LineState.empty(), listOf(Op.put("NoScreen", region)), Owner.USER)
+        // (and a 20 s break ending now: the machine's rested start bars each break one cadence, and a rest alone no
+        // longer bars the 20 s one)
+        val base = applyEdit(rules, LineState.empty(), listOf(Op.put("NoScreen", region), Op.put("Break20s", Region.of(IntervalSet.of(listOf(Interval.of(Pos(Rational.of(-20)), Pos(Rational.ZERO), false, true)))))), Owner.USER)
         val sb = ScreenBreaks(specs.map { Triple(kindOf.getValue(it.label), sec(it.durationMillis), sec(it.cadenceMillis)) }, "NoScreen",
             listOf("Break5", "Break15"))
         sb.bind(rules)
@@ -73,6 +79,11 @@ class BreakRulesShadowTest {
             }
         }
         println("app: ${appBreaks.size} breaks in ${app.duration}; rule engine: ${engineBreaks.size} in ${engine.duration}")
+        val from = (System.getenv("OMNIAPP_SHADOW_FROM") ?: "0").toLong() * 60_000
+        fun seq(l: List<Triple<String, Long, Long>>) = l.filter { it.third > it.second && it.second >= from && it.second < from + 300 * 60_000 }.sortedBy { it.second }
+            .joinToString(" ") { "%.2f:%s".format(it.second / 60_000.0, it.first) }
+        println("  app, 5 h from ${from / 60_000} min: " + seq(appBreaks))
+        println("  rule engine, 5 h from ${from / 60_000} min: " + seq(engineBreaks))
         for (label in specs.map { it.label }) {
             val a = appBreaks.filter { it.first == label }.map { it.second to it.third }.sortedBy { it.first }
             val e = engineBreaks.filter { it.first == label }.map { it.second to it.third }.sortedBy { it.first }
