@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * The mode rules acting at the chip, one position after the other — a port of

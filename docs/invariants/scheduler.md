@@ -526,7 +526,9 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
 - **The passes over one score** (`ScheduleOptimizer.plan`): the rollout policy builds the continuation one decision
   at a time; the **seeds** compete (the plan being replaced, another device's plan — each cut to its legal prefix,
   completed, re-scored); `ScheduleImprover` lowers `J` of the whole continuation within `DEFAULT_IMPROVE_BUDGET`
-  scored moves; then, **only while the fill's `SearchBudget` lasts**, the exhaustive search and the platform solver;
+  scored moves — of the **two** best continuations so far (`IMPROVED_CANDIDATES`), the lowest improved one kept:
+  the best as it stands is not always the best improved (2026-11-28, the real account: the plan on screen won the
+  seeds and lost improved, by 1.4 %; do not go back to improving one); then, **only while the fill's `SearchBudget` lasts**, the exhaustive search and the platform solver;
   the alternatives are named on the result. No pass can move the plan away from the best score
   (`ScheduleImproverTest.the_improvement_never_worsens_the_score_and_keeps_every_constraint`,
   `ScheduleScoreTest.a_seed_that_scores_better_than_the_search_is_what_the_plan_returns`).

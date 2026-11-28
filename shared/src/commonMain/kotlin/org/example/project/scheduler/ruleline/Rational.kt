@@ -1,4 +1,4 @@
-package org.example.project.scheduler.line
+package org.example.project.scheduler.ruleline
 
 /**
  * An exact rational number, or +-infinity: the coordinate of the line (`docs/invariants/line.md`).

@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * What an event of the script has to be looked at for — a port of `C:\code\line_manager\scripts\watch.py`: for each

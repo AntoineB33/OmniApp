@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
 

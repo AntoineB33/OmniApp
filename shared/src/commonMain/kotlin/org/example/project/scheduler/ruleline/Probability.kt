@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * Probability finder: probability rules in the pattern of mode transitions — a port of

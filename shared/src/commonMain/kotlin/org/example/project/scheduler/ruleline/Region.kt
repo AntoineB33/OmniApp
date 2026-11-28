@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * Exact subsets of the line that may repeat forever — a port of `C:\code\line_manager\scripts\region.py`.

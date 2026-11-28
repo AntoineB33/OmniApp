@@ -255,12 +255,10 @@ Which installer you use is **machine-local** — the project only needs *some* `
 `link`ed. But what it forces is not: `deploy-supabase.bat` must keep `call supabase ...` everywhere, and the
 `db query` leading-`--` misparse stays.
 
-## `line-reverse-logic-golden.py [reference dir] [histories] [timeout s] [unbounded cases]`
+## `ruleline-golden.py [reference dir] [cases]`
 
-`python scripts/line-reverse-logic-golden.py` — rewrites `shared/src/jvmTest/resources/line/reverse-logic-golden.json`
-from the Python reference (`C:\code\line_manager\reverse_logic` by default; 160 histories, 60 s, 10 unbounded):
-random histories and unbounded cases run through it, every step's outcome and line recorded, for `LineGoldenTest`
-(`docs/invariants/line.md`). Each unbounded case runs alone in its own process, killed at the timeout — the
-reference's infinite search can take minutes and gigabytes (a parallel run of 40 was stopped for low memory) — and
-is then left out and listed in the file's `left_out`. ~1.5 min. Run it after a change to the reference, never to
-make the Kotlin test pass.
+`python -I scripts/ruleline-golden.py` — rewrites the golden files of `shared/src/jvmTest/resources/ruleline/` from
+the Python reference (`C:\code\line_manager\scripts` by default): each layer's random cases run through it under
+two hash seeds, kept only where both answer the same and fast (`docs/invariants/line.md`). `--layer6` rewrites only
+the last layer's (`last-layer-golden.json`, ~5 min). Run it after a change to the reference, never to make the Kotlin
+test pass. (It replaced `line-reverse-logic-golden.py`, the first port's, removed with it 2026-11-28.)

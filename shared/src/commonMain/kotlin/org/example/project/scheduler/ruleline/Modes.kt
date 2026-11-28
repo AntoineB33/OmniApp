@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * Modes of the chip positions — a port of `C:\code\line_manager\scripts\modes.py`.

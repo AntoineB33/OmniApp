@@ -7,7 +7,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
-import org.example.project.scheduler.line.Rational
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

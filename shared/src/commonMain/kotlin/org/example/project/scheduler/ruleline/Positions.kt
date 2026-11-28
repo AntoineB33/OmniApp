@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * Exact interval arithmetic on the line of positions x + kε — a port of `C:\code\line_manager\scripts\intervals.py`.

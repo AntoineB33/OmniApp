@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * A number as the reference's arithmetic has it: an exact fraction, or a float once a float joined in (Python's

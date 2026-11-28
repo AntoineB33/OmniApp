@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 import kotlin.math.max
 
 /**
@@ -192,8 +191,8 @@ class Instant(val rules: RuleSet, val score: Score, constraints: List<Constraint
         val r = score.ruleState(lo)
         val out = LinkedHashMap<String, MutableList<Pair<Rational, Rational>>>()
         for (i in rare(r)) {
-            val tau = exactRational(r.tau.getValue(i)).limitDenominator(1000)
-            val m = exactRational(r.m.getValue(i)).limitDenominator(1000)
+            val tau = limitDenominatorOf(r.tau.getValue(i), 1000)
+            val m = limitDenominatorOf(r.m.getValue(i), 1000)
             val before = state.line.presence(i) and Region.of(Interval.of(Pos.NEG_INF, Pos(lo), false, false))
             var last: Rational? = null
             if (before.isNotEmpty()) {
@@ -280,13 +279,13 @@ class Instant(val rules: RuleSet, val score: Score, constraints: List<Constraint
                 t = nxt
                 continue
             }
-            val xs = allowed.associateWith { if (r.x.getValue(it) != Double.POSITIVE_INFINITY) exactRational(r.x.getValue(it)).limitDenominator(1000) else null }
+            val xs = allowed.associateWith { if (r.x.getValue(it) != Double.POSITIVE_INFINITY) limitDenominatorOf(r.x.getValue(it), 1000) else null }
             val longer = allowed.filter { i -> !(run.first == i && xs[i] != null && t - run.second >= xs.getValue(i)!!) }
             allowed = longer.ifEmpty { allowed }
             val share = shares(r, pres, no, mid, names)
             val room = allowed.associateWith { roomOf(t, b, it, no, user, names) - t }
             val due = allowed.sortedWith(compareBy<String>({ i -> (lag.getValue(i) + r.m.getValue(i) / 2) / max(share.getValue(i), 1e-12) }, { it }))
-            val ms = allowed.associateWith { exactRational(r.m.getValue(it)).limitDenominator(1000) }
+            val ms = allowed.associateWith { limitDenominatorOf(r.m.getValue(it), 1000) }
             val (e, xk) = nextUser(t, b, user, names)
             val p = names.firstOrNull { j -> user.getValue(j).intervals.any { it.hi.x == t } }
             val least = ms.values.min()

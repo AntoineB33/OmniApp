@@ -11,6 +11,18 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The rule engine meets the app: measured on the real account; the optimizer improves two candidates — 2026-11-28
+
+- User: *"Yes, step 7"*. `scheduler/line/` removed (`ruleline` covers it; `Rational` moved there). `RuleEngineBridge`
+  translates a fill's input into the rule engine, and `RuleEngineShadowTest` (skipped unless `OMNIAPP_SHADOW_DB` names
+  a copy of a release DB) runs both schedulers on it, judged by both scores. It found an optimizer fault:
+  `ScheduleOptimizer.plan` improved only the continuation scoring lowest before improvement; it now improves the two
+  best (`IMPROVED_CANDIDATES`) and keeps the lower — on the real account 1.4 % better and 2.6× faster (0.95 s vs
+  2.5 s), and better than the rule engine's search. That search is an optional seed, off
+  (`ScheduleFill.Input.ruleEngine`). `limitDenominatorOf` no longer overflows on a real account's positions
+  (`LimitDenominatorTest`, against CPython). ADR 0018 step 7. Needs an app rebuild to take effect
+  (`scriptsccount3-deploy-windows.bat`).
+
 ### The rule engine: the generator, the two schedulers, the simulation — 2026-11-28
 
 - User: *"Yes, last layer"*. `scheduler/ruleline/` gains OmniApp's score on a line and its search (`Score.kt`,

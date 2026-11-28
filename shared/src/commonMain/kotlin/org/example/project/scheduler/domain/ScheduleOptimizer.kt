@@ -16,11 +16,14 @@ import kotlin.math.abs
  *    time; the window is closed with each lag's [ScoreModel.lowerBound].
  * 2. **The seeds compete.** Every continuation handed in as a seed — the plan this one replaces, another device's
  *    plan for the same rules — is checked against every hard constraint, completed by the rollout policy where it
- *    stops short, and scored; the lowest score of all of them and of pass 1 goes on. A re-plan therefore never
+ *    stops short, and scored; the [IMPROVED_CANDIDATES] lowest of them and of pass 1 go on. A re-plan therefore never
  *    returns a continuation worse than one it was shown.
- * 3. **The whole-continuation improvement** ([ScheduleImprover]) then lowers the score of the continuation as a
- *    whole, within [improveBudget] scored moves. A decision that is best for its own window can still cost more
- *    over the continuation, and only this pass judges by the number the definition minimizes.
+ * 3. **The whole-continuation improvement** ([ScheduleImprover]) then lowers the score of each of them as a whole,
+ *    within [improveBudget] scored moves, and the lowest improved one is kept. A decision that is best for its own
+ *    window can still cost more over the continuation, and only this pass judges by the number the definition
+ *    minimizes — so the best continuation as it stands is not always the best one improved: on the real account
+ *    (2026-11-28) the plan on screen scored lower than the rollout's, and the rollout's, improved, scored 1.4 % lower
+ *    than the plan on screen improved, in 40 % of the time.
  * 4. **While the [SearchBudget] lasts** (`docs/scheduler/scheduler_requirements.md` § *Strict requirements*: the best score
  *    must be reached when it is reachable in the time): the exhaustive search ([certify]) started from the best
  *    continuation so far — when it finishes, nothing over the candidate lengths scores better and [Plan.certified]
@@ -328,19 +331,25 @@ class ScheduleOptimizer(
     ): Plan {
         val pinFirst = forcedFirst >= 0 || refusedFirst >= 0 || firstAmong.isNotEmpty()
         val built = construct(start, untilU, forcedFirst, refusedFirst, firstAmong, budget = budget)
-        var runs = built
-        var cost = score(start, runs)
+        // Pass 2, then pass 3 on the best [IMPROVED_CANDIDATES] of them: a seed that scores worse as it stands can be
+        // the better one improved (the rule engine's continuation against the plan on screen, `RuleEngineShadowTest`).
+        val candidates = ArrayList<Pair<List<Run>, Double>>()
+        candidates.add(built to score(start, built))
         for (seed in seeds) {
             val completed =
                 complete(start, seed, untilU, forcedFirst, refusedFirst, firstAmong, built, budget) ?: continue
-            val c = score(start, completed)
-            if (better(c, cost)) {
-                runs = completed
+            candidates.add(completed to score(start, completed))
+        }
+        var runs = built
+        var cost = Double.NaN
+        for ((k, cand) in candidates.withIndex().sortedWith { a, b -> if (better(a.value.second, b.value.second)) -1 else if (better(b.value.second, a.value.second)) 1 else a.index.compareTo(b.index) }.take(IMPROVED_CANDIDATES).withIndex()) {
+            val improved = improve(start, cand.value.first, untilU, pinFirst, budget)
+            val c = score(start, improved)
+            if (k == 0 || better(c, cost)) {
+                runs = improved
                 cost = c
             }
         }
-        runs = improve(start, runs, untilU, pinFirst, budget)
-        cost = score(start, runs)
 
         var certified = false
         var solverImproved = false
@@ -701,6 +710,12 @@ class ScheduleOptimizer(
 
     companion object {
         const val DEFAULT_SEARCH_BUDGET: Int = 20_000
+
+        /**
+         * How many of pass 2's continuations pass 3 improves, the best first: the result is never worse than the best
+         * one improved (what a single improvement returned), and a runner-up wins where it improves further.
+         */
+        const val IMPROVED_CANDIDATES: Int = 2
 
         /**
          * What the first FREE run may be, out of the [candidates] the instant offers: PRD §13's [forced] task alone

@@ -5,69 +5,56 @@ Active invariants. Reasoning and post-mortems: `docs/adr/0018-the-line-is-the-re
 
 ---
 
-### The engine is a port, and the reference decides
+### The engine is a port, and the reference decides (`scheduler/ruleline/`)
 
-→ ADR 0018. `scheduler/line/` is `C:\code\line_manager\reverse_logic` in Kotlin: `Rational` (`Fraction` + `math.inf`),
-`Region` (`region.py`), `LineRules` (`rules.py`), `LineChoice` (`choice.py`), `LineEngine` (`engine.py`). The proofs
-are the reference's `SEMANTICS.md`; the names and the order of every decision follow it.
+→ ADR 0018 § *2026-11-28*. `ruleline` is `C:\code\line_manager\scripts` in Kotlin, layer by layer (positions x + kε,
+regions, the rule language, the solver and the sweep, the claims and line state, the resolution of edits, the
+generator's inputs, the generator, the two schedulers and the simulation); the file mapping is in
+`scheduler/ruleline/CLAUDE.md`. Each layer is held to `scripts/ruleline-golden.py`'s files (`RuleLineGoldenTest`,
+`RuleLanguageGoldenTest`, `SolverGoldenTest`, `LineStateGoldenTest`, `ResolveGoldenTest`, `GeneratorInputsGoldenTest`,
+`LastLayerGoldenTest`). The first port (`scheduler/line/`, of `reverse_logic/`) is gone: `ruleline` covers it.
 
-- **A behaviour change starts in the reference**, then the golden file is regenerated
-  (`python scripts/line-reverse-logic-golden.py`) and the port made to reproduce it. `LineGoldenTest` fails on any
-  step whose outcome or line differs; never "fix" it by editing the golden file.
-- **Never add a fast path that answers differently.** An optimization is fine when `LineGoldenTest` and
-  `LineReverseLogicTest` still pass unchanged; a shortcut that changes a tie-break (closest to 0 first, the leftmost
-  kept, the first operand) is a second copy of the rule.
+- **A behaviour change starts in the reference**, then `python -I scripts/ruleline-golden.py` rewrites the golden
+  files and the port is made to reproduce them; never "fix" a golden test by editing its file.
+- **Never add a fast path that answers differently.** An optimization is fine when the golden tests still pass
+  unchanged; a shortcut that changes a tie-break (closest to 0 first, the leftmost kept, the first operand) is a
+  second copy of the rule.
 - **Coordinates are exact.** Never route a position through a `Double`: "move then move back" relies on
   `(x + d) - d == x`. `Rational` throws on `Long` overflow rather than wrapping.
+- **The same inputs answer the same.** A random choice of the reference is drawn by `PyRandom` (CPython's generator)
+  from the same seed, and a number keeps Python's promotion (`Num`: exact until a float joins). Where the reference
+  breaks a tie by Python's set order, the port uses a fixed order; golden cases are kept only when the reference
+  answers the same under two hash seeds, and a case the reference settles near its own time limit is left out: no
+  expected answer may depend on a clock.
+- **Python's unbounded integers are `Long` here**: where the reference relies on growing past 2^63, the port must say
+  how it stops instead (`ScreenBreaks.around`), or compute exactly another way (`limitDenominatorOf`: the closest
+  fraction of a float whose exact denominator no `Long` holds, `LimitDenominatorTest` against CPython).
 
-### The second port: `scheduler/ruleline/` (2026-11-28)
+### The line is a function of the ordered edits
 
-→ ADR 0018 § *2026-11-28*. The reference replaced `reverse_logic/` with `scripts/`; `ruleline` ports it layer by layer
-(positions x + kε, regions, the rule language, the solver and the sweep, the claims and line state, the resolution of
-edits, the generator's inputs, the generator, the two schedulers and the simulation), each layer held to
-`scripts/ruleline-golden.py`'s files (`RuleLineGoldenTest`, `RuleLanguageGoldenTest`, `SolverGoldenTest`,
-`LineStateGoldenTest`, `ResolveGoldenTest`, `GeneratorInputsGoldenTest`, `LastLayerGoldenTest`). A random choice of
-the reference is drawn by `PyRandom` (CPython's generator) from the same seed, and a number keeps Python's promotion
-(`Num`: exact until a float joins), so the same inputs answer the same. Python's unbounded
-integers are `Long` here: where the reference relies on growing past 2^63, the port must say how it stops instead
-(`ScreenBreaks.around`). Where the reference breaks a tie by Python's set order,
-the port uses a fixed order; the edit cases are kept only when the reference gives the same answer under two hash
-seeds. A golden case the reference settles near its own time limit is left out: no expected answer
-may depend on a clock. The same rules as the first port: the reference decides, no fast path
-that answers differently, coordinates exact. `scheduler/line/` stays until `ruleline` covers it.
+- **The line is never stored as truth**: it is recomputed from the user's edits, kept in the order they were made
+  (`rebuild`, `LineState.history`). Where edits contradict, the newer wins; an older one gives way only where and as
+  long as a newer one contradicts it.
+- **An edit is refused rather than half-applied**: `applyEdit` throws `Refused` (it breaks the rules, or the
+  generator would remove what the user put) or `Undetermined` (no answer in reasonable time), and the state is left
+  as it was.
+- **Past the memory limit** the far left of the chip is flattened (`flattened`), then removed
+  (`Simulation.withinMemory`): the reversal is degraded there, the line itself unchanged.
 
-### The line is a function of the ordered active edits
+### OmniApp's world as rules (`RuleEngineBridge`)
 
-- **The line is never stored as truth**: it is recomputed from the active edits (§ 1 of `SEMANTICS.md`). Two
-  histories with the same visible line can give back different lines on an undo.
-- **An edit is valid** when it fits the line, none of its claims is dropped, everything it puts is on the result, and
-  its inverse fits the result (`LineSystem.validate`). An invalid edit changes nothing.
-- **A drag step is the line of the direct move** from the active edits alone (`setPending`), never a function of the
-  previous step; no step is skipped or delayed.
-
-### The fold (`FoldedLine`)
-
-→ ADR 0018 § *Phase 2*. What lies before the fold point is a plain record the replay never sees again.
-
-- **The record is a pin with TOP priority** (`LineSystem.pin`), never the oldest edit. As the oldest it would be the
-  first thing to adapt: an older live edit that a newer one once beat would come back and push the record aside
-  (`LineFoldTest.theFoldedPastOutranksEveryLiveEdit`). As the newest, live edits adapt around it, and an edit whose
-  own claims it would drop (its rules reach into the past) is refused.
-- **Validity is judged as the edit was made**: a replay (undo, `requires`) validates each edit with the record as the
-  history's BASE, and a fold rebuilds the replay with `LineSystem.restore`, unvalidated. Validating against the pin as
-  the newest, or re-applying, refuses the older edits a newer one made adapt.
-- **A fold never changes the line**: the rebuilt line is compared with the old one, and a fold that would differ is
-  not made (the point stays). An edit is cut at the point: before it flat, after it live; a move across it is what it
-  takes and what it puts on each side.
-- **A flat edit adapts nothing**: a plain diff of the record, refused if the record would then break a rule by itself
-  (an A without its B under "A → B" is refused, not completed). Its undo lasts until the next fold, which forgets every
-  edit it leaves nothing live of.
-- **The fold point is quantized**: midnight UTC, `FOLD_DAYS` (30) before (`foldPointMillis`), so every device folds at
-  the same point. Nothing folds on a timer: the caller folds at start-up, a sync or an edit.
+→ ADR 0018 step 7. `ScheduleFill.Input` translated: positions in seconds after the fill's start (exact
+milliseconds), a kind per task and per restrictive-period kind, the periods and pre-placed blocks the user's claims,
+the frozen past the generator's, every task's resilience written for every period kind (the rule engine's default is
+1, the app's `PeriodKinds.defaultResilience`). Not carried yet, so the bridge declines such a fill: sets of tasks, a
+rule state changing over the fill, PRD §7 / §13's first run. `RuleEngineShadowTest` runs both schedulers on a copy of
+a real account (`OMNIAPP_SHADOW_DB`, never the live file).
 
 ### Decided, not yet built (ADR 0018 phases 3–5)
 
 - The merge orders edits by creation date (server-corrected clocks, ties by device id).
-- A moved block lands on top (a move is a new edit) — replaces the 2026-10-17 `tm_level`-kept rule once phase 3 ships.
+- A moved block lands on top (a move is a new edit) — replaces the 2026-10-17 `tm_level`-kept rule once it ships.
 - Undoing an edit another device's edit requires is refused with a notice.
 - Live line edits are never evicted by `MAX_HISTORY_UNITS`.
+- The fold point, when the line is wired to the app, is quantized (midnight UTC, 30 days back) so every device
+  folds at the same point, and nothing folds on a timer.

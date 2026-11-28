@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
@@ -640,8 +639,8 @@ class ScoreModel(problem: ScoreProblem, ctx: ProblemContext, state: LineState, b
                     val a = max(u, s.u0)
                     val b = min(e, s.u1)
                     if (b - a > 1e-9 && s.fixed == null && who in s.allowed) {
-                        val wa = exactRational(s.w0 + (a - s.u0)).limitDenominator(1000)
-                        val wb = exactRational(s.w0 + (b - s.u0)).limitDenominator(1000)
+                        val wa = limitDenominatorOf(s.w0 + (a - s.u0), 1000)
+                        val wb = limitDenominatorOf(s.w0 + (b - s.u0), 1000)
                         out.getOrPut(who) { ArrayList() }.add(wa to wb)
                     }
                 }

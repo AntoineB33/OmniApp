@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * Element rules, mode rules and percentage rules — a port of `C:\code\line_manager\scripts\rules.py`

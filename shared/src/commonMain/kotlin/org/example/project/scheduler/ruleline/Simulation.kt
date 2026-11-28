@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * The world: the chip moving, modes being revealed, the user editing, scripts running — a port of

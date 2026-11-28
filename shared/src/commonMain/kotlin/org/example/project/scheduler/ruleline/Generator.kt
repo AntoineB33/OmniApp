@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 import kotlin.math.floor
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
@@ -291,7 +290,7 @@ class RulesGenerator(
             if (afterEdits == null) {
                 var nextRun = if (rules.modeRules.isNotEmpty()) d / 18 else d
                 if (paced) {
-                    val elapsed = exactRational(began.elapsedNow().inWholeMicroseconds / 1e6).limitDenominator(1000)
+                    val elapsed = limitDenominatorOf(began.elapsedNow().inWholeMicroseconds / 1e6, 1000)
                     val each = elapsed / Rational.of(maxOf(1, stats.work).toLong())
                     nextRun = maxOf(nextRun, each * 2 * budgetOf(1.0) * speed)
                 }

@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * Constraints the rules generator satisfies — a port of `C:\code\line_manager\scripts\constraints.py`.

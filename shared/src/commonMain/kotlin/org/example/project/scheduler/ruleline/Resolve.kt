@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * Edits: the result of every edit is decided by fixed rules — a port of `C:\code\line_manager\scripts\resolve.py`

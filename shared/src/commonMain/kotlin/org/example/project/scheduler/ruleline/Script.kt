@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * Generated scripts — a port of `C:\code\line_manager\scripts\script.py` (its module text describes the language).

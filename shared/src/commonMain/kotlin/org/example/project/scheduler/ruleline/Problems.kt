@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * The optimization problems of the rules generator — a port of `C:\code\line_manager\scripts\problems.py` (its module

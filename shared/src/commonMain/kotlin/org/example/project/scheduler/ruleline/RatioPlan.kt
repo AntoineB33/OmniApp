@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * The best line of the presence ratio targets and minimum lengths, found at once when the definitions are simple

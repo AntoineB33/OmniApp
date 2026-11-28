@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.max
@@ -540,6 +539,32 @@ class Score(tasks: Map<String, ScoreTask>, settings: ScoreSettings? = null) {
     }
 }
 
+/**
+ * `Fraction(d).limit_denominator(maxDen)`. A float under about 2^-9 has an exact fraction whose denominator no `Long`
+ * holds (CPython's integers are unbounded): there the closest p/q with q <= [maxDen] is found by trying every q, an
+ * exact tie (which CPython settles by its bounds) left to the smaller denominator.
+ */
+fun limitDenominatorOf(d: Double, maxDen: Long): Rational {
+    val exact = try {
+        exactRational(d)
+    } catch (e: ArithmeticException) {
+        null
+    }
+    if (exact != null) return exact.limitDenominator(maxDen)
+    require(kotlin.math.abs(d) < 1.0) { "too large for a Long fraction: $d" }
+    var best = Rational.ZERO
+    var off = kotlin.math.abs(d)
+    for (q in 1..maxDen) {
+        val p = kotlin.math.round(d * q).toLong()
+        val e = kotlin.math.abs(p.toDouble() / q - d)
+        if (e < off) {
+            off = e
+            best = Rational.of(p, q)
+        }
+    }
+    return best
+}
+
 /** CPython's `Fraction.limit_denominator`: the closest fraction with a denominator at most [maxDen]. */
 fun Rational.limitDenominator(maxDen: Long): Rational {
     if (den <= maxDen) return this
@@ -551,8 +576,8 @@ fun Rational.limitDenominator(maxDen: Long): Rational {
     var d = den
     while (true) {
         val a = n.floorDiv(d)
+        if (q1 != 0L && a > (maxDen - q0) / q1) break // (q0 + a q1 > maxDen, without overflowing)
         val q2 = q0 + a * q1
-        if (q2 > maxDen) break
         val np1 = p0 + a * p1
         p0 = p1
         q0 = q1
@@ -565,7 +590,94 @@ fun Rational.limitDenominator(maxDen: Long): Rational {
     val k = (maxDen - q0).floorDiv(q1)
     val bound1 = Rational.of(p0 + k * p1, q0 + k * q1)
     val bound2 = Rational.of(p1, q1)
-    return if ((bound2 - this).abs() <= (bound1 - this).abs()) bound2 else bound1
+    // |b2 - x| <= |b1 - x|, exactly: |p2 d - n q2| q1 <= |p1 d - n q1| q2 (Python's unbounded integers; a Long overflows)
+    fun off(b: Rational) = (BigInt.of(b.num) * BigInt.of(den) - BigInt.of(num) * BigInt.of(b.den)).abs()
+    val lhs = off(bound2) * BigInt.of(bound1.den)
+    val rhs = off(bound1) * BigInt.of(bound2.den)
+    return if (lhs <= rhs) bound2 else bound1
+}
+
+/** Just enough of an unbounded integer for an exact comparison: sign and magnitude in base 2^16, little end first. */
+internal class BigInt private constructor(private val negative: Boolean, private val mag: IntArray) : Comparable<BigInt> {
+    private val isZero get() = mag.isEmpty()
+
+    operator fun times(o: BigInt): BigInt {
+        if (isZero || o.isZero) return ZERO
+        val out = LongArray(mag.size + o.mag.size + 1)
+        for (i in mag.indices) for (j in o.mag.indices) out[i + j] += mag[i].toLong() * o.mag[j]
+        return BigInt(negative != o.negative, normalize(out))
+    }
+
+    operator fun minus(o: BigInt): BigInt = this + BigInt(!o.negative && !o.isZero, o.mag)
+
+    operator fun plus(o: BigInt): BigInt {
+        if (o.isZero) return this
+        if (isZero) return o
+        if (negative == o.negative) {
+            val out = LongArray(maxOf(mag.size, o.mag.size) + 1)
+            for (i in mag.indices) out[i] += mag[i].toLong()
+            for (i in o.mag.indices) out[i] += o.mag[i].toLong()
+            return BigInt(negative, normalize(out))
+        }
+        val c = compareMag(mag, o.mag)
+        if (c == 0) return ZERO
+        val (big, small, neg) = if (c > 0) Triple(mag, o.mag, negative) else Triple(o.mag, mag, o.negative)
+        val out = LongArray(big.size)
+        var borrow = 0L
+        for (i in big.indices) {
+            var v = big[i].toLong() - borrow - (if (i < small.size) small[i].toLong() else 0L)
+            borrow = 0L
+            if (v < 0) {
+                v += BASE
+                borrow = 1L
+            }
+            out[i] = v
+        }
+        return BigInt(neg, normalize(out))
+    }
+
+    fun abs(): BigInt = if (negative) BigInt(false, mag) else this
+
+    override fun compareTo(other: BigInt): Int {
+        if (negative != other.negative) return if (negative) -1 else 1
+        val c = compareMag(mag, other.mag)
+        return if (negative) -c else c
+    }
+
+    companion object {
+        private const val BASE = 1L shl 16
+        val ZERO = BigInt(false, IntArray(0))
+
+        fun of(v: Long): BigInt {
+            if (v == 0L) return ZERO
+            val out = ArrayList<Int>()
+            var u = v.toULong().let { if (v < 0) (0UL - it) else it } // (Long.MIN_VALUE's magnitude too)
+            while (u != 0UL) {
+                out.add((u and 0xffffUL).toInt())
+                u = u shr 16
+            }
+            return BigInt(v < 0, out.toIntArray())
+        }
+
+        private fun normalize(a: LongArray): IntArray {
+            var carry = 0L
+            for (i in a.indices) {
+                val v = a[i] + carry
+                a[i] = v and (BASE - 1)
+                carry = v ushr 16
+            }
+            require(carry == 0L)
+            var n = a.size
+            while (n > 0 && a[n - 1] == 0L) n--
+            return IntArray(n) { a[it].toInt() }
+        }
+
+        private fun compareMag(a: IntArray, b: IntArray): Int {
+            if (a.size != b.size) return a.size.compareTo(b.size)
+            for (i in a.indices.reversed()) if (a[i] != b[i]) return a[i].compareTo(b[i])
+            return 0
+        }
+    }
 }
 
 /** The score as a problem of the rules generator: its error is J on (c, c + H], its shortfall D comes first. */
@@ -578,7 +690,7 @@ class ScoreProblem(val score: Score, override val window: Rational? = null) : Op
     override fun withWindow(h: Rational) = ScoreProblem(score, h)
 
     override val lengths: Map<String, Rational>
-        get() = score.tasks.mapValues { (_, t) -> exactRational(max(t.minimum.at(Rational.ZERO), 1.0)).limitDenominator(1000) }
+        get() = score.tasks.mapValues { (_, t) -> limitDenominatorOf(max(t.minimum.at(Rational.ZERO), 1.0), 1000) }
 
     override fun hasTargets() = score.tasks.isNotEmpty()
 
@@ -634,7 +746,7 @@ class ScoreProblem(val score: Score, override val window: Rational? = null) : Op
             val share = shares(r, s.line, out, t)
             val ends = LinkedHashMap<String, Rational>()
             for (i in ok) {
-                val want = exactRational(r.m.getValue(i) * factor).limitDenominator(1000)
+                val want = limitDenominatorOf(r.m.getValue(i) * factor, 1000)
                 val stop = no.getValue(i).on(Pos(t), Pos(t + want)).intervals.map { it.lo.x }
                 var b = (stop.filter { it > t } + (t + want) + end).min()
                 for ((qq, qa, qb) in sc.tasks.getValue(i).quantities) {

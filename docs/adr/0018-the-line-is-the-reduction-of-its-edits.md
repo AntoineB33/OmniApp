@@ -109,8 +109,8 @@ generator and its scripts, the instant schedule, the pace, the probability finde
 requirements' whole model, which OmniApp's scheduler only approximates by hand (`BreakMachine`, the fill).
 
 Decision: **port `scripts/` layer by layer into `shared/.../scheduler/ruleline/`, each layer held to golden files the
-reference writes** (`scripts/ruleline-golden.py`), the same discipline as phase 1. The old `scheduler/line/` port stays
-until `ruleline` covers what it does, then goes. Order, from the dependency graph of `scripts/`:
+reference writes** (`scripts/ruleline-golden.py`), the same discipline as phase 1. The old `scheduler/line/` port stayed
+until `ruleline` covered what it did, then went (step 7). Order, from the dependency graph of `scripts/`:
 
 1. `intervals.py`, `region.py` → `Positions.kt`, `Region.kt` — **done** (`RuleLineGoldenTest`).
 2. `rules.py` → `Rules.kt` — **done**, without `parse_rules`'s satisfiability check, which is the solver's
@@ -150,7 +150,24 @@ until `ruleline` covers what it does, then goes. Order, from the dependency grap
    and `aheadJobs`). The generator's interface is `Generating` (the rules generator and the pace's `Stepped`). This
    is the second copy of the score beside OmniApp's own scheduler (`docs/scheduler_score.md`): step 7 must leave one.
 7. Wiring: the calendar's elements and the default rules (`docs/scheduler/default_scheduler_rules.md`) written as rules,
-   the scheduler replaced, `scheduler/line/` removed.
+   the scheduler replaced, `scheduler/line/` removed. Started 2026-11-28:
+   - `scheduler/line/` is **removed** (`Rational` moved into `ruleline`, the only user left).
+   - **The bridge** (`RuleEngineBridge`): `ScheduleFill.Input` — the app's tasks, restrictive periods, pre-placed
+     blocks and frozen past — as the rule engine's kinds, claims and score (`docs/invariants/line.md`).
+   - **Measured on the real account** (`RuleEngineShadowTest`, a copy of the release DB: 141 tasks, 337 periods, 1119
+     past runs, 24 h ahead), both plans judged by both scores. The rule engine's instant schedule is far behind (J
+     about twice the app's plan's); its score search, ~4 s, first beat the app's plan on both scores (1.2 % on the
+     app's) — and that exposed an optimizer fault rather than a reason to switch: `ScheduleOptimizer` improved only the
+     candidate that scored lowest before improvement, the plan on screen, when the rollout's continuation improves
+     further. Improving the two best (`IMPROVED_CANDIDATES`) made the app's fill 1.4 % better and 2.6× faster there,
+     and then better than every continuation the rule engine found. So the rule engine's search is wired only as an
+     optional seed (`ScheduleFill.Input.ruleEngine`, off), and **the score's search stays the app's**: the rule
+     engine's port of the score is a second copy, kept for the comparison and the reference's tests.
+   - **What is left is the model, not the search**: the task tree's relations and the default rules as element and
+     mode rules, the breaks as constraints instead of `BreakMachine`, and the line as the reduction of the user's
+     edits instead of stored panels — which changes what is persisted and synced (`persistence.md`,
+     `sync-and-accounts.md`, `server-quota.md`), the user's live data. Each is its own stage, measured on the real
+     account the same way before it replaces anything.
 
 Where the two requirement files differ, OmniApp's is the one to satisfy; the reference's `requirement.md` still has the
 older wording of 2026-11-28's edits (positions over the reals; an "or" decided leftmost only when no optimization goal

@@ -114,7 +114,41 @@ internal object ScheduleFill {
          * same fill); only the decisions differ.
          */
         val instant: Boolean = false,
+        /**
+         * ADR 0018 step 7: a fill given search time also asks the rule engine's search (`scheduler/ruleline/`,
+         * [RuleEngineBridge]) for a continuation, which competes as a seed — kept only if THIS score finds it better.
+         * Off by default: measured on the real account (2026-11-28, `RuleEngineShadowTest`), the app's own search,
+         * its two best continuations improved, scores better than every one the rule engine found, and the rule
+         * engine's search would take half the fill's grant for nothing. On for the comparison.
+         */
+        val ruleEngine: Boolean = false,
     )
+
+    /** At most this long for the rule engine's search in one fill (and half of what the fill was granted). */
+    const val RULE_ENGINE_MILLIS: Long = 10_000
+
+    /**
+     * The rule engine's continuation for this fill, when it was given search time and the bridge carries the whole
+     * problem: not where the first run is forced, refused or restricted, not under a rule state that changes over the
+     * fill, not with sets of tasks (none of which the rule engine's score has yet). Null otherwise, or when it fails:
+     * the app's own search answers then, as before.
+     */
+    private fun ruleEngineSeed(input: Input, firstOnly: Boolean, among: Set<Int>): List<RulePlacement>? {
+        if (!input.ruleEngine || firstOnly || input.instant || !input.budget.granted()) return null
+        if (input.forcedFirst != null || input.refusedFirst != null || among.isNotEmpty() || input.ruleStates != null) return null
+        if (input.ruleState.any { it.credits.isNotEmpty() }) return null
+        val millis = minOf(input.budget.remainingMillis() / 2, RULE_ENGINE_MILLIS)
+        if (millis <= 0L) return null
+        val runs = try {
+            RuleEngineBridge.search(input, millis / 1000.0)
+        } catch (e: PlanAbandoned) {
+            throw e
+        } catch (e: RuntimeException) {
+            null
+        }
+        input.budget.checkAbandoned()
+        return runs
+    }
 
     /** How finely the instant a moving rule state changes the first run is located. */
     const val RULE_SWITCH_RESOLUTION_MILLIS: Long = 1_000
@@ -229,7 +263,14 @@ internal object ScheduleFill {
      * The walk over the rule state (see the class doc): stretch by stretch where it holds, decision by decision where
      * it moves, each placed under the rule state in force there with everything placed before it as the frozen past.
      */
+    /**
+     * A test seam: every input a fill is run on (`RuleEngineShadowTest` hands it to the rule engine to compare the two
+     * schedulers on a real account). Null in the app.
+     */
+    internal var observeInput: ((Input) -> Unit)? = null
+
     fun run(input: Input): Result {
+        observeInput?.invoke(input)
         val states = input.ruleStates ?: return runSegment(input, firstOnly = false)
         if (input.unrollOnly) return runSegment(input.copy(ruleState = states.at(input.startMillis)), firstOnly = false)
         val placements = ArrayList<Placement>()
@@ -351,7 +392,8 @@ internal object ScheduleFill {
         val approximate = limit != null && emitEnd >= limit
         val searchUntil = if (approximate) model.uAt(limit!!) else model.uEnd
         val emitU = model.uAt(emitEnd)
-        val seeds = (input.seeds + listOfNotNull(adoptedSeed)).map { seedRuns(model, it, input.startMillis) }.filter { it.isNotEmpty() }
+        val engineSeed = ruleEngineSeed(input, firstOnly, among)
+        val seeds = (input.seeds + listOfNotNull(adoptedSeed, engineSeed)).map { seedRuns(model, it, input.startMillis) }.filter { it.isNotEmpty() }
         // § *Two paces*, the instant schedule: the score's policy, ruled and rolled by parts, nothing searched.
         if (input.instant && !firstOnly) {
             val runs = InstantSchedule(model).plan(cursor, emitU, forcedFirst, refusedFirst, among)

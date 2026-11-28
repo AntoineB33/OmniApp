@@ -1,6 +1,5 @@
 package org.example.project.scheduler.ruleline
 
-import org.example.project.scheduler.line.Rational
 
 /**
  * The sweep: the "or" choices when the positions that act on each other are not discrete — a port of

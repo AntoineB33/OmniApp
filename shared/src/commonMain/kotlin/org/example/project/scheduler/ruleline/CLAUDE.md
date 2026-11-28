@@ -11,7 +11,8 @@ A port of `C:\code\line_manager\scripts` (the requirements' whole model), layer 
 `modes.py`, `Script.kt` = `script.py`, `ScriptText.kt` = `script_text.py`, `Watch.kt` = `watch.py`, `Score.kt` = `score.py`, `ScoreSearch.kt` = `score_search.py`, `RatioPlan.kt` =
 `ratio_plan.py`, `Instant.kt` = `instant.py`, `Pace.kt` = `pace.py`, `Probability.kt` = `probability.py`, `Generator.kt` =
 `generator.py`, `Simulation.kt` = `simulation.py`; `PyNum.kt` and `PyRandom.kt` are Python's numbers and `random`. Plan and order: `docs/adr/0018-the-line-is-the-reduction-of-its-edits.md`
-§ *2026-11-28*. Not wired to the app yet.
+§ *2026-11-28*. The app reaches it only through `domain/RuleEngineBridge.kt` (an optional seed of the fill, off, and
+`RuleEngineShadowTest`).
 
 A behaviour change starts in the reference; then `python -I scripts/ruleline-golden.py` rewrites the golden files and
 the port must reproduce them. Never edit a golden file by hand.
