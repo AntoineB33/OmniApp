@@ -34,10 +34,10 @@ Examples:
 
 The rules must not have a cycle dependency.
 
-The rules must be deterministic.
-If there is an "or" on the right side of the element rule, the leftmost operand (leftmost in the expression) that can be chosen is chosen. The position that choses first is the closest to 0, and the one to the right if two positions are equally close to 0.
+The rules must be deterministic, giving the same result if the input, the program's logic and resources (memory, CPU, time...) are the same, with an exception on the optimization problems that can be using randomness
+If there is an "or" on the right side of the element rule, and that no optimization goals act as a tie-breaker, the leftmost operand (leftmost in the expression) that can be chosen is chosen. The position that choses first is the closest to 0, and the one to the right if two positions are equally close to 0. If the solver hits a repeating cycle OR exceeds $N$ consecutive $\varepsilon$-steps at the same real coordinate, switch to small interval lengths chosen from the context.
 
-A position is a rational number x or x + kε, with k a non-zero integer and ε an infinitely small positive distance: x + ε is after x and before every real number greater than x. When a rule needs the first position after x, it uses x + ε.
+A position is a real number x or x + kε, with k a non-zero integer and ε an infinitely small positive distance: x + ε is after x and before every real number greater than x. When a rule needs the first position after x, it uses x + ε.
 Example: "A → B or C", "B → E", "B → no E on (0, 1] of l", A on [0, 2]: B is at 0 and at 1 + ε.
 
 If an interval that stretches to +infinity must be placed at -infinity and vice versa, then it is placed on the whole line.
