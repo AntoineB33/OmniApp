@@ -11,6 +11,16 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The rule engine: the solver, the sweep and the line state ported — 2026-11-28
+
+- User: *"Yes, next layer"*. `scheduler/ruleline/` gains the line computed from claims (`Solver.kt`: the region stage
+  kind after kind, the lattices with their rays, the cells of a local rule set, the percentage rules, `satisfiable`),
+  the sweep that decides the "or"s when positions act on their neighbours (`Sweep.kt`: greedy runs, look-ahead with
+  memo and learnt dead ends, the outward decision from 0, the far-left case, repeats), and the claims, edits index and
+  line state (`LineState.kt`). Held to the reference by `SolverGoldenTest` (501 cases) and `LineStateGoldenTest`.
+- Still not wired to the app. Next: user edits winning over the line (`resolve.py`, `guards.py`, `constraints.py`).
+- Nothing persisted or synced. No deploy needed.
+
 ### The rule engine: line_manager's current model ported, first layers — 2026-11-28
 
 - User: *"Make sure docs\scheduler_requirements.md is satisfied"*, then *"Start the rule engine"*. The audit found the

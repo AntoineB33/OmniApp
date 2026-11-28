@@ -344,3 +344,153 @@ def main_rules():
 
 if __name__ == "__main__":
     main_rules()
+
+
+# ---------------------------------------------------------------- solver.py, sweep.py
+
+SOLVE_OUT = OUT.parent / "solve-golden.json"
+
+
+def rclaim_region():
+    r = R.random()
+    if r < 0.75:
+        return Region.of(rset(R.randint(1, 3), -6, 6))
+    lo = Pos(R.randint(-4, 2))
+    per = Pos(R.choice([2, 3, 4, 6]))
+    pat = IntervalSet(rpattern(per))
+    if not pat:
+        return Region.of(rset(1, -6, 6))
+    side = R.random()
+    return Region(lo, lo, IntervalSet(), per, pat if side < 0.3 else IntervalSet(), per, pat if side >= 0.15 else IntervalSet())
+
+
+def main_solve():
+    import time as _time
+    from rules import RuleError, RuleSet, parse_percent_rule, parse_rule
+    from solver import Conflict, Interrupted, Problem, Undetermined, limited, satisfiable, solve
+    texts = reference_rule_texts()
+    rand = [f"{rand_lhs_text()} → {rand_rhs_text()}" for _ in range(CASES)] + [rand_percent_text() for _ in range(60)]
+    pool = [t for t in texts + rand if "error" not in rule_result(t)]
+    sets = []
+    # rule sets the lattices solve: "or"s of single positions relative to p, rules on chosen kinds at offsets
+    while len(sets) < 50:
+        a, b, c, d = R.sample(KINDS, 4)
+        off = lambda: R.choice(["", "", " 1 unit on the right", " 1 unit on the left", " 2 units on the right"])
+        ts = [f"{a} → {b}{off()} or {c}{off()}"]
+        if R.random() < 0.7:
+            ts.append(f"{b} → no {c}{off()}")
+        if R.random() < 0.5:
+            ts.append(f"{c} → {d}{off()}")
+        if R.random() < 0.3:
+            ts.append(f"{b} & not {d} → no {c}{off()}")
+        if R.random() < 0.3:
+            ts.append(f"{b} → {d} 50%")
+        if "error" in set_result(ts):
+            continue
+        sets.append(ts)
+    while len(sets) < 170:
+        ts = R.sample(pool, R.randint(1, 3))
+        if "error" in set_result(ts):
+            continue
+        sets.append(ts)
+    cases, dropped = [], 0
+    for ts in sets:
+        pct = [parse_percent_rule(t) for t in ts]
+        rs = RuleSet([parse_rule(t) for t, p in zip(ts, pct) if p is None], tuple(p for p in pct if p is not None))
+        kinds = [k for k in rs.order if not k.startswith("§")] or ["A"]
+        t0 = _time.monotonic()
+        try:
+            with limited(1.0):
+                sat = satisfiable(rs) or "satisfiable"
+        except Exception as e:  # noqa: BLE001
+            sat = "error " + type(e).__name__
+        if _time.monotonic() - t0 > 0.8:
+            sat = "skip"  # (too close to its own time limit to be an answer)
+        for _ in range(3):
+            pos, neg = {}, {}
+            for k in R.sample(kinds, R.randint(1, len(kinds))):
+                used = Region.empty()
+                for v in R.sample([F(100), F(100), F(50), F(20), F(80)], R.randint(1, 2)):
+                    g = rclaim_region() - used
+                    if g:
+                        pos.setdefault(k, {})[v] = g
+                        used = used | g
+            if R.random() < 0.3:
+                k = R.choice(kinds)
+                neg[k] = Region.of(rset(1, -6, 6))
+            t0 = _time.monotonic()
+            try:
+                with limited(1.0):
+                    out = "line\n" + str(solve(rs, Problem(pos, neg)))
+            except Conflict as e:
+                out = "Conflict: " + str(e)
+            except Undetermined as e:
+                out = "Undetermined: " + str(e)
+            except IncompatiblePeriods as e:
+                out = "IncompatiblePeriods"
+            except (RuleError, ValueError, RecursionError) as e:
+                out = "error " + type(e).__name__
+            if _time.monotonic() - t0 > 0.8 or out == "Undetermined: it takes too long to compute":
+                dropped += 1
+                continue
+            enc = lambda d: {k: {str(v): region_json(g) for v, g in by.items()} for k, by in d.items()}
+            cases.append({"texts": ts, "pos": enc(pos), "neg": {k: region_json(g) for k, g in neg.items()},
+                          "out": out, "satisfiable": sat})
+    SOLVE_OUT.write_text(json.dumps({"cases": cases}, ensure_ascii=False, indent=0), encoding="utf-8")
+    kinds_out = {}
+    for c in cases:
+        kinds_out[c["out"].split(":")[0].split("\n")[0]] = kinds_out.get(c["out"].split(":")[0].split("\n")[0], 0) + 1
+    print(f"wrote {SOLVE_OUT} ({len(cases)} cases, {dropped} dropped as too slow): {kinds_out}")
+
+
+if __name__ == "__main__":
+    main_solve()
+
+
+# ---------------------------------------------------------------- line.py
+
+LINE_OUT = OUT.parent / "line-state-golden.json"
+
+
+def main_line_state():
+    from line import GEN, MODE, USER, Claims, LineState, Op
+    from solver import Line
+    out = []
+    owners = [USER, GEN, MODE]
+    for _ in range(CASES):
+        c = Claims()
+        steps = []
+        for _ in range(R.randint(1, 8)):
+            k = R.choice(KINDS[:3])
+            g = rclaim_region()
+            a = R.choice(["pos", "pos", "neg", "taken", "rpos", "rneg", "rtaken"])
+            o = R.choice(owners)
+            v = R.choice([F(100), F(50), F(20)])
+            {"pos": lambda: c.add_pos(k, g, v, o), "neg": lambda: c.add_neg(k, g, o), "taken": lambda: c.add_taken(k, g, o),
+             "rpos": lambda: c.remove_pos(k, g), "rneg": lambda: c.remove_neg(k, g), "rtaken": lambda: c.remove_taken(k, g)}[a]()
+            steps.append({"a": a, "k": k, "g": region_json(g), "o": o, "v": str(v)})
+        other = Claims()
+        other.add_pos("A", Region.of(rset(1, -6, 6)), F(100), USER)
+        where = Region.of(rset(2, -6, 6))
+        p = c.problem({"B": Region.of(rset(1, -6, 6))} if R.random() < 0.5 else None)
+        extra = None
+        st = LineState(c, Line({}))
+        cut = rpos(-8, 8)
+        out.append({
+            "steps": steps, "other": region_json(other.pos["A"][(F(100), USER)]), "where": region_json(where),
+            "cut": pos_json(cut), "neg_b": None,
+            "results": {
+                "str": str(c), "on": str(c.on(where)), "kinds": " ".join(c.kinds()), "empty": str(c.is_empty()),
+                "merged": str(c.merged(other)), "same": str(c.same(c.copy())), "same_other": str(c.same(other)),
+                "owned": " | ".join(f"{k}/{o}: {c.owned(k, o)}" for k in KINDS[:3] for o in owners),
+                "by_value": " | ".join(f"{k}: " + ", ".join(f"{v}={r}" for v, r in sorted(c.by_value(k).items())) for k in KINDS[:3]),
+                "memory": str(st.memory()), "starts_before": " ".join(map(str, st.starts_before(cut))),
+                "op": str(Op.put("A", where, 50)) + " ; " + str(Op.take_no("B", where)),
+            },
+        })
+    LINE_OUT.write_text(json.dumps({"cases": out}, ensure_ascii=False, indent=0), encoding="utf-8")
+    print(f"wrote {LINE_OUT} ({len(out)} cases)")
+
+
+if __name__ == "__main__":
+    main_line_state()

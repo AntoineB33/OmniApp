@@ -115,7 +115,11 @@ until `ruleline` covers what it does, then goes. Order, from the dependency grap
 1. `intervals.py`, `region.py` → `Positions.kt`, `Region.kt` — **done** (`RuleLineGoldenTest`).
 2. `rules.py` → `Rules.kt` — **done**, without `parse_rules`'s satisfiability check, which is the solver's
    (`RuleLanguageGoldenTest`: the reference's 309 rule texts, random ones, rule sets, left sides read on values).
-3. `solver.py`, `sweep.py` (the line of a set of claims; the choices on lattices or by a sweep), then `line.py`.
+3. `solver.py`, `sweep.py`, `line.py` → `Solver.kt`, `Sweep.kt`, `LineState.kt` — **done** (`SolverGoldenTest`: 501
+   random rule sets and claims, the lattices and the sweep both reached — its outward decision, look-ahead, runs and
+   repeats — and `satisfiable`; `LineStateGoldenTest`). The sweep's probe (`_probe`) is ported but no golden case
+   reaches it yet. The solver's time limit and its "by point" flag are process-wide where the reference's are per
+   thread (`SolverLimits`): to settle when the generator runs beside the display.
 4. `resolve.py`, `guards.py`, `constraints.py`, `problems.py`, `state_delta.py` (user edits win, the fewest changed).
 5. `mode_rules.py`, `modes.py`, `script.py`, `script_text.py`, `script_python.py`, `watch.py` (the generated script).
 6. `score.py`, `score_search.py`, `ratio_plan.py`, `instant.py`, `pace.py`, `probability.py`, `generator.py`,

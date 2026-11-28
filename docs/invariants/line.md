@@ -23,8 +23,10 @@ are the reference's `SEMANTICS.md`; the names and the order of every decision fo
 ### The second port: `scheduler/ruleline/` (2026-11-28)
 
 → ADR 0018 § *2026-11-28*. The reference replaced `reverse_logic/` with `scripts/`; `ruleline` ports it layer by layer
-(positions x + kε, regions, the rule language so far), each layer held to `scripts/ruleline-golden.py`'s files
-(`RuleLineGoldenTest`, `RuleLanguageGoldenTest`). The same rules as the first port: the reference decides, no fast path
+(positions x + kε, regions, the rule language, the solver and the sweep, the claims and line state so far), each layer
+held to `scripts/ruleline-golden.py`'s files (`RuleLineGoldenTest`, `RuleLanguageGoldenTest`, `SolverGoldenTest`,
+`LineStateGoldenTest`). A golden case the reference settles near its own time limit is left out: no expected answer
+may depend on a clock. The same rules as the first port: the reference decides, no fast path
 that answers differently, coordinates exact. `scheduler/line/` stays until `ruleline` covers it.
 
 ### The line is a function of the ordered active edits

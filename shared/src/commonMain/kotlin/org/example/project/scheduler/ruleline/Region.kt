@@ -521,12 +521,12 @@ internal fun Region.eager(): Region = if (this is Lazy) full() else this
  */
 class Lazy private constructor(
     private val op: String,
-    private var a: Region?,
-    private var b: Region?,
+    internal var a: Region?,
+    internal var b: Region?,
     private val d: Pos?,
     private val iv: Interval?,
 ) : Region() {
-    private var computed: Region? = null
+    internal var computed: Region? = null
     internal val depth: Int = 1 + maxOf((a as? Lazy)?.depth ?: 0, (b as? Lazy)?.depth ?: 0)
 
     init {
@@ -654,7 +654,7 @@ class Lazy private constructor(
     }
 
     /** Positions near which the operands start: where to look for a piece first. */
-    private fun hints(): List<Pos> {
+    internal fun hints(): List<Pos> {
         val out = ArrayList<Pos>()
         val todo = ArrayList<Region>()
         todo.add(this)
