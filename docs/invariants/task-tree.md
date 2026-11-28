@@ -1960,6 +1960,11 @@ suggestions before it was ever entered.
   `NavigationTreeTest` until it is placed. Each category ends with its own "Default for this" where some of it is on by
   default. The groups ("Search", "Sorting", "Parents and children"…), their sub-categories and the type families of
   2026-11-27 are gone with it. The sections above that describe the groups describe the tree before this.
+- **EVERY TOP CATEGORY HAS A WALKED REQUEST, AND A WALK IS A TEST** (user 2026-11-28, *"start walks"*):
+  `docs/new-user-walks.md` tells each request's thinking and hovers; `NewUserWalksTest` holds them as data and fails when a
+  walk no longer reaches its configuration, takes more than three hovers, or a top category has none. A change to
+  `CONFIGURATION_LAYOUT` that moves a configuration updates its walks. A request the tree cannot answer is fixed in the
+  tree, then walked there.
 - **A FILTER IS NAMED BY WHAT THE USER IS AFTER, AND NO CHOICE LOOKS LIKE AN ANSWER IT IS NOT** (user request
   2026-11-28, walked on *"the sorted history units about window opening or closing"*): App & history › History (or ›
   Windows) › **What was done to a window** › opened, closed; History › Sort by › date. What a window's layout change was

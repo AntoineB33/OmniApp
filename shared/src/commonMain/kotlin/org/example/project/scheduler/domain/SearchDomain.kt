@@ -1326,6 +1326,8 @@ object SearchDomain {
                     alarmState = filters.alarmState.name,
                     alarmDays = filters.alarmDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     datedOnDays = filters.datedOnDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
+                    datedFromMillis = filters.datedFrom,
+                    datedUntilMillis = filters.datedUntil,
                     checkedOnDays = filters.checkedOnDays.sortedBy { it.isoDayNumber }.map { it.isoDayNumber },
                     lettersIn = filters.lettersIn.takeIf { it != LETTERS_IN_NAME },
                     letters = filters.letters.entries.sortedBy { it.key }.associate { it.key to it.value.toString() },
@@ -1459,6 +1461,8 @@ object SearchDomain {
                         alarmState = enumNamed(stored.alarmState, AlarmState.Any),
                         alarmDays = stored.alarmDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
                             .toSet(),
+                        datedFrom = stored.datedFromMillis,
+                        datedUntil = stored.datedUntilMillis,
                         datedOnDays = stored.datedOnDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
                             .toSet(),
                         checkedOnDays = stored.checkedOnDays.mapNotNull { n -> DayOfWeek.entries.firstOrNull { it.isoDayNumber == n } }
@@ -1674,12 +1678,31 @@ object SearchDomain {
      */
     fun taskInTreeLabel(choice: Tri): String = if (choice == Tri.No) "no (deleted)" else choice.label
 
+    /** User request 2026-11-28: the spans "Dated from"'s drop-down fills both bounds with ([datedRangeOf]). */
+    enum class DatedRange(val label: String, val days: Int, val endsDaysAgo: Int) {
+        Today("today", 1, 0),
+        Yesterday("yesterday", 1, 1),
+        Last7Days("last 7 days", 7, 0),
+        Last30Days("last 30 days", 30, 0),
+    }
+
+    /**
+     * The bounds [range] fills "Dated from" and "Dated until" with at [nowMillis]: from the start of its first day to the last
+     * millisecond of its last, on [timeZone]'s days. Fixed instants, stored as such — the list never re-reads the clock.
+     */
+    fun datedRangeOf(range: DatedRange, nowMillis: Long, timeZone: TimeZone): Pair<Long, Long> {
+        val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date
+        val last = today.plus(-range.endsDaysAgo, DateTimeUnit.DAY)
+        val first = last.plus(-(range.days - 1), DateTimeUnit.DAY)
+        return first.atStartOfDayIn(timeZone).toEpochMilliseconds() to last.plus(1, DateTimeUnit.DAY).atStartOfDayIn(timeZone).toEpochMilliseconds() - 1
+    }
+
     /**
      * The "Default periods" filter: whether a restrictive period is one the app ships (named by its fixed id,
      * `PeriodKinds.isUserDefined` false) or one of the account's own. Stored by the entries' names, which are kept as
      * they were under the filter's first label ("Origin": built-in / yours).
      */
-    enum class PeriodOrigin(val label: String) { Any("any"), BuiltIn("yes"), Yours("no") }
+    enum class PeriodOrigin(val label: String) { Any("any"), BuiltIn("yes (the app's)"), Yours("no (yours)") }
 
     /**
      * How much resilience a task has to a period, as the period filter asks it ([Filters.periodResilience]): none (the
@@ -1740,6 +1763,12 @@ object SearchDomain {
         val alarmDays: Set<DayOfWeek> = emptySet(),
         /** User rule 2026-11-27: empty = any; else only the rows dated ([dateOf]) on one of these weekdays. */
         val datedOnDays: Set<DayOfWeek> = emptySet(),
+        /**
+         * User request 2026-11-28 (walked: *"what I changed yesterday"*): only the rows dated ([dateOf]) in
+         * `[datedFrom, datedUntil]`; a null bound asks nothing on its side, both null = any.
+         */
+        val datedFrom: Long? = null,
+        val datedUntil: Long? = null,
         /** User request 2026-11-28: empty = any; else only the rows whose check box was checked on one of these weekdays ([checksOf]). */
         val checkedOnDays: Set<DayOfWeek> = emptySet(),
         /**
@@ -2051,6 +2080,8 @@ object SearchDomain {
                 Setting.AlarmStateSetting -> alarmState
                 Setting.AlarmDays -> alarmDays
                 Setting.DatedOnDays -> datedOnDays
+                Setting.DatedFrom -> datedFrom
+                Setting.DatedUntil -> datedUntil
                 Setting.CheckedOnDays -> checkedOnDays
                 Setting.LettersAt -> lettersIn to letters
                 Setting.TimerStateSetting -> timerState
@@ -2108,6 +2139,8 @@ object SearchDomain {
                 Setting.AlarmStateSetting -> alarmState != AlarmState.Any
                 Setting.AlarmDays -> alarmDays.isNotEmpty()
                 Setting.DatedOnDays -> datedOnDays.isNotEmpty()
+                Setting.DatedFrom -> datedFrom != null
+                Setting.DatedUntil -> datedUntil != null
                 Setting.CheckedOnDays -> checkedOnDays.isNotEmpty()
                 Setting.LettersAt -> letters.isNotEmpty()
                 Setting.TimerStateSetting -> timerState != TimerState.Any
@@ -2234,6 +2267,16 @@ object SearchDomain {
         } else {
             listOf(SortKey.Relevance, SortKey.Name) + SortKey.entries.filter { it.kind == kind }
         }
+
+    /**
+     * User request 2026-11-28 (walked: *"the alarms by their time"*, looked for under ▾ › Order): **the methods a "Sort by"
+     * offers** — one type's own ([kind]: relevance, name, its keys); the whole list's (null) its own keys, then every
+     * type's ("alarm: time"), which order that type's rows among the places they hold ([SortMethod]). The same list the
+     * type's own "Sort by" writes, so a method checked in one is checked in the other.
+     */
+    fun sortMethodsOffered(kind: Kind?): List<SortMethod> =
+        sortKeysOf(kind).map { SortMethod(kind, it) } +
+            (if (kind == null) SortKey.entries.filter { it.kind != null }.map { SortMethod(it.kind, it) } else emptyList())
 
     /**
      * One sorting method of the list at the top of the Configuration Search window: a [key], the rows it is
@@ -2509,6 +2552,14 @@ object SearchDomain {
         CalendarAt(null, "Is on the calendar at"),
         /** User rule 2026-11-27: only the rows dated on the weekdays checked ([Filters.datedOnDays], [dateOf]). */
         DatedOnDays(null, "Dated on"),
+        /**
+         * User request 2026-11-28 (walked: *"what I changed yesterday"*, which "Dated on"'s weekdays answered with every
+         * other week's same day too): only the rows dated from an instant ([Filters.datedFrom]) — its drop-down fills both
+         * bounds with a span (today, yesterday…) — and until one ([Filters.datedUntil]). Two rows, as the Claude Code logs'
+         * "Written from" and "Written until": one row holds one instant ([SettingRowHeightTest]).
+         */
+        DatedFrom(null, "Dated from"),
+        DatedUntil(null, "Dated until"),
         /**
          * User request 2026-11-28 (*"the rows with a check box the user checked on a Sunday"*, walked as a new user would):
          * only the rows whose check box was checked on one of the weekdays checked ([Filters.checkedOnDays], [checksOf]).
@@ -3101,7 +3152,7 @@ object SearchDomain {
                 node("which/include", "Include & exclude", "The elements listed whatever else is set, and those never listed.", Setting.ListedFrom, Setting.IncludedElements, Setting.ExcludedElements),
                 node(
                     "which/dates", "Date & calendar", "The elements of a day (dated on it, or checked on it), or of a moment of the calendar.",
-                    Setting.DatedOnDays, Setting.CheckedOnDays, Setting.CalendarAt, Setting.CalendarAdd,
+                    Setting.DatedFrom, Setting.DatedUntil, Setting.DatedOnDays, Setting.CheckedOnDays, Setting.CalendarAt, Setting.CalendarAdd,
                 ),
                 node("which/parents", "By parent", "The parents of some elements, or the elements with no parent of some types.", Setting.ParentsOf, Setting.ParentDistance, Setting.NoParentOfKinds),
             ),
@@ -3148,15 +3199,15 @@ object SearchDomain {
                 type(Kind.Timer, "Timers", Setting.TimerSort, Setting.TimerStateSetting),
                 type(Kind.Chrono, "Chronos", Setting.ChronoSort, Setting.ChronoStateSetting),
                 type(Kind.Reminder, "Reminders", Setting.ReminderSort, Setting.ReminderRepeatsSetting),
-                type(Kind.Notification, "Notifications", Setting.NotificationSort, Setting.NotificationSourceSetting, Setting.DatedOnDays),
+                type(Kind.Notification, "Notifications", Setting.NotificationSort, Setting.NotificationSourceSetting, Setting.DatedFrom, Setting.DatedUntil, Setting.DatedOnDays),
             ),
             node(
                 "app", "App & history", "The history of changes, the windows, the keyboard shortcuts and the app's own elements.",
                 type(
                     Kind.HistoryUnit, "History",
                     Setting.HistorySort, Setting.HistoryCategorySetting, Setting.HistoryWindowSetting, Setting.HistoryMadeInWindowSetting, Setting.HistoryUndoneSetting,
-                    Setting.HistoryWindowChangeSetting, Setting.HistoryChangedKindsSetting, Setting.HistoryChangedElementSetting, Setting.DatedOnDays,
-                    Setting.CheckedOnDays,
+                    Setting.HistoryWindowChangeSetting, Setting.HistoryChangedKindsSetting, Setting.HistoryChangedElementSetting, Setting.DatedFrom, Setting.DatedUntil,
+                    Setting.DatedOnDays, Setting.CheckedOnDays,
                 ),
                 // "What was done to a window" here too: a user after the windows' history looks under Windows as well.
                 type(
@@ -3479,7 +3530,12 @@ object SearchDomain {
             Setting.CalendarAdd -> "Only what can be put on the calendar at the instant given."
             Setting.CalendarAt -> "Only what is on the calendar at the instant given."
             Setting.DatedOnDays ->
-                "Only the rows dated on one of the days checked: a history unit, a notification, a log entry. When a box was checked: \"Checked on\"."
+                "Only the rows dated on one of the days of the week checked: a history unit, a notification, a log entry. " +
+                    "A span of days: \"Dated from\". When a box was checked: \"Checked on\"."
+            Setting.DatedFrom ->
+                "Only the rows dated from this instant on: a history unit, a notification, a log entry. Its drop-down fills it and " +
+                    "\"Dated until\" with a span: today, yesterday, the last 7 or 30 days."
+            Setting.DatedUntil -> "Only the rows dated until this instant: a history unit, a notification, a log entry."
             Setting.CheckedOnDays -> "Only the rows with a check box checked on one of the days checked: a type, a notification source, any box of a list."
             Setting.LettersAt ->
                 "Only the rows whose text has the letters typed in the numbered boxes at those places: box 1, the first letter (starts with); " +
@@ -3698,6 +3754,9 @@ object SearchDomain {
         val alarmDays: List<Int> = emptyList(),
         /** New 2026-11-27: absent from an older build's = any day. */
         val datedOnDays: List<Int> = emptyList(),
+        /** New 2026-11-28: absent from an older build's = no bound. */
+        val datedFromMillis: Long? = null,
+        val datedUntilMillis: Long? = null,
         /** New 2026-11-28: absent from an older build's = any day. */
         val checkedOnDays: List<Int> = emptyList(),
         /** New 2026-11-28: absent from an older build's = the name. */
@@ -4748,6 +4807,14 @@ object SearchDomain {
                     }
                 }
                 .let { rows ->
+                    // "Dated from" / "Dated until": about every row, through the same one date of a row.
+                    if (!filters.isOn(Setting.DatedFrom) && !filters.isOn(Setting.DatedUntil)) return@let rows
+                    rows.filter { row ->
+                        val at = dateOf(state, row) ?: return@filter false
+                        (filters.datedFrom == null || at >= filters.datedFrom) && (filters.datedUntil == null || at <= filters.datedUntil)
+                    }
+                }
+                .let { rows ->
                     // "Checked on": the rows a check box of which was checked on one of the weekdays, read off the one index.
                     if (!filters.isOn(Setting.CheckedOnDays)) return@let rows
                     rows.filter { row ->
@@ -5559,13 +5626,14 @@ object SearchDomain {
                 DayOfWeek.entries.sortedBy { it.isoDayNumber }.flatMap { listOf(it.name.take(2).lowercase().replaceFirstChar(Char::uppercase), it.name.lowercase()) } +
                     "any day"
             Setting.TaskBoxesFrom, Setting.TaskBoxesUntil, Setting.PeriodBoxesFrom, Setting.PeriodBoxesUntil -> listOf("any", "Pick", "Now")
+            Setting.DatedFrom -> DatedRange.entries.map { it.label }
             Setting.CalendarAdd, Setting.CalendarAt -> listOf("Now")
             // The text's choices as drawn, then each box by its place ("5th letter"), so a bar finds it by the request's words.
             Setting.LettersAt -> LETTERS_IN_OPTIONS.map(::lettersInLabel) + (1..LETTER_PLACES).map { "${ordinal(it)} letter" } + "starts with"
             // Each box of the drop-down, so a bar finds it by the request's words ("window opened", "closed").
             Setting.HistoryWindowChangeSetting -> labels(WindowChange.entries) { it.label }
             // Every method it offers ("date", "time"), so "sort by date" finds the sorts that can (user 2026-11-28).
-            Setting.SortResults -> listOf("Default") + sortKeysOf(null).map { it.label }
+            Setting.SortResults -> listOf("Default") + sortMethodsOffered(null).map { it.label }
             Setting.SearchBars -> listOf("Add a search bar")
             Setting.ResetSearch -> listOf("Reset")
             // A type's own methods (not the relevance and name every list has), so "sort by date" finds its sorts alone.

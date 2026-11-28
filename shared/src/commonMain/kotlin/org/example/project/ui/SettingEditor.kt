@@ -342,6 +342,27 @@ internal fun SettingEditor(
             DayChips(f.datedOnDays) { filters(f.copy(datedOnDays = it)) }
         SearchDomain.Setting.CheckedOnDays ->
             DayChips(f.checkedOnDays) { filters(f.copy(checkedOnDays = it)) }
+        // User request 2026-11-28: from an instant — a span a new user thinks in (yesterday…) one pick away in the drop-down,
+        // which fills "Dated until" too; one row, as every configuration's (`SettingRowHeightTest`).
+        SearchDomain.Setting.DatedFrom -> {
+            val now = LocalAppNowMillis.current
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                ChoiceDropDown(setting.name,
+                    options = SearchDomain.DatedRange.entries,
+                    selected = null,
+                    label = { it.label },
+                    onSelect = { range ->
+                        val (from, until) = SearchDomain.datedRangeOf(range, now(), kotlinx.datetime.TimeZone.currentSystemDefault())
+                        filters(f.copy(datedFrom = from, datedUntil = until))
+                    },
+                    modifier = Modifier.width(100.dp),
+                    placeholder = "span…",
+                )
+                BoxBoundField(f.datedFrom, { filters(f.copy(datedFrom = it)) }, onPick = null)
+            }
+        }
+        SearchDomain.Setting.DatedUntil ->
+            BoxBoundField(f.datedUntil, { filters(f.copy(datedUntil = it)) }, onPick = null)
         SearchDomain.Setting.LettersAt ->
             LettersAtEditor(setting.name, f) { filters(it) }
         SearchDomain.Setting.TimerStateSetting ->
@@ -498,13 +519,15 @@ private fun SortMethodPicker(
     onChange: (List<SearchDomain.SortMethod>) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
-    val methods = SearchDomain.sortKeysOf(kind).map { SearchDomain.SortMethod(kind, it) }
+    val methods = SearchDomain.sortMethodsOffered(kind)
+    // In the whole list's, a type's method says its type ("alarm: time"); in a type's own, its key alone.
+    fun labelOf(method: SearchDomain.SortMethod) = if (kind == null) method.label else method.key.label
     fun inList(method: SearchDomain.SortMethod) = sorts.any { it.sameMethod(method) }
     val range = rememberCheckRange<SearchDomain.SortMethod>()
     val popupOpener = rememberPopupOpener()
     Box { OpenedBy(popupOpener) {
         Text(
-            text = methods.filter(::inList).joinToString(", ") { it.key.label }.ifEmpty { "none" } + "  ▾",
+            text = methods.filter(::inList).joinToString(", ", transform = ::labelOf).ifEmpty { "none" } + "  ▾",
             style = MaterialTheme.typography.bodyMedium,
             // User rule 2026-11-04: wrapped, never cut by "…".
             modifier = Modifier
@@ -519,7 +542,7 @@ private fun SortMethodPicker(
             onDismiss = { open = false },
             modifier = Modifier.checkRangeShift(range),
             options = SearchOptions(
-                options = methods.mapIndexed { i, method -> i.toString() to method.key.label },
+                options = methods.mapIndexed { i, method -> i.toString() to labelOf(method) },
                 checked = methods.indices.filter { inList(methods[it]) }.mapTo(HashSet()) { it.toString() },
                 // A shift-click range lands at the bottom in the menu's order, as checking each in turn would.
                 onClick = { id ->

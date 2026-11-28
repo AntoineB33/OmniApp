@@ -11,6 +11,22 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### New-user walks: a batch over the whole ▾ tree, and what it found — 2026-11-28
+
+- User: *"start walks"* — a batch of 34 requests, at least one per top category, each walked as a new user would
+  (`docs/new-user-walks.md`), held as data by `NewUserWalksTest`, which fails when a walk stops leading to its
+  configuration, takes more than three hovers, or a top category has none.
+- New search configurations **"Dated from"** and **"Dated until"** (`Setting.DatedFrom`/`DatedUntil`,
+  `Filters.datedFrom`/`datedUntil`): rows dated (`dateOf`) from / until an instant; Dated from's drop-down fills both with
+  today, yesterday, the last 7 or 30 days. Two rows, as one row holds one instant (`SettingRowHeightTest`) (`datedRangeOf`, fixed instants:
+  the list never re-reads the clock). In Which elements › Date & calendar, History and Notifications. "Dated on" answered
+  "yesterday" with every other week's same weekday too.
+- **Order › Sort by offers every type's methods** ("alarm: time", `sortMethodsOffered`), the same one list each type's
+  own Sort by writes.
+- "Default periods" reads "yes (the app's)" / "no (yours)".
+- Persisted shape: two optional fields on a stored configuration (`datedFromMillis`, `datedUntilMillis`); absent = no
+  bound (`NewUserWalksTest`). Client rebuild only.
+
 ### "What was done to a window": the window-opening history found along the ▾ — 2026-11-28
 
 - User: *"Start with getting the sorted history units about window opening or closing"*, walked as a new user would. The
