@@ -112,6 +112,22 @@ class RandomRequestsTest {
     }
 
     /**
+     * User 2026-11-28: *"The flat list after the tree structure was to enable the user to find any search configuration by
+     * its title with the search bar"* — and a new user types their own words. In the ▾'s first pop-up: "checked on sunday"
+     * is "Checked on" alone (its name, and its Su chip said "sunday"); "sunday" lists the three day filters.
+     */
+    @Test
+    fun the_arrow_bar_finds_checked_on_by_the_words_of_the_request() {
+        val tree = SearchDomain.configurationTree(SearchDomain.Config(kinds = Kind.entries.toSet()))
+        val rows = SearchDomain.ConfigurationTreeRows(tree)
+        fun typed(q: String) = SearchDomain.shownConfigurationNodes(SchedulerState.empty(), tree, root = true, rows, SearchDomain.CONFIGURATION_SEARCH.copy(query = q))
+            .filterIsInstance<SearchDomain.ConfigurationLeaf>().map { it.setting }
+        assertEquals(listOf(SearchDomain.Setting.CheckedOnDays), typed("checked on sunday"))
+        assertEquals(setOf(SearchDomain.Setting.DatedOnDays, SearchDomain.Setting.CheckedOnDays, SearchDomain.Setting.AlarmDays), typed("sunday").toSet())
+        assertEquals(true, SearchDomain.Setting.CheckedOnDays in typed("checked"))
+    }
+
+    /**
      * Iteration 2:*"every context where search configurations show a result list where the 3rd row has a title that starts
      * with the letter d and the 5th letter is h, sorted by the last character of their id"*. A context's first rows are facts
      * of it ("Row 3: Death"). Types: context; Where to search › Facts; regular expression `^Row 3: d...h`; Sort by: id, from

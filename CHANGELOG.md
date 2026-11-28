@@ -22,6 +22,14 @@ Check here before assuming the code matches the docs.
   on", beside it in Which elements › Date & calendar and in App & history › History. The checks are one structured index
   (`SearchDomain.checksOf`, built once per histories value), read by it and by the row's "Checked" facts (`checkFacts`).
   "Dated on"'s info bubble points to it.
+- Then the user: *"The flat list after the tree structure was to enable the user to find any search configuration by its
+  title with the search bar"*. Measured in the ▾'s first pop-up: "sunday", "day" and "checked on sunday" found nothing
+  (the bar read names alone, and all of a bar's words had to stand in one text). Now a bar's words are each found in any
+  part of a row read (`SearchDomain.textsAnswer`, in `fieldsMatch`: every Search window), the ▾ reads a row's buttons
+  beside its name, and a day chip is found by its day's whole name. "checked on sunday" → "Checked on" alone; "sunday" →
+  Dated on, Checked on, Rings on. Info bubbles left out of the ▾'s search: "checked" then answered 42 rows.
+- Not changed: while a bar holds text the ▾ still lists in the tree's order (user rule 2026-11-16), so for "checked" the
+  row comes 6th, after Recent and the four categories leading to it.
 - Persisted shape: one optional field on a stored configuration (`checkedOnDays`); absent = any day (`RandomRequestsTest`).
   Client rebuild only.
 

@@ -541,7 +541,15 @@ object SearchDomain {
             c(CONFIGURATION_TREE_CONTEXT, "default of the configurations tree (the down arrow)", Config(
                 kinds = setOf(Kind.SearchConfiguration),
                 sorts = TREE_ORDER_SORTS,
-                filters = Filters(searchChildren = true, childDistance = CHILD_DISTANCE_ANY),
+                // User 2026-11-28 (*"The flat list after the tree structure was to enable the user to find any search
+                // configuration by its title with the search bar"*): a new user types their own words ("sunday", "check
+                // box"), not only the row's title: a row answers by its name and the buttons drawn in it ("Su", said
+                // "sunday"); a category by its children's names. Not their info bubbles: measured, "checked" then
+                // answered 42 rows ("the days checked"…) and put "Dated on" above "Checked on".
+                filters = Filters(
+                    searchChildren = true, childDistance = CHILD_DISTANCE_ANY,
+                    searchIn = setOf(SearchField.Name, SearchField.Buttons),
+                ),
                 // User rule 2026-11-27: the ▾ lays its configurations out as a tree to navigate ([configurationTree]).
                 navigationTree = true,
             )),
@@ -5396,10 +5404,19 @@ object SearchDomain {
     ): Boolean {
         if (query.isBlank()) return true
         val match = filters.queryOptions
-        if (searchTexts(row, filters.searchIn, claudeLogs, facts).any { textAnswers(it, query, match) }) return true
+        if (textsAnswer(searchTexts(row, filters.searchIn, claudeLogs, facts), query, match)) return true
         if (!filters.searchChildren) return false
-        return children(row).any { child -> searchTexts(child, filters.childSearchIn, claudeLogs, facts).any { textAnswers(it, query, match) } }
+        return children(row).any { child -> textsAnswer(searchTexts(child, filters.childSearchIn, claudeLogs, facts), query, match) }
     }
+
+    /**
+     * User 2026-11-28 (a new user types *"checked on sunday"*: "Checked on" is the name, Su a button): **whether the parts
+     * [texts] of one row answer [query]** — each of its words or "quoted phrases" found in one of them, wherever. Match
+     * case, whole word or a regular expression read one part at a time, as one phrase ([textAnswers]).
+     */
+    fun textsAnswer(texts: List<String>, query: String, match: TaskTreeSearch.Options): Boolean =
+        if (match != TaskTreeSearch.Options()) texts.any { textAnswers(it, query, match) }
+        else ClaudeLogSearch.rawTerms(query).all { term -> texts.any { it.contains(term, ignoreCase = true) } }
 
     /**
      * What stands [distance] levels below [start] ([below] gives one level), each once, by [key]: exactly that level;
@@ -5467,7 +5484,10 @@ object SearchDomain {
             Setting.ReminderRepeatsSetting -> labels(ReminderRepeats.entries) { it.label }
             Setting.WindowDuplicatesSetting -> labels(WindowDuplicates.entries) { it.label }
             Setting.ChildDistance -> listOf("any", "1", "2", "3", "4", "5")
-            Setting.AlarmDays, Setting.DatedOnDays, Setting.CheckedOnDays -> listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su", "any day")
+            // Each chip as drawn ("Su") and as said ("sunday"), so a bar finds it by the day's whole name (user 2026-11-28).
+            Setting.AlarmDays, Setting.DatedOnDays, Setting.CheckedOnDays ->
+                DayOfWeek.entries.sortedBy { it.isoDayNumber }.flatMap { listOf(it.name.take(2).lowercase().replaceFirstChar(Char::uppercase), it.name.lowercase()) } +
+                    "any day"
             Setting.TaskBoxesFrom, Setting.TaskBoxesUntil, Setting.PeriodBoxesFrom, Setting.PeriodBoxesUntil -> listOf("any", "Pick", "Now")
             Setting.CalendarAdd, Setting.CalendarAt -> listOf("Now")
             Setting.SearchBars -> listOf("Add a search bar")

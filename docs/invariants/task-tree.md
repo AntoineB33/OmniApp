@@ -1967,6 +1967,11 @@ suggestions before it was ever entered.
   verb. Before it, the answer needed Types = search configuration, Where to search › Facts and the bar
   `"Checked: on" sunday` (which also matched a box unchecked on a Sunday and checked another day). "Checked on" and a
   row's "Checked" facts read the one index `SearchDomain.checksOf`. `RandomRequestsTest`.
+  **The other half of the walk is typing in the ▾'s bar** (user 2026-11-28: *"The flat list after the tree structure was
+  to enable the user to find any search configuration by its title with the search bar"*): the user types their own
+  words, so a bar's words are each found in any part of a row read (`SearchDomain.textsAnswer`: "Checked on" by its name,
+  "sunday" by its chip), and "checked on sunday" lists "Checked on" alone. Info bubbles are not read by the ▾: measured,
+  "checked" then answered 42 rows.
 - **THE ▾'S TREE IS A SEARCH CONFIGURATION, AND NO NODE OF IT IS LONG** (user rule 2026-11-27: *"set to on (and add if
   didn't exist) search configurations for some contexts, so that in some contexts the elements are organized in an
   intuitive tree structure … Make sure there are not lots of elements in one node"*; `Config.navigationTree`,
@@ -2032,7 +2037,7 @@ suggestions before it was ever entered.
   (a category's pop-up: its children, a given list). The ▾'s defaults (`CONFIGURATION_SEARCH`): the search
   configurations, sorted by **"tree order"** (`SortKey.TreeOrder`: each row's place in the tree it comes from, a
   given list's own order; `defaultSortsOf` gives it to any search of the search configurations alone), its bar reading
-  names and children's names at **any** depth (`CHILD_DISTANCE_ANY`: a category found by what it holds). Another type
+  names and buttons (a day chip "Su" said "sunday"; user 2026-11-28), and children's names, at **any** depth (`CHILD_DISTANCE_ANY`: a category found by what it holds). Another type
   checked lists its rows too (`ConfigurationOther`). There is no second filter of the tree beside it (the field's
   own filter, `filterConfigurationNodes`, is gone). **"On" is "not a plain Search window's default"** (`Config()`):
   the types checked and the sorting count, so ▾ › ▾ › "Currently on" and "Default for this" say what fills and
