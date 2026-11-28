@@ -166,7 +166,7 @@ Global rules that always apply: `CLAUDE.md`.
   of view must still narrow the block on screen. A block mid-gesture is exempt: its slices hold the gesture.
 - **Test against a large, realistic DB**, not just an emptied one — an empty account hides the cost entirely.
 - **The schedule horizon is $t_{goal}$ = `now + 168 h`** (`SchedulerDomain.scheduleGoalEndMillis`, user rule
-  2026-11-18) — `docs/scheduler_requirements.md` § *Progressive Calculation*. It does not follow the scroll or the week:
+  2026-11-18) — `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*. It does not follow the scroll or the week:
   the calendar past the definitive front shows the instant schedule (below). Until then (2026-09-18) it was the latest
   of the week's end, the calendar's end and `now + 10 min`, a far calendar was capped at 168 h, and a calculation time
   limit could leave `panels` short of it (`scheduler.md` § *Progressive Calculation*).

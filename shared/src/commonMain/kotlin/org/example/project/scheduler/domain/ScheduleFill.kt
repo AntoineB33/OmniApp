@@ -21,7 +21,7 @@ import org.example.project.scheduler.model.TaskTimeRange
  *   progress at the line. A panel the line is standing in is part of it, which is why the chunk in progress
  *   continues without a rule of its own: stopping it short costs its shortfall.
  *
- * ### The rule state (`docs/scheduler_requirements.md` § *Rule state input evolution*)
+ * ### The rule state (`docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*)
  * Every stretch is placed under the rule state in force THERE, never under the one at the line ([run], the walk):
  * - where `R` is **constant** up to its next change `t_s`, the stretch is the perfect schedule of that `R` ALONE on
  *   the whole timeline — searched past `t_s` under it, so its hypothetical backward compensation from what lies
@@ -94,21 +94,21 @@ internal object ScheduleFill {
         /** Wall time the search may spend past its step-bounded passes (the exhaustive search, the platform solver). */
         val budget: SearchBudget = SearchBudget.NONE,
         /**
-         * `docs/scheduler_requirements.md` § *Rule state input evolution*: the rule state along the timeline, when it
+         * `docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*: the rule state along the timeline, when it
          * changes over this fill (dated task trees). Null: [ruleState] holds everywhere. When given, [run] walks it.
          */
         val ruleStates: RuleStates? = null,
         /** The balance of the score's two criteria ([ScoreModel.minimumWeight], `SchedulerState.minimumTimeWeight`). */
         val minimumWeight: Double = 1.0,
         /**
-         * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: a line walked across a
+         * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: a line walked across a
          * stretch nothing ran in (a wake from device sleep) is given *"the current set of rules … while no better set
          * was found"* — the repeating part of the rules already returned ([cycle]) unrolled, and NOTHING searched.
          * Where the cycle does not apply, nothing is laid.
          */
         val unrollOnly: Boolean = false,
         /**
-         * `docs/scheduler_requirements.md` § *Two paces*: plan with [InstantSchedule] — the score's own policy rolled by
+         * `docs/scheduler/scheduler_requirements.md` § *Two paces*: plan with [InstantSchedule] — the score's own policy rolled by
          * parts, no search — rather than with [ScheduleOptimizer]. What the calendar shows past the definitive front,
          * and the first 10 seconds of a run from scratch. The environment is built exactly as for a search (it is the
          * same fill); only the decisions differ.
@@ -159,7 +159,7 @@ internal object ScheduleFill {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule state input evolution*: the rule state input along the timeline — a
+     * `docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*: the rule state input along the timeline — a
      * sequence of pieces, each either constant or moving continuously, separated by the instants it changes at.
      */
     interface RuleStates {
@@ -186,7 +186,7 @@ internal object ScheduleFill {
      * What a fill returns: the placements, the repeating part of the rules when they repeat, what the extra passes
      * did ([report]) and the score of the continuation that was searched ([cost], null when nothing was searched).
      * [idle] is the schedulable time between the start and the horizon the rules leave to NOBODY — a decision like a
-     * placement (`docs/scheduler_requirements.md` requires no task anywhere), told apart from a stretch nobody may
+     * placement (`docs/scheduler/scheduler_requirements.md` requires no task anywhere), told apart from a stretch nobody may
      * run in, which is not on the schedulable clock at all.
      */
     class Result(
@@ -445,7 +445,7 @@ internal object ScheduleFill {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule State Evolution*: *"When $now line$ is between two rule states, the
+     * `docs/scheduler/scheduler_requirements.md` § *Rule State Evolution*: *"When $now line$ is between two rule states, the
      * rule state being applied is the one found at this moment in the transition."* The runs were searched under
      * `R(start)`; as the line moves through the FIRST free run, `R` moves with it, and where the best first run under
      * `R(x)` — the run so far being the frozen past — is no longer this task, the rules switch there.
@@ -798,7 +798,7 @@ internal object ScheduleFill {
         }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, modes 2 & 3: *"$now line$ must be covered by the period
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, modes 2 & 3: *"$now line$ must be covered by the period
      * 'no on-screen task'"* — at the line's INSTANT, a zero-width period ([linePoints]). The tasks that may be the first
      * run from it: those the kinds covering that instant leave a non-zero multiplier. Empty — no restriction — when no
      * such period is there; and [ScheduleOptimizer.firstOptions] lets anybody run when nobody in the set may (the
@@ -824,7 +824,7 @@ internal object ScheduleFill {
      * two of different kinds multiply ([PeriodKinds.multiplier]).
      */
     /**
-     * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
+     * `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
      * and backward"* — **how far back the frozen past has to be replayed for the lags at the line to be the ones the
      * score defines**, in wall millis, because that is what the model is built over.
      *

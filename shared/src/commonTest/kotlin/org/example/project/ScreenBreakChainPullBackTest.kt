@@ -15,7 +15,7 @@ import org.example.project.scheduler.domain.DynamicPeriods.Span
 import org.example.project.scheduler.domain.SchedulerDomain
 
 /**
- * `docs/scheduler_requirements.md` § *Default restrictive periods*, last bullet — *"In a 'no screen' period, if t_b is
+ * `docs/scheduler/scheduler_requirements.md` § *Default restrictive periods*, last bullet — *"In a 'no screen' period, if t_b is
  * the start of a screen break and $now line$ < t_b, then this screen break must now start at max($now line$, t_s)"* —
  * and the line going on in an away mode.
  *

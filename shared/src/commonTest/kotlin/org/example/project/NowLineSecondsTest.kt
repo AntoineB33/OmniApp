@@ -54,7 +54,7 @@ class NowLineSecondsTest {
 
     @Test
     fun the_now_line_itself_is_placed_below_the_second() {
-        // `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in
         // time"*. [hourOfDay] answers to the second, which is all anything DERIVED from the clock needs — it
         // is recomputed on the app's quantized display instant. The LINE is not one of those: it is one
         // number, placed on every frame, so it reads [hourOfDayExact] and the second is no longer its floor.
@@ -117,7 +117,7 @@ class NowLineSecondsTest {
 
     @Test
     fun the_now_line_is_placed_between_pixels_not_on_them() {
-        // `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in
         // time"*. Sampling the clock per frame is only half of that — the other half is that the answer must
         // reach the screen unrounded. `offset { IntOffset(…) }` cannot carry a fraction, so the line used to
         // be snapped to the pixel grid: it stood still and then jumped a whole pixel (~75 s of travel at the

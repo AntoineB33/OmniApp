@@ -184,7 +184,7 @@ object SchedulerReducer {
     var tpMode: () -> Int = { DynamicPeriods.MODE_AT_SCREEN }
 
     /**
-     * `docs/scheduler_requirements.md` § *frozen past*: **the screen breaks the line has already banked**
+     * `docs/scheduler/scheduler_requirements.md` § *frozen past*: **the screen breaks the line has already banked**
      * ([org.example.project.scheduler.domain.FrozenScreenBreaks]) — every fill places the three continuing from
      * them, so nothing a fill does can move a break behind the line. The engine owns the record (it banks it as the
      * line advances, `SchedulerEngine`), exactly as it owns [noScreenEvidence] — and carries the break machine at its
@@ -2839,7 +2839,7 @@ object SchedulerReducer {
     ): Pair<SchedulerState, List<TaskPanel>> {
         if (edited === origin.panels && working.hiddenPanels === origin.hiddenPanels) return working to edited
         val was = origin.panels.associateBy { it.id }
-        // `docs/scheduler_requirements.md` § *Manual editing*: a block is given its level when it is PLACED — when it was
+        // `docs/scheduler/scheduler_requirements.md` § *Manual editing*: a block is given its level when it is PLACED — when it was
         // no block on a level before this edit ([TimelineLevels.placed]) — and keeps it through every move; moved, it
         // moves as the one element it is, every piece the levels cut it into with it ([TimelineLevels.carried]).
         val before = positionedId?.let { was[it] }?.takeIf(TimelineLevels::participates)
@@ -2892,7 +2892,7 @@ object SchedulerReducer {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *frozen past* (*"The schedule at t < now line never changes"*) with
+     * `docs/scheduler/scheduler_requirements.md` § *frozen past* (*"The schedule at t < now line never changes"*) with
      * `docs/scheduler_input_requirements.md` § tm_levels: **the work banked under a period the user laid over the
      * past is HIDDEN, never stripped.** A record is a claim that the task ran there and the period is the statement
      * that it could not have ([periodRefuses], the override rule's one question) — so while the period stands the
@@ -3613,7 +3613,7 @@ object SchedulerReducer {
         val idSet = intent.removeIds.toSet()
         val remaining = state.panels.filterNot { it.id in idSet }
         val (panelId, allocated) = state.copy(panels = remaining).allocatePanelId()
-        // The blocks it replaces are MOVED, not placed anew (`docs/scheduler_requirements.md` § *Manual editing*): it
+        // The blocks it replaces are MOVED, not placed anew (`docs/scheduler/scheduler_requirements.md` § *Manual editing*): it
         // keeps the highest of their levels. Only where none of them stood on a level is it a block placed now.
         val replaced = state.panels.filter { it.id in idSet && TimelineLevels.participates(it) }
         val weight =
@@ -3780,7 +3780,7 @@ object SchedulerReducer {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, § *Progressive Calculation* ([SchedulerIntent.SwitchTpMode],
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, § *Progressive Calculation* ([SchedulerIntent.SwitchTpMode],
      * user rule 2026-11-18: *"The schedule must take all the infinite branches (e.g.: if mode 1 at [t0, t1] then ... else
      * ...)"*): the line has moved into the other mode CLASS, so **the rules' answer for every path of modes the plan was
      * not made for is laid from the line: the instant schedule's policy** (`InstantSchedule`, the score's own policy
@@ -3822,7 +3822,7 @@ object SchedulerReducer {
      * it too.
      *
      * [nowMillis] and [mode] are carried because the returned rules are *parameterized by* them
-     * (`docs/scheduler_requirements.md`): the same instruction list read at another position of the line, or
+     * (`docs/scheduler/scheduler_requirements.md`): the same instruction list read at another position of the line, or
      * at another mode, is a different schedule, so a row that did not name them would name no schedule.
      */
     private fun recordRun(
@@ -3853,7 +3853,7 @@ object SchedulerReducer {
     }
 
     /**
-     * PRD §7 **"Switch task"** ([SchedulerIntent.ForceTaskSwitch]) — `docs/scheduler_requirements.md` § *Alternative
+     * PRD §7 **"Switch task"** ([SchedulerIntent.ForceTaskSwitch]) — `docs/scheduler/scheduler_requirements.md` § *Alternative
      * Schedules*: read the task the rules name as the alternative at the line, **set it at `[now line, now line + d]`**
      * ([SchedulerDomain.ALTERNATIVE_SCHEDULE_MILLIS], a pre-placed block, [placeSwitchEntry]) and run the scheduler
      * again with that schedule. (Until 2026-09-29 it laid an epsilon entry and forced the task as the first run, leaving
@@ -3889,7 +3889,7 @@ object SchedulerReducer {
         // is no task the user has switched TO, so there is nothing to state and the press is the refusal
         // alone, exactly as before.
         val replacementTask = replacement ?: return replanned ?: reduceInlineReplan(refused, nowMillis)
-        // `docs/scheduler_requirements.md` § *Alternative Schedules*: the alternative is SET at
+        // `docs/scheduler/scheduler_requirements.md` § *Alternative Schedules*: the alternative is SET at
         // `[now line, now line + d]` and the scheduler runs again with that schedule — nothing more is carried: the
         // pre-placed block is the whole of the answer, so no refusal marker and no first-run request stand beside it.
         val laid = placeSwitchEntry(state.copy(forcedSwitch = null), replacementTask, nowMillis, SchedulerDomain.ALTERNATIVE_SCHEDULE_MILLIS)
@@ -4109,7 +4109,7 @@ object SchedulerReducer {
     private class TakenBack(val state: SchedulerState, val panels: List<TaskPanel>, val left: List<TaskTimeRange>)
 
     /**
-     * `docs/scheduler_requirements.md` § *Manual editing*: *"If the user moves some elements, then moves them back to
+     * `docs/scheduler/scheduler_requirements.md` § *Manual editing*: *"If the user moves some elements, then moves them back to
      * their original place, the state of the line is the same as before the move."* A block dragged away from the past
      * left a hole the hole rule filled ([withVacatedPastFilled]: a period of its choice, the work at both edges given
      * back), and the block remembers where ([TaskPanel.tmLeft]). Brought back [over] part of that, it takes back what
@@ -4152,7 +4152,7 @@ object SchedulerReducer {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Manual editing*: *"If the user moves some elements, then moves them back to
+     * `docs/scheduler/scheduler_requirements.md` § *Manual editing*: *"If the user moves some elements, then moves them back to
      * their original place, the state of the line is the same as before the move."* A block a hand made of an
      * occurrence of a pattern ([TaskPanel.patternOrigin]: a repeating panel's, a night of the Sleep schedule, its hour
      * before bed) put back exactly where the pattern has that occurrence, as it was, is the occurrence again: the
@@ -5484,7 +5484,7 @@ private fun advanceSchedule(
     val remaining = ArrayList<TaskPanel>(state.panels.size)
     var changed = false
     // **A run of one task is banked once, when the RUN has ended — not once per set of rules it was laid by.** The
-    // scheduler returns its rules in stages (`docs/scheduler_requirements.md` § *Progressive Calculation*: the ten
+    // scheduler returns its rules in stages (`docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: the ten
     // definitive seconds, then each extension), so one uninterrupted run of a task is several plan panels end to end;
     // banking each as it elapsed wrote the task's record — a row the server is sent — ten seconds after every run
     // from scratch. An elapsed plan panel the same task's next panel continues exactly is carried by that one instead.
@@ -5559,7 +5559,7 @@ private fun advanceSchedule(
  * that part reads as past inactivity instead of completed work. An off-screen task (allowed inside a
  * no-screen period) banks the whole span.
  *
- * `docs/scheduler_requirements.md`: the three dynamic periods are of the kind "no task allowed", so a task is
+ * `docs/scheduler/scheduler_requirements.md`: the three dynamic periods are of the kind "no task allowed", so a task is
  * never recorded as having run inside one the line has banked ([SchedulerReducer.frozenScreenBreaks]) — unless it
  * was given a resilience to that kind. The record is what happened, and the banked break is too: without this a plan
  * built around another placement of the breaks (a plan made by an earlier build, or before the environment moved)

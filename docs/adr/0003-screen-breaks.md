@@ -421,7 +421,7 @@ satisfy anything.
 The drag used to be an obstacle, and the consequence was written down here as deliberate: *while a device
 stays unlocked and no rest happens, the owed chain parks at the now-line and the fill schedules no task under
 it*. On account 3 that came out as a grey **"Inactivity" band growing behind the now-line** while the machine
-was unlocked and every task was free to run — which `docs/scheduler_requirements.md` § *No idling* forbids
+was unlocked and every task was free to run — which `docs/scheduler/scheduler_requirements.md` § *No idling* forbids
 outright, and which the mode-1 clause forbids by name: the line reaching a pose *"would continuously delay
 that period (while creating task panels in its passing)"*.
 
@@ -492,7 +492,7 @@ one: the stretch was crossed in mode 2, or the app conducted it and recorded it 
 
 ## Modes 2 and 3 are one placement; the difference is the cue — 2026-09-10
 
-The user restated § *$now line$ and 3 Dynamic Restrictive Period* in `docs/scheduler_requirements.md`. Three
+The user restated § *$now line$ and 3 Dynamic Restrictive Period* in `docs/scheduler/scheduler_requirements.md`. Three
 things changed, and they are one change seen from three sides.
 
 **Mode 2's clause was merged into mode 3's.** It used to read *"Mode 2: $now line$ must be covered by the
@@ -612,7 +612,7 @@ requirements' rule rather than a new one; it was simply unreachable while the st
 
 ## Each break is its own kind again; the look-away has a mode — 2026-09-29
 
-`docs/scheduler_requirements.md` (changed 2026-09-29, commit `5398550` and after) states three things this ADR had
+`docs/scheduler/scheduler_requirements.md` (changed 2026-09-29, commit `5398550` and after) states three things this ADR had
 decided the other way. The requirements are the authority, so the code followed them.
 
 **The kinds.** The 20 s break *"allows no task"*; the 5-min break is two periods, a first minute that allows no task

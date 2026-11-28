@@ -17,7 +17,7 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.time.AppClock
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* and its examples: *"When the $now line$ is in mode 1 and
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* and its examples: *"When the $now line$ is in mode 1 and
  * reaches a 'no screen' period that extends to [t1;t2], I want the 'no screen' period to become ]$now line$;t2] when
  * $now line$ is in [t1;t2[. When $now line$ >= t2, then this 'no screen' period is removed."*
  *
@@ -189,7 +189,7 @@ class PeriodCrossingTest {
 }
 
 /**
- * `docs/scheduler_requirements.md` § *Rule Structure*: the line's walk at a screen holds ONE armed trigger and banks
+ * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: the line's walk at a screen holds ONE armed trigger and banks
  * the stretch it crossed at exactly two events — that trigger, and the edge out of mode 1.
  */
 class AtScreenWalkTest {

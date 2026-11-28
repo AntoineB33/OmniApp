@@ -3,7 +3,7 @@ package org.example.project.scheduler.domain
 import org.example.project.scheduler.model.TaskTimeRange
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **the line's walk at a screen, and when what it crossed is
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **the line's walk at a screen, and when what it crossed is
  * banked.** A mode-1 line is never in "no screen", so what it walks of a period the user stated that is or carries
  * one is taken from that period (`PeriodCrossing`, [SchedulerDomain.withAtScreenCrossing]).
  *

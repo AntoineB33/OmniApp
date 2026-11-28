@@ -10,7 +10,7 @@ import org.example.project.scheduler.domain.DynamicPeriods.Span
 import org.example.project.scheduler.domain.SchedulerDomain
 
 /**
- * `docs/scheduler_requirements.md` § *Use of the set of rules output*: a re-run of the scheduler *"removes everything
+ * `docs/scheduler/scheduler_requirements.md` § *Use of the set of rules output*: a re-run of the scheduler *"removes everything
  * deduced from the previous set of rules but not saved in history"*. The break machine's bars are deduced; history is
  * the banked breaks, the breaks the app conducted and the "no screen" the devices observed
  * ([BreakMachine.rebuildFromHistory]).

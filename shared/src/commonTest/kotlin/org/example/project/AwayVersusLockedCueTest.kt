@@ -33,7 +33,7 @@ import kotlin.test.assertNotNull
  *
  * **The button changes WHAT IS SCHEDULED, not what may be said** — and that is the whole of how the two
  * halves fit together. Away puts the line in mode 3, where
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* requires it to be *"covered by the period 'no
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* requires it to be *"covered by the period 'no
  * on-screen task'"*, so an ON-SCREEN task is not at the line to be announced (2026-09-12: the app spoke one
  * anyway, off a plan built for a `t_p` the line had walked away from). A task with a non-zero resilience to
  * that kind IS scheduled there, and the away device is told about it exactly as it always was — which is

@@ -18,7 +18,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**), over a §17 SLEEP
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**), over a §17 SLEEP
  * WINDOW the user is still awake inside.
  *
  * The reported anomaly (account 3, 00:43 on 2026-09-18): bedtime 23:15, so the night's window is

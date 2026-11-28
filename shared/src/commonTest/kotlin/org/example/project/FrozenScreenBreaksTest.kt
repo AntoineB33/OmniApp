@@ -17,7 +17,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *frozen past*: **the three screen breaks behind the line are banked as the line
+ * `docs/scheduler/scheduler_requirements.md` § *frozen past*: **the three screen breaks behind the line are banked as the line
  * enters them, and never move again** ([SchedulerDomain.stepScreenBreaks], the break machine's runtime step).
  */
 class FrozenScreenBreaksTest {

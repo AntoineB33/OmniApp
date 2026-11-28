@@ -774,7 +774,7 @@ data class HiddenPanel(
     val panel: TaskPanel,
     /**
      * Whether the piece is completed WORK rather than a block: a stretch of [TaskPanel.taskId]'s record that a period
-     * the user laid over the past refuses. `docs/scheduler_requirements.md` § *frozen past*: the past is never
+     * the user laid over the past refuses. `docs/scheduler/scheduler_requirements.md` § *frozen past*: the past is never
      * destroyed — the work is on the bottom level under the period, and back in the record when the period leaves.
      */
     val record: Boolean = false,
@@ -783,7 +783,7 @@ data class HiddenPanel(
 }
 
 /**
- * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
+ * `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
  * and backward, and the pre-placed tasks and restrictive periods can be in infinite patterns."* — a pre-placed block
  * or a restrictive period that **recurs every [everyDays] days** at the same local time of day, from its own start
  * and, with no [untilMillis], for ever. Weekly is `7`.
@@ -938,19 +938,19 @@ data class TaskPanel(
      */
     val alternativeTaskId: TaskId? = null,
     /**
-     * `docs/scheduler_requirements.md` § *Alternative Schedules* asks for the alternative **for every $now
+     * `docs/scheduler/scheduler_requirements.md` § *Alternative Schedules* asks for the alternative **for every $now
      * line$**, and inside one panel the answer can change as the line moves through it. [alternativeTaskId] is
      * the answer at the panel's start; each entry here is where a different answer takes over, in time order.
      * Derived exactly like [alternativeTaskId]: never persisted, never synced.
      */
     val alternativeSpans: List<AlternativeSpan> = emptyList(),
     /**
-     * `docs/scheduler_requirements.md`: this pre-placed block or restrictive period **recurs** ([PanelRepeat]); null
+     * `docs/scheduler/scheduler_requirements.md`: this pre-placed block or restrictive period **recurs** ([PanelRepeat]); null
      * for a panel that happens once. Only a panel the user placed carries one; its later occurrences are derived.
      */
     val repeat: PanelRepeat? = null,
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: the stretches of this run that hold only AT
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: the stretches of this run that hold only AT
      * THE LINE — *"if $now line$ mode = 1, then … task B at $now line$"* — where a "no screen" period or a screen break
      * ahead gives way to a line still at a screen. There the run's extent is the line's: nothing of a stretch the line
      * has not reached, its start up to the line while the line is in it, the whole of it once passed
@@ -964,7 +964,7 @@ data class TaskPanel(
      * The **tm_level** a block the user placed stands on — the timeline is the overlap of the levels applied from top
      * to bottom ([org.example.project.scheduler.domain.TimelineLevels]). Given ONCE, when the block is placed: above
      * every block there is, so the levels are the order the blocks were placed in, and moving a block never changes it
-     * (`docs/scheduler_requirements.md` § *Manual editing*: moved and moved back, the line is what it was). `0` on
+     * (`docs/scheduler/scheduler_requirements.md` § *Manual editing*: moved and moved back, the line is what it was). `0` on
      * everything a hand did not place, and on a block placed before the levels existed. Authoritative: persisted and
      * synced with the panel.
      */
@@ -998,7 +998,7 @@ data class TaskPanel(
      */
     val patternOrigin: String = "",
     /**
-     * `docs/scheduler_requirements.md` § *Manual editing* (*"If the user moves some elements, then moves them back to
+     * `docs/scheduler/scheduler_requirements.md` § *Manual editing* (*"If the user moves some elements, then moves them back to
      * their original place, the state of the line is the same as before the move"*): **the stretches the hole rule
      * filled where this block was dragged away from** (`SchedulerDomain.vacatedPastFill` — the [tmFill] periods it
      * laid and the work it gave back, behind the line). The block brought back over one of them takes back what the

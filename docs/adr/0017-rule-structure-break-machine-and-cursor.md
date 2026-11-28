@@ -4,7 +4,7 @@ Status: accepted, 2026-09-30. Supersedes the placement half of ADR 0003 (the rec
 
 ## Context
 
-`docs/scheduler_requirements.md` gained a § *Rule Structure* on 2026-09-30:
+`docs/scheduler/scheduler_requirements.md` gained a § *Rule Structure* on 2026-09-30:
 
 > **Event-Driven / Cursor-Based Evaluation:** Rules must be structured as sequential local branches and trigger
 > boundaries (… an alarm/trigger for the next transition at $t$, at $now line$ mode switch, at history being rewritten

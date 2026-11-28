@@ -57,7 +57,7 @@ fun minimumTimeWeightOf(value: Double): Double =
     if (value.isNaN()) DEFAULT_MINIMUM_TIME_WEIGHT else value.coerceIn(MIN_MINIMUM_TIME_WEIGHT, MAX_MINIMUM_TIME_WEIGHT)
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* and its examples: **what a mode-1 line has crossed of ONE
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* and its examples: **what a mode-1 line has crossed of ONE
  * period the user stated** — *"When the $now line$ is in mode 1 and reaches a 'no screen' period that extends to
  * [t1;t2], I want the 'no screen' period to become ]$now line$;t2] … When $now line$ >= t2, then this 'no screen'
  * period is removed."*
@@ -76,7 +76,7 @@ data class PeriodCrossing(
 )
 
 /**
- * `docs/scheduler_requirements.md`: **the "allocated resources quantity" hyperparameter `q` in [0, 1]** until the user
+ * `docs/scheduler/scheduler_requirements.md`: **the "allocated resources quantity" hyperparameter `q` in [0, 1]** until the user
  * sets another — a quarter of what the pace allows, given back once the search has gone `q²` of it without a gain
  * (`SearchBudget.paced`): a run to `now + 168 h` on a 12-task tree is about a minute and a half (2026-11-21; it was half an
  * hour when every step spent its whole grant).
@@ -495,7 +495,7 @@ data class PlanBasis(
  * PRD §6/§9: one run of the **scheduler engine** — the [HistorySource.SchedulerEngine] rows of the History
  * window. A re-plan is not a History Unit (PRD §9: a schedule is derived from the current state, so nothing
  * undoes it), but it IS the app deciding something, and the one thing about it the user cannot otherwise see
- * is *what the scheduler was asked and what it answered* — and `docs/scheduler_requirements.md` keeps those
+ * is *what the scheduler was asked and what it answered* — and `docs/scheduler/scheduler_requirements.md` keeps those
  * two apart, so this row does too:
  *
  * - [ruleState] is the § *Rule State Definition* the fill READ: every schedulable task with the priority
@@ -849,7 +849,7 @@ data class SchedulerState(
      */
     val scheduleCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
     /**
-     * `docs/scheduler_requirements.md` asks for no task anywhere, so the plan may leave schedulable time to nobody:
+     * `docs/scheduler/scheduler_requirements.md` asks for no task anywhere, so the plan may leave schedulable time to nobody:
      * **the stretches ahead of the line the last fill decided to leave empty** (`ScheduleFill.Result.idle`). What tells
      * a hole the plan chose from a hole a moved break left behind (`SchedulerDomain.planMismatchAtLine`). Derived and
      * **in memory only**, like [scheduleCycle]: a restart starts without it, and the next fill finds it again.
@@ -995,7 +995,7 @@ data class SchedulerState(
      */
     val showScreenBreaks: Boolean = false,
     /**
-     * `docs/scheduler_requirements.md`, user rule 2026-11-18: **`q`, the "allocated resources quantity" hyperparameter**,
+     * `docs/scheduler/scheduler_requirements.md`, user rule 2026-11-18: **`q`, the "allocated resources quantity" hyperparameter**,
      * in [0, 1] — *"balances between resource usage economy (0) and optimization problem-solving (1). When q is lower,
      * then a rules generator run will be faster and use less CPU resources … At 1, the generator uses all the time the
      * pace allows finding the best arrangement."* Each ten-minute step of a run searches `q` of what the ten-second pace
@@ -1037,7 +1037,7 @@ data class SchedulerState(
      * Null until one has run, and after a pull (which replaces the derived panels it describes).
      *
      * Read once, at launch: a restart is not a rule change, so when the rules loaded are the ones the persisted plan
-     * was made for, the engine keeps that plan and only extends it (`docs/scheduler_requirements.md` § *Progressive
+     * was made for, the engine keeps that plan and only extends it (`docs/scheduler/scheduler_requirements.md` § *Progressive
      * Calculation*: a definitive schedule stays definitive). Before this existed every launch re-planned.
      *
      * Derived bookkeeping about a derived plan: persisted locally, never on the wire (neutralized by

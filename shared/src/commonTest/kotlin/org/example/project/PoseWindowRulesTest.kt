@@ -7,7 +7,7 @@ import org.example.project.scheduler.domain.SchedulerDomain
 import org.example.project.scheduler.model.ScreenBreak
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **the scheduler returns a SET OF RULES, and that set
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **the scheduler returns a SET OF RULES, and that set
  * is the whole of what the server is given about where breaks fall.**
  *
  * *"I don't want the server to run the scheduler, but it to read the resulting set of rules to determine if

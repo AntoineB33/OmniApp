@@ -389,7 +389,7 @@ class PeriodKindConfig(
 
     /**
      * Whether a period of [kind] is, or carries, a [PeriodKinds.NO_SCREEN] period — the one predicate
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* is written against ("covered by the period 'no
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* is written against ("covered by the period 'no
      * on-screen task'"). NOT [PeriodKinds.coversNoScreen], the bars' question, which answers true for
      * [PeriodKinds.INACTIVITY] as well.
      */

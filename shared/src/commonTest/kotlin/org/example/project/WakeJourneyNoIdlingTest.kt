@@ -20,7 +20,7 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: *"If the device bearing the running
+ * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: *"If the device bearing the running
  * process is put to sleep, then when the program wakes up, the $now line$ does a fast move forward in mode 2 to the
  * current date. If the current date is beyond the definitive schedule, then it is similar to a case where no CPU were
  * available during this period and the current set of rules output … is used to define the schedule as the $now line$

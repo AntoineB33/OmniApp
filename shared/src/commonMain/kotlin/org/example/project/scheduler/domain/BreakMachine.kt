@@ -8,7 +8,7 @@ import org.example.project.scheduler.domain.DynamicPeriods.Span
 import org.example.project.scheduler.domain.DynamicPeriods.Spec
 
 /**
- * `docs/scheduler_requirements.md` § *Default restrictive periods* — **the three screen breaks as a forward state
+ * `docs/scheduler/scheduler_requirements.md` § *Default restrictive periods* — **the three screen breaks as a forward state
  * machine**, the ONE place their rules are applied. The runtime drives it with the now-line (and the mode edges and
  * the history rewrites); every question about where the breaks fall AHEAD of the line — the plan's obstacles, the
  * calendar, the pause cue's published windows — runs the same step function forward from the state the line is in
@@ -76,7 +76,7 @@ object BreakMachine {
     data class Drag(val label: String, val dueMillis: Long, val members: List<String>)
 
     /**
-     * `docs/scheduler_requirements.md` § *frozen past*, its first exception, ahead of the line: **a break the user
+     * `docs/scheduler/scheduler_requirements.md` § *frozen past*, its first exception, ahead of the line: **a break the user
      * dragged on the calendar** — the occurrence of [label] the rules put at [fromMillis] stands at [toMillis] instead
      * ([handDue]). Kept until an occurrence of the label starts at or after the earlier of the two.
      */
@@ -645,7 +645,7 @@ object BreakMachine {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Use of the set of rules output*: **a re-run of the scheduler drops what was
+     * `docs/scheduler/scheduler_requirements.md` § *Use of the set of rules output*: **a re-run of the scheduler drops what was
      * deduced but not saved in history.** The bars are deduced — each is what the rules set after a break or a stretch
      * of "no screen" — so they are rebuilt from what history holds: [banked] (the breaks the line banked), [dynamic]
      * (the breaks the app conducted) and [stretches] (the "no screen" observed behind the line). A bar the carried

@@ -9,7 +9,7 @@ Global rules that always apply: `CLAUDE.md`.
 
 `BreakMachineFuzzTest` (2026-10-10, in `:shared:jvmTest`): the now line moved by random amounts and its mode switched
 at random between the three, 300 seeds of 400 steps, and every break the line leaves behind checked against
-`docs/scheduler_requirements.md` § *screen breaks* — it lasts as long as its name implies; no two overlap; after a
+`docs/scheduler/scheduler_requirements.md` § *screen breaks* — it lasts as long as its name implies; no two overlap; after a
 break of a label has ended, none of that label inside its bar; the line is never in mode 1 during a 20 s break; no
 20 s break starts under a mode-2 line; the events say what the state holds. `BreakMachineTest` pins each rule on the
 case that shows it; this asks them of whatever sequence the seeds reach.
@@ -27,7 +27,7 @@ case that shows it; this asks them of whatever sequence the seeds reach.
 
 ## Screen breaks — the three dynamic restrictive periods
 
-→ ADR 0003, ADR 0017, `docs/scheduler_requirements.md` § *Default restrictive periods*. The three are the 20-s
+→ ADR 0003, ADR 0017, `docs/scheduler/scheduler_requirements.md` § *Default restrictive periods*. The three are the 20-s
 look-away, the 5-min pose, the 15-min pose. Terminology: **"screen breaks"** everywhere — UI, docs, code identifiers,
 persisted keys.
 

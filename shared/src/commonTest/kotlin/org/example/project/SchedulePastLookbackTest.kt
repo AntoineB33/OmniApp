@@ -16,7 +16,7 @@ import org.example.project.scheduler.domain.ScoreModel
 import org.example.project.scheduler.model.TaskId
 
 /**
- * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
+ * `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward
  * and backward"*, and `docs/scheduler_score.md`: *"`L_i(x)` is determined by the frozen past"*.
  *
  * How far back the frozen past is replayed is [ScheduleFill.pastLookbackMillis], and it is measured in the score's

@@ -42,7 +42,7 @@ import org.example.project.scheduler.state.TaskTreeEntry
 import org.example.project.scheduler.state.TreeSnapshot
 
 /**
- * PRD §6 / `docs/scheduler_requirements.md`: what one run of the scheduler read and what it answered, kept
+ * PRD §6 / `docs/scheduler/scheduler_requirements.md`: what one run of the scheduler read and what it answered, kept
  * apart.
  *
  * [ruleState] is the § *Rule State Definition* — the tasks with their priority percentages, minimum
@@ -1350,7 +1350,7 @@ object SchedulerDomain {
     const val SWITCH_ENTRY_MILLIS: Long = 1_000L
 
     /**
-     * `docs/scheduler_requirements.md` § *Alternative Schedules*: **`d`** — *"a program would simply read the rules, set
+     * `docs/scheduler/scheduler_requirements.md` § *Alternative Schedules*: **`d`** — *"a program would simply read the rules, set
      * this alternative task starting at [$now line$, $now line$+d], with d defined beforehand (like 10 minutes), and run
      * the scheduler again with this new schedule"*. What "Switch task" lays the rules' alternative for.
      */
@@ -1529,7 +1529,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: **the stretches the user DECLARED this
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: **the stretches the user DECLARED this
      * device away from** — the closed episodes plus the open one growing with the now-line, the same shape
      * [displayInactivityGaps] gives the live pause.
      *
@@ -1955,7 +1955,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: **the ceiling on how far a CALENDAR-driven
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: **the ceiling on how far a CALENDAR-driven
      * $t_{goal}$ may pull the materialized fill** (168 hours). It is not the goal, and it is not a target — the
      * goal is [scheduleGoalEndMillis], and [scheduleHorizonEndMillis] is what the fill honours.
      *
@@ -1966,20 +1966,20 @@ object SchedulerDomain {
     const val SCHEDULE_HORIZON_MILLIS: Long = 168L * 60 * 60 * 1000
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: how far the first stage of a progressive fill
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: how far the first stage of a progressive fill
      * reaches; every next stage reaches twice as far, up to $t_{goal}$ (`SchedulerEngine.dispatchProgressivePlan`, and
      * the in-reducer re-plans that answer a press).
      */
     const val PROGRESSIVE_FIRST_STAGE_MILLIS: Long = 60L * 60 * 1_000
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*, **first 10s**: how far the quick stage a
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, **first 10s**: how far the quick stage a
      * from-scratch re-plan publishes first reaches, when [firstSecondsGapFillable] says it is needed.
      */
     const val FIRST_DEFINITIVE_MILLIS: Long = 10_000
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*, **first 10s**: *"When there is a change that will
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, **first 10s**: *"When there is a change that will
      * make the scheduler engine run from scratch, it must firstly check if in the next 10 seconds there are gaps with
      * no task and if there are tasks that can be scheduled in those gaps."*
      *
@@ -2098,7 +2098,7 @@ object SchedulerDomain {
     const val MIN_SCHEDULE_HORIZON_MILLIS: Long = 24L * 60 * 60 * 1000
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: the **floor under $t_{goal}$** (10 minutes).
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: the **floor under $t_{goal}$** (10 minutes).
      * With no calendar open — or one showing nothing later than this — the scheduler only has to know what
      * comes in the next ten minutes: that is all the headless §11/§13 task cue, the §17 wind-down cue and the
      * schedule-unit deadlines read ahead of the line. The §15 break windows the server is told are asked of the
@@ -2115,7 +2115,7 @@ object SchedulerDomain {
         date.minus(DatePeriod(days = date.dayOfWeek.isoDayNumber - 1))
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: **the end of the CURRENT WEEK**, one of the
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: **the end of the CURRENT WEEK**, one of the
      * three instants $t_{goal}$ is the latest of ([scheduleGoalEndMillis]). Midnight opening the next Monday,
      * because the app is Monday-first everywhere ([weekStartDate]).
      *
@@ -2130,7 +2130,7 @@ object SchedulerDomain {
             .toEpochMilliseconds()
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_{goal}$ — how far a run of the scheduler goes:
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: **$t_{goal}$ — how far a run of the scheduler goes:
      * `now + 168 h`** ([SCHEDULE_HORIZON_MILLIS]; user rule 2026-11-18: *"the 10 minute per 10 seconds minimum
      * scheduler from now to now + 168h with a pace varying with the hyperparameter q"*). Until then it was the latest of
      * the week's end, the calendar's end and ten minutes ahead, and a run stopped at a calculation time limit; the
@@ -2153,7 +2153,7 @@ object SchedulerDomain {
     ): Long = scheduleGoalEndMillis(nowMillis, displayedEndMillis, timeZone)
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: whether [panel] is part of a schedule the
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: whether [panel] is part of a schedule the
      * scheduler has **not made definitive**, i.e. one a later set of rules may still contradict — an AUTO panel
      * reaching past [definitiveFrontMillis] (the end of the plan's chain of panels from the line, [firstFreeMoment]).
      *
@@ -2219,7 +2219,7 @@ object SchedulerDomain {
      */
     val DEFAULT_SCREEN_BREAKS: List<ScreenBreak> = listOf(
         // The 20-20-20 micro-break. Its interval IS the requirements' own bar: after the end of a 20 s break, no
-        // 20 s break in the next 20 minutes — and only a 20 s break bars it (`docs/scheduler_requirements.md`
+        // 20 s break in the next 20 minutes — and only a 20 s break bars it (`docs/scheduler/scheduler_requirements.md`
         // § *screen breaks*). Nothing has to "serve" it — the break machine reads what the line has crossed.
         ScreenBreak(
             "look 20 feet away",
@@ -2702,7 +2702,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: *"$now line$ must not be covered by
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: *"$now line$ must not be covered by
      * the period 'no on-screen task'. This means that if it reaches one of those periods, the passing of the
      * $now line$ line creates task panels not covered by the period."* — **the spans those periods give up to a
      * line that stays at a screen**, and the ONE place the clause is read for the fill. Its consequence example:
@@ -2776,7 +2776,7 @@ object SchedulerDomain {
         panel.isRestrictivePeriod && isUserPlaced(panel) && config.isOrImpliesNoScreen(panel.restrictiveKind)
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **the periods as they stand once a mode-1 line has
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **the periods as they stand once a mode-1 line has
      * crossed them** — each period the user stated that is or carries "no screen" ([retractsAtScreen]) less what the
      * line crossed of it at a screen ([crossings], and [live]: the stretch it is walking now, not banked yet). So a
      * period the line is in reads ]$now line$;t2], and one it has left is gone. The ONE reading of it: the plan, the
@@ -2970,7 +2970,7 @@ object SchedulerDomain {
      * **The plan at the line, checked against the rules there**: what the plan holds at [nowMillis] no longer
      * matches what the rules say is there — or null when it does. Two ways, and only these:
      *  - **idle**: no task at the line, no break the line is in, somebody may run here, and the plan did not DECIDE
-     *    to leave this instant to nobody ([SchedulerState.plannedIdle] — `docs/scheduler_requirements.md` requires no
+     *    to leave this instant to nobody ([SchedulerState.plannedIdle] — `docs/scheduler/scheduler_requirements.md` requires no
      *    task anywhere, so an empty stretch the score chose is the plan, not a mismatch) — so a break the plan was
      *    built around has moved on (the requirements' chain rule pulls a pose back onto the start of the stretch
      *    the line is in, in an away mode), or a period it planned around is gone;
@@ -3053,7 +3053,7 @@ object SchedulerDomain {
      */
     fun tpMode(anyDeviceUnlocked: Boolean, awayDeclared: Boolean = false, lookAwayHold: Boolean = false): Int =
         when {
-            // `docs/scheduler_requirements.md` § *Mode switching*: *"When $now line$ enters a '20s screen break'
+            // `docs/scheduler/scheduler_requirements.md` § *Mode switching*: *"When $now line$ enters a '20s screen break'
             // restrictive period in mode 1, it gets in mode 3, and when it leaves it, it gets in mode 1"* — and it
             // *"can't go in mode 1 during a '20s screen break'"* ([lookAwayHold]).
             anyDeviceUnlocked -> if (lookAwayHold) DynamicPeriods.MODE_ON_BREAK else DynamicPeriods.MODE_AT_SCREEN
@@ -3085,7 +3085,7 @@ object SchedulerDomain {
      * How long the DISPLAY may wait before it is re-derived — **the next instant the set of rules says the
      * picture changes SHAPE.**
      *
-     * `docs/scheduler_requirements.md` says the scheduler returns *a set of rules*, and everything the
+     * `docs/scheduler/scheduler_requirements.md` says the scheduler returns *a set of rules*, and everything the
      * calendar draws is read out of that set. So the display is a **piecewise affine** function of the
      * now-line, and nothing about it is a reason to recompute on a timer:
      *
@@ -3347,7 +3347,7 @@ object SchedulerDomain {
             .filter { it.endEpochMillis - it.startEpochMillis >= MIN_INACTIVITY_BAND_MILLIS }
 
     /**
-     * PRD §8 + `docs/scheduler_requirements.md` § *$now line$ 3 modes*: which sub-stretches of one layer's
+     * PRD §8 + `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: which sub-stretches of one layer's
      * [regions] are the user's word against the machine's — and so are **"not on a computer" / "not on a phone"**,
      * which IS the dotted oblique lines (user, 2026-10-01): `App.kt` draws them as the fake band, under the fake kind's
      * name and drawing, never as a dotted copy of the real layer. The rules that made them dotted: *"the oblique lines must be dotted if at
@@ -3527,7 +3527,7 @@ object SchedulerDomain {
      */
     /**
      * **The task panels the user placed, where they actually STAND** — each less the screen breaks that refuse its
-     * task ([periodRefuses] of the break's own kind): `docs/scheduler_requirements.md` gives a break no task, so a
+     * task ([periodRefuses] of the break's own kind): `docs/scheduler/scheduler_requirements.md` gives a break no task, so a
      * panel put across one is retracted there (the calendar draws the hole, `layoutWithBreakHoles`). What a
      * rule-laid period gives way to ([retractOverAtScreenPast]) is this, not the panel's stored span — or the Sleep
      * band drew back from a stretch where the panel is not (user, 2026-10-08: *"strangely the sleep block retracts
@@ -3651,7 +3651,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **a device kind's "not on a …" stretches** — what
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **a device kind's "not on a …" stretches** — what
      * the user declared away from it ([away], the "I'm away" button) where that device kind is not really locked
      * ([realLayer]): *"'not on a computer' can't be with 'no computer unlocked'"*, same with the phone. The real
      * layer wins wherever both would be said. Not seam-filtered: a declaration shorter than a minute is still one.
@@ -3813,7 +3813,7 @@ object SchedulerDomain {
     const val DYNAMIC_PLACEMENT_LOOKBACK_MILLIS: Long = 4L * 60L * 60L * 1000L
 
     /**
-     * `docs/scheduler_requirements.md` § *Strict Requirements*, exception 2: **how long the banked screen breaks are
+     * `docs/scheduler/scheduler_requirements.md` § *Strict Requirements*, exception 2: **how long the banked screen breaks are
      * kept** ([FrozenScreenBreaks]). The same bound the frozen past is replayed over for the lags
      * ([SCHEDULE_PAST_LOOKBACK_CAP_MILLIS]): past it, neither the plan nor anything that reads the breaks looks.
      */
@@ -3912,7 +3912,7 @@ object SchedulerDomain {
     )
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule Structure* and § *frozen past*: **the line moves to [nowMillis]** — the
+     * `docs/scheduler/scheduler_requirements.md` § *Rule Structure* and § *frozen past*: **the line moves to [nowMillis]** — the
      * runtime's one step of the break machine, and the one writer of what is banked.
      *
      * The machine is advanced in the mode it was in, applying each transition at the instant it was armed for, and the
@@ -4004,7 +4004,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Use of the set of rules output*: a new set of rules drops what the old one
+     * `docs/scheduler/scheduler_requirements.md` § *Use of the set of rules output*: a new set of rules drops what the old one
      * deduced but history does not hold — the machine's bars are rebuilt from the banked breaks, the breaks the app
      * conducted ([dynamic]) and the "no screen" the devices observed ([observed]) ([BreakMachine.rebuildFromHistory]).
      * The line moves on from there to the clock at the runtime's next step.
@@ -4076,7 +4076,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Mode switching*: **the mode the line is in**, given the mode the devices
+     * `docs/scheduler/scheduler_requirements.md` § *Mode switching*: **the mode the line is in**, given the mode the devices
      * report — mode 1 cannot be inside a 20 s break (*"When $now line$ enters a '20s screen break' restrictive period in
      * mode 1, it gets in mode 3"*), which the machine the line carries knows ([BreakMachine.effectiveMode]).
      */
@@ -4145,7 +4145,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Default restrictive periods*: **the three ahead of the line as they are
+     * `docs/scheduler/scheduler_requirements.md` § *Default restrictive periods*: **the three ahead of the line as they are
      * drawn** — the break the line is in, the one it drags (`]now line; now line + d]`, [isDraggedScreenBreak]), and every
      * one the machine places from there for a line that takes each break where it falls and is away in every known
      * no-screen period ([BreakMachine.predictExpected]). What the calendar draws and what the server is told.
@@ -4169,7 +4169,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **the breaks the line will actually meet if the mode it is
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **the breaks the line will actually meet if the mode it is
      * in holds** — what a plan may be built around ([BreakMachine.predict], [BreakMachine.Policy.HOLD]).
      *
      * - **Mode 1**: a pose the line reaches is dragged and never happens, and every break falling due within its reach
@@ -4214,7 +4214,7 @@ object SchedulerDomain {
             .filter { it.startEpochMillis in fromMillis..toMillis }
 
     /**
-     * `docs/scheduler_requirements.md` § *frozen past*: the dynamic periods that fall in `[fromMillis, toMillis]`
+     * `docs/scheduler/scheduler_requirements.md` § *frozen past*: the dynamic periods that fall in `[fromMillis, toMillis]`
      * **behind the now-line** — the calendar's past-side markers — **read off the banked record and nothing else**
      * ([FrozenScreenBreaks], written by [stepScreenBreaks] as the line enters each one).
      *
@@ -4354,7 +4354,7 @@ object SchedulerDomain {
         listOf(DynamicPeriods.LABEL_20S, DynamicPeriods.LABEL_5MIN, DynamicPeriods.LABEL_15MIN)
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* and § *screen breaks*: **the panels as the rules give them
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* and § *screen breaks*: **the panels as the rules give them
      * at the line, with the breaks ahead of it** — [atLine], and a run does not hold where a break ahead of the line
      * refuses its task.
      *
@@ -4426,7 +4426,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: **the panels as the rules give them at the
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: **the panels as the rules give them at the
      * line** — every panel as it is, and the stretches of a run held at the line ([TaskPanel.heldAtLine], *"task B at
      * $now line$"*) with the line's extent: absent before the line reaches them, up to the line while it is in one,
      * whole once passed.
@@ -4591,7 +4591,7 @@ object SchedulerDomain {
      * PRD §15 / CLAUDE.md "each fires exactly once, **in order**": the cue boundaries the line crossed, as a single list
      * sorted by their true boundary [CueCrossing.instant]. This is the pure core the engine's one cue sweep drives.
      *
-     * **The breaks are the machine's own transitions** ([BreakMachine.Event], `docs/scheduler_requirements.md` §
+     * **The breaks are the machine's own transitions** ([BreakMachine.Event], `docs/scheduler/scheduler_requirements.md` §
      * *Rule Structure*): the line entering the 20 s break is its start ([CueKind.LookAwayStart], resumed at its end); a
      * pose falls due where the line meets it — owed at a line that drags it ([BreakMachine.Event.Owed]), entered at one
      * that does not ([BreakMachine.Event.Started]), or grown out of the break the line was in by the chain rule
@@ -4868,7 +4868,7 @@ object SchedulerDomain {
     data class PoseWindow(val key: String, val startMillis: Long, val endMillis: Long)
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **THE SET OF RULES the scheduler returns for the two
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **THE SET OF RULES the scheduler returns for the two
      * poses** — where every 5- and 15-minute break falls over the next [NEXT_BREAK_SEARCH_MILLIS] for a line that takes
      * each break where it falls ([screenBreakPanels]), the pose the line owes right now included, from the line.
      *
@@ -4937,7 +4937,7 @@ object SchedulerDomain {
         )
 
     /**
-     * `docs/scheduler_requirements.md` § *screen breaks*: **the restrictive periods a screen-break panel is** — the one
+     * `docs/scheduler/scheduler_requirements.md` § *screen breaks*: **the restrictive periods a screen-break panel is** — the one
      * reading the fill, the check at the line, the calendar clip and the record banking all ask. Its own kind
      * ([DynamicPeriods.breakKind]) end to end, and for the 5 min break *"the first minute that allow no tasks"* as an
      * [PeriodKinds.INACTIVITY] period over its first minute. (The "no screen" period every break is accompanied by is its
@@ -5004,7 +5004,7 @@ object SchedulerDomain {
         withWorkOutOfBreaks(state, listOf(bankedBreakPanel(banked)))
 
     /**
-     * `docs/scheduler_requirements.md` § *frozen past*, its first exception — *"When the user or a program wants to
+     * `docs/scheduler/scheduler_requirements.md` § *frozen past*, its first exception — *"When the user or a program wants to
      * rewrite history"* — and its mirror ahead of the line: **the screen break of the role [label] standing over
      * `[fromStartMillis, fromEndMillis)` is put by hand to start at [newStartMillis]**, its length kept (*"A screen
      * break period lasts as long as its name implies"*). The ONE rule behind a break dragged on the calendar, whichever
@@ -5177,7 +5177,7 @@ object SchedulerDomain {
      * PRD §11: the panel covering [nowMillis] (pinned or auto) — what to notify as the current task.
      *
      * **Asked with the MODE, because that is what the schedule is parameterized by.**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: *"Mode 2 & 3: $now line$ must be covered by
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: *"Mode 2 & 3: $now line$ must be covered by
      * the period 'no on-screen task'"* — a constraint on the line at EVERY instant it is in one of those
      * modes, not only at the instant the last fill happened to run. The fill now covers the whole continuation in an
      * away mode and a flip re-plans at the flip, but a plan can still be read in the moment between a flip and its
@@ -5846,7 +5846,7 @@ object SchedulerDomain {
         // (tests, a headless host that cannot read a lock) should assume — somebody is at a screen.
         tpMode: Int = DynamicPeriods.MODE_AT_SCREEN,
         // PRD §6/§9: where this fill reports what it read and what it ANSWERED — the two halves
-        // `docs/scheduler_requirements.md` names separately and which must never be confused for each other
+        // `docs/scheduler/scheduler_requirements.md` names separately and which must never be confused for each other
         // ([SchedulerRunRules]). Only the two plan reductions in `SchedulerReducer` pass one — the display
         // fills leave it null, and nothing is described then, so this costs a null check on the hot path.
         rulesSink: ((SchedulerRunRules) -> Unit)? = null,
@@ -5862,7 +5862,7 @@ object SchedulerDomain {
         adoptedCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
         /** Lay only the repetition of the rules already returned ([ScheduleFill.Input.unrollOnly]). */
         unrollOnly: Boolean = false,
-        /** `docs/scheduler_requirements.md` § *Two paces*: the instant schedule's decisions ([ScheduleFill.Input.instant]). */
+        /** `docs/scheduler/scheduler_requirements.md` § *Two paces*: the instant schedule's decisions ([ScheduleFill.Input.instant]). */
         instant: Boolean = false,
         // `docs/scheduler_score.md` § *Degradation*: the wall time this fill may spend past its step-bounded passes —
         // the exhaustive search that certifies the best continuation, and the platform's solver. NONE for every fill
@@ -5873,10 +5873,10 @@ object SchedulerDomain {
         extraSeeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
         // What the extra passes did, and the score of the searched continuation (null: nothing was searched).
         searchSink: ((SearchReport, Double?) -> Unit)? = null,
-        // `docs/scheduler_requirements.md` § *frozen past*: the screen breaks the line has already banked
+        // `docs/scheduler/scheduler_requirements.md` § *frozen past*: the screen breaks the line has already banked
         // ([FrozenScreenBreaks]); the three are placed continuing from them. Null re-derives the past.
         frozenBreaks: FrozenScreenBreaks? = null,
-        // `docs/scheduler_requirements.md` § *Two paces*, Example 3: a DISPLAY fill of a stretch far past the definitive
+        // `docs/scheduler/scheduler_requirements.md` § *Two paces*, Example 3: a DISPLAY fill of a stretch far past the definitive
         // front ([instantDisplayPlan]) starts at [nowMillis] with every lag at its target — no frozen past replayed, no
         // forced switch or start — so what it costs is bounded by the stretch, not by its distance from the line.
         noPast: Boolean = false,
@@ -5910,7 +5910,7 @@ object SchedulerDomain {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Two paces*: **the instant schedule the calendar shows over the displayed span
+     * `docs/scheduler/scheduler_requirements.md` § *Two paces*: **the instant schedule the calendar shows over the displayed span
      * `[windowStartMillis, windowEndMillis)` past the definitive front** — the one place that question is answered.
      *
      * The requirement is about what is SHOWN: *"the user goes to see thousands of years in the future: the schedule
@@ -5998,7 +5998,7 @@ object SchedulerDomain {
             .toList()
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **does a flip from [from] to [to] change the plan?** Only
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **does a flip from [from] to [to] change the plan?** Only
      * a change of CLASS does. Modes 2 and 3 place everything identically — they differ in the cue alone
      * ([DynamicPeriods.breaksAreNotifiedAt]) — so a flip between them has nothing to lay and nothing to re-plan, and a
      * re-plan there only rewrote a definitive schedule with a search that could land elsewhere.
@@ -6020,7 +6020,7 @@ object SchedulerDomain {
     fun planModeAfter(held: Int, mode: Int): Int = if (mode == DynamicPeriods.MODE_ON_BREAK) held else mode
 
     /**
-     * PRD §6: one line of the **rule state**, spelled for a human — `docs/scheduler_requirements.md` § *Rule
+     * PRD §6: one line of the **rule state**, spelled for a human — `docs/scheduler/scheduler_requirements.md` § *Rule
      * State Definition*: *"the set of tasks and their associated priority percentages, minimum execution time
      * and resilience values"*. A task with no resilience override is spelled "on screen only", which is what
      * an empty map means (see [PlanTask.resilience]).
@@ -6045,7 +6045,7 @@ object SchedulerDomain {
     }
 
     /**
-     * PRD §6 / `docs/scheduler_requirements.md`: **the set of rules the scheduler RETURNED**, spelled for a
+     * PRD §6 / `docs/scheduler/scheduler_requirements.md`: **the set of rules the scheduler RETURNED**, spelled for a
      * human — one entry per rule, written as § *Rule Structure* asks: the interval it holds over (its end is the
      * trigger for the next), `if … then …` for the task scheduled there, `else …` for the alternative set at the line
      * when it is refused (§ *Alternative Schedules*), and, in the head, the two triggers that are not an instant of the
@@ -6101,7 +6101,7 @@ object SchedulerDomain {
     }
 
     /**
-     * **The set of rules output, written as it is READ** (`docs/scheduler_requirements.md` § *Rule Structure*:
+     * **The set of rules output, written as it is READ** (`docs/scheduler/scheduler_requirements.md` § *Rule Structure*:
      * *"sequential local branches and trigger boundaries"*). Four things an outside reader got wrong off the first
      * wording (2026-10-08), each of them the wording's fault and none the plan's:
      *  - **The pieces are sequential and never overlap.** A run is ONE panel across the breaks inside it, and a break
@@ -6234,7 +6234,7 @@ object SchedulerDomain {
         adoptedCycle: org.example.project.scheduler.model.ScheduleCycle? = null,
         /** Lay only the repetition of the rules already returned ([ScheduleFill.Input.unrollOnly]). */
         unrollOnly: Boolean = false,
-        /** `docs/scheduler_requirements.md` § *Two paces*: the instant schedule's decisions ([ScheduleFill.Input.instant]). */
+        /** `docs/scheduler/scheduler_requirements.md` § *Two paces*: the instant schedule's decisions ([ScheduleFill.Input.instant]). */
         instant: Boolean = false,
         searchBudget: SearchBudget = SearchBudget.NONE,
         extraSeeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
@@ -6244,7 +6244,7 @@ object SchedulerDomain {
         noPast: Boolean = false,
     ): List<TaskPanel> {
         val horizon = maxOf(horizonMillis, nowMillis)
-        // `docs/scheduler_requirements.md`: the pre-placed tasks and restrictive periods can be in infinite patterns.
+        // `docs/scheduler/scheduler_requirements.md`: the pre-placed tasks and restrictive periods can be in infinite patterns.
         // The fill sees every occurrence over what it reads — the frozen past as far back as the lags are replayed,
         // and past its horizon as far as it searches — and keeps in its answer only those around the line
         // ([keepsOccurrence]): the rest are derived again wherever they are asked for.
@@ -6400,7 +6400,7 @@ object SchedulerDomain {
                 frozen = frozenBreaks,
             )
         val sidePanels = envSidePanels.filter { it.startEpochMillis < horizon }
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: **a period
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: **a period
         // the line is DRAGGING obstructs nothing** ([isDraggedScreenBreak]).
         //
         // Mode 1 says `t_p` may not be covered by one of the three, so a pose the line reached is pushed to
@@ -6436,7 +6436,7 @@ object SchedulerDomain {
         // on ahead, and nothing re-plans on time passing.
         val obstructingSidePanels =
             breaksTheLineWillMeet(state.screenBreaks, nowMillis, searchEnd, dynamicBase, tpMode, frozenBreaks)
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **modes 2 & 3**: *"$now line$ must be covered by
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, **modes 2 & 3**: *"$now line$ must be covered by
         // the period 'no on-screen task'"*, and its own consequence example — *"the gap between the end of the 15min
         // period and $now line$ is covered by a period 'no on-screen task', filled with tasks that have a non-zero
         // resilience to the kind 'no on-screen task', or no task if none have such resilience"*.
@@ -6461,7 +6461,7 @@ object SchedulerDomain {
             return (kept + sidePanels + sleepPanels + beforeBedPanels).filter(::keepsOccurrence).sortedBy { it.startEpochMillis }
         }
 
-        // --- the RESTRICTIVE PERIODS (`docs/scheduler_requirements.md` § *Restrictive Period*), past AND future:
+        // --- the RESTRICTIVE PERIODS (`docs/scheduler/scheduler_requirements.md` § *Restrictive Period*), past AND future:
         // the score measures the frozen past against them and reads a deprivation's influence on both sides of it.
         //
         // Every restriction on the timeline is one object — a start, an end and a KIND — and every task's behaviour
@@ -6494,7 +6494,7 @@ object SchedulerDomain {
                     // place ([companionPeriods]).
                     companionPeriods(periodOwn, state.periodKindConfig)
                 ).filter { it.kind.isNotEmpty() && it.endMillis > it.startMillis }
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: the line is at a screen, so a
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**: the line is at a screen, so a
         // period saying nobody is does not cover it — it gives up everything from the line to its own end
         // ([retractedAtLineSpans] / [retractAtLine], where the whole rule and its reasons live). The plan is
         // searched over the retracted timeline so it can name which task holds and until when; only the
@@ -6518,7 +6518,7 @@ object SchedulerDomain {
                     it.startEpochMillis <= horizon && !it.isRestrictivePeriod
             }
         val startMillis = maxOf(nowMillis, keptHead.maxOfOrNull { it.endEpochMillis } ?: nowMillis).coerceAtMost(horizon)
-        // `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"the timeline is infinite
+        // `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"the timeline is infinite
         // forward and backward"*. How far back is not a wall-time constant — it is four of the longest task window
         // `Theta`, measured on the schedulable clock, so a task rare enough to need a month of it gets one
         // ([ScheduleFill.pastLookbackMillis] holds the whole rule and its reasons).
@@ -6568,7 +6568,7 @@ object SchedulerDomain {
         val forcedStartTask = if (noPast) null else liveForcedStartTask(state.forcedStart, pastBlocks, nowMillis)
 
         // --- the rule state: `R(now)` and, where a formula moves it over this fill, the timeline the fill walks
-        // (`docs/scheduler_requirements.md` § *Rule state input evolution*: every stretch is placed under the rule state
+        // (`docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*: every stretch is placed under the rule state
         // in force THERE; user rule 2026-11-16, the formulas of the instant).
         val timeline = if (ruleStateChangesWithin(state, nowMillis, searchEnd)) FormulaTimeline(state, ordered) else null
         val ruleState = timeline?.at(startMillis) ?: planTasks
@@ -6630,7 +6630,7 @@ object SchedulerDomain {
         // on time passing (CLAUDE.md), so between two fills the line must find its task in the rules already
         // returned — or the calendar would draw the §17 carve's hole as a growing Inactivity band. They are laid
         // line-bound (just below), never as a panel inside the period that a display cut then hides.
-        // `docs/scheduler_requirements.md` § *mode 1*: where a "no screen" period gives way to a line still at a screen
+        // `docs/scheduler/scheduler_requirements.md` § *mode 1*: where a "no screen" period gives way to a line still at a screen
         // ([retractedSpans], the line onward), the rules hold the task AT THE LINE — *"if $now line$ mode = 1, then …
         // task B at $now line$"*. Those stretches of a run are laid as held at the line ([TaskPanel.heldAtLine]): their
         // extent is the line's, so nothing is laid inside a period still ahead, and the line reads its task off the

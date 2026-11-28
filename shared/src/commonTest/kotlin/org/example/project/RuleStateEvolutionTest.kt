@@ -9,7 +9,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *Rule state input evolution* (rewritten by the user 2026-10-04), driven since
+ * `docs/scheduler/scheduler_requirements.md` § *Rule state input evolution* (rewritten by the user 2026-10-04), driven since
  * 2026-11-16 by each weight's own formula of the instant (user rule: *"the evolution of its presence ratio target … with
  * any mathematical formula"*, `TimeFormula`) — what the dated task trees drove until then, `TaskTreeTimelineTest`'s
  * scheduling half carried over: every stretch is placed under the rule state in force THERE.

@@ -18,7 +18,7 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.time.AppClock
 
 /**
- * `docs/scheduler_requirements.md` § *frozen past* — *"The schedule at t < now line never changes as now line
+ * `docs/scheduler/scheduler_requirements.md` § *frozen past* — *"The schedule at t < now line never changes as now line
  * increases, with only two exceptions"* — with `docs/scheduler_input_requirements.md` § tm_levels, **lived through at
  * random behind the line**: periods laid over worked time, dragged, resized, removed, the edits undone, each checked
  * slot by slot.

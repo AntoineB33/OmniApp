@@ -14,7 +14,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**): **the period the
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* (**mode 1**): **the period the
  * line drags obstructs nothing.**
  *
  * The requirement is one sentence — in mode 1 the line reaching a pose *"would continuously delay that
@@ -248,7 +248,7 @@ class DraggedPoseNoIdlingTest {
 
     @Test
     fun mode_two_does_not_drag_either_so_its_break_obstructs_like_mode_threes() {
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes* states the two away modes in ONE clause —
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* states the two away modes in ONE clause —
         // *"Mode 2 & 3: $now line$ must be covered by the period 'no on-screen task'"* — so mode 2 drags
         // nothing either. It used to drag exactly as mode 1 does, on the reading that a locked screen is not a
         // break TAKEN; what tells the two apart now is the CUE

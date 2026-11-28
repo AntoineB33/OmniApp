@@ -119,7 +119,7 @@ class SwitchTaskEntryTest {
         val after = SchedulerReducer.reduce(state, SchedulerIntent.ForceTaskSwitch(T0))
         val entry = assertNotNull(entryAt(after, T0))
         assertEquals(b, entry.taskId)
-        // `docs/scheduler_requirements.md` § *Alternative Schedules*: the alternative is set at [now line, now line + d].
+        // `docs/scheduler/scheduler_requirements.md` § *Alternative Schedules*: the alternative is set at [now line, now line + d].
         assertEquals(T0 + SchedulerDomain.ALTERNATIVE_SCHEDULE_MILLIS, entry.endEpochMillis)
         assertNull(after.forcedSwitch, "nothing but the laid block is carried into the next run of the scheduler")
         assertNull(after.forcedStart)

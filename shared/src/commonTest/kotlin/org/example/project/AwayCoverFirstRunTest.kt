@@ -12,7 +12,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (**modes 2 & 3**: *"$now line$ must be covered by the
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* (**modes 2 & 3**: *"$now line$ must be covered by the
  * period 'no on-screen task'"*): **while the mode holds, the plan is the plan for a covered line —
  * from the line to the end of what is searched.**
  *

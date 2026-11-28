@@ -4,7 +4,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 
 /**
- * `docs/scheduler_requirements.md` § *Rule Structure*: **the task side of the set of rules, compiled for a forward
+ * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: **the task side of the set of rules, compiled for a forward
  * cursor.** The scheduler returns its rules as panels; this turns them — once, whenever a new set is returned — into
  * sequential local branches and the instants they change at:
  *

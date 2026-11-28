@@ -12,7 +12,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation*: *"When the schedule is definitive for any t < t1, it
+ * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: *"When the schedule is definitive for any t < t1, it
  * means that for all the next set of rules the scheduler will return until it is done, they will all indicate the
  * same schedule rules for any t < t1."* — held across the account's devices (`docs/invariants/scheduler.md` § *One
  * device plans*).

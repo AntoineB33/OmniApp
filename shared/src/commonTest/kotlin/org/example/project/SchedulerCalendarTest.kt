@@ -301,7 +301,7 @@ class SchedulerCalendarTest {
 
     @Test
     fun adding_a_panel_touching_a_same_task_panel_keeps_two_blocks_shown_as_one() {
-        // `docs/scheduler_requirements.md` § *Manual editing* (2026-10-17): "If the user adds an element, then removes
+        // `docs/scheduler/scheduler_requirements.md` § *Manual editing* (2026-10-17): "If the user adds an element, then removes
         // it, the state of the line is the same as before the addition" — fused into its neighbour, the added block
         // could not be removed without it. Each block stands on its own level, and the display groups the two.
         val (s0, a, _) = stateWithTwoTasks()
@@ -659,7 +659,7 @@ class SchedulerCalendarTest {
             SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, 0, 2 * HOUR))
         val s = withPeriod.copy(
             panels = withPeriod.panels +
-                // Both placed after the period, so above it (`docs/scheduler_requirements.md` § *Manual editing*).
+                // Both placed after the period, so above it (`docs/scheduler/scheduler_requirements.md` § *Manual editing*).
                 TaskPanel("pA", a, "A", 0, 2 * HOUR, pinned = true, auto = false, layoutWeight = 4.0, tmLevel = 2) +
                 userPanel("pB", 5 * HOUR, 6 * HOUR, b, pinned = true).copy(tmLevel = 3),
         )
@@ -679,7 +679,7 @@ class SchedulerCalendarTest {
         val t = (kotlin.time.Clock.System.now().toEpochMilliseconds() / HOUR + 24) * HOUR
         val withPeriod =
             SchedulerReducer.reduce(s0, SchedulerIntent.AddRestrictivePeriod(PeriodKinds.NO_SCREEN, t + HOUR, t + 4 * HOUR))
-        // The block placed after the period: it stands above it (`docs/scheduler_requirements.md` § *Manual editing*).
+        // The block placed after the period: it stands above it (`docs/scheduler/scheduler_requirements.md` § *Manual editing*).
         val s = withPeriod.copy(panels = withPeriod.panels + userPanel("pA", t + 6 * HOUR, t + 8 * HOUR, a, pinned = true).copy(tmLevel = 2))
         fun period(state: SchedulerState) = state.panels.first { it.isRestrictivePeriod }
         // The question the preview and the commit both ask: an on-screen task has no resilience to it.
@@ -697,7 +697,7 @@ class SchedulerCalendarTest {
         )
         assertEquals(t + 3 * HOUR, period(dropped).endEpochMillis)
         // ...and dragging the block back away gives the period its hour back: moved and moved back, the line is what
-        // it was (`docs/scheduler_requirements.md` § *Manual editing*; until 2026-10-17 the hour stayed lost).
+        // it was (`docs/scheduler/scheduler_requirements.md` § *Manual editing*; until 2026-10-17 the hour stayed lost).
         val back = SchedulerReducer.reduce(
             dropped,
             SchedulerIntent.UpdateTaskPanel("pA", a, "A", t + 6 * HOUR, t + 8 * HOUR, PanelPins(existence = true), allowOverlap = true),
@@ -1029,7 +1029,7 @@ class SchedulerCalendarTest {
             assertEquals(5 * MIN, first.endEpochMillis - first.startEpochMillis)
             assertTrue(first.startEpochMillis > start, "the period is ahead of the line, never on it")
 
-            // `docs/scheduler_requirements.md` mode 1: a POSE the line reaches is dragged. The 20 s break is not — the line
+            // `docs/scheduler/scheduler_requirements.md` mode 1: a POSE the line reaches is dragged. The 20 s break is not — the line
             // enters it, in mode 3. The bar labels are positional, so this account's single break stands in the
             // shortest-of-three role and is that one: the line walks into it, and it has not moved.
             val inside = first.startEpochMillis + 10_000L

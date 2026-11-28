@@ -14,7 +14,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *Two paces*, Example 3: *"the user goes to see thousands of years in the future:
+ * `docs/scheduler/scheduler_requirements.md` § *Two paces*, Example 3: *"the user goes to see thousands of years in the future:
  * the schedule displayed doesn't break any rules, and the ratio targets and minimum lengths are roughly respected …
  * no inactivity area where a task with a ratio target can fit in"* — through [SchedulerDomain.instantDisplayPlan], the
  * one funnel the calendar asks. A window two years out was empty on a real account (2026-11-12): the fill walked to it

@@ -759,7 +759,7 @@ class RemoteSnapshotClient(
     // ---- README 3 modes: the away flag and the rule set (migration 20260904000000) ----
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* — **this device's "I'm away" flag, out and back**
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* — **this device's "I'm away" flag, out and back**
      * through the `sync_device_away` RPC. The account comes from the JWT, so the body is this device and the
      * flag; [away] `null` reads without writing.
      *
@@ -780,7 +780,7 @@ class RemoteSnapshotClient(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* — **the scheduler's SET OF RULES for the two
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* — **the scheduler's SET OF RULES for the two
      * poses**, replaced whole through the `publish_break_rules` RPC (`screen_break_rule`).
      *
      * This is the only thing the server is given about where breaks fall, and all it does with it is compare

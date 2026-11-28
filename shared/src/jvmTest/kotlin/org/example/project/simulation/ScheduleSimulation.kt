@@ -103,7 +103,7 @@ internal object ScheduleSimulation {
     val TOLERATED = Levels(idleFraction = 0.15, underService = 0.75, overService = 1.60, shortRunFraction = 0.10)
 
     /**
-     * [TOLERATED] for a stretch that FOLLOWS a rule change. `docs/scheduler_requirements.md` § *Rule state input
+     * [TOLERATED] for a stretch that FOLLOWS a rule change. `docs/scheduler/scheduler_requirements.md` § *Rule state input
      * evolution*: *"a new rule state should dynamically 'catch up' or compensate for how the past deviated from its
      * newly established goals"* — so over the days after a change a task whose share went up is served past its new
      * share, and one whose share went down under it, by design. The targets of [measure] are the new rules' alone, so
@@ -286,7 +286,7 @@ internal object ScheduleSimulation {
             var epochRules = s
             s = r(s, SchedulerIntent.RefreshSchedule(now))
             val pending = scenario.changes.sortedBy { it.atMillis }.toMutableList()
-            // `docs/scheduler_requirements.md` § *frozen past*: what the line has banked is never rewritten — by an
+            // `docs/scheduler/scheduler_requirements.md` § *frozen past*: what the line has banked is never rewritten — by an
             // extension, a re-plan or a rule change. Checked at every step: every stretch of record a task held one
             // step ago is still its record (a record may only GROW: the run in progress at the line is banked when
             // it ends).

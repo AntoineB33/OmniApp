@@ -18,7 +18,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *Default restrictive periods*: **where the 20 s, the 5 min and the 15 min breaks
+ * `docs/scheduler/scheduler_requirements.md` § *Default restrictive periods*: **where the 20 s, the 5 min and the 15 min breaks
  * go**, as the app reads it — the break machine's placement ([SchedulerDomain.screenBreakPanels] for what is drawn,
  * [SchedulerDomain.breaksTheLineWillMeet] for what the plan is built around), the banked record behind the line and
  * the cues. The machine's own transitions, one requirement each, are `BreakMachineTest`.

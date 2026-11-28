@@ -10,7 +10,7 @@ import org.example.project.scheduler.model.TaskTimeRange
  * The timeline is the overlap of hidden levels, the **tm_levels** (first stated in the since-removed
  * `docs/scheduler_input_requirements.md`): *"What is in the timeline is the result of the overlap of those tm_levels,
  * applying them from top to bottom, ignoring those that are incompatible with the higher tm_levels."* And
- * `docs/scheduler_requirements.md` § *Manual editing*: *"If the user adds an element, then removes it, the state of
+ * `docs/scheduler/scheduler_requirements.md` § *Manual editing*: *"If the user adds an element, then removes it, the state of
  * the line is the same as before the addition. If the user moves some elements, then moves them back to their
  * original place, the state of the line is the same as before the move."* — the model of `line_manager.py`: the
  * elements stacked in the order they were placed, the rules read off that stack, never written into it.
@@ -55,7 +55,7 @@ object TimelineLevels {
      * [panels] with the block [id] — one a hand has just PLACED — on a level above every other block there is, shown
      * or hidden, wherever it stands. The levels are the order the blocks were placed in (`line_manager.py`'s z-index,
      * fixed at creation), so a block that is MOVED keeps the level it was given and this is never asked of it:
-     * `docs/scheduler_requirements.md` § *Manual editing* — *"If the user moves some elements, then moves them back to
+     * `docs/scheduler/scheduler_requirements.md` § *Manual editing* — *"If the user moves some elements, then moves them back to
      * their original place, the state of the line is the same as before the move"*, which a block raised over what it
      * was moved onto could not be. Above EVERY block, not only the ones it overlaps: moved later onto a block placed
      * before it, it stays above that one too.
@@ -74,7 +74,7 @@ object TimelineLevels {
      * a piece of one. **A block is ONE element however the levels cut it** (`line_manager.py`: an element moves whole,
      * and its place in the stack with it): where the edit is a move — both ends by the same amount — every other piece
      * of the block, shown or hidden, moves with it, so a block moved and moved back is the block it was
-     * (`docs/scheduler_requirements.md` § *Manual editing*). A piece moved alone would stand on its own block's level
+     * (`docs/scheduler/scheduler_requirements.md` § *Manual editing*). A piece moved alone would stand on its own block's level
      * over its own other pieces and fuse with them, and could never be taken back off them. What the hand says of
      * sharing the width it says of the whole block. The very lists where nothing else moves.
      */
@@ -270,7 +270,7 @@ object TimelineLevels {
     }
 
     /**
-     * [hidden] within the limits a hidden level is kept to (`docs/scheduler_requirements.md` § *Strict Requirements*,
+     * [hidden] within the limits a hidden level is kept to (`docs/scheduler/scheduler_requirements.md` § *Strict Requirements*,
      * exception 2 — *"a limit may be imposed on the memory for the frozen timeline history"* — and
      * `docs/invariants/server-quota.md`: no rows that grow with editing without a purge): the pieces wholly more than
      * [HIDDEN_KEEP_MILLIS] behind [nowMillis] are dropped, then the earliest-ending past [MAX_HIDDEN_PANELS].

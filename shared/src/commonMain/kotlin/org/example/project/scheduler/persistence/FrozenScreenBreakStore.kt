@@ -5,7 +5,7 @@ import org.example.project.scheduler.domain.FrozenScreenBreaks
 
 /**
  * Optional capability of a platform store: durable storage for the screen breaks the now-line has banked
- * ([FrozenScreenBreaks]) — `docs/scheduler_requirements.md` § *frozen past*.
+ * ([FrozenScreenBreaks]) — `docs/scheduler/scheduler_requirements.md` § *frozen past*.
  *
  * LOCAL-ONLY — never synced, never a History Unit. Each device banks the breaks its own line passed; the record is
  * a fact about what this device's scheduler returned, and a restart that forgot it would re-derive the past off

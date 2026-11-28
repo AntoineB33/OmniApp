@@ -3,7 +3,7 @@ package org.example.project.scheduler.domain
 import org.example.project.scheduler.model.TaskId
 
 /**
- * The scheduler's three inputs, as `docs/scheduler_requirements.md` names them: a **task** of the rule state, a
+ * The scheduler's three inputs, as `docs/scheduler/scheduler_requirements.md` names them: a **task** of the rule state, a
  * **pre-placed** block, and a **restrictive period** read as every task's multiplier. The score that is computed
  * over them is [ScoreModel]; the search for its best continuation is [ScheduleOptimizer]; the driver OmniApp's
  * calendar fill hands its world to is [ScheduleFill].

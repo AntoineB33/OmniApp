@@ -12,7 +12,7 @@ import org.example.project.scheduler.model.TaskId
 import org.example.project.scheduler.model.TaskPanel
 
 /**
- * `docs/scheduler_requirements.md` § *Rule Structure*: the task side of the rules compiled into sequential branches with
+ * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: the task side of the rules compiled into sequential branches with
  * their trigger boundaries, read by a forward cursor — and it answers what the timeline-wide readings it replaces at the
  * line answered ([SchedulerDomain.panelAt], [SchedulerDomain.alternativeTaskAt]).
  */

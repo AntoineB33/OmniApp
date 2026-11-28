@@ -29,7 +29,7 @@ import org.example.project.time.AppClock
  *
  * The model is a stack of what the user placed, the last PLACED on top — `line_manager.py`'s z-index, fixed at creation:
  * a block moved keeps its place in the stack, and moves whole: every part of it, shown or hidden
- * (`docs/scheduler_requirements.md` § *Manual editing*). At an instant the timeline is that stack
+ * (`docs/scheduler/scheduler_requirements.md` § *Manual editing*). At an instant the timeline is that stack
  * read from the top: a period is ignored under a period of its own kind and where it — with the periods the account's
  * rules bring with it — would refuse a task above it; a task panel is ignored where a period above refuses its task
  * and under another task's panel that was not positioned to share the width. What the worked examples of

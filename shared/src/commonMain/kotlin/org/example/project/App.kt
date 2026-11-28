@@ -1315,7 +1315,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // PRD §15: whether the user declared they are away from THIS device (left-menu "I'm away" button).
         val userAway by engine.userAway.collectAsState()
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: and whether any OTHER device of the account
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: and whether any OTHER device of the account
         // has it on — the mode is a quantifier over the account, not a property of this install.
         val accountAway by engine.accountAway.collectAsState()
         // PRD §8 + the same section: the stretches this device's button was ON for. The OS log cannot show
@@ -1332,7 +1332,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // the hatching, which are asked over the whole scrolled span; the bars deliberately share the engine's,
         // or the calendar would draw a break at an instant the app does not announce one at.
         val observedNoScreenEvidence by engine.noScreenEvidence.collectAsState()
-        // `docs/scheduler_requirements.md` § *frozen past*: the screen breaks the line has banked — the calendar
+        // `docs/scheduler/scheduler_requirements.md` § *frozen past*: the screen breaks the line has banked — the calendar
         // draws the past from them and every placement continues from their front.
         val frozenBreaks by engine.frozenBreaks.collectAsState()
         // PRD §7/§15: what claim the OS granted the system-wide chords — shown in the keyboard-shortcuts window,
@@ -3544,7 +3544,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             visibleFirstDay.plus(visibleDayCount, DateTimeUnit.DAY).atStartOfDayIn(tz).toEpochMilliseconds()
 
 
-        // `docs/scheduler_requirements.md` § *Progressive Calculation*: **$t_goal$**, the instant the
+        // `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: **$t_goal$**, the instant the
         // scheduler may stop at — the end of the timeline the calendar shows, or `now + 10 min` if further. It
         // follows the SCROLL: it is what the whole plan is computed out to.
         val goalEndMillis = SchedulerDomain.scheduleGoalEndMillis(nowMillis, visibleSpanEndMillis, tz)
@@ -3566,7 +3566,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // fill is dropped ("erased") — no retained multi-week memory. Nearer days need none of this: the
         // engine already fills exactly to the goal (`engine.setCalendarHorizon` above), so
         // `schedulerState.panels` covers the whole displayed span.
-        // `docs/scheduler_requirements.md` § *Two paces*: the scheduler's steps make the schedule definitive ten minutes
+        // `docs/scheduler/scheduler_requirements.md` § *Two paces*: the scheduler's steps make the schedule definitive ten minutes
         // at a time, from the line; what the calendar shows past that front is the INSTANT schedule — *"the
         // instantaneous scheduler schedules for the part of the timeline displayed"* (user, 2026-11-11). The front is
         // where the plan's chain of panels from the line ends; it moves when a step publishes, not with the clock.
@@ -3621,7 +3621,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         }
         // The source for the calendar's real task BLOCKS: the near panels as usual, or the async far-week fill
         // (falling back to the near panels while it is still computing, so past/pinned blocks stay visible).
-        // `docs/scheduler_requirements.md`: pre-placed tasks and restrictive periods can repeat for ever, so every
+        // `docs/scheduler/scheduler_requirements.md`: pre-placed tasks and restrictive periods can repeat for ever, so every
         // occurrence of one over the displayed span is drawn — derived here like everywhere else it is asked for.
         // While the next fill computes, what the state holds now (a block being dragged where it is dragged) and the
         // last plan's own runs past the front, so the window is never drawn empty meanwhile.
@@ -3741,7 +3741,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
         // hold the press ([org.example.project.ui.LocalHeldCalendarRecords]) — their nodes must not move under it.
         val heldCalendarPreview =
             remember(schedulerState, frozenBreaks, heldInCalendar) { heldInCalendar?.let { previewOf(listOf(it)) } }
-        // `docs/scheduler_requirements.md` § *Rule state input evolution*, *New Schedule*: each manual edit of the
+        // `docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*, *New Schedule*: each manual edit of the
         // timeline triggers a run from scratch — and a held block is one.
         // So the state its release would leave is handed to the engine WHEN IT CHANGES ([SchedulerEngine.planHeld]),
         // and what the engine has found for it so far is what is drawn. The stored state is untouched: it remembers.
@@ -3796,7 +3796,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                     awayDeclared = userAway || accountAway,
                 )
             // …and held in mode 3 inside a 20 s break it entered at a screen, as the break machine the line carries
-            // says (`docs/scheduler_requirements.md` § *Mode switching*), exactly as the engine reads it.
+            // says (`docs/scheduler/scheduler_requirements.md` § *Mode switching*), exactly as the engine reads it.
             val tpMode = SchedulerDomain.effectiveTpMode(displayFrozenBreaks, baseTpMode, nowMillis)
             // Every forward DISPLAY projection stops here: the end of the displayed span, floored at the horizon
             // a closed calendar still needs. Never `now + 168h` unconditionally — a grid sitting on today
@@ -3868,7 +3868,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                         )
                     }
                 }
-            // `docs/scheduler_requirements.md` § *frozen past*: the elapsed part of the visible window — what the three
+            // `docs/scheduler/scheduler_requirements.md` § *frozen past*: the elapsed part of the visible window — what the three
             // dynamic periods DID over a stretch the line has already crossed — is the banked record
             // ([SchedulerDomain.stepScreenBreaks]) and nothing else: never the placement re-run with the mode or the
             // environment of now, which drew breaks that never happened.
@@ -3939,7 +3939,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
             // plan's own origin (`side-dev/scheduler_logic.py` tests 10–11).
             val displayWorkPlanPanels =
                 Perf.measure("display.clipPlanForBreak") {
-                // `docs/scheduler_requirements.md` § *mode 1*: where a no-screen period gives way to a line at a screen,
+                // `docs/scheduler/scheduler_requirements.md` § *mode 1*: where a no-screen period gives way to a line at a screen,
                 // the rules hold the task AT THE LINE (line-bound runs), so the panels are drawn as the rules give them
                 // at the line — nothing is laid in a period still ahead, and nothing is hidden.
                 SchedulerDomain.atLine(
@@ -4269,7 +4269,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             else -> emptyList() // not asked yet ≠ cannot be asked
                         }
                     // The "I'm away" stretches belong to THIS device's FAKE layer alone — a press on the computer says
-                    // nothing about the phone, and a device declared away is unlocked (`docs/scheduler_requirements.md`
+                    // nothing about the phone, and a device declared away is unlocked (`docs/scheduler/scheduler_requirements.md`
                     // § *$now line$ 3 modes*: "not on a computer", drawn as its own band below).
                     val layerAway = if (layer == ownLayer) declaredAwayRegions else emptyList()
                     // What the RULES promise for this layer: the breaks and the future sleep windows whose kind
@@ -4303,7 +4303,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
                             layerAway + stated[PeriodKinds.fakeLayerKind(layer)].orEmpty(),
                             regions,
                         )
-                    // `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the sub-stretches of
+                    // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the sub-stretches of
                     // this hatch that a device of the layer's kind really was UNLOCKED for, the user having said
                     // otherwise — the "I'm away" button (mode 3) or a period they drew over hours already
                     // elapsed. They are drawn DOTTED, so the band is emitted as one record per stretch of each
@@ -4570,7 +4570,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 
         // ---- The display's own clock ------------------------------------------------------------------
         //
-        // `docs/scheduler_requirements.md`: the scheduler returns a SET OF RULES, and everything above is read
+        // `docs/scheduler/scheduler_requirements.md`: the scheduler returns a SET OF RULES, and everything above is read
         // out of it. So the display is a piecewise function of the now-line and there is nothing to poll:
         // nothing in the past is a function of the line (the past is frozen — only an event changes it), and
         // nothing in the future is either until the line crosses a boundary the rules themselves name. What
@@ -6190,7 +6190,7 @@ fun App(store: SchedulerStore? = createDefaultSchedulerStore(), host: AppSchedul
 private data class TaskPickerRequest(val anchor: ScreenPoint?, val openedAtMillis: Long)
 
 /**
- * `docs/scheduler_requirements.md`: how often the panel [entryId] recurs, in days (0: once) — an occurrence of a
+ * `docs/scheduler/scheduler_requirements.md`: how often the panel [entryId] recurs, in days (0: once) — an occurrence of a
  * repeating panel reads its pattern's.
  */
 private fun repeatDaysOf(panels: List<TaskPanel>, entryId: String?): Int {
@@ -6782,7 +6782,7 @@ private fun mergePanelsForDisplay(
     // calendar can draw the part of a 5-/15-min break that accepts off-screen tasks hollow rather than
     // covering it with a solid band.
     screenBreaks: List<ScreenBreak> = emptyList(),
-    // `docs/scheduler_requirements.md` § *Progressive Calculation*: the DEFINITIVE-SCHEDULE FRONT
+    // `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: the DEFINITIVE-SCHEDULE FRONT
     // ([SchedulerDomain.definitiveScheduleFrontMillis]). An auto panel reaching past it is the far-week display
     // fill's, not a schedule the scheduler has settled, and is marked [CalendarRecord.provisional] so the
     // calendar draws its edges blurred. The default says "everything shown is definitive", which is what a

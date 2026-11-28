@@ -28,7 +28,7 @@ import kotlin.math.exp
  *   variable with big-M constraints was tried first: its relaxation was so loose that SCIP proved nothing within a
  *   window's time limit.)
  * - **Hard constraints**: at most one task per slot — a free slot may be left to nobody, which
- *   `docs/scheduler_requirements.md` allows and the score prices — `x = 0` where a task may not run (resilience 0),
+ *   `docs/scheduler/scheduler_requirements.md` allows and the score prices — `x = 0` where a task may not run (resilience 0),
  *   `x = 1` for the owner of a pre-placed slot.
  *
  * Everything inside the program is in MINUTES (the score is in millis): a cost of millis³ puts coefficients near

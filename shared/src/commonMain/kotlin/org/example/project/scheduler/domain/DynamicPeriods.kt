@@ -1,7 +1,7 @@
 package org.example.project.scheduler.domain
 
 /**
- * `docs/scheduler_requirements.md` § *Default restrictive periods* — **the vocabulary of the three screen breaks**:
+ * `docs/scheduler/scheduler_requirements.md` § *Default restrictive periods* — **the vocabulary of the three screen breaks**:
  * the three roles ([LABEL_20S], [LABEL_5MIN], [LABEL_15MIN]), the requirements' bars and stretch thresholds, the
  * `t_p` modes and the two questions each mode answers ([lineIsCoveredAt], [dragsAt]), and the kind each break is.
  *
@@ -97,7 +97,7 @@ object DynamicPeriods {
      * **Is the line covered by "no on-screen task" in this mode?** — the ONE predicate the placement reads the
      * mode through, true of mode 2 and mode 3 alike.
      *
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* states them in one clause — *"Mode 2 & 3: $now
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* states them in one clause — *"Mode 2 & 3: $now
      * line$ must be covered by the period 'no on-screen task'"* — and a dynamic period's kind is
      * [PeriodKinds.INACTIVITY], which covers "no on-screen task" a fortiori. So being covered and being coverable
      * BY ONE OF THE THREE are not two questions: there was a second predicate here (`breaksAreTakenAt`, mode 3
@@ -123,7 +123,7 @@ object DynamicPeriods {
     fun breaksAreNotifiedAt(mode: Int): Boolean = mode != MODE_AWAY
 
     /**
-     * The mode, in words — `docs/scheduler_requirements.md` § *$now line$ 3 modes*, one phrase each.
+     * The mode, in words — `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, one phrase each.
      *
      * The set of rules the scheduler returns is parameterized by the mode as well as by the line, so anything
      * that reports a rule list has to say which mode it was drawn at (the History window's scheduler rows do,
@@ -186,7 +186,7 @@ object DynamicPeriods {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *screen breaks*: **the kind a break in this role is** — the 20 s *"allows no
+     * `docs/scheduler/scheduler_requirements.md` § *screen breaks*: **the kind a break in this role is** — the 20 s *"allows no
      * task"* ([PeriodKinds.INACTIVITY], which nobody may be resilient to); the 5 min and the 15 min are kinds of their
      * own ([PeriodKinds.BREAK_5MIN], [PeriodKinds.BREAK_15MIN]), with the 5 min's first minute allowing no task
      * ([BREAK_5MIN_NO_TASK_MILLIS], `SchedulerDomain.screenBreakPeriods`). All three are accompanied by "no screen".
@@ -204,7 +204,7 @@ object DynamicPeriods {
 
     /**
      * **Does a line in [mode] DRAG this one when it reaches it?** — pushes it onto itself as `(t_p, t_p + d]`, and
-     * goes on pushing it, because the line may not be inside it in that mode. `docs/scheduler_requirements.md`:
+     * goes on pushing it, because the line may not be inside it in that mode. `docs/scheduler/scheduler_requirements.md`:
      * - **a pose, in mode 1**: *"$now line$ must not be covered by the period 'no screen'"*, and a pose comes with
      *   one — *"If the $now line$ reaches a 5min break in mode 1, this 5min break becomes ]$now line$; $now line$ +
      *   5min]"*. Five or fifteen minutes away from the screen is something the user must DO, so an untaken one is

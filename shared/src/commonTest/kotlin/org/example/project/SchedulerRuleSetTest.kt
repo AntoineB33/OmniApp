@@ -15,7 +15,7 @@ import org.example.project.scheduler.state.SchedulerRunEntry
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` keeps two things apart that the History window had run together:
+ * `docs/scheduler/scheduler_requirements.md` keeps two things apart that the History window had run together:
  *
  * > **Rule State Definition:** A rule state is the set of tasks and their associated priority percentages,
  * > minimum execution time and resilience values for every periods at a given moment in time.
@@ -94,7 +94,7 @@ class SchedulerRuleSetTest {
     }
 
     /**
-     * User rule 2026-10-06, `docs/scheduler_requirements.md` § *Rule Structure*: the set of rules is a TEXT of
+     * User rule 2026-10-06, `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: the set of rules is a TEXT of
      * `if … then … else …` clauses and their triggers, not a table of offsets to decode.
      */
     @Test

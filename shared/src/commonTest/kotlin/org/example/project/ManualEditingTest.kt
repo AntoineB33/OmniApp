@@ -22,7 +22,7 @@ import org.example.project.scheduler.state.SchedulerState
 import org.example.project.time.AppClock
 
 /**
- * `docs/scheduler_requirements.md` § *Manual editing*:
+ * `docs/scheduler/scheduler_requirements.md` § *Manual editing*:
  *
  * *"If the user adds an element, then removes it, the state of the line is the same as before the addition. If the
  * user moves some elements, then moves them back to their original place, the state of the line is the same as before

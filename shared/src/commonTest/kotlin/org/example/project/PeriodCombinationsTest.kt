@@ -22,7 +22,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30) and the period edit window's **combinations**:
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30) and the period edit window's **combinations**:
  *
  * - *"Mode 3: $now line$ is in either 'not on a computer' or 'not on a phone' periods. 'not on a
  *   computer' can't be with 'no computer unlocked', same with the phone."*

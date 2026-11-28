@@ -30,7 +30,7 @@ import org.example.project.time.AppClock
  * Anomaly 2026-10-06: *"I tried to drag a past 15min screen break but I couldn't."* — and the user's rule of
  * 2026-10-07: *"Any block can be dragged, it then gets a blue outline."* A screen break is no panel: behind the line
  * it is this device's banked record, ahead of it it is where the machine the line carries puts it. One rule moves it
- * on either side ([SchedulerDomain.placeBreakByHand]), `docs/scheduler_requirements.md` § *frozen past*: *"The
+ * on either side ([SchedulerDomain.placeBreakByHand]), `docs/scheduler/scheduler_requirements.md` § *frozen past*: *"The
  * schedule at t < now line never changes … with only two exceptions: When the user or a program wants to rewrite
  * history"*.
  */

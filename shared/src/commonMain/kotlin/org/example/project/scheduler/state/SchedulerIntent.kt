@@ -494,7 +494,7 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * `docs/scheduler_requirements.md` § *frozen past* (*"When the user … wants to rewrite history"*): **a past screen
+     * `docs/scheduler/scheduler_requirements.md` § *frozen past* (*"When the user … wants to rewrite history"*): **a past screen
      * break the user dragged now stands at `[startEpochMillis, endEpochMillis)`** — the work recorded there, for the
      * tasks a break in the role [label] refuses, goes: a banked break and recorded work never overlap. The break
      * itself is the engine's (`SchedulerEngine.placeBreakByHand`, the banked record — local-only, not in the state).
@@ -1005,7 +1005,7 @@ sealed interface SchedulerIntent {
     data class RefreshSchedule(
         val nowMillis: Long,
         /**
-         * `docs/scheduler_requirements.md` § *Progressive Calculation*: materialize no further than this instant
+         * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: materialize no further than this instant
          * (still never past $t_{goal}$). The engine fills in doubling stages so the definitive schedule grows at the
          * required pace whatever a whole fill costs on this device; `null` fills to $t_{goal}$ in one go.
          */
@@ -1027,7 +1027,7 @@ sealed interface SchedulerIntent {
          */
         val generation: Long = 0L,
         /**
-         * `docs/scheduler_requirements.md` § *Two paces*: plan with the instant schedule ([SchedulerDomain.fillSchedule]'s
+         * `docs/scheduler/scheduler_requirements.md` § *Two paces*: plan with the instant schedule ([SchedulerDomain.fillSchedule]'s
          * `instant`) — the first 10 seconds of a run from scratch.
          */
         val instant: Boolean = false,
@@ -1049,7 +1049,7 @@ sealed interface SchedulerIntent {
     data class ExtendSchedule(
         val nowMillis: Long,
         /**
-         * `docs/scheduler_requirements.md` § *Progressive Calculation*: materialize no further than this instant
+         * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: materialize no further than this instant
          * (still never past $t_{goal}$). The engine fills in doubling stages so the definitive schedule grows at the
          * required pace whatever a whole fill costs on this device; `null` fills to $t_{goal}$ in one go.
          */
@@ -1066,7 +1066,7 @@ sealed interface SchedulerIntent {
         val seeds: List<List<org.example.project.scheduler.model.RulePlacement>> = emptyList(),
         /**
          * Lay only the repetition of the rules already returned — never search (a line walked across a stretch nothing
-         * ran in, `docs/scheduler_requirements.md` § *Progressive Calculation*). Where the rules do not repeat, the
+         * ran in, `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*). Where the rules do not repeat, the
          * extension lays nothing.
          */
         val unrollOnly: Boolean = false,
@@ -1087,7 +1087,7 @@ sealed interface SchedulerIntent {
         val cycle: org.example.project.scheduler.model.ScheduleCycle?,
         val horizonMillis: Long,
         /**
-         * `docs/scheduler_requirements.md` § *Progressive Calculation*: this device already holds a plan for these very
+         * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: this device already holds a plan for these very
          * rules, so what it has materialized is definitive — keep it, and lay the rules only past it. False when the
          * plan held answers other rules (a rule change): nothing of it is definitive for these.
          */
@@ -1095,7 +1095,7 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the now-line has just changed mode CLASS (at a screen
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: the now-line has just changed mode CLASS (at a screen
      * vs covered) at [nowMillis]. The rules are parameterized by the mode, and their answer for a path of modes the
      * plan was not made for is the instant schedule's policy (user rule 2026-11-18): laid from the line out to where the
      * plan reached, nothing searched — the same on every device, and never a rewrite by a search of a schedule
@@ -1149,7 +1149,7 @@ sealed interface SchedulerIntent {
         val nowMillis: Long,
         /**
          * § *Alternative Schedules*: who the rules name to run instead at [nowMillis], as the runtime's cursor holds it
-         * (`RuleProgram.Cursor.alternative`) — `docs/scheduler_requirements.md` § *Rule Structure* has the press read
+         * (`RuleProgram.Cursor.alternative`) — `docs/scheduler/scheduler_requirements.md` § *Rule Structure* has the press read
          * the rules rather than search the plan. Null: the reducer reads the panels itself (a shell with no engine).
          */
         val rules: RulesAlternative? = null,
@@ -1182,7 +1182,7 @@ sealed interface SchedulerIntent {
     ) : SchedulerIntent
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the line walked `[fromMillis, untilMillis)` in MODE 1.
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: the line walked `[fromMillis, untilMillis)` in MODE 1.
      * Whatever of it lies in a period the user stated that is or carries "no screen" is no longer that period's
      * ([SchedulerState.periodCrossings]). Dispatched by the engine's interpreter at its two armed triggers — the end of
      * such a period, and the mode edge out of mode 1 — never per tick. The line's own history: local, not undoable,
@@ -1589,7 +1589,7 @@ sealed interface SchedulerIntent {
         val kind: String,
         val startEpochMillis: Long,
         val endEpochMillis: Long,
-        /** `docs/scheduler_requirements.md`: the period recurs every this many days ([PanelRepeat]); 0 lays it once. */
+        /** `docs/scheduler/scheduler_requirements.md`: the period recurs every this many days ([PanelRepeat]); 0 lays it once. */
         val repeatEveryDays: Int = 0,
     ) : SchedulerIntent
 
@@ -1609,7 +1609,7 @@ sealed interface SchedulerIntent {
         /** PRD §8 Overlap Mode: keep the raw (possibly overlapping) bounds and seed the panel to 1/n. */
         val allowOverlap: Boolean = false,
         /**
-         * `docs/scheduler_requirements.md`: how often the panel recurs, in days ([PanelRepeat]) — 0 to stop it
+         * `docs/scheduler/scheduler_requirements.md`: how often the panel recurs, in days ([PanelRepeat]) — 0 to stop it
          * recurring, null to keep whatever it does (a drag never changes a pattern). An [id] of a derived
          * occurrence takes that occurrence OUT of its pattern (`docs/scheduler_input_requirements.md`: the pattern
          * gets an exception and the occurrence is a panel of the user's); with another cadence it edits the pattern.

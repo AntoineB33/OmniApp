@@ -13,7 +13,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation* — **$t_goal$**: *"The scheduler can have a time
+ * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation* — **$t_goal$**: *"The scheduler can have a time
  * $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop."*
  *
  * It is **`now + 168 h`** ([SchedulerDomain.scheduleGoalEndMillis], user rule 2026-11-18: *"the 10 minute per 10

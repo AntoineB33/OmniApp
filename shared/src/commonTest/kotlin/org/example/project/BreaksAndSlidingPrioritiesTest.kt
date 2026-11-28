@@ -88,7 +88,7 @@ class BreaksAndSlidingPrioritiesTest {
 
     @Test
     fun the_plan_follows_the_percentages_in_force_where_it_places_them() {
-        // `docs/scheduler_requirements.md` § *Rule state input evolution* (2026-10-04): every stretch is placed under
+        // `docs/scheduler/scheduler_requirements.md` § *Rule state input evolution* (2026-10-04): every stretch is placed under
         // the rule state in force THERE, not under the one at the position the plan was made from. One plan, made a
         // day before the first keyframe and reaching a day past the last, follows "before" before it, the halfway
         // blend halfway through, and "after" after it. (It used to hold the line's own percentages for its whole reach.)

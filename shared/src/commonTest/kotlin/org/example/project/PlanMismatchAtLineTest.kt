@@ -15,7 +15,7 @@ import org.example.project.scheduler.state.SchedulerState
  * The plan checked at the line ([SchedulerDomain.planMismatchAtLine]): the rules place the three dynamic periods as
  * a function of the line, so a plan built around one placement can be left, as the line advances, either empty
  * where somebody may run or running a task inside a break. The engine re-plans from the line on either, once per
- * mismatch. `docs/scheduler_requirements.md` requires no task anywhere, so an empty line the plan itself DECIDED
+ * mismatch. `docs/scheduler/scheduler_requirements.md` requires no task anywhere, so an empty line the plan itself DECIDED
  * ([SchedulerState.plannedIdle]) is the plan, not a mismatch.
  */
 class PlanMismatchAtLineTest {

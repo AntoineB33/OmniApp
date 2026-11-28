@@ -12,7 +12,7 @@ import org.example.project.scheduler.model.TaskPanel
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **"Mode 2 & 3: $now line$ must be covered by the
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **"Mode 2 & 3: $now line$ must be covered by the
  * period 'no on-screen task'"** — so *what is the task to do now* is a question about the line AND the mode,
  * and [SchedulerDomain.currentPanel] is where the two meet.
  *

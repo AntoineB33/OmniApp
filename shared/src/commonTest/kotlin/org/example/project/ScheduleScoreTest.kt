@@ -130,7 +130,7 @@ class ScheduleScoreTest {
 
     @Test
     fun nothing_is_left_to_nobody_where_leaving_it_cannot_score_lower() {
-        // `docs/scheduler_requirements.md` requires no task anywhere, but criterion 1 asks for the percentages over
+        // `docs/scheduler/scheduler_requirements.md` requires no task anywhere, but criterion 1 asks for the percentages over
         // schedulable time, and they add up to 100 %: time left to nobody puts every task behind. With nothing
         // restricting anybody and no panel to cut short, it can only cost.
         for (tasks in listOf(listOf(task("A", 1.0, 30)), listOf(task("A", 0.5, 20), task("B", 0.5, 20)))) {
@@ -219,7 +219,7 @@ class ScheduleScoreTest {
 
     @Test
     fun a_longer_pre_placed_task_saturates_the_compensation_on_both_sides() {
-        // `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: a 48-hour pre-placed task
+        // `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation*: a 48-hour pre-placed task
         // increases a deprived task's presence in the adjacent schedule, but not twice as much as a 24-hour one —
         // before the block as well as after it.
         val tasks = listOf(task("A", 0.5, 30), task("B", 0.5, 30))

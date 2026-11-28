@@ -10,7 +10,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation* and § *Soft Minimum Execution Time*,
+ * `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation* and § *Soft Minimum Execution Time*,
  * on the tree that breaks the arithmetic behind both.
  *
  * Nothing bounds a priority percentage from below, so one leaf with a near-zero share makes its own window

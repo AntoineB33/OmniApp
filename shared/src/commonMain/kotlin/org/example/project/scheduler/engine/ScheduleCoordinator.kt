@@ -57,7 +57,7 @@ class ScheduleCoordinator(
     private val planLocally: (Lead?) -> Unit,
     /**
      * Take a leader's rules into this device's plan. `keepHead` is true when this device already holds a plan for
-     * the same rules: what it has materialized of it is definitive (`docs/scheduler_requirements.md` § *Progressive
+     * the same rules: what it has materialized of it is definitive (`docs/scheduler/scheduler_requirements.md` § *Progressive
      * Calculation*), and the rules taken in are laid past it only.
      */
     private val adopt: (PeerMessage.Rules, Boolean) -> Unit,
@@ -341,7 +341,7 @@ class ScheduleCoordinator(
 
         /**
          * How long a device waits for the elected device's first rules before planning for itself. The pace
-         * `docs/scheduler_requirements.md` § *Progressive Calculation* asks for is 10 minutes of definitive schedule per
+         * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation* asks for is 10 minutes of definitive schedule per
          * 10 seconds, and a device waiting on a rule change has already spent the engine's debounce (1 s) and the probe
          * window ([PROBE_WINDOW_MILLIS]) and still has its own first stage to fill: the whole wait has to fit inside the
          * 10 s with room to spare, which a 10-second deadline alone did not.

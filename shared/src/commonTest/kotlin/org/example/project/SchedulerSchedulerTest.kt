@@ -575,7 +575,7 @@ class SchedulerSchedulerTest {
         // reference is the screen break, never this.
         //
         // The 20 minutes before it are shorter than any task's minimum, and here they are FILLED: leaving them to
-        // nobody is a candidate (`docs/scheduler_requirements.md` requires no task anywhere, ADR 0001 §14), but B
+        // nobody is a candidate (`docs/scheduler/scheduler_requirements.md` requires no task anywhere, ADR 0001 §14), but B
         // there joins its own pre-placed five minutes into one panel, which the score prices below putting every
         // task twenty minutes behind.
         val (s0, a, b) = stateWithTwoTasks()

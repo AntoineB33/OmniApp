@@ -10,7 +10,7 @@ import org.example.project.scheduler.model.TaskPanel
 
 /**
  * 2026-10-08: the set of rules output, pasted to an outside reader, was found not to satisfy
- * `docs/scheduler_requirements.md` on four counts — every one of them the WORDING of the output. This is the wording.
+ * `docs/scheduler/scheduler_requirements.md` on four counts — every one of them the WORDING of the output. This is the wording.
  */
 class ScheduleRulesOutputTest {
     private val MIN = 60_000L

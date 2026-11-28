@@ -21,7 +21,7 @@ import kotlin.math.abs
  * 3. **The whole-continuation improvement** ([ScheduleImprover]) then lowers the score of the continuation as a
  *    whole, within [improveBudget] scored moves. A decision that is best for its own window can still cost more
  *    over the continuation, and only this pass judges by the number the definition minimizes.
- * 4. **While the [SearchBudget] lasts** (`docs/scheduler_requirements.md` § *Strict requirements*: the best score
+ * 4. **While the [SearchBudget] lasts** (`docs/scheduler/scheduler_requirements.md` § *Strict requirements*: the best score
  *    must be reached when it is reachable in the time): the exhaustive search ([certify]) started from the best
  *    continuation so far — when it finishes, nothing over the candidate lengths scores better and [Plan.certified]
  *    says so — and, when it does not, the platform's [ExternalScheduleSolver] with the time that is left.
@@ -40,7 +40,7 @@ import kotlin.math.abs
  * and two minimums, up to the next three environment edges, and as far as it may run within the window.
  *
  * ### Nobody is a candidate
- * `docs/scheduler_requirements.md` requires no task anywhere, so every decision also tries leaving the time to
+ * `docs/scheduler/scheduler_requirements.md` requires no task anywhere, so every decision also tries leaving the time to
  * nobody ([ScoreModel.IDLE], [ScoreModel.choicesAt]) — up to the next three edges, or as far as it may go. The score
  * prices it: every lag falls behind its target (the shares add up to 100 %), and the panel it interrupts ends. It is
  * kept only where that costs less than any task — typically a stretch before an edge too short for any minimum. A run

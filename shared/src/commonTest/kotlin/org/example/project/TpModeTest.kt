@@ -120,7 +120,7 @@ class TpModeTest {
 
     @Test
     fun mode_2_drags_the_look_away_and_the_pose_joins_its_chain_where_mode_3_enters_both() {
-        // `docs/scheduler_requirements.md`: *"The $now line$ must be in mode 1 or 3 before entering the 20s break"* — so a
+        // `docs/scheduler/scheduler_requirements.md`: *"The $now line$ must be in mode 1 or 3 before entering the 20s break"* — so a
         // mode-2 line drags the look-away it reaches (`]now line; now line + 20s]`), and the pose falling due within the
         // reach of that drag joins its chain: *"the interval of the whole chain only contains one screen break, which is
         // the longest ... brought to the start of the interval"*. Mode 3 enters each where it falls.

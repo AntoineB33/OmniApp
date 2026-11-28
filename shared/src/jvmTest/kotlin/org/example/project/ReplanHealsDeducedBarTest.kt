@@ -22,7 +22,7 @@ import org.example.project.time.AppClock
 
 /**
  * Account 3, 2026-09-30: the persisted break machine carried a 5-min bar at restart + 1 h that nothing in history held
- * (a stretch at an unlocked computer counted as "no screen"). `docs/scheduler_requirements.md` § *Use of the set of
+ * (a stretch at an unlocked computer counted as "no screen"). `docs/scheduler/scheduler_requirements.md` § *Use of the set of
  * rules output*: the scheduler's next run drops what was deduced but not saved — so the start-up re-plan heals it, and
  * the 5-min break is dragged by the line.
  */

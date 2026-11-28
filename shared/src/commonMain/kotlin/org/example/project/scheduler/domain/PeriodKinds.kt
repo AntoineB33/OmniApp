@@ -116,7 +116,7 @@ object PeriodKinds {
     const val NO_PHONE_UNLOCKED: String = "no phone unlocked"
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **a computer of the account is unlocked, and the user
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **a computer of the account is unlocked, and the user
      * said nobody is at it** — the "I'm away" button pressed on a computer. *"Mode 3: $now line$ is in either 'not on a
      * computer' or 'not on a phone' periods. 'not on a computer' can't be with 'no computer
      * unlocked'"*: where the computer really is locked the stretch is [NO_COMPUTER_UNLOCKED], never both
@@ -131,7 +131,7 @@ object PeriodKinds {
     const val NOT_ON_A_PHONE: String = "not on a phone"
 
     /**
-     * `docs/scheduler_requirements.md` § *screen breaks*: **the kind of the 5-minute screen break** — *"The 5min break is
+     * `docs/scheduler/scheduler_requirements.md` § *screen breaks*: **the kind of the 5-minute screen break** — *"The 5min break is
      * accompanied by two periods: the first minute that allow no tasks and the 4 next minutes"*. The break is a
      * period of this kind end to end, accompanied by "no screen", and its first minute also by [INACTIVITY]
      * (`SchedulerDomain.screenBreakPeriods`): nobody runs in that minute whatever their resilience, while in the four
@@ -141,14 +141,14 @@ object PeriodKinds {
     const val BREAK_5MIN: String = "5min screen break"
 
     /**
-     * `docs/scheduler_requirements.md` § *screen breaks*: **the kind of the 15-minute screen break**, accompanied by "no
+     * `docs/scheduler/scheduler_requirements.md` § *screen breaks*: **the kind of the 15-minute screen break**, accompanied by "no
      * screen". The requirements say nothing more of it, so it is an ordinary editable kind: `0` for every task until
      * one is given more.
      */
     const val BREAK_15MIN: String = "15min screen break"
 
     /**
-     * `docs/scheduler_requirements.md` § *screen breaks*: **the kind of the 20-second screen break** (user rule
+     * `docs/scheduler/scheduler_requirements.md` § *screen breaks*: **the kind of the 20-second screen break** (user rule
      * 2026-10-03: *"a 20s screen break is a restrictive period like any other"* — until then it was an [INACTIVITY]
      * period with no kind of its own, so nothing could name it: the Search window listed "inactivity" for it). A kind
      * like the two others, listed with them — and, as the requirements say, one that
@@ -190,7 +190,7 @@ object PeriodKinds {
         )
 
     /**
-     * **The combination rules an account starts with** (`docs/scheduler_requirements.md` § *$now line$ 3 modes*; user
+     * **The combination rules an account starts with** (`docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*; user
      * rule 2026-09-30: *"when 'not on a computer' and 'no phone unlocked' are present, it is always accompanied
      * by 'no screen' (except if the user changes the period configurations)"*): **each computer layer with each phone
      * layer — real or fake — is a "no screen" period.** Where a computer's and a phone's "nobody here" overlap, nobody is
@@ -441,7 +441,7 @@ object PeriodKinds {
     /**
      * Whether a task may be given a resilience to [kind] **at all**.
      *
-     * [INACTIVITY] is the one it may not: it is the kind of what `docs/scheduler_requirements.md` says *"allows no
+     * [INACTIVITY] is the one it may not: it is the kind of what `docs/scheduler/scheduler_requirements.md` says *"allows no
      * task"* — the 20 s screen break and the 5 min break's first minute — so its multiplier is `0` for everybody,
      * whatever a resilience map holds ([resilienceFor]). Every other kind is an ordinary editable value — [SLEEP]
      * included: the requirements say a sleep period *"allows no task (a task has a 0 resilience to it by default)"*,

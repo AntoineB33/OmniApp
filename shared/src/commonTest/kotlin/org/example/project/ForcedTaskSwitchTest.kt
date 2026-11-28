@@ -75,7 +75,7 @@ class ForcedTaskSwitchTest {
         val state = s0.copy(panels = listOf(auto("auto/0", a, T0 - 10 * MIN, T0 + 50 * MIN)))
         val switched = SchedulerReducer.reduce(state, SchedulerIntent.ForceTaskSwitch(T0))
         assertEquals(b, taskAt(switched, T0))
-        // `docs/scheduler_requirements.md` § *Alternative Schedules*: the alternative is SET at
+        // `docs/scheduler/scheduler_requirements.md` § *Alternative Schedules*: the alternative is SET at
         // `[now line, now line + d]` — a user-placed block is the whole answer, so no refusal marker stands beside it.
         val entry = switched.panels.single { !it.auto && it.startEpochMillis == T0 }
         assertEquals(b, entry.taskId)

@@ -109,7 +109,7 @@ User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`),
     MULTIPLIES every covering kind's resilience (`PeriodKinds.multiplier`): counting the stretch twice would
     square it and halve the share of anybody sitting strictly between 0 and 1. A `0` and a `1` would not have
     noticed.
-- **THE FOUR LAYERS: REAL AND FAKE, PER DEVICE KIND** (`docs/scheduler_requirements.md` § *$now line$ 3 modes*,
+- **THE FOUR LAYERS: REAL AND FAKE, PER DEVICE KIND** (`docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*,
   2026-09-30). Each device kind has a real layer ("no computer unlocked", read off the OS) and a **fake** one
   ("not on a computer", `PeriodKinds.NOT_ON_A_COMPUTER` / `NOT_ON_A_PHONE`): the device is
   unlocked and the user said nobody is at it — the "I'm away" button, or a period drawn of the fake kind. **The two
@@ -520,7 +520,7 @@ User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`),
   one on screen.
 - **The NOW-LINE ITSELF goes two steps further: it is placed below the second AND between pixels, in the DRAW
   phase, off its own frame sampler** (`hourOfDayExact`, `nowLineOffsetPx`, `rememberNowLineHour`) —
-  `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in time"*. The
+  `docs/scheduler/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in time"*. The
   split is the whole of it, and it is the same one ADR 0009 makes everywhere else: **what is DERIVED from the
   clock** (every band, panel, projection and cull) is a function of the app's **quantized** display instant,
   because each new value re-runs an O(visible window) pass; **the line** is one number, so it is sampled on
@@ -775,7 +775,7 @@ User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`),
     laid, an auto panel or a Sleep window edited by hand, an occurrence taken out of its pattern, a record pinned).
     **A move or a resize never changes it**: the levels are the order the blocks were placed in — `line_manager.py`'s
     z-index fixed at creation — so a block dragged onto one placed after it goes UNDER it.
-  - **MANUAL EDITING IS UNDONE BY THE INVERSE EDIT** (`docs/scheduler_requirements.md` § *Manual editing*, 2026-10-17:
+  - **MANUAL EDITING IS UNDONE BY THE INVERSE EDIT** (`docs/scheduler/scheduler_requirements.md` § *Manual editing*, 2026-10-17:
     *"If the user adds an element, then removes it, the state of the line is the same as before the addition. If the
     user moves some elements, then moves them back to their original place, the state of the line is the same as
     before the move."*; `ManualEditingTest`, `TimelineLevelsFuzzTest`). What has to hold for that:
@@ -1365,7 +1365,7 @@ User rule 2026-11-12. `SearchDomain.Kind.Calendar` (one element, `CALENDAR_ID`),
   off-screen tasks too. What a strip vacates is idle time the calendar already derives a band for, so the
   deletion changed no pixel. `materializePastSleep` is the deliberate counter-case: a sleep session is a fact
   the **user** asserted with the Sleep/Work toggle, not something a scan observed.
-  The other past Sleep is **frozen by the line** (`docs/scheduler_requirements.md` § *frozen past*; 2026-10-05): the
+  The other past Sleep is **frozen by the line** (`docs/scheduler/scheduler_requirements.md` § *frozen past*; 2026-10-05): the
   part of a scheduled Sleep period the line crossed in mode 2 or 3, covered by "no screen", stays behind it; the part
   crossed in mode 1, where its "no screen" retracts at the line, does not. `SchedulerEngine.freezeSleepBehindLine`,
   called by the one interpreter — live, on a wake's fast move, on the catch-up of a stretch the app did not run in —

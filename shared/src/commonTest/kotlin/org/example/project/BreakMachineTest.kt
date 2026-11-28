@@ -19,7 +19,7 @@ import org.example.project.scheduler.domain.DynamicPeriods.Span
 import org.example.project.scheduler.domain.SchedulerDomain
 
 /**
- * `docs/scheduler_requirements.md` § *Default restrictive periods* and § *Example behaviors*, one rule at a time, against
+ * `docs/scheduler/scheduler_requirements.md` § *Default restrictive periods* and § *Example behaviors*, one rule at a time, against
  * the break machine ([BreakMachine]) — the one place the three screen breaks are placed, driven forward by the line.
  */
 class BreakMachineTest {

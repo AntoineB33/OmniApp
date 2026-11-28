@@ -2338,7 +2338,7 @@ its selector checked (`clearedConfig`), no longer the tasks alone. A blank field
 
 ### Two paces: ten-minute deep steps, and the instant schedule for what is displayed — 2026-11-11
 
-`docs/scheduler_requirements.md` § *Two paces*, user choices 2026-11-11 ("fixed 10-min deep steps"; "the instantaneous
+`docs/scheduler/scheduler_requirements.md` § *Two paces*, user choices 2026-11-11 ("fixed 10-min deep steps"; "the instantaneous
 scheduler schedules for the part of the timeline displayed on the app, and [now, now+10s]"), ported from line_manager.
 **The steps** (`SchedulerEngine.runProgressiveStages`, `progressiveStageCapMillis`): every stage extends the definitive
 front by exactly ten minutes and searches with the whole pace (7 s), its search reaching one decision window past it, up to
@@ -2944,7 +2944,7 @@ scheduler feature page"*.) What it does:
 
 ### Manual editing: an edit undone by its inverse leaves the line as it was — 2026-10-17
 
-`docs/scheduler_requirements.md` § *Manual editing* (new): *"If the user adds an element, then removes it, the state of
+`docs/scheduler/scheduler_requirements.md` § *Manual editing* (new): *"If the user adds an element, then removes it, the state of
 the line is the same as before the addition. If the user moves some elements, then moves them back to their original
 place, the state of the line is the same as before the move."* (reference model: `C:\code\line_manager\line_manager.py`
 — a z-index fixed at creation, rules read off the stack). `docs/scheduler_input_requirements.md` was removed the same
@@ -3767,7 +3767,7 @@ Client only. Not looked at on screen: the grouping is tested, the drawing is not
 ### `docs/scheduler_input_requirements.md`: the hidden timeline levels, and a dragged occurrence is an exception — 2026-10-10
 
 The user asked that the project strictly satisfy `docs/scheduler_input_requirements.md` and
-`docs/scheduler_requirements.md`; an audit found two clauses the code contradicted or did not have. (The audit's other
+`docs/scheduler/scheduler_requirements.md`; an audit found two clauses the code contradicted or did not have. (The audit's other
 findings, and what is still open, are in `docs/invariants/calendar.md` § *tm_levels* — "Open".)
 - **A dragged occurrence leaves its pattern** (*"the configuration that created this orange outlined block/chip gets
   an 'exception' info"*). Dragging or editing one occurrence of a repeating panel used to move the WHOLE pattern
@@ -3802,7 +3802,7 @@ findings, and what is still open, are in `docs/invariants/calendar.md` § *tm_le
   `RecordLevelsFuzzTest`, in `:shared:jvmTest`. They found five faults in the levels as first written, all fixed the
   same day and listed in `docs/invariants/calendar.md` § *tm_levels* — among them a fill laid over hidden work, which
   kept it from coming back, and same-task panels fused across levels.
-- `BreakMachineFuzzTest`: the same for the screen-break rules of `docs/scheduler_requirements.md` (random line
+- `BreakMachineFuzzTest`: the same for the screen-break rules of `docs/scheduler/scheduler_requirements.md` (random line
   motion and mode switches). No fault in the machine; one edge of no length noted in
   `docs/invariants/screen-breaks.md` (two breaks touching when the mode switches at the instant a pose ends).
 - Also: replacing a merged block (`ReplaceTaskPanels`) recorded its unit from the panels AFTER the removal, so Ctrl+Z
@@ -3922,7 +3922,7 @@ then the 15min break retracts the held task panel, which comes out on the other 
   requirements" for a task panel: a held panel is not lengthened across a period laid by hand that refuses its task
   (there the PERIOD gives way, user rule 2026-10-02).
 
-`HeldBlockKeepsLengthTest`. `docs/scheduler_requirements.md` itself changed only in wording (commit 2c2c1a8: "set of
+`HeldBlockKeepsLengthTest`. `docs/scheduler/scheduler_requirements.md` itself changed only in wording (commit 2c2c1a8: "set of
 rules output", "the future part of the timeline"). Client only. NOT seen on screen.
 
 ### A window's section lines did not survive a restart, so a button's "Update" kept the middle — 2026-10-08
@@ -5045,7 +5045,7 @@ the calendar."*
 
 ### Screen breaks: only a 20 s break bars the next 20 s break — 2026-10-05
 
-`docs/scheduler_requirements.md` (user edit, f73ee9d): *"After the end of a **20s** break, no 20s break in the next
+`docs/scheduler/scheduler_requirements.md` (user edit, f73ee9d): *"After the end of a **20s** break, no 20s break in the next
 20 minutes"* (was: of a screen break), and a ≥15-minute "no screen" bars the 15 min break only (it barred the 20 s
 break for 20 minutes too). `BreakMachine.endActive` / `absorbHistory` set the 20 s bar only from a 20 s break (one
 the app conducted included); `stretchBars` no longer touches it; `BAR_20S_AFTER_ANY_MILLIS` →
@@ -5207,7 +5207,7 @@ is deleted. `LineBoundRunTest`; the six rewritten tests and `SleepWindowNoIdling
 
 ### Mode 1 pushes "no screen" forward on a task; the calendar draws it the same for every no-screen period — 2026-10-04
 
-User clarification of `docs/scheduler_requirements.md`: in mode 1 the $now line$ is in a task even with a "no screen"
+User clarification of `docs/scheduler/scheduler_requirements.md`: in mode 1 the $now line$ is in a task even with a "no screen"
 period right after it, and the rules (if/then on the line and its mode) name that task. So the mode-1 plan holding a
 task across a no-screen period ahead is required, and six tests asserting the opposite on the mode-1 PLAN were wrong.
 - They now assert both halves: the calendar DRAWS no on-screen task inside the period ahead (`drawnAtAScreen`), and
@@ -5227,7 +5227,7 @@ it with real touch events on a rendered tree.
 
 ### Rule state input evolution: every stretch under the rule state in force there — 2026-10-04
 
-User rewrote `docs/scheduler_requirements.md` § *Rule state input evolution*. What the code did against it: a plan
+User rewrote `docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*. What the code did against it: a plan
 held the rule state at the line, `R(x)`, for its whole reach (only its FIRST run was cut where a moving `R` turned
 against it), and the engine re-planned at every run start inside a transition. So the far side of a switch ahead was
 planned under the near side's rules, and became right only by rewriting a definitive schedule as the line arrived.
@@ -5373,7 +5373,7 @@ in a priority weights table shows a warning in the task tree window's configurat
 
 ### Scheduler: the first 10 s of a re-plan from scratch — 2026-10-03
 
-Requirement added to `docs/scheduler_requirements.md` § *Progressive Calculation* (**first 10s**): a change that makes
+Requirement added to `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation* (**first 10s**): a change that makes
 the engine re-plan from scratch first checks whether the next 10 s hold a gap with no task that a task could fill, and
 if so returns a set of rules at once whose first 10 s are definitive. `SchedulerDomain.firstSecondsGapFillable` +
 `FIRST_DEFINITIVE_MILLIS`; `SchedulerEngine.dispatchProgressivePlan` publishes a search-free `RefreshSchedule` capped at
@@ -5506,7 +5506,7 @@ non-focusable (`leavesKeyboardToCalendar`); the mouse presses them as before.
 
 Every launch re-planned: the rule-change watcher (`launchRuleChangeReschedule`) took the first value of its
 `distinctUntilChanged` flow — the rules loaded from the DB — for an edit, and ~1 s after start a full
-`RefreshSchedule` rewrote a schedule `docs/scheduler_requirements.md` § *Progressive Calculation* had made definitive.
+`RefreshSchedule` rewrote a schedule `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation* had made definitive.
 Every re-plan reduction (`RefreshSchedule`, the in-reducer re-plans, `AdoptScheduleRules`) now records
 `SchedulerState.planBasis` (the `schedulingSignature` and instant the plan was made for; persisted locally, never on
 the wire, not carried across a pull), and the launch re-plans only when `SchedulerDomain.planHoldsAtLaunch` is false:
@@ -5621,7 +5621,7 @@ unlocked. Display only; no state, SQLite or Supabase change.
 ### Calendar: a screen break's hover bubble names the "No screen" it is accompanied by — 2026-10-02
 
 Anomaly: the 15-min break ahead of the line read as the break alone. Every break band now stacks its kind's
-companions in the bubble over its own span, "No screen" always among them (`docs/scheduler_requirements.md`
+companions in the bubble over its own span, "No screen" always among them (`docs/scheduler/scheduler_requirements.md`
 § *screen breaks*: "always accompanied by the 'no screen' period"). Display only.
 
 ### Search window: the "app setting" element, "Sound setting" and its global volume — 2026-10-02
@@ -5703,7 +5703,7 @@ No state, SQLite or Supabase change.
 
 ### Engine: the task-tree blend watch and the horizon watcher sleep until their armed instant — 2026-10-02
 
-Audit against `docs/scheduler_requirements.md` § *Rule Structure* ("No Global Lookups", "advances a forward cursor to
+Audit against `docs/scheduler/scheduler_requirements.md` § *Rule Structure* ("No Global Lookups", "advances a forward cursor to
 the next armed trigger point"). Two engine loops woke on a timer whether or not anything was due:
 `launchTaskTreeBlendReschedule` at least every 60 s (`TASK_TREE_BLEND_POLL_MILLIS`, removed), scanning all of
 `state.panels` each time even with no dated tree; `launchHorizonReschedule` every 30 s to ask whether its due instant
@@ -6255,7 +6255,7 @@ the old period titles by `migrateStoredTitle`; pinned by `RestrictivePeriodKindT
 
 ### "Fake no computer/phone unlocked" and the combination rules — 2026-09-30
 
-`docs/scheduler_requirements.md` § *$now line$ 3 modes* defines modes 2 and 3 by real and fake "no … unlocked" periods,
+`docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* defines modes 2 and 3 by real and fake "no … unlocked" periods,
 and the user asked for the period edit window to hold combinations: *"select a combination of periods, and select which
 periods appear when this combination is present"*, with every real/fake computer layer and phone layer bringing "no
 screen" unless the user changes it.
@@ -6282,7 +6282,7 @@ screen" unless the user changes it.
 
 ### Requirements 2026-09-30: a re-run of the scheduler rebuilds the breaks from history; a lock ends "I'm away"
 
-`docs/scheduler_requirements.md` gained § *Use of the set of rules output* (a re-run drops what the previous rules
+`docs/scheduler/scheduler_requirements.md` gained § *Use of the set of rules output* (a re-run drops what the previous rules
 deduced but history does not hold) and the definitions of modes 2 and 3 (real vs. fake "no computer/phone unlocked",
 which cannot coexist).
 
@@ -6338,7 +6338,7 @@ from above (it was 24 px), so a revealed row is never under the pinned copy.
 
 ### § *Rule Structure*: the break machine, the rule cursor, a strict wake journey — 2026-09-30
 
-`docs/scheduler_requirements.md` gained § *Rule Structure* (event-driven, cursor-based rules; no timeline-wide
+`docs/scheduler/scheduler_requirements.md` gained § *Rule Structure* (event-driven, cursor-based rules; no timeline-wide
 filtering, sorting or search at runtime). The runtime did all three at every move of the line. ADR 0017.
 
 - **The three screen breaks are a forward state machine** (`BreakMachine`, new): bars, the break the line is in, the
@@ -6371,7 +6371,7 @@ filtering, sorting or search at runtime). The runtime did all three at every mov
 - `ServerQuotaTest` heavy hour: 126 reconciles against 125, egress 511.8 MB of the 512 MB budget (was 508.7).
 - Client rebuild needed (desktop and Android); no Supabase change.
 
-### The code brought to `docs/scheduler_requirements.md` (audit list, items 1–5 and 7) + OR-Tools packaging — 2026-09-29
+### The code brought to `docs/scheduler/scheduler_requirements.md` (audit list, items 1–5 and 7) + OR-Tools packaging — 2026-09-29
 
 An audit of the requirements file against the code listed eight gaps; these were fixed. Item 6 (the exhaustive search
 tries a fixed set of run lengths, so the optimum is not guaranteed) and the O(1) rule-reading requirement are open.
@@ -6408,7 +6408,7 @@ over the elapsed window with the mode and environment of NOW (a lock, the away c
 redrew it). Behind that, the banking front waited at the start of any "no screen" chain and of any break in
 progress, and re-derived everything from there at every advance — both built on an older wording of the chain rule
 (*"now starts at the start of this chain. If it means starting in the past, this is the only exception to the frozen
-past rule"*). `docs/scheduler_requirements.md` now says `max($now line$, $t_s$)` and has no such exception.
+past rule"*). `docs/scheduler/scheduler_requirements.md` now says `max($now line$, $t_s$)` and has no such exception.
 
 - The calendar draws the past from the banked record ONLY (bisected to the visible window); no record, no past
   breaks; a failed load is logged.
@@ -6426,7 +6426,7 @@ past rule"*). `docs/scheduler_requirements.md` now says `max($now line$, $t_s$)`
 
 ### No idling dropped from the requirements: time left to nobody is a decision the score prices — 2026-09-29
 
-`docs/scheduler_requirements.md` removed § *No idling* (commit `4a07113`). The rule had been enforced as a hard
+`docs/scheduler/scheduler_requirements.md` removed § *No idling* (commit `4a07113`). The rule had been enforced as a hard
 constraint in the score's candidate definition, the rollout, the exhaustive search, the legality check and the MIP,
 which threw away continuations scoring lower.
 
@@ -6446,7 +6446,7 @@ which threw away continuations scoring lower.
 
 ### A lock and an unlock rewrote the definitive schedule — 2026-09-28 (audit, no incident)
 
-`docs/scheduler_requirements.md` makes a schedule definitive *for every now-line mode*; a mode flip re-planned from the
+`docs/scheduler/scheduler_requirements.md` makes a schedule definitive *for every now-line mode*; a mode flip re-planned from the
 line with a search whose answer depends on the time it is given, so a flip and a flip back could hand the line a
 different schedule from the one already published.
 
@@ -6488,7 +6488,7 @@ a no-screen chain the front waited at its start, so the breaks after it moved as
 - Not healed: the work the old plan banked across the seven hours the app did not run is still in the record (nothing
   can tell it from real work); delete it from the calendar if it is wrong.
 
-### Nothing in `docs/scheduler_requirements.md` violated or left unguaranteed — 2026-09-27
+### Nothing in `docs/scheduler/scheduler_requirements.md` violated or left unguaranteed — 2026-09-27
 
 An audit of the requirements against the code, and the fixes. Client apps only: SQLite schema v15 → v16 (15.sqm),
 no Supabase change.
@@ -7481,7 +7481,7 @@ README's "no task" now has zero length, so the plan is no longer cut at the line
 
 ### The compensation fades over 4 hours, not over the task's own window — 2026-09-19
 
-`docs/scheduler_requirements.md` now states that the compensation decays on both sides of a blockage and saturates
+`docs/scheduler/scheduler_requirements.md` now states that the compensation decays on both sides of a blockage and saturates
 (a 48-hour pre-placed task buys more presence than a 24-hour one, but not twice as much). The score already had that
 shape, but faded it over `τ_i = M_i/π_i`, which both capped it far too low (a whole day of deprivation bought a 50%
 task with a 30-min minimum ~7.5 min in the next 4 hours) and made it depend on the minimum time. User decision: one
@@ -7534,7 +7534,7 @@ another, even when they overlap."*
 
 ### Requirements audit: the pace per stage, and a follower's rules checked on its own timeline — 2026-09-18
 
-→ `docs/scheduler_requirements.md` § *Progressive Calculation*, § *No idling*, § *Restrictive Period*;
+→ `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, § *No idling*, § *Restrictive Period*;
 `docs/invariants/scheduler.md`.
 
 - **Progressive stages are capped by the pace** (`progressiveStageCapMillis`, `ProgressivePaceTest`). Pure doubling
@@ -7550,7 +7550,7 @@ another, even when they overlap."*
 
 ### $t_{goal}$ gains the current week, and a calculation time limit that actually stops — 2026-09-18
 
-→ `docs/scheduler_requirements.md` § *Progressive Calculation*, `docs/invariants/scheduler.md`, PRD §9.
+→ `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, `docs/invariants/scheduler.md`, PRD §9.
 
 The user's statement of the stopping rule: *"The scheduler stops when the schedule is definitive up to the end
 of the current week, the last displayed time in the calendar, and 10 minutes after now, or if the set of rules
@@ -7590,7 +7590,7 @@ whatever zone the machine is in. Every host installs the real provider at start.
 
 ### A task panel past the definitive-schedule front is drawn with blurred edges — 2026-09-18
 
-→ `docs/scheduler_requirements.md` § *Progressive Calculation*, `docs/invariants/calendar.md`.
+→ `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, `docs/invariants/calendar.md`.
 
 The calendar drew every task panel identically, whether or not the scheduler had settled it. § *Progressive
 Calculation* guarantees a schedule only below a front $t_1$ — *"for all the next set of rules the scheduler
@@ -7613,7 +7613,7 @@ retained, recomputed from scratch on the next visit. They were indistinguishable
 
 ### A sleep window implies a no-screen period, and a mode-1 line retracts it — 2026-09-18
 
-→ `docs/scheduler_requirements.md` § *$now line$ 3 modes* (mode 1) + § *No idling*, PRD §17 (both its
+→ `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* (mode 1) + § *No idling*, PRD §17 (both its
 *Scheduler avoidance* and *Carved by activity* bullets amended), `docs/invariants/scheduler.md` § *A mode-1
 line retracts the period that says nobody is at a screen*.
 
@@ -7764,7 +7764,7 @@ iOS, JS, Wasm; `App.kt` / `SchedulerHolder` pass `planSearch = true`. Build: `or
 re-plans), `PlanConcurrencyTest` (expected plan computed from the pre-plan state). **Client only — an app rebuild
 (`account{1,2,3}-*deploy*.bat`); no Supabase deploy** (the counter rides the existing private broadcast channel).
 
-An audit of whether the scheduler strictly satisfies `docs/scheduler_requirements.md`, and the user's rule that its
+An audit of whether the scheduler strictly satisfies `docs/scheduler/scheduler_requirements.md`, and the user's rule that its
 answer need not be deterministic across devices: the best score wins, and a MIP must be used where it is better.
 - "The best score must be reached when reachable in the time" was never attempted: the exhaustive search now runs on
   the wall time each progressive stage's pace leaves, and certifies the result when it finishes.
@@ -7930,7 +7930,7 @@ Asked for (2026-09-13): *"The requirements only says to achieve 'best possible s
 goals, but doesn't define it. […] So define it and satisfy the requirements. No shortcut that violates the
 requirements […] are allowed."*
 
-- **The score is defined** in `docs/scheduler_score.md` — first written into `docs/scheduler_requirements.md`, and
+- **The score is defined** in `docs/scheduler_score.md` — first written into `docs/scheduler/scheduler_requirements.md`, and
   moved out on the user's request (that file is theirs). Criterion 1: discounted squared lag against a target share
   carrying resilience and a bounded, exponentially decaying compensation. Criterion 2: every panel short of its
   minimum, `τ_i·s·(2M_i + s)`. All on the schedulable clock.
@@ -8280,7 +8280,7 @@ Reported as: *"it is impossible for a task to be scheduled between these two not
 screen period and no task has a resilience to no screen periods. However, at 15:08:40, the app did a
 notification for a new task to do"* — away since 14:54:15, back at 15:16:26 (account 3).
 
-- **`SchedulerDomain.currentPanel` did not read the mode.** `docs/scheduler_requirements.md` § *$now line$
+- **`SchedulerDomain.currentPanel` did not read the mode.** `docs/scheduler/scheduler_requirements.md` § *$now line$
   3 modes* binds the line at every instant it is in mode 2 or 3; `DynamicPeriods.awayCover` expresses that
   to the fill as one millisecond at the `t_p` the fill was built for, and time passing never re-plans — so
   the line walked out of it into the task the plan had put after it, and the cue read that stored panel.
@@ -8929,7 +8929,7 @@ Reported as: hovering a timer's end on the calendar shows no information about i
 `scheduler/domain/DynamicPeriods.kt` (`lineIsCoveredAt`, `breaksAreNotifiedAt`, `chainStartTouching`,
 `instances`), `scheduler/domain/SchedulerDomain.kt` (`cueCrossings`, `fillSchedule`).
 `ScreenBreakChainPullBackTest` (new), `DynamicPeriodsTest`, `TpModeTest`, `DraggedPoseNoIdlingTest`.
-`docs/scheduler_requirements.md` § *$now line$ and 3 Dynamic Restrictive Period*, restated by the user.
+`docs/scheduler/scheduler_requirements.md` § *$now line$ and 3 Dynamic Restrictive Period*, restated by the user.
 **Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy, no schema migration.**
 
 Three deltas, all from the restated requirements:
@@ -9150,7 +9150,7 @@ one), `SchedulerReducerTest`, new `SchedulerRuleSetTest`, PRD §6, `docs/MANUAL_
 
 Reported anomaly: the History window's scheduler rows called their one list *the set of rules*, and what it
 held was the **rule state** — the tasks, their priority percentages, their minimums, their resilience values.
-That is the scheduler's INPUT. `docs/scheduler_requirements.md` names the two separately (§ *Rule State
+That is the scheduler's INPUT. `docs/scheduler/scheduler_requirements.md` names the two separately (§ *Rule State
 Definition* against § *System Overview*), and the window was showing the question in the place reserved for
 the answer.
 
@@ -9725,7 +9725,7 @@ ADR 0003.
 
 Reported on account 3: the now-line was dragging the 15-min pose and a grey **"Inactivity" band grew behind
 it** — on an unlocked machine, with tasks free to run and no period saying otherwise.
-`docs/scheduler_requirements.md` forbids that twice over: § *No idling* (*"anywhere that is not covered by
+`docs/scheduler/scheduler_requirements.md` forbids that twice over: § *No idling* (*"anywhere that is not covered by
 restrictive periods which would prevent any task from being scheduled, the scheduler must schedule a task, for
 any $now line$ and $now line$ mode"*) and mode 1's own clause, which says what the line does instead in as many
 words — it *"would continuously delay that period (while creating task panels in its passing)"*.
@@ -9754,7 +9754,7 @@ dragged instance, which is the only behaviour change they saw.
 ### A mode-3 period is drawn as one: "I'm away" hatches a layer — 2026-09-05
 
 `shared` (`domain/SchedulerDomain.kt`, `domain/SchedulerProgressive.kt`, `engine/SchedulerEngine.kt`,
-`App.kt`) + `CalendarLayerTest`, `AccountAwayModeTest`, `docs/scheduler_requirements.md`,
+`App.kt`) + `CalendarLayerTest`, `AccountAwayModeTest`, `docs/scheduler/scheduler_requirements.md`,
 `docs/invariants/{calendar,screen-breaks}.md`, ADR 0002, ADR 0003.
 **Client only — an app rebuild (`account{1,2,3}-*deploy*.bat`); no Supabase deploy and no DB migration.**
 
@@ -9788,7 +9788,7 @@ Two details that had to be right rather than convenient:
 left the calendar in mode 2 dragging a pose the fill had let elapse. `SchedulerEngine.accountAway` is exposed
 and the display now reads the engine's own `own || account`.
 
-**Two stale bits of vocabulary went with it.** `docs/scheduler_requirements.md`'s 20 s exception still said the
+**Two stale bits of vocabulary went with it.** `docs/scheduler/scheduler_requirements.md`'s 20 s exception still said the
 line is *"in mode 2"* while it crosses the look-away — wording from when there were two modes, and
 unsatisfiable against the mode-2 the same section now defines (*"covered by 'no on-screen task' **but not one
 of the three dynamic periods**"*). It says mode 3, which is what the code has done since 2026-09-04.
@@ -9971,7 +9971,7 @@ rest of the column uses, so a column that is not today's, a grid scrolled to ano
 calendar ask for no frames at all. The overdue reminder tags ride the same state — CLAUDE.md's rule is that
 the stack's anchor and the line read one instant.
 
-**The engine was already right and is untouched.** `docs/scheduler_requirements.md`'s *"the $now line$ moves
+**The engine was already right and is untouched.** `docs/scheduler/scheduler_requirements.md`'s *"the $now line$ moves
 continuously forward in time"* is about the scheduler's now-line, which is walked one
 `SchedulerDomain.sweepStepMillis` at a time by `SchedulerEngine.sweepNowLineTo` — the only route to
 `advanceTo` — and pinned by `NowLineSweepTest`. What changed here is only how the calendar draws it.
@@ -10031,7 +10031,7 @@ cue keys on — a look-away's placed `[start, end]`, a pose's **due** and one du
 `sync/PauseCueGateway.kt` + `DeviceHeartbeatPublisher.kt` + `RemoteSnapshotClient.kt` +
 `SchedulerSyncEngine.kt`, `App.kt`) +
 `supabase/migrations/20260904000000_now_line_mode_3.sql` + `supabase/functions/pause-cue-cron` +
-`docs/scheduler_requirements.md`, `CLAUDE.md`, ADR 0003, ADR 0006, `docs/PAUSE_CUE_DELIVERY.md`.
+`docs/scheduler/scheduler_requirements.md`, `CLAUDE.md`, ADR 0003, ADR 0006, `docs/PAUSE_CUE_DELIVERY.md`.
 **Both surfaces: `deploy-supabase.bat` AND an app rebuild (`account{1,2,3}-*deploy*.bat`).** No client DB
 migration — the new state is server-only and the client's own record of it is in memory.
 
@@ -10134,7 +10134,7 @@ template — because `TaskRow` is the one row.
 
 ### The schedule horizon IS $t_{goal}$ — 2026-09-04
 
-`docs/scheduler_requirements.md` § *Progressive Calculation*'s stopping clause, answered with a concrete
+`docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*'s stopping clause, answered with a concrete
 instant. `shared` (`scheduler/domain/SchedulerDomain.kt` — new `weekStartDate`,
 `endOfFirstDayOfNextWeekMillis`, `endOfDayAfterMillis`, `scheduleGoalEndMillis`, and
 `scheduleHorizonEndMillis` rebuilt over them;

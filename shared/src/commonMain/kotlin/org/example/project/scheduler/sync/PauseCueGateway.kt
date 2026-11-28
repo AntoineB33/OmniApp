@@ -65,7 +65,7 @@ interface PauseCueGateway {
     suspend fun publishPresence(state: PresenceState): Int?
 
     /**
-     * PRD §15 + `docs/scheduler_requirements.md` § *$now line$ 3 modes*: writes **the scheduler's set of rules
+     * PRD §15 + `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: writes **the scheduler's set of rules
      * for the two poses, and the two dues projected out of it** — `publish_break_rules` (migration
      * 20260904000000) and `publish_next_break` (migrations 20260726000000 + 20260728000000), in that order and
      * in one call, because they are one answer and a server holding half of each would time a cue to a break
@@ -103,7 +103,7 @@ interface PauseCueGateway {
     suspend fun publishAccountState(sleeping: Boolean, wakeAtMillis: Long?)
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* (migration 20260904000000): **this device's "I'm
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* (migration 20260904000000): **this device's "I'm
      * away" flag, out and back in one round trip** — `sync_device_away(device, away)`.
      *
      * Mode 3 is *at least one device with the button ON and every other device locked*, so it is a question

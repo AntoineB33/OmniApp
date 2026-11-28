@@ -9,7 +9,7 @@ import kotlinx.datetime.toInstant
 import org.example.project.scheduler.domain.SchedulerDomain
 
 /**
- * `docs/scheduler_requirements.md`: the scheduler returns a **set of rules**, and everything the calendar
+ * `docs/scheduler/scheduler_requirements.md`: the scheduler returns a **set of rules**, and everything the calendar
  * draws is read out of it — so the display is a PIECEWISE function of the now-line and there is nothing to
  * poll.
  *

@@ -25,7 +25,7 @@ import org.example.project.ui.filteredHistoryUnits
  * anywhere else is what the scheduler was asked and what it answered. These pin that the two plan reductions
  * report a run, that the run carries **both** halves — the § *Rule State Definition* it read and the set of
  * rules it returned ([SchedulerRuleSetTest] owns the split itself) — and that a rule-state line says what
- * `docs/scheduler_requirements.md` says a rule state holds (a share, a minimum, a resilience).
+ * `docs/scheduler/scheduler_requirements.md` says a rule state holds (a share, a minimum, a resilience).
  */
 class SchedulerRunLogTest {
     private val previousSink = SchedulerReducer.recordSchedulerRun
@@ -64,7 +64,7 @@ class SchedulerRunLogTest {
 
     @Test
     fun a_re_plan_given_the_time_reaches_and_reports_the_certified_best() {
-        // `docs/scheduler_requirements.md` § *Strict requirements*: "if the best possible score is reachable within
+        // `docs/scheduler/scheduler_requirements.md` § *Strict requirements*: "if the best possible score is reachable within
         // the required time and acceptable computer power, it must be reached" — on a case this small the
         // exhaustive search finishes inside the time a stage is given, and the run says the result is the best.
         collect()
@@ -102,7 +102,7 @@ class SchedulerRunLogTest {
 
     @Test
     fun a_rule_state_line_spells_the_share_the_minimum_and_the_resilience() {
-        // `docs/scheduler_requirements.md` § *Rule State Definition*, and resilience is "the ONE thing that
+        // `docs/scheduler/scheduler_requirements.md` § *Rule State Definition*, and resilience is "the ONE thing that
         // says where a task may run and at what share", so a line that omitted it would not be the rule
         // state the scheduler read.
         val plain =

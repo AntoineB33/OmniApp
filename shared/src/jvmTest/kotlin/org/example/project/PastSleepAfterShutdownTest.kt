@@ -31,7 +31,7 @@ import org.example.project.time.AppClock
  * starts each morning AFTER the night, and past sleep was recorded only for what elapsed "while this session ran" —
  * which, on such a machine, is never a night. (A quota read 64.5 % for it, the nights counted as time at work.)
  *
- * `docs/scheduler_requirements.md` § *frozen past*: the LINE freezes the Sleep period it crosses away from a screen
+ * `docs/scheduler/scheduler_requirements.md` § *frozen past*: the LINE freezes the Sleep period it crosses away from a screen
  * (mode 2 or 3, covered by "no screen"), and the restart catch-up walks the stretch the app did not run in — in mode 1
  * where the OS says the device was unlocked, in mode 2 elsewhere. So the night is frozen by that walk.
  */

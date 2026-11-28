@@ -15,7 +15,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` through the real calendar fill ([SchedulerDomain.fillSchedule]): the
+ * `docs/scheduler/scheduler_requirements.md` through the real calendar fill ([SchedulerDomain.fillSchedule]): the
  * alternation scale, the priority shares, a past or pre-placed exclusion buying a bounded compensation, the
  * zero-priority and sole-task edges, no undecided hole over a week of screen breaks, and the trigger rule (the plan moves
  * only on a change to the rules, and an extension keeps what is materialized).
@@ -190,7 +190,7 @@ class SchedulerFillTest {
         )
         // Over the whole week, every gap between two consecutive blocks is covered by a restrictive period that
         // refuses everybody, or is time the plan DECIDED to leave to nobody (`ScheduleFill.Result.idle`, priced by
-        // the score — `docs/scheduler_requirements.md` requires no task anywhere). A gap that is neither is a hole
+        // the score — `docs/scheduler/scheduler_requirements.md` requires no task anywhere). A gap that is neither is a hole
         // nothing decided — the 2026-09-05 dragged-pose failure shape.
         val ordered = autos.sortedBy { it.startEpochMillis }
         val periods = panels.filter { it.restrictiveKind.isNotEmpty() }
@@ -363,7 +363,7 @@ class SchedulerFillTest {
 
     @Test
     fun progressive_stages_never_rewrite_what_an_earlier_stage_made_definitive() {
-        // `docs/scheduler_requirements.md` § *Progressive Calculation*: the engine re-plans to the first stage and
+        // `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: the engine re-plans to the first stage and
         // then EXTENDS to twice as far each time. Once a stage is published its schedule is definitive: every later
         // stage must keep it verbatim, and reach further.
         val (s0, _) = stateWithTasks("A", "B", "C", minMinutes = 30)

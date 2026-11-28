@@ -14,7 +14,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *screen breaks*: *"There are the 20s, 5min and 15min screen break periods, always
+ * `docs/scheduler/scheduler_requirements.md` § *screen breaks*: *"There are the 20s, 5min and 15min screen break periods, always
  * accompanied by the 'no screen' period. The 20s screen break allows no task. The 5min break is accompanied by two
  * periods: the first minute that allow no tasks and the 4 next minutes."*
  *

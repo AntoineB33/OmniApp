@@ -1,8 +1,8 @@
 # Scheduler score definition
 
-`docs/scheduler_requirements.md` asks for "the best possible score for the two optimization criteria" without
+`docs/scheduler/scheduler_requirements.md` asks for "the best possible score for the two optimization criteria" without
 defining the score, and leaves the definition to the implementation. This document is that definition. It adds no
-requirement: it only fixes what "best" means. Every § below names a section of `docs/scheduler_requirements.md`.
+requirement: it only fixes what "best" means. Every § below names a section of `docs/scheduler/scheduler_requirements.md`.
 
 **Implemented in part (2026-11-08).** `ScoreModel` now scores each task's own compensation length $\lambda_i$, the
 rare tasks discounted over their own $\tau_i$ (and $\Theta$ over the ordinary ones), and reads each task's past back to
@@ -260,7 +260,7 @@ A quantity $k$ of task $i$ asks for $Q_k$ minutes of presence within $[a_k, b_k]
 * **The score of a continuation is the pair $(D, J)$, compared in that order, lower is better**, with
   $J = J_1 + w\,J_2 + w_X\,J_3$ and $D$ the shortfall of § *Quantities by a date* (0 when there is none, so $J$ alone
   as before). Two values of $D$ within one second of each other are equal. Hard constraints are not in the score:
-  a continuation that violates any requirement of `docs/scheduler_requirements.md` (resilience 0, pre-placed tasks,
+  a continuation that violates any requirement of `docs/scheduler/scheduler_requirements.md` (resilience 0, pre-placed tasks,
   dynamic restrictive periods, $now line$ modes, frozen past) is not a candidate at all. Nor is leaving schedulable time
   to nobody where a task may run *(2026-11-18)*.
 * **The best possible score** at $(x, m)$ is the infimum of $(D, J)$, in that order, over all candidate

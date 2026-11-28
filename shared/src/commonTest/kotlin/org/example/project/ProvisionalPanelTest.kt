@@ -19,7 +19,7 @@ import org.example.project.ui.CalendarRecord
 import org.example.project.ui.recordsForDay
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation*: which task panels the calendar may NOT draw as
+ * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: which task panels the calendar may NOT draw as
  * settled.
  *
  * *"When the schedule is definitive for any t < $t_1$, it means that for all the next set of rules the

@@ -319,7 +319,7 @@ data class CalendarRecord(
      */
     val layer: SchedulerDomain.ActivityLayer? = null,
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: this region is [layer]'s **fake** half — "not on a
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: this region is [layer]'s **fake** half — "not on a
      * computer" / "not on a phone", a device of that kind unlocked and declared away. Drawn with the
      * fake kind's own drawing ([PeriodKinds.fakeLayerKind], dotted obliques by default) and named by it in the bubble.
      * It is also every stretch the user stated the real layer over while the OS saw the device unlocked
@@ -357,7 +357,7 @@ data class CalendarRecord(
      */
     val openStart: Boolean = false,
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: this task panel is part of a schedule the
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: this task panel is part of a schedule the
      * scheduler has **not made definitive** — it reaches past the definitive-schedule front, where a later set
      * of rules may still say something else ([SchedulerDomain.isProvisionalPanel]). Drawn with BLURRED EDGES:
      * the block is there, its bounds are not settled. False for everything below the front, and for every
@@ -460,7 +460,7 @@ internal fun LocalTime.hourOfDay(): Float = hour + minute / 60f + second / 3600f
  * The same point, to the FULL resolution of the instant — the hour-of-day as a `Double`, sub-second remainder
  * included. **What the grid places by** ([recordsForDay]) and what the now-line itself is drawn at.
  *
- * `docs/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in time"*. At
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$*: *"the $now line$ moves continuously forward in time"*. At
  * the zoom ceiling an hour is [MAX_CALENDAR_ZOOM] x 48 dp, so one second is ~1.7 dp: anything read to the
  * second there advances in visible 1.7 dp jerks once a second. That bites twice —
  *  • the LINE, which is one number and can be placed as finely as the clock can be read: at the ceiling this
@@ -3554,7 +3554,7 @@ internal fun historyEntryInfos(entry: FilteredHistoryEntry): List<HistoryInfo> =
                 HistoryInfo("Event", entry.entry.kind.label),
                 HistoryInfo("Time", formatHistoryTime(entry.entry.timeMillis)),
                 // The two parameters the returned rules are written against
-                // (`docs/scheduler_requirements.md`): the same instruction list read at another position of
+                // (`docs/scheduler/scheduler_requirements.md`): the same instruction list read at another position of
                 // the line, or at another mode, is a different schedule.
                 HistoryInfo("Now line", formatHistoryTime(entry.entry.nowMillis)),
                 HistoryInfo(
@@ -4477,7 +4477,7 @@ fun CalendarElementLocks(
 }
 
 /**
- * `docs/scheduler_requirements.md`, user rule 2026-11-18: **`q`, the allocated resources quantity** — 0 spends nothing
+ * `docs/scheduler/scheduler_requirements.md`, user rule 2026-11-18: **`q`, the allocated resources quantity** — 0 spends nothing
  * on the search (the fastest run, the least CPU), 1 every second the ten-second pace leaves each ten-minute step
  * ([org.example.project.scheduler.state.SchedulerState.planResources]). A number in [0, 1]; a text that is not one shows
  * the error state and writes nothing. It governs the NEXT step, never one already running.
@@ -5121,7 +5121,7 @@ private fun WeekView(
     today: LocalDate,
     nowMillis: Long,
     /**
-     * `docs/scheduler_requirements.md` § *$now line$*: **the exact clock**, read afresh on every frame the
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$*: **the exact clock**, read afresh on every frame the
      * now-line is placed on.
      *
      * [nowMillis] is the app's QUANTIZED display instant: every band, panel and projection on this calendar is
@@ -6152,7 +6152,7 @@ private fun DayHeader(
 }
 
 /**
- * PRD §8 / `docs/scheduler_requirements.md` § *$now line$*: **the exact clock, sampled on the frame clock and
+ * PRD §8 / `docs/scheduler/scheduler_requirements.md` § *$now line$*: **the exact clock, sampled on the frame clock and
  * readable without recomposing anything.**
  *
  * The requirement is that *"the $now line$ moves continuously forward in time"*, and the engine honours that
@@ -6493,7 +6493,7 @@ private fun DayColumn(
     fun onScreenDp(top: Dp, bottom: Dp) =
         hourHeight > 0.dp && onScreen(top / hourHeight, bottom / hourHeight)
 
-    // PRD §8 / `docs/scheduler_requirements.md` § *$now line$*: where the current-time indicator goes, and
+    // PRD §8 / `docs/scheduler/scheduler_requirements.md` § *$now line$*: where the current-time indicator goes, and
     // where the overdue reminder tags stack on it. Two readings of one instant, and they must be ONE
     // instant (CLAUDE.md: "the lock's centring fraction and the reminder stack's anchor read the same
     // instant, or the line is not the one on screen"):
@@ -6577,7 +6577,7 @@ private fun DayColumn(
                     ),
                 )
             }
-            // `docs/scheduler_requirements.md` § *screen breaks*: every break is *"always accompanied by the 'no
+            // `docs/scheduler/scheduler_requirements.md` § *screen breaks*: every break is *"always accompanied by the 'no
             // screen' period"* — named over the break's own span, with whatever else its kind carries (anomaly
             // 2026-10-02: a 15-min break ahead of the line read as the break alone).
             screenBreakMarkers.forEach { band ->
@@ -10107,7 +10107,7 @@ private fun CalendarBlockBody(
      */
     outline: SchedulerDomain.PanelOutline = SchedulerDomain.PanelOutline.None,
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: this panel is past the definitive-schedule
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: this panel is past the definitive-schedule
      * front, so the scheduler may still answer differently here ([CalendarRecord.provisional]). Its PAINT — the
      * tint and the outline both — is drawn blurred, which is a statement about its EDGES: the block says a task
      * is planned around here, and refuses to say where it starts and ends until the front has reached it.
@@ -10259,7 +10259,7 @@ private fun Modifier.panelDecor(placement: PanelDecorPlacement, color: Color): M
     }
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation*: the blur radius a task panel past the
+ * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: the blur radius a task panel past the
  * definitive-schedule front is painted with ([CalendarBlockBody]'s `provisional`). Two device-independent dp:
  * enough that the edge reads as unsettled beside the crisp block before the front, small enough that a block
  * as short as a few minutes is still a block.
@@ -10396,7 +10396,7 @@ fun ManualEntryEditWindow(
      * where the README's "for each kind" lives.
      */
     noScreenResilienceForTaskId: (TaskId) -> Double? = { null },
-    /** `docs/scheduler_requirements.md`: how often the block recurs, in days (0: it happens once) — [RepeatEveryField]. */
+    /** `docs/scheduler/scheduler_requirements.md`: how often the block recurs, in days (0: it happens once) — [RepeatEveryField]. */
     initialRepeatDays: Int = 0,
     /** The pattern's exceptions, said under the field that states it ([PatternExceptionsNote]). */
     repeatExceptions: List<org.example.project.scheduler.domain.PatternExceptions.Entry> = emptyList(),
@@ -10693,7 +10693,7 @@ fun PeriodEditWindow(
     onDismiss: () -> Unit,
     /** PRD §8: the bin — see [EditorBinButton]. Null while ADDING, and on a period the app derived. */
     onRemove: (() -> Unit)? = null,
-    /** `docs/scheduler_requirements.md`: how often the period recurs, in days (0: once) — [RepeatEveryField]. */
+    /** `docs/scheduler/scheduler_requirements.md`: how often the period recurs, in days (0: once) — [RepeatEveryField]. */
     initialRepeatDays: Int = 0,
     /** The pattern's exceptions, said under the field that states it ([PatternExceptionsNote]). */
     repeatExceptions: List<org.example.project.scheduler.domain.PatternExceptions.Entry> = emptyList(),
@@ -10804,7 +10804,7 @@ fun PeriodEditWindow(
 }
 
 /**
- * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"the pre-placed tasks and restrictive
+ * `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"the pre-placed tasks and restrictive
  * periods can be in infinite patterns"* — **how often the thing this window edits recurs**, in days. Blank or 0 is
  * once; 1 every day, 7 every week. It recurs at the same local time for ever; every occurrence of it is the same
  * thing, so editing or deleting any one of them edits or deletes the pattern.

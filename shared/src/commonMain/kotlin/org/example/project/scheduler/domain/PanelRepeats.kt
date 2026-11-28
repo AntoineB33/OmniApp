@@ -10,7 +10,7 @@ import kotlinx.datetime.toLocalDateTime
 import org.example.project.scheduler.model.TaskPanel
 
 /**
- * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward and
+ * `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward and
  * backward, and the pre-placed tasks and restrictive periods can be in infinite patterns."*
  *
  * A panel carrying a [org.example.project.scheduler.model.PanelRepeat] is the first occurrence of a pattern; every

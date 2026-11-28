@@ -595,7 +595,7 @@ ported answer waiting for a driver — before wiring it, give it the same slot-f
 `SchedulerPlanTest` gives the walk.
 
 **$t_{goal}$ is the exception: it is answered by the app's own driver too** (2026-09-04).
-`docs/scheduler_requirements.md` § *Progressive Calculation* — *"The scheduler can have a time $t goal$
+`docs/scheduler/scheduler_requirements.md` § *Progressive Calculation* — *"The scheduler can have a time $t goal$
 such as when definitive schedule is found for any t < $t goal$ the scheduler can stop"* — is the one
 clause of that section a horizon can answer, and the app's horizon **is** that goal:
 `SchedulerDomain.scheduleGoalEndMillis` = **the end of the timeline the calendar shows, or `now + 10 min`
@@ -728,7 +728,7 @@ Schedules* clauses want a rule list that improves under a budget. That is `Sched
 
 ### Why the walk went
 
-`docs/scheduler_requirements.md` asks for *"the best possible score for the two optimization criteria"* and
+`docs/scheduler/scheduler_requirements.md` asks for *"the best possible score for the two optimization criteria"* and
 accepts one degradation only: getting as close to it as the time allows. It never defines the score. The walk
 (§1–§9) was a constructive heuristic with design constants (`maxBoost`, `fieldFloor`, `tau`) that no definition
 produced, so neither "best" nor "as close as possible" could be checked, and several clauses were admitted gaps:
@@ -789,7 +789,7 @@ defined score, "the walk reaches the shares constructively" said nothing about r
 
 Asked whether a proposal from another assistant — Model Predictive Control over a Mixed-Integer Program, a hybrid
 automaton for the `t_p` modes, the exponential decay as penalty weights — "strictly satisfies"
-`docs/scheduler_requirements.md`. The architecture already was receding-horizon planning over a written-down score
+`docs/scheduler/scheduler_requirements.md`. The architecture already was receding-horizon planning over a written-down score
 (§11); the audit found where the project did NOT strictly satisfy the requirements, and the user added two rules:
 
 > There is no need to guarantee that the result of the scheduler engine is deterministic. If two devices offline on
@@ -856,7 +856,7 @@ the exhaustive search, with the time the exhaustive search did not use, and neve
 
 ### The question
 
-Asked again whether the project strictly satisfies `docs/scheduler_requirements.md` (a proposal from another assistant
+Asked again whether the project strictly satisfies `docs/scheduler/scheduler_requirements.md` (a proposal from another assistant
 to compile the rules into a state machine the client evaluates without the scheduler), the audit found the one clause
 §12 had not closed: the set of rules is *"parameterized by $now line$ and $now line$ mode"*, and a definitive schedule
 is one every later set of rules *"indicate[s] the same … for any t < t₁ (… parameterized by now line and now line
@@ -896,7 +896,7 @@ the one published for it (`TpModeSwitchTest`'s control).
 
 ## 14. 2026-09-29: time left to nobody is a decision the score prices
 
-`docs/scheduler_requirements.md` dropped § *No idling* (*"anywhere not covered by restrictive periods which would
+`docs/scheduler/scheduler_requirements.md` dropped § *No idling* (*"anywhere not covered by restrictive periods which would
 prevent any task from being scheduled, the scheduler must schedule a task"*), and the user asked for the project to
 satisfy the file **strictly**. What remains asks for a best score and says nothing against an empty stretch, so a
 hard "no gap" rule became a constraint the requirements do not impose — one that throws away continuations scoring

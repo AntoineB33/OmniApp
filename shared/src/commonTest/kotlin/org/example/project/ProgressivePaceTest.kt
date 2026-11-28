@@ -9,7 +9,7 @@ import org.example.project.scheduler.engine.PROGRESSIVE_PACE_MILLIS
 import org.example.project.scheduler.engine.progressiveStageCapMillis
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation*: *"if the definitive schedule is found for any
+ * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: *"if the definitive schedule is found for any
  * t < t1, then 10 seconds later the definitive schedule must be found for any t < t1 + 10 minutes."*
  *
  * The pace binds EVERY stage. Doubling the stages held it only on average: a stage costs in proportion to its
@@ -51,7 +51,7 @@ class ProgressivePaceTest {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Two paces* (2026-11-11): every step moves the definitive front by exactly the
+     * `docs/scheduler/scheduler_requirements.md` § *Two paces* (2026-11-11): every step moves the definitive front by exactly the
      * requirement's ten minutes, whatever the device — the first from the line, every next one from the front. A fast
      * device no longer doubles: it spends the pace working deeply on its ten minutes instead.
      */

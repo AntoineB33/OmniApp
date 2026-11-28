@@ -13,7 +13,7 @@ import org.example.project.scheduler.model.ScreenBreak
  * look-away was announced AFTER the 5-min rest pose that is still starting at the now-line" — came from two cues read
  * off two projections and racing.
  *
- * `docs/scheduler_requirements.md` § *Rule Structure*: the cues are now the break machine's own transitions as the line
+ * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: the cues are now the break machine's own transitions as the line
  * crosses them ([BreakMachine.Event]) — a look-away where the line enters it, a pose where it falls due — merged with
  * the wind-down and the reminders into one list sorted by instant ([SchedulerDomain.cueCrossings]).
  */

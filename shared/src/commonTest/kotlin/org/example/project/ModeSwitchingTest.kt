@@ -13,7 +13,7 @@ import org.example.project.scheduler.domain.FrozenScreenBreaks
 import org.example.project.scheduler.domain.SchedulerDomain
 
 /**
- * `docs/scheduler_requirements.md` § *Mode switching*: *"The current $now line$ mode can be decided anytime by a
+ * `docs/scheduler/scheduler_requirements.md` § *Mode switching*: *"The current $now line$ mode can be decided anytime by a
  * program, but can't go in mode 1 during a '20s screen break' restrictive period. When $now line$ enters a '20s screen
  * break' restrictive period in mode 1, it gets in mode 3, and when it leaves it, it gets in mode 1 unless the user
  * wanted it to stay in mode 3, or unless it is in mode 2."* — the break machine's effective mode

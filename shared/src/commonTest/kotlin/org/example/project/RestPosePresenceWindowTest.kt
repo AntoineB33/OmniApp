@@ -125,7 +125,7 @@ class RestPosePresenceWindowTest {
 
     @Test
     fun a_pose_due_inside_the_no_screen_period_the_line_is_in_is_due_now() {
-        // `docs/scheduler_requirements.md`: a break falling due in a "no screen" period the line is in starts at
+        // `docs/scheduler/scheduler_requirements.md`: a break falling due in a "no screen" period the line is in starts at
         // max($now line$, t_s) — the line. At a screen that pose is owed at once, and published as due.
         val dues = SchedulerEngine.restPoseDueMillisByKey(
             listOf(pose5()),

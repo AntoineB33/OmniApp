@@ -10,7 +10,7 @@ import kotlin.time.TimeSource
  * The rollout policy and the whole-continuation improver always run — they are bounded in steps and are what every
  * fill returns at the least. What this budget pays for is everything past them: the exhaustive search that
  * **certifies** the best continuation when it finishes ([ScheduleOptimizer.certify]), and the platform's
- * [ExternalScheduleSolver] when there is one. `docs/scheduler_requirements.md` § *Strict requirements*: *"if the best
+ * [ExternalScheduleSolver] when there is one. `docs/scheduler/scheduler_requirements.md` § *Strict requirements*: *"if the best
  * possible score is reachable within the required time and acceptable computer power, it must be reached"* — so
  * the time the progressive calculation leaves a stage is spent on reaching it, not left unused.
  *
@@ -115,7 +115,7 @@ class SearchBudget private constructor(
             else SearchBudget(TimeSource.Monotonic.markNow() + millis.milliseconds, abandoned)
 
         /**
-         * `docs/scheduler_requirements.md`, the "allocated resources quantity" hyperparameter **`q`**: a step's search
+         * `docs/scheduler/scheduler_requirements.md`, the "allocated resources quantity" hyperparameter **`q`**: a step's search
          * granted [grantMillis] (already `q` of what the pace leaves it, `SchedulerEngine.pacedStepSearchMillis`) that,
          * below `q = 1`, **stops once it has gone `q²` of its grant without finding anything better** — `pace · q³`.
          * At 1 it uses all the time the pace allows, as the requirements say; lower, it spends its time where it is

@@ -124,7 +124,7 @@ ahead each), instead of one full re-plan per run start as the line moved through
 By the user's spec the plan genuinely IS a function of time here, so a plan computed once would be wrong from the
 next instant.
 
-**Since 2026-09-13 it is boundary-driven, not quantized.** `docs/scheduler_requirements.md` § *Rule state
+**Since 2026-09-13 it is boundary-driven, not quantized.** `docs/scheduler/scheduler_requirements.md` § *Rule state
 evolution* applies the rule state found at the now-line and changes every attribute at a constant rate, with an
 example: a 0→100 % ramp over 10 min and a 0→50 % ramp over 5 min must give the same schedule while they overlap. The
 100-step cursor could not honour it — its steps land at different instants on the two ramps. So a plan now holds the

@@ -17,7 +17,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**, as the user reads it (2026-10-04): the line is on a
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*, **mode 1**, as the user reads it (2026-10-04): the line is on a
  * task even with a "no screen" period right after it, and the task it is on while pushing that period forward is
  * **found by reading the set of rules** — *"if $now line$ mode = 1, then … task B at $now line$"* — never by laying a
  * task inside the period and hiding it. Such a run is laid line-bound ([TaskPanel.lineBound]).

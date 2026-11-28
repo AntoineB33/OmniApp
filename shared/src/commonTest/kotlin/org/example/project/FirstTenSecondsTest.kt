@@ -22,7 +22,7 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation*, **first 10s**: *"When there is a change that will make
+ * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, **first 10s**: *"When there is a change that will make
  * the scheduler engine run from scratch, it must firstly check if in the next 10 seconds there are gaps with no task
  * and if there are tasks that can be scheduled in those gaps. If so, then almost instantly, a new set of rules is
  * returned and the first 10 seconds are definitive."*
@@ -225,7 +225,7 @@ class FirstTenSecondsTest {
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule state input evolution*, *New Schedule*: *"Each time the user manually
+     * `docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*, *New Schedule*: *"Each time the user manually
      * edits the timeline … it triggers a run"* — and a block HELD on the calendar edits it. The user's example is its consequence, not a rule of its own: *"the scheduler engine doesn't do anything
      * because restarted repeatedly while I move the mouse and doesn't have time to do anything. When I don't move the
      * mouse … the scheduler engine stops being restarted repeatedly and can run normally. At first … the first 10

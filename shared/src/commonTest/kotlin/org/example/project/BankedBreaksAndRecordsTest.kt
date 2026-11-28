@@ -22,7 +22,7 @@ import org.example.project.time.AppClock
 
 /**
  * Account 3, 2026-09-27 21:09: **a 20 s screen break drawn over a task panel in the past**, and past breaks moving.
- * `docs/scheduler_requirements.md`: the three have the kind "no task allowed", and the past is frozen.
+ * `docs/scheduler/scheduler_requirements.md`: the three have the kind "no task allowed", and the past is frozen.
  *
  * Three things met there, each pinned here:
  *  - the app had not been running for seven hours and nothing walked that stretch at start-up, so the old plan was

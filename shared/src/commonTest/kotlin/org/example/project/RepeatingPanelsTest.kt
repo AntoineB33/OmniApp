@@ -21,7 +21,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward and
+ * `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"The timeline is infinite forward and
  * backward, and the pre-placed tasks and restrictive periods can be in infinite patterns."* — a panel carrying a
  * [PanelRepeat] recurs every so many days at the same local time, for ever; its occurrences are derived
  * ([PanelRepeats]) wherever they are asked for, and the scheduler, the recurrence bars and the calendar all see them.

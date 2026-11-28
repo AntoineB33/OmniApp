@@ -16,7 +16,7 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
 /**
- * PRD §9 calculation events, against `docs/scheduler_requirements.md` § *Progressive Calculation*: once the schedule
+ * PRD §9 calculation events, against `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: once the schedule
  * for `t < t1` is definitive, *"all the next set of rules the scheduler will return … will all indicate the same
  * schedule rules for any t < t1"*. A re-plan of rules that did not change can only break that, so **time passing
  * never re-plans**: a rule CHANGE does (debounced), and the rolling horizon only extends the tail.

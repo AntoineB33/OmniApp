@@ -29,7 +29,7 @@ import org.example.project.ui.withLineMotion
  * ADR 0009 § *Everything that follows the line moves continuously*: **the set of rules is read once, and the
  * motion of everything it draws is known from that reading until the next instant the rules name.**
  *
- * `docs/scheduler_requirements.md` § *$now line$*: in mode 1 the line reaching a pose *"would continuously
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$*: in mode 1 the line reaching a pose *"would continuously
  * delay that period (while creating task panels in its passing)"* — so the pose, the panel growing behind it
  * and the panel resuming after it all move WITH the line. The calendar used to draw them as still pictures
  * re-derived once per pixel, so they stepped while the line beside them glided and a dragged pose sat visibly

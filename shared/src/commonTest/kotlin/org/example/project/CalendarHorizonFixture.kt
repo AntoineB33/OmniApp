@@ -5,7 +5,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 
 /**
  * The reducer's re-plans fill to `SchedulerReducer.scheduleHorizonEndMillis`, whose default with no engine
- * attached is the rolling floor: `now + 2 × 10 min` (`docs/scheduler_requirements.md` § *Progressive
+ * attached is the rolling floor: `now + 2 × 10 min` (`docs/scheduler/scheduler_requirements.md` § *Progressive
  * Calculation*, [SchedulerDomain.scheduleGoalEndMillis]). A test about a rule that only shows over a longer
  * plan — a run reaching its minimum, a second task being rotated in — stands in for an open calendar with
  * [show] and restores the default with [close], rather than asserting against a plan the production app would

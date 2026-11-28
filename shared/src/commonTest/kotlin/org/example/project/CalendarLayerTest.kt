@@ -166,7 +166,7 @@ class CalendarLayerTest {
 
     @Test
     fun the_away_button_hatches_its_own_device_layer_for_as_long_as_it_is_on() {
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: mode 3 is "at least one device with the
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: mode 3 is "at least one device with the
         // I'm away button clicked and all the other devices locked". The machine stays UNLOCKED while the
         // button is on, so the OS log shows nothing at all for it — and without this the calendar would draw
         // no layer over a stretch the now-line was in mode 3 for.

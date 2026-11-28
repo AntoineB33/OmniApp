@@ -17,7 +17,7 @@ import org.example.project.scheduler.state.SchedulerReducer
 import org.example.project.scheduler.state.SchedulerState
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes* against § *Progressive Calculation*: **the rules are
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* against § *Progressive Calculation*: **the rules are
  * parameterized by the mode, and what they make definitive stays definitive for every mode.**
  *
  * *"When the schedule is definitive for any t < t₁, it means that for all the next set of rules the scheduler will

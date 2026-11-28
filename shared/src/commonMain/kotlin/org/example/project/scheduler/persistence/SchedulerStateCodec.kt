@@ -3022,7 +3022,7 @@ private data class PersistedPanel(
      */
     val periodKind: String = "",
     /**
-     * `docs/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"the pre-placed tasks and
+     * `docs/scheduler/scheduler_requirements.md` § *Priority, Granularity and Compensation*: *"the pre-placed tasks and
      * restrictive periods can be in infinite patterns"* — [org.example.project.scheduler.model.TaskPanel.repeat],
      * flattened. `0` (and a payload that predates the field) is a panel that does not repeat.
      */

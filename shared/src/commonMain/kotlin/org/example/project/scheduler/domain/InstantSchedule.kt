@@ -1,7 +1,7 @@
 package org.example.project.scheduler.domain
 
 /**
- * `docs/scheduler_requirements.md` § *Two paces*, **the instant schedule**: what the calendar shows where the
+ * `docs/scheduler/scheduler_requirements.md` § *Two paces*, **the instant schedule**: what the calendar shows where the
  * scheduler's steps have not made the schedule definitive (the displayed part of the timeline past the front), and
  * the first 10 seconds of a run from scratch. It *"prevents displaying obviously wrong schedules"*: no rule broken, the
  * target ratios and the minimum lengths roughly kept, nobody left where a task may run — at once, with no search.

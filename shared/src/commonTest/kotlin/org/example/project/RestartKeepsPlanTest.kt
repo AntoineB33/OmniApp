@@ -28,7 +28,7 @@ import org.example.project.time.AppClock
 /**
  * `docs/invariants/scheduler.md` § *When the plan is recomputed*: **a restart is not a rule change.** Every launch
  * used to re-plan (the rule-change watcher took the loaded rules for an edit), rewriting a schedule
- * `docs/scheduler_requirements.md` § *Progressive Calculation* had already made definitive. The plan now carries the
+ * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation* had already made definitive. The plan now carries the
  * rules it was made for ([SchedulerState.planBasis]) through the store, and a launch re-plans only when they moved.
  *
  * A "restart" here is what the app does: the state is encoded as the store writes it, decoded and prepared as a

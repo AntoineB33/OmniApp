@@ -174,7 +174,7 @@ class ScheduleCoordinatorTest {
         runCurrent()
         assertEquals(listOf<ScheduleCoordinator.Lead?>(null), p.plans, "no rules in time: the phone plans for itself")
 
-        // `docs/scheduler_requirements.md` § *Progressive Calculation*: the plan the phone made for itself is definitive
+        // `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: the plan the phone made for itself is definitive
         // as far as it is materialized, so rules arriving late for the same rules are laid past it, never over it.
         d.publishes = true
         d.coordinator.publish(d.rules(d.plans.single()!!.election))

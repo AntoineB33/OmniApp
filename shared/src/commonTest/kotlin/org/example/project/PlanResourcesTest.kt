@@ -22,7 +22,7 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
 /**
- * `docs/scheduler_requirements.md` § *Progressive Calculation*, § *Two paces* (user rule 2026-11-18): *"the 10 minute
+ * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, § *Two paces* (user rule 2026-11-18): *"the 10 minute
  * per 10 seconds minimum scheduler from now to now + 168h with a pace varying with the hyperparameter q"*.
  *
  * A run walks ten-minute steps from the line to $t_{goal}$ = `now + 168 h`; each step searches `q` of what the

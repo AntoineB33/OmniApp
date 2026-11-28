@@ -99,7 +99,7 @@ backstop that already covers "the user came back before the break ended".
 
 ## Mode 3 — the account SAYS it is on a break, so the server reads the rules for it
 
-Migration `20260904000000`. The now-line's third mode (`docs/scheduler_requirements.md`, ADR 0003) is *at least
+Migration `20260904000000`. The now-line's third mode (`docs/scheduler/scheduler_requirements.md`, ADR 0003) is *at least
 one device with the "I'm away" button clicked and every other device locked*. It is the one mode in which a 5-
 or 15-minute pose is not dragged ahead of the line but **taken** — it elapses under the line — and therefore
 the one case in which no screen of the account is on while a break is genuinely running. Nothing local can

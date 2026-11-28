@@ -9154,7 +9154,7 @@ object SearchDomain {
 
     /**
      * The length ONE added element has of its own, or null where it has none:
-     *  - a screen break: as long as its name implies (`docs/scheduler_requirements.md`: *"A screen break period lasts
+     *  - a screen break: as long as its name implies (`docs/scheduler/scheduler_requirements.md`: *"A screen break period lasts
      *    as long as its name implies"*) — the 5- and 15-minute ones; a 20-second one is shorter than the shortest
      *    block the calendar lays, so it has none;
      *  - a task: its minimum execution time, which is the length a panel of it is meant to reach;

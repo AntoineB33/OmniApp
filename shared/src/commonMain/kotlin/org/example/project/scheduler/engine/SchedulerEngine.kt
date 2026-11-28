@@ -113,15 +113,15 @@ private const val LOOK_AWAY_START_FRESH_MILLIS: Long = 2_000
 // How long the scheduling rules ([SchedulerDomain.schedulingSignature]) must have stopped changing before the OTHER
 // DEVICES are told — the election of who plans (`docs/invariants/scheduler.md` § *One device plans*). One second: a
 // typed value, a dragged panel or a burst of pulled changes costs one election, not one per change. It delays no
-// run: the scheduler runs from scratch on this device at every change (`docs/scheduler_requirements.md` § *Rule state
+// run: the scheduler runs from scratch on this device at every change (`docs/scheduler/scheduler_requirements.md` § *Rule state
 // input evolution*). Sim time, like every other engine delay.
 private const val RESCHEDULE_DEBOUNCE_MILLIS: Long = 1_000
 
-// `docs/scheduler_requirements.md` § *Progressive Calculation*: the first stage of a progressive fill
+// `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: the first stage of a progressive fill
 // ([SchedulerEngine.dispatchProgressivePlan]); every next stage reaches twice as far, up to $t_goal$.
 internal const val PROGRESSIVE_FIRST_STAGE_MILLIS: Long = SchedulerDomain.PROGRESSIVE_FIRST_STAGE_MILLIS
 
-// `docs/scheduler_requirements.md` § *Progressive Calculation*: "if the definitive schedule is found for any t < t1,
+// `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: "if the definitive schedule is found for any t < t1,
 // then 10 seconds later [it] must be found for any t < t1 + 10 minutes". Every stage extends by at least
 // [PROGRESSIVE_MIN_ADVANCE_MILLIS], so each must be published within this of the previous one.
 internal const val PROGRESSIVE_PACE_MILLIS: Long = 10_000
@@ -134,7 +134,7 @@ internal const val PROGRESSIVE_MIN_ADVANCE_MILLIS: Long = 10L * 60 * 1_000
 private const val PROGRESSIVE_PACE_MARGIN_MILLIS: Long = 3_000
 
 /**
- * `docs/scheduler_requirements.md` § *Two paces*, *10 minutes steps from the $now line$*: **where the next step of a
+ * `docs/scheduler/scheduler_requirements.md` § *Two paces*, *10 minutes steps from the $now line$*: **where the next step of a
  * progressive fill ends** — exactly [PROGRESSIVE_MIN_ADVANCE_MILLIS] past the front already made definitive
  * ([reachedMillis]; the line, for the first step). *"Each of its steps has 10 seconds to work deeply on the schedule
  * and deliver the best possible schedule for the 10 minutes it focuses on: step n is focused on [now + 10min·(n+1),
@@ -157,7 +157,7 @@ internal fun progressiveStageCapMillis(
 /**
  * `docs/scheduler_score.md` § *Degradation*: the search time a step covering [spanMillis] may spend — what the pace
  * leaves after this device's measured cost of the step's own passes ([planHoursPerSecond]; unmeasured, a second),
- * capped at [PROGRESSIVE_STAGE_SEARCH_MILLIS] — and `docs/scheduler_requirements.md`, user rule 2026-11-18: **`q` of
+ * capped at [PROGRESSIVE_STAGE_SEARCH_MILLIS] — and `docs/scheduler/scheduler_requirements.md`, user rule 2026-11-18: **`q` of
  * it**: 0 searches nothing (the fastest run, the least CPU), 1 every millisecond the pace leaves
  * ([org.example.project.scheduler.state.SchedulerState.planResources]). The pace itself is never given up: a step is
  * published within the ten seconds whatever `q` is. Below 1, the search gives back what it does not use: it stops once
@@ -500,7 +500,7 @@ class SchedulerEngine(
     // without a row a restart erases the stretch from the layer, the hatch and the §9 record bank alike.
     // Null keeps the old in-memory-only behaviour (a store without the capability, e.g. web).
     private val declaredAwayStore: DeclaredAwayStore? = null,
-    // `docs/scheduler_requirements.md` § *frozen past*: LOCAL-ONLY store for the screen breaks the line has banked
+    // `docs/scheduler/scheduler_requirements.md` § *frozen past*: LOCAL-ONLY store for the screen breaks the line has banked
     // ([_frozenBreaks]). Null keeps the record in memory only (a store without the capability, e.g. web).
     private val frozenBreakStore: org.example.project.scheduler.persistence.FrozenScreenBreakStore? = null,
     // PRD §15: store for the active-session intervals — this device's own rows (the beat writes them) plus
@@ -631,7 +631,7 @@ class SchedulerEngine(
     // The instant this device entered mode 3, or null while it is not in it — the open half of [mode3Spans].
     private var mode3Since: Long? = null
 
-    // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **is any device of the ACCOUNT away?** — the
+    // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **is any device of the ACCOUNT away?** — the
     // second half of the mode-3 condition, and the half no device can answer from its own flag.
     //
     // The rule is *at least one device with "I'm away" ON and every OTHER device locked*, so the quantifier is
@@ -643,7 +643,7 @@ class SchedulerEngine(
     private val _accountAway = MutableStateFlow(false)
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **is any device of the account away?** — the
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **is any device of the account away?** — the
      * half of the mode-3 condition no device can answer from its own flag, exposed so the DISPLAY reads the
      * mode off the same two facts the plan does ([liveTpMode]'s `_userAway.value || _accountAway.value`). A
      * display reading only this device's button would draw the three dynamic periods in mode 2 while the fill
@@ -708,7 +708,7 @@ class SchedulerEngine(
     /** PRD §15: whether the user declared they are away from this device (drives the left-menu button label). */
     val userAway: StateFlow<Boolean> = _userAway.asStateFlow()
 
-    // `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the CLOSED stretches this device was
+    // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the CLOSED stretches this device was
     // declared away for, and the start of the open one ([_declaredAwaySince], null while the button is off).
     // Together they are the layer's reading of the button ([SchedulerDomain.declaredAwayRegions]): "I'm away"
     // says this device's screen is not in use, which no OS lock log will ever show, and a stretch where it is
@@ -733,7 +733,7 @@ class SchedulerEngine(
     /** The start of the open "I'm away" stretch, or null while the button is off. */
     val declaredAwaySince: StateFlow<Long?> = _declaredAwaySince.asStateFlow()
 
-    // `docs/scheduler_requirements.md` § *frozen past* + § *Rule Structure*: the three screen breaks the line has
+    // `docs/scheduler/scheduler_requirements.md` § *frozen past* + § *Rule Structure*: the three screen breaks the line has
     // BANKED, the front they are the whole answer up to, and the break machine the line carries forward
     // ([org.example.project.scheduler.domain.BreakMachine]). Moved only by [advanceBreaks] — at the machine's own armed
     // triggers, at a mode edge, at a history rewrite — and read by every placement: the reducer's fills
@@ -752,7 +752,7 @@ class SchedulerEngine(
     val frozenBreaks: StateFlow<org.example.project.scheduler.domain.FrozenScreenBreaks?> = _frozenBreaks.asStateFlow()
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule Structure*: **what the break machine reads, compiled** — the
+     * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: **what the break machine reads, compiled** — the
      * no-screen periods it pulls breaks into, over a window ahead of the line. Recompiled only when what it is built
      * from changes (a new set of panels, the §17 schedule, the kinds, the configuration, the evidence the devices
      * observed) or when the line reaches [validUntilMillis]: a trigger the compile itself arms.
@@ -800,7 +800,7 @@ class SchedulerEngine(
     private val lastScreenSignal = MutableStateFlow<Boolean?>(null)
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule Structure*: **the instants at which what the OS recorded about this
+     * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: **the instants at which what the OS recorded about this
      * device's screen can have changed** — a lock or an unlock the platform announced, a wake from device sleep, an
      * "I'm away" press. A counter, so that each one is an event a reader can wait on.
      *
@@ -940,9 +940,9 @@ class SchedulerEngine(
         // `side-dev/README.md` § *$t_p$ 3 modes*: mode 1 while a device of the account is unlocked, mode 2
         // otherwise. Read at fill time from the same account-wide pause the calendar draws ([tpModeNow]).
         SchedulerReducer.tpMode = { planTpModeNow() }
-        // `docs/scheduler_requirements.md` § *frozen past*: every fill continues from the banked screen breaks.
+        // `docs/scheduler/scheduler_requirements.md` § *frozen past*: every fill continues from the banked screen breaks.
         SchedulerReducer.frozenScreenBreaks = { _frozenBreaks.value }
-        // PRD §9 / `docs/scheduler_requirements.md` § *Progressive Calculation*: every refill materializes the
+        // PRD §9 / `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: every refill materializes the
         // plan out to $t_{goal}$ — the end of the timeline the calendar shows, or `now + 10 min` if further.
         SchedulerReducer.scheduleHorizonEndMillis = { now -> scheduleHorizonEndMillis(now) }
         // `docs/invariants/scheduler.md` § *Progressive Calculation*: what the search of each stage did, so a stage
@@ -1383,7 +1383,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule Structure*: **sleep until the clock reads [atMillis]** — the wait of a
+     * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: **sleep until the clock reads [atMillis]** — the wait of a
      * routine that knows its next armed instant, as opposed to [tickDelay]'s "look again in a while". Exact in the
      * clock's own time base (an accelerated clock reaches the instant sooner), and woken early when the clock is
      * reconfigured (a speed change, a leap), since the instant then falls somewhere else in real time; the caller
@@ -1438,7 +1438,7 @@ class SchedulerEngine(
 
     // ---- § *frozen past*: the Sleep period the line crossed away from a screen ------------------------------------
     //
-    // `docs/scheduler_requirements.md`: the "sleep" period is placed at the same times every day and is always
+    // `docs/scheduler/scheduler_requirements.md`: the "sleep" period is placed at the same times every day and is always
     // accompanied by "no screen"; the schedule behind the line never changes. So a Sleep period the line crosses in
     // mode 2 or 3 — covered by "no screen" — stays behind it as the period it was, and the part crossed in mode 1,
     // where its "no screen" retracts at the line, does not. The LINE decides, in the mode it is walked in: live, on a
@@ -1509,7 +1509,7 @@ class SchedulerEngine(
         sleepFreezeAtMillis = if (away) nextSleepEndAfter(until) else Long.MAX_VALUE
     }
 
-    // `docs/scheduler_requirements.md` § *$now line$ 3 modes*: a mode-1 line is never in "no screen", so what it walks
+    // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: a mode-1 line is never in "no screen", so what it walks
     // of a period the user stated that is or carries one is taken from that period ([AtScreenWalk], which holds the
     // one armed trigger). The panels the trigger was armed for, so it is armed again only when they change.
     private val atScreenWalk =
@@ -1587,7 +1587,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **publish this device's away flag and adopt the
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **publish this device's away flag and adopt the
      * ACCOUNT's answer** ([_accountAway]).
      *
      * Mode 3 is *at least one device away and every other one locked*, so the flag has to leave this device:
@@ -1642,7 +1642,7 @@ class SchedulerEngine(
     /**
      * PRD §15: sample the RAW platform lock signal and clear "I'm away" **while locked, and at an unlock**.
      *
-     * - **A lock ends it.** `docs/scheduler_requirements.md` § *$now line$ 3 modes*: "I'm away" is this device's
+     * - **A lock ends it.** `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: "I'm away" is this device's
      *   *"not on a computer"* (or phone) period, which *"can't be with 'no computer unlocked'"* — so the fake
      *   period ends where the real one starts, and a line with every device really locked is in mode 2, not 3.
      * - **An unlock ends it** too (a safety net now: the lock before it already did). Unlocking this device is the
@@ -2112,7 +2112,7 @@ class SchedulerEngine(
     // session opens after the gap, exactly like the §12 device-sleep detection; a fast sim tick just extends the
     // session across the leaped clock time.
     //
-    // **ONLY THE PHONE STILL BEATS** (2026-10-02, `docs/scheduler_requirements.md` § *Rule Structure*). Everywhere
+    // **ONLY THE PHONE STILL BEATS** (2026-10-02, `docs/scheduler/scheduler_requirements.md` § *Rule Structure*). Everywhere
     // else the loop is gone, because every one of its jobs has an event or a carrier of its own:
     //  • opening and finalizing a session — the platform's lock/unlock notification ([onPlatformActivityChanged]),
     //    the "I'm away" press, the debug flip, the sign-in edge, and the one sample below for the launch itself;
@@ -2264,7 +2264,7 @@ class SchedulerEngine(
         // short fast-break now-line break vanished from it the moment its window elapsed and was replaced by a
         // far-future sleep-anchored occurrence, so the cue aimed hours out; see RestPosePresenceWindowTest).
         //
-        // **ONE query, two readings.** `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the scheduler
+        // **ONE query, two readings.** `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: the scheduler
         // returns a SET OF RULES, and both things the server is told are that set — the windows themselves,
         // which the mode-3 evaluation compares the line against, and the two dues, which are the first of each
         // kind and which the walk-away gate asks about the past with. Deriving them separately is how the two
@@ -2418,7 +2418,7 @@ class SchedulerEngine(
 
     /**
      * PRD §9 calculation event #2 — **a CHANGE re-plans the schedule.** Time passing re-plans nothing: a re-plan
-     * of unchanged rules could only rewrite a schedule `docs/scheduler_requirements.md` § *Progressive Calculation*
+     * of unchanged rules could only rewrite a schedule `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*
      * has already made definitive (the hourly staleness bound that did exactly that was removed 2026-09-17).
      *
      * The scheduler runs when someone CHANGED a rule it depends on: this user editing the
@@ -2435,7 +2435,7 @@ class SchedulerEngine(
      *
      * **A launch is not a change.** The flow's first value is the rules the app came up with, not an edit, so it
      * re-plans only when [SchedulerDomain.planHoldsAtLaunch] says the persisted plan was not made for them. Every
-     * launch used to re-plan here, rewriting a schedule `docs/scheduler_requirements.md` § *Progressive
+     * launch used to re-plan here, rewriting a schedule `docs/scheduler/scheduler_requirements.md` § *Progressive
      * Calculation* had already made definitive, for rules nobody had touched.
      */
     private fun launchRuleChangeReschedule() = scope.launch {
@@ -2540,7 +2540,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule state input evolution*, *New Schedule*: *"Each time the user manually
+     * `docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*, *New Schedule*: *"Each time the user manually
      * edits the timeline … it triggers a run"* — and a block HELD on the calendar edits it: what is planned while it is held is the state its release would leave (user rule
      * 2026-10-07: holding and releasing differ only in that what the held block removed is remembered).
      *
@@ -2616,7 +2616,7 @@ class SchedulerEngine(
     private fun stageSearchMillis(spanMillis: Long, q: Double): Long = pacedStepSearchMillis(spanMillis, planHoursPerSecond, q)
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*, § *Two paces*: **one run, ten-minute steps from the
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, § *Two paces*: **one run, ten-minute steps from the
      * line to $t_{goal}$ = `now + 168 h`, one published every ten seconds at most.** *"If the definitive schedule is
      * found for any t < t1, then 10 seconds later the definitive schedule must be found for any t < t1 + 10 minutes."*
      * The first step re-plans ([SchedulerIntent.RefreshSchedule], or an [SchedulerIntent.ExtendSchedule] when [replan] is
@@ -2655,7 +2655,7 @@ class SchedulerEngine(
     private var runSignature: Int? = null
 
     /**
-     * **What a run of the scheduler plans, and where its sets of rules go** — `docs/scheduler_requirements.md` § *Rule
+     * **What a run of the scheduler plans, and where its sets of rules go** — `docs/scheduler/scheduler_requirements.md` § *Rule
      * state input evolution*, *New Schedule*: *"The scheduler engine starts a new run from scratch each time when the
      * context is different and calculating a new set of rules output would be relevant"*.
      * The input is the stored state ([StoredPlan]) or, while a block is held on the calendar, the state its release
@@ -2682,7 +2682,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: one run of the scheduler on [target] — from scratch
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: one run of the scheduler on [target] — from scratch
      * ([replan]) or extending what is materialized — as a sequence of sets of rules, each extending the last, at the
      * required pace. See [dispatchProgressivePlan].
      */
@@ -2952,7 +2952,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Use of the set of rules output*: once a re-run of the scheduler has found its
+     * `docs/scheduler/scheduler_requirements.md` § *Use of the set of rules output*: once a re-run of the scheduler has found its
      * set of rules, *"it removes everything deduced from the previous set of rules but not saved in history"* and the
      * line moves fast from where the run took its screenshot to the clock. The plan was found from the line the run
      * started at and published by compare-and-set; what the line carries of the three breaks is rebuilt here from
@@ -3033,7 +3033,7 @@ class SchedulerEngine(
      * **The plan at the line, checked against the rules there** ([SchedulerDomain.planMismatchAtLine]) — reported,
      * and never answered with a re-plan.
      *
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*: a schedule published as definitive stays the one
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*: a schedule published as definitive stays the one
      * every later set of rules gives, and re-planning from the line whenever the plan and the breaks disagreed there
      * rewrote it (until 2026-09-29). The rules already say what happens in both cases, and they are applied where the
      * line is, in O(1):
@@ -3060,7 +3060,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule Structure*: **the runtime interpreter** — the one thing that moves the
+     * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: **the runtime interpreter** — the one thing that moves the
      * line over the set of rules, called by the advance tick, by the cue sweep at the instant it armed itself for, and
      * at every step of a journey.
      *
@@ -3178,7 +3178,7 @@ class SchedulerEngine(
         // The server is owed the breaks' dues when what the breaks are PLACED BY changed (the periods, the breaks'
         // own configuration, what the devices observed) — not each time the plan's own task panels were rewritten:
         // the break machine reads no task, and the scheduler runs from scratch at every change of its input
-        // (`docs/scheduler_requirements.md` § *Rule state input evolution*), which must not be a request per run
+        // (`docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*), which must not be a request per run
         // (`docs/invariants/server-quota.md`).
         if (held == null || held.periods != inputs.periods || held.specs != inputs.specs || held.evidence !== evidence) {
             presenceDirty = true
@@ -3206,7 +3206,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *Rule Structure* and § *frozen past*: **move the break machine the line
+     * `docs/scheduler/scheduler_requirements.md` § *Rule Structure* and § *frozen past*: **move the break machine the line
      * carries to [now], in [mode]** ([SchedulerDomain.stepScreenBreaks]) — the one writer of [_frozenBreaks]. Before
      * the machine's next armed trigger, with the mode unchanged, it moves nothing: one comparison. At a trigger (or a
      * mode edge, or a history rewrite) the machine applies the transitions due, banks the breaks the line entered, and
@@ -3248,7 +3248,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *frozen past*, its first exception (*"When the user … wants to rewrite
+     * `docs/scheduler/scheduler_requirements.md` § *frozen past*, its first exception (*"When the user … wants to rewrite
      * history"*) and its mirror ahead of the line: **the screen break of the period kind [kind] standing over
      * `[fromStartMillis, fromEndMillis)` was dragged on the calendar to start at [newStartMillis]**
      * ([SchedulerDomain.placeBreakByHand], the one rule for a break behind the line and for one ahead of it). The
@@ -3371,7 +3371,7 @@ class SchedulerEngine(
     private var lastFrozenPersistRealMillis = Long.MIN_VALUE
 
     /**
-     * `docs/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: a stretch nothing ran in is
+     * `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*, direct consequence: a stretch nothing ran in is
      * WALKED, not jumped — *"it is similar to a case where no CPU were available during this period"*. A device sleep
      * is detected by the tick loop; an app that was not RUNNING at all is detected here, before anything is launched
      * that could bank — otherwise the first advance banked the whole of the old plan as work done while nothing ran
@@ -3451,7 +3451,7 @@ class SchedulerEngine(
     /**
      * The mode as the DEVICES report it: no journey, no look-away hold.
      *
-     * `docs/scheduler_requirements.md` § *Rule Structure*: read at every move of the line, so it is not re-derived from
+     * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: read at every move of the line, so it is not re-derived from
      * the pause history each time — for the same inputs the answer only changes once, at the instant an open pause
      * begins; it is recomputed when an input changes (an edge the platform announces) or the line passes that instant.
      */
@@ -3541,7 +3541,7 @@ class SchedulerEngine(
                 heldPlanMode = after
                 planModeKnown = true
                 noteTpMode(it)
-                // `docs/scheduler_requirements.md` § *Rule Structure*: a mode switch is a trigger of its own — the break
+                // `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: a mode switch is a trigger of its own — the break
                 // machine switches at the edge, not at the next tick.
                 advanceBreaks(clock.nowMillis(), sweepMode ?: it)
             }
@@ -3558,7 +3558,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: the rules are parameterized by the mode, so the plan for
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: the rules are parameterized by the mode, so the plan for
      * the class the line is in NOW applies from the flip — at once, on this device. It is not a rule change: no
      * election (whose deadline would leave the old mode's plan standing for seconds), no debounce.
      *
@@ -3584,7 +3584,7 @@ class SchedulerEngine(
         }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **this device's own record of when it was in
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **this device's own record of when it was in
      * mode 3** ([mode3Spans]), so a journey it has to walk later knows which of its stretches were.
      *
      * It records only; nothing is published from here. The account's mode-3 history is the SERVER's, opened and
@@ -3604,7 +3604,7 @@ class SchedulerEngine(
     }
 
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: **keep this device's record of when its
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: **keep this device's record of when its
      * "I'm away" button was on** ([_declaredAwaySpans]), so the calendar layer can hatch it.
      *
      * The same shape as [noteTpMode] beside it and deliberately NOT the same fact: that one records the
@@ -3964,7 +3964,7 @@ class SchedulerEngine(
                     announcedReminderTags = announcedReminderTags.filterValues { it >= scanFloor }
                     announcedNotices = announcedNotices.filterValues { it >= scanFloor }
 
-                    // `docs/scheduler_requirements.md` § *Rule Structure*: the line is moved over the rules to here — the
+                    // `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: the line is moved over the rules to here — the
                     // interpreter applies what was armed before it and queues what it crossed. The sweep announces from
                     // those queues and asks nothing of the timeline itself.
                     interpretTo(simNow)

@@ -13,7 +13,7 @@ import org.example.project.scheduler.model.ScreenBreak
  * PRD §15 / CLAUDE.md: a break cue must be **mathematically accurate** — a pure function of which boundary
  * instants the clock crossed, never of how a sweep or heartbeat happens to align with the calendar.
  *
- * `docs/scheduler_requirements.md` § *Rule Structure*: every cue is a transition of the break machine as the line
+ * `docs/scheduler/scheduler_requirements.md` § *Rule Structure*: every cue is a transition of the break machine as the line
  * crosses it — a look-away where the line enters it, a pose where it falls due — so what is announced and what is
  * banked are one instant by construction.
  *

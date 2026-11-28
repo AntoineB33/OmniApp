@@ -133,7 +133,7 @@ class TimeFormulaTest {
         assertTrue(SchedulerStateCodec.decode(older)!!.cells.values.all { it.weightFormula.isEmpty() })
     }
 
-    /** `docs/scheduler_requirements.md` § *Rule state input evolution*: every stretch is placed under the state in force there. */
+    /** `docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*: every stretch is placed under the state in force there. */
     @Test
     fun the_plan_follows_the_formula_where_it_places() {
         val s = account().copy(sleep = null)

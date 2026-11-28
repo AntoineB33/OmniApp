@@ -13,7 +13,7 @@ import org.example.project.scheduler.domain.DynamicPeriods.MODE_ON_BREAK
 import org.example.project.scheduler.domain.SchedulerDomain
 
 /**
- * `docs/scheduler_requirements.md` § *screen breaks*, **lived through at random**: the now line moved by random
+ * `docs/scheduler/scheduler_requirements.md` § *screen breaks*, **lived through at random**: the now line moved by random
  * amounts — seconds, minutes, hours — and its mode switched at random between the three, for days of timeline per
  * seed, with what the machine banks ([BreakMachine]) checked against the requirements' own sentences. [BreakMachineTest]
  * pins each rule on the case that shows it; this asks them of whatever sequence the seeds reach.

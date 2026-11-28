@@ -2,14 +2,14 @@
 
 Active invariants. Reasoning and post-mortems: `docs/adr/`. Dated log: `CHANGELOG.md`.
 Global rules that always apply: `CLAUDE.md`.
-The requirements are `docs/scheduler_requirements.md` (user-owned — never edit it); the score its two optimization
+The requirements are `docs/scheduler/scheduler_requirements.md` (user-owned — never edit it); the score its two optimization
 criteria are measured by is defined in `docs/scheduler_score.md`.
 
 ---
 
 ## Scheduler
 
-→ ADR 0001 §11. The requirements are `docs/scheduler_requirements.md`; their two optimization
+→ ADR 0001 §11. The requirements are `docs/scheduler/scheduler_requirements.md`; their two optimization
 criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.fillSchedule` is a driver over it.
 
 - **The score is the ONLY copy of the scheduling rules.** `ScoreModel` (`ScheduleScore.kt`) evaluates it;
@@ -49,7 +49,7 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
     states *which task and when*, **nothing about how long**: the length is the scheduler's answer (below).
   - `Ctrl+Shift+Alt+Z` (and PRD §7's "Switch task") lays the **alternative** the rules name at the line on
     `[now line, now line + d]` with `d` fixed beforehand (`SchedulerDomain.ALTERNATIVE_SCHEDULE_MILLIS`, 10 min) —
-    `docs/scheduler_requirements.md` § *Alternative Schedules*, word for word — and runs the scheduler again with it.
+    `docs/scheduler/scheduler_requirements.md` § *Alternative Schedules*, word for word — and runs the scheduler again with it.
     The engine hands the reducer the alternative its runtime cursor holds (`SchedulerIntent.ForceTaskSwitch.rules`,
     `RuleProgram.Cursor.alternative`) rather than letting it search the plan; a reducer with no engine reads the
     panels (`alternativeTaskAt`). Where the rules name nobody, the press falls back to the refusal below.
@@ -74,7 +74,7 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
   the tree, `SchedulerDomain.isPlaceableTask`, which is the one predicate the reducer and every menu raising
   this intent ask; asking for a task clears an outstanding refusal *of that same task*.
 - **EVERY rule the fill makes also names WHO RUNS INSTEAD** (`TaskPanel.alternativeTaskId` +
-  `alternativeSpans`, `SchedulerDomain.alternativeTaskAt`). `docs/scheduler_requirements.md` § *Alternative
+  `alternativeSpans`, `SchedulerDomain.alternativeTaskAt`). `docs/scheduler/scheduler_requirements.md` § *Alternative
   Schedules*: *"The returned set of rules must also give for every $now line$ the task that must be scheduled if
   the task scheduled by the scheduler can't be scheduled now."* The answer is the next-best first run of the
   decision asked where the run starts (`ScheduleOptimizer.Evaluation.alternativeTo`), and where it changes inside
@@ -98,7 +98,7 @@ criteria are one score, defined in `docs/scheduler_score.md`. `SchedulerDomain.f
 
 ### The rules are read by a forward cursor
 
-→ `docs/scheduler_requirements.md` § *Rule Structure*, ADR 0017.
+→ `docs/scheduler/scheduler_requirements.md` § *Rule Structure*, ADR 0017.
 
 - **The runtime never scans, sorts or searches the timeline.** As the line moves, the one interpreter
   (`SchedulerEngine.interpretTo`, called by the advance tick, by the cue sweep at the instant it armed itself for,
@@ -410,7 +410,7 @@ model exists to prevent.
   one. Tied to `τ_i`, it made the repayment depend on the minimum time and shrank it to minutes (2026-09-19).
 - **NOBODY ONLY WHERE NO TASK MAY RUN** (user rule 2026-11-18: *"The deep search is worse than the instant schedule.
   Fix it."*; `ScoreModel.choicesAt`, `permitted`, the MIP's slot constraint). Until then (2026-09-29, when
-  `docs/scheduler_requirements.md` dropped § *No idling*) nobody was a decision the score priced beside every task, and
+  `docs/scheduler/scheduler_requirements.md` dropped § *No idling*) nobody was a decision the score priced beside every task, and
   the search took it wherever every candidate would overshoot its own small lag by its minimum — 5 % of the simulations'
   time — while the instant schedule, which never does, divided the time better. Nobody is now what a stretch no task may
   run in holds, and nothing else: `ScoreModel.IDLE` is still a run (a stretch every task is barred from), reported as
@@ -425,7 +425,7 @@ model exists to prevent.
 
 ### A period the user stated gives way to a mode-1 line — and is never rewritten by it
 
-`docs/scheduler_requirements.md`: a "no screen" period the line is in at a screen is `]$now line$; t2]`, and is removed
+`docs/scheduler/scheduler_requirements.md`: a "no screen" period the line is in at a screen is `]$now line$; t2]`, and is removed
 once the line is past `t2`. For the periods a rule lays that is `retractOverAtScreenPast` (above). For one the USER
 placed that is or carries "no screen" (`SchedulerDomain.retractsAtScreen`):
 
@@ -639,7 +639,7 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
 
 ### The rules are parameterized by the mode
 
-→ `docs/scheduler_requirements.md` § *$now line$ 3 modes* against § *Progressive Calculation*, 2026-09-28.
+→ `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* against § *Progressive Calculation*, 2026-09-28.
 
 - **What is definitive is definitive for EVERY mode, and there are infinitely many paths of modes** (user rule
   2026-11-18: *"The schedule must take all the infinite branches (e.g.: if mode 1 at [t0, t1] then ... else ...)"*).
@@ -700,7 +700,7 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
 
 ### Progressive Calculation
 
-→ `docs/scheduler_requirements.md` § *Progressive Calculation*.
+→ `docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*.
 
 - **A RUN GOES TO $t_{goal}$ = `now + 168 h`, PACED BY `q`** (user rule 2026-11-18: *"the 10 minute per 10 seconds
   minimum scheduler from now to now + 168h with a pace varying with the hyperparameter q"*;
@@ -851,7 +851,7 @@ off the scheduler's own score, so a fault in the score model cannot hide behind 
 
 ### The rule state is the question; the set of rules is the answer
 
-`docs/scheduler_requirements.md` names two different things and they must never be reported under one name:
+`docs/scheduler/scheduler_requirements.md` names two different things and they must never be reported under one name:
 
 - the **rule state** is *"the set of tasks and their associated priority percentages, minimum execution time
   and resilience values"* — the scheduler's INPUT, authored by the user. `SchedulerDomain.describePlanRule`

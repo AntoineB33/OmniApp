@@ -120,7 +120,7 @@ class PlanOffTheFrameLoopTest {
     /**
      * The routing must not change WHAT is planned. Same account, same clock, same horizon: the plan the
      * engine commits through its dispatcher is the plan the reducer computes on the spot — for the same
-     * progressive stages (`docs/scheduler_requirements.md` § *Progressive Calculation*): a re-plan to the first
+     * progressive stages (`docs/scheduler/scheduler_requirements.md` § *Progressive Calculation*): a re-plan to the first
      * stage, then extensions to twice as far each time, up to $t_{goal}$.
      */
     @Test
@@ -139,7 +139,7 @@ class PlanOffTheFrameLoopTest {
         // re-plan is timed from the FIRST edit and the first stage runs at the edit's own instant; every stage
         // after it runs once the debounce has elapsed. A stage's cap is relative to its own `now` — and so now
         // is the plan itself, since a period the line has RETRACTED gives up exactly `[now, its end)`
-        // (`docs/scheduler_requirements.md` § *mode 1*), so a run inside a §17 window starts at the line.
+        // (`docs/scheduler/scheduler_requirements.md` § *mode 1*), so a run inside a §17 window starts at the line.
         // Asked with one instant for both, this compared two fills made a second apart and only passed while
         // nothing in the plan depended on where the line was: the panels agreed and the last stage's horizon
         // was a second out.
@@ -149,9 +149,9 @@ class PlanOffTheFrameLoopTest {
         // straddling the line is truncated to it and merged with the new run, PRD §9). A single pass at a
         // single instant was what this compared against, and it only matched while nothing in the plan
         // depended on where the line was: a period the line has RETRACTED gives up exactly `[now, its end)`
-        // (`docs/scheduler_requirements.md` § *mode 1*), so inside a §17 window the run starts at the line and
+        // (`docs/scheduler/scheduler_requirements.md` § *mode 1*), so inside a §17 window the run starts at the line and
         // the second's difference between the two instants became a second's difference in the plan.
-        // ONE run, at the instant the input changed (`docs/scheduler_requirements.md` § *Rule state input evolution*:
+        // ONE run, at the instant the input changed (`docs/scheduler/scheduler_requirements.md` § *Rule state input evolution*:
         // the engine runs from scratch each time its input changes — the two re-plans a second apart that the
         // paragraphs above describe were the debounce's, which delays no run any more, 2026-10-07): the ten definitive
         // seconds first where the line is bare (§ *Progressive Calculation*, **first 10s**), then the stages, each

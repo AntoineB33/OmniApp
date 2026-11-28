@@ -150,7 +150,7 @@ line read one instant. What each of the two halves decides is worth stating: the
 **exists** (is there a line on this column, is it in view, which tags are overdue); the frame-sampled one
 decides only **where** those go.
 
-**This changes nothing in the engine.** `docs/scheduler_requirements.md`'s *"the $now line$ moves continuously
+**This changes nothing in the engine.** `docs/scheduler/scheduler_requirements.md`'s *"the $now line$ moves continuously
 forward in time"* is a statement about the scheduler's now-line, and that one is already walked and never
 teleported (`SchedulerEngine.sweepNowLineTo`, one `SchedulerDomain.sweepStepMillis` at a time, pinned by
 `NowLineSweepTest`). What was fixed here is only how the calendar DRAWS it.
@@ -198,7 +198,7 @@ offset × zoom × viewport × row), the quantization bound, and that it actually
 ## The schedule horizon is $t_{goal}$: the current week, the displayed timeline, floored at ten minutes
 
 The engine does **not** systematically materialize 168 h: it fills to **$t_{goal}$**, the instant
-`docs/scheduler_requirements.md` § *Progressive Calculation* lets the scheduler stop at — *"The scheduler can have
+`docs/scheduler/scheduler_requirements.md` § *Progressive Calculation* lets the scheduler stop at — *"The scheduler can have
 a time $t goal$ such as when definitive schedule is found for any t < $t goal$ the scheduler can stop."*
 
 **$t_{goal}$ = the latest of the end of the current week, the end of the timeline the calendar shows, and
@@ -384,7 +384,7 @@ The quantization above answered *how often can we afford to recompute?* That is 
 user's follow-up said why: **nothing in the past is affected by the now-line moving** (the past is frozen — a
 20 s break is removed by pressing "look away now", a period is changed by hand; both are EVENTS), and the
 future panels *"simply follow the instructions of the set of rules given by the scheduler, telling what
-happens between periods of time"*. `docs/scheduler_requirements.md` says exactly that: the scheduler returns a
+happens between periods of time"*. `docs/scheduler/scheduler_requirements.md` says exactly that: the scheduler returns a
 **set of rules**. Between two of its boundaries there is nothing to recompute, at any rate.
 
 **Decision — the display's clock is the rule set's own boundaries.**
@@ -431,7 +431,7 @@ already exact.
 
 ## Everything that follows the line moves continuously (2026-09-17)
 
-**Symptom.** The user's report against `docs/scheduler_requirements.md`: *"the panels don't move as smoothly as
+**Symptom.** The user's report against `docs/scheduler/scheduler_requirements.md`: *"the panels don't move as smoothly as
 the current now line, which makes situations where the now line must drag a panel visually incorrect."* In mode
 1 the pose the line drags is `(t_p, t_p + d]` — its top edge IS the line — and the calendar drew it one pixel
 at a time beside a line that glided, so the band sat visibly behind the line that is supposed to be pushing it.

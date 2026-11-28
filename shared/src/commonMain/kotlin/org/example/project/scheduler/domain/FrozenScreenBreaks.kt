@@ -6,7 +6,7 @@ package org.example.project.scheduler.domain
  *
  * A recorded fact, not a derivation: the walk that placed it read an environment, a set of tasks, a
  * configuration and a mode that may all be different by now, and none of those may move it any more
- * (`docs/scheduler_requirements.md` § *frozen past*).
+ * (`docs/scheduler/scheduler_requirements.md` § *frozen past*).
  */
 data class BankedBreak(
     val label: String,
@@ -20,7 +20,7 @@ data class BankedBreak(
 )
 
 /**
- * `docs/scheduler_requirements.md` § *frozen past*: **the three dynamic periods behind the banked front** —
+ * `docs/scheduler/scheduler_requirements.md` § *frozen past*: **the three dynamic periods behind the banked front** —
  * every occurrence the line has made a fact of, and [untilMillis], the instant up to which they are the whole
  * answer. Before it the placement is this record; from it on the break machine continues from [machine].
  *

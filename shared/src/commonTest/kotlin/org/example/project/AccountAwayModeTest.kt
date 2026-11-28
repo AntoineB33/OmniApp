@@ -18,7 +18,7 @@ import org.example.project.scheduler.ui.TaskSchedulerViewModel
 import org.example.project.time.AppClock
 
 /**
- * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **mode 3 is an ACCOUNT-wide condition, and the "I'm
+ * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **mode 3 is an ACCOUNT-wide condition, and the "I'm
  * away" flag has to leave the device it was pressed on for that to be true.**
  *
  * *"Mode 3 happens when and only when there is at least one device where the I'm away button is clicked and all
@@ -145,7 +145,7 @@ class AccountAwayModeTest {
 
     @Test
     fun the_button_records_the_stretch_it_was_on_so_the_calendar_can_hatch_it() = runTest {
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the period this device is declared
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* + PRD §8: the period this device is declared
         // away for has to be COVERED BY THE TWO LAYERS on the calendar — it is a stretch where no computer and
         // no phone of the account is unlocked, which is what a no-screen period is. The OS cannot supply it:
         // the machine stays unlocked the whole time (`screenActive = { true }` here, which is the case the
@@ -195,7 +195,7 @@ class AccountAwayModeTest {
 
     @Test
     fun the_lock_that_ends_the_button_closes_the_stretch_there() = runTest {
-        // `docs/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30): the button is the device's "not on a
+        // `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes* (2026-09-30): the button is the device's "not on a
         // computer" period, which "can't be with 'no computer unlocked'" — so the machine locking itself while
         // the user is away ENDS it, and the record closes at the lock: the OS's own lock history covers the rest, and a
         // line with every device really locked is in mode 2.

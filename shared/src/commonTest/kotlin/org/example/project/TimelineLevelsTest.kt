@@ -197,7 +197,7 @@ class TimelineLevelsTest {
 
     @Test
     fun work_banked_under_a_period_laid_over_the_past_is_hidden_and_back_when_the_period_leaves() {
-        // docs/scheduler_requirements.md § frozen past: "The schedule at t < now line never changes" — a period laid
+        // docs/scheduler/scheduler_requirements.md § frozen past: "The schedule at t < now line never changes" — a period laid
         // over worked time does not destroy the work.
         val previous = SchedulerReducer.clock
         val now = h(0)

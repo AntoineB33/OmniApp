@@ -14,7 +14,7 @@ import org.example.project.scheduler.state.SchedulerIntent
 import org.example.project.scheduler.state.SchedulerReducer
 
 /**
- * `docs/scheduler_requirements.md`, the "allocated resources quantity" hyperparameter `q` (user rule 2026-11-21: *"I
+ * `docs/scheduler/scheduler_requirements.md`, the "allocated resources quantity" hyperparameter `q` (user rule 2026-11-21: *"I
  * don't want my fans to make a noise for hours with the default q value and a task tree that is not particularly
  * complex"*). A run is about a thousand ten-minute steps to `now + 168 h`, started again at every change of the rules:
  * what one step's search costs at the default `q` is what the run costs a thousand times.

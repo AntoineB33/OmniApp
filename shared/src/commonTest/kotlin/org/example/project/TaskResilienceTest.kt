@@ -182,7 +182,7 @@ class TaskResilienceTest {
                 PeriodKinds.NO_PHONE_UNLOCKED,
                 PeriodKinds.NOT_ON_A_COMPUTER,
                 PeriodKinds.NOT_ON_A_PHONE,
-                // The two pose kinds (`docs/scheduler_requirements.md` § *screen breaks*).
+                // The two pose kinds (`docs/scheduler/scheduler_requirements.md` § *screen breaks*).
                 PeriodKinds.BREAK_5MIN,
                 PeriodKinds.BREAK_15MIN,
                 "deep focus",
@@ -192,7 +192,7 @@ class TaskResilienceTest {
     }
 
     /**
-     * `docs/scheduler_requirements.md`: the 20 s screen break and the 5 min break's first minute *"allow no task"* —
+     * `docs/scheduler/scheduler_requirements.md`: the 20 s screen break and the 5 min break's first minute *"allow no task"* —
      * [PeriodKinds.INACTIVITY]. An override a payload holds for it is not honoured (until 2026-09-29 it was, which let a
      * task into a look-away), and sleep, whose `0` is only a default, is editable like any kind.
      */

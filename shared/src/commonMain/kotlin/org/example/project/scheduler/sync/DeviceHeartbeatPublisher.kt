@@ -44,7 +44,7 @@ data class NextBreakState(
     val fiveMinDueMillis: Long?,
     val fifteenMinDueMillis: Long?,
     /**
-     * `docs/scheduler_requirements.md` § *$now line$ 3 modes*: **the SET OF RULES** — the future 5- and
+     * `docs/scheduler/scheduler_requirements.md` § *$now line$ 3 modes*: **the SET OF RULES** — the future 5- and
      * 15-minute dynamic restrictive periods, on the REAL wall clock (`screen_break_rule`, migration
      * 20260904000000).
      *
