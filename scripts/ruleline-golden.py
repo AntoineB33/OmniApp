@@ -632,9 +632,308 @@ def main_resolve():
     print(f"wrote {RESOLVE_OUT} ({len(kept)} cases; {unstable} unstable across hash seeds, {slow} slow left out): {outcomes}")
 
 
+# ---------------------------------------------------------------- constraints, problems, script, watch, modes, mode_rules
+
+LAYER5_OUT = OUT.parent / "generator-inputs-golden.json"
+
+BREAK_RULES = ["B1 → N", "B2 → N", "B3 → N", "mode 1 → no N", "mode 2 → N"]
+
+ZERO_ = Pos(0)
+
+
+def _state_of(texts, claims_spec):
+    """A state from claims [(kind, owner, region json)] on these rules (one edit each)."""
+    from line import LineState, Op
+    from resolve import apply_edit
+    from rules import RuleSet, parse_percent_rule, parse_rule
+    pct = [parse_percent_rule(t) for t in texts]
+    rs = RuleSet([parse_rule(t) for t, p in zip(texts, pct) if p is None], tuple(p for p in pct if p is not None))
+    st = LineState.empty()
+    for k, owner, g in claims_spec:
+        st = apply_edit(rs, st, [Op.put(k, _region_of(g))], owner)
+    return rs, st
+
+
+def _ops_text(ops):
+    return " ; ".join(str(o) for o in ops)
+
+
+def _mid(a, b):
+    """A few positions inside a stretch, to read the compiled run there."""
+    if a == b or a.x == b.x:
+        return []
+    return [Pos((a.x + b.x) / 2), Pos(a.x + (b.x - a.x) / 4)]
+
+
+def layer5_eval(case):
+    import time as _time
+    from constraints import (AsEarlyAsPossible, Breaks, KeepOn, MaximumGap, MinimumGap, ScreenBreaks, constraint_ops,
+                             expand, pulled, push_of)
+    from line import Op
+    from mode_rules import compile_runs
+    from modes import ModeTimeline
+    from problems import MinimumLengthProblem, PresenceRatioProblem, shortfalls
+    from script import ChipIn, ChipOn, EditAction, Event, PresenceAbove, Script, ScoreBelow, score
+    from solver import limited
+    from watch import look
+    t0 = _time.monotonic()
+    out = {}
+
+    def put(name, f):
+        try:
+            with limited(3.0):
+                out[name] = f()
+        except Exception as e:  # noqa: BLE001
+            out[name] = "error " + type(e).__name__ + (": " + str(e) if type(e).__name__ in ("Refused", "ValueError") else "")
+
+    try:
+        rs, st = _state_of(case["texts"], case["claims"])
+    except Exception as e:  # noqa: BLE001
+        return {"out": {"state": "error " + type(e).__name__}, "seconds": 0}
+    c = Pos(F(case["chip"]))
+    out["state"] = str(st.claims) + "\n--\n" + str(st.line)
+    k = case["k"]
+    if k == "constraints":
+        L, P = F(case["L"]), F(case["P"])
+        cons = {
+            "min": lambda: MinimumGap("B1", P, after="N", at_least=L, pull="N" if case["pull"] else None),
+            "early": lambda: AsEarlyAsPossible("B1", length=L),
+            "max": lambda: MaximumGap("B2", P, after="N", at_least=L),
+            "breaks": lambda: Breaks("B3", "N", L, P),
+            "screen": lambda: ScreenBreaks((("B1", L, P), ("B2", 2 * L, 3 * P), ("B3", 3 * L, 6 * P)), "N", ("B2", "B3")),
+            "keep": lambda: KeepOn(Op.put("B1", Region.of(Interval(F(1), F(1) + L, False, True)))),
+        }
+        ks = list(expand([cons[n]() for n in case["cons"]]))
+        for x in ks:
+            if hasattr(x, "bind"):
+                x.bind(rs)
+            if hasattr(x, "bind_all"):
+                x.bind_all(ks)
+        out["constraints"] = " | ".join(map(str, ks))
+        for n, x in enumerate(ks):
+            put(f"targets{n}", lambda x=x: " ; ".join(f"{kk}: {r}" for kk, r in sorted(x.targets(st, c).items())))
+            put(f"ops{n}", lambda x=x: _ops_text(x.ops(st, c)))
+            if isinstance(x, AsEarlyAsPossible) and x.length is not None:
+                put(f"place{n}", lambda x=x: str(x.place(st, c)))
+                put(f"until{n}", lambda x=x: str(x.place(st, c, until=c + 20)))
+                put(f"obst{n}", lambda x=x: str(x.obstacles(st, c)[0]))
+                put(f"pushed{n}", lambda x=x: ",".join(x.pushed_in(rs)) + "/" + ",".join(x.puts_at_chip(rs, "N")))
+            if isinstance(x, MinimumGap):
+                put(f"apart{n}", lambda x=x: str(x.apart(st.line.presence(x.after), x.pulls_of(st, c))))
+        put("all", lambda: _ops_text(constraint_ops(rs, st, c, ks)))
+        put("all_until", lambda: _ops_text(constraint_ops(rs, st, c, ks, until=F(case["chip"]) + 15)))
+        put("pulled", lambda: str(pulled(st.line.presence("N").dilate(Interval(ZERO_, F(2), True, False)), st.line.presence("N"), F(3))))
+    elif k == "problems":
+        class Ctx:
+            def __init__(self, cc):
+                self.c, self.state, self.open_end = cc, st, None
+                self.gen = type("G", (), {"rules": rs})()
+                self.weights_full = self.weights_best = self.weights_uniform = None
+
+            def expected(self, s, kind, weights, W):
+                return s.line.integral(kind, W)
+        H = F(case["H"])
+        cc = F(case["chip"])
+        pr = PresenceRatioProblem({"A": F(1, 2), "B": F(1, 4), "C": F(1, 4)}).with_window(H)
+        ml = MinimumLengthProblem({"A": F(3), "B": F(2)}).with_window(H)
+        ctx = Ctx(cc)
+        for name, p in (("ratio", pr), ("length", ml)):
+            put(name + "_error", lambda p=p: str(p.error(ctx, st)))
+            for strat in ("left", "right", "spread3"):
+                put(f"{name}_{strat}", lambda p=p, strat=strat: _ops_text(p.proposals(ctx, "none", strat)))
+            put(name + "_extra", lambda p=p: " | ".join(f"{a}: {_ops_text(o)}" for a, o in p.extra(ctx)))
+        put("stretch", lambda: str(pr.stretch_error(ctx, st)))
+        put("short", lambda: " ; ".join(f"{iv} {d}" for iv, d in shortfalls(st.line.presence("A"), F(3), cc, H)))
+        put("score", lambda: str(score([(pr, F(1)), (ml, F(1, 2))], st, cc)))
+        for name, trig in (("chipin", ChipIn(F(2), F(9), "1")), ("above", PresenceAbove("A", F(100), F(1, 3), F(6), F(-5), F(30))),
+                           ("scorebelow", ScoreBelow(F(1, 2)))):
+            put("look_" + name, lambda trig=trig: str(look(trig, st, cc, "1", [(pr, F(1))])[0]))
+        put("holds", lambda: str(ChipOn("A", within=F(2)).holds(st, cc, "1")) + str(ChipOn("A", lasted=F(1)).holds(st, cc, "1")) +
+            str(PresenceAbove("A", F(100), F(1, 3), F(6), F(-5), F(30)).holds(st, cc, "1")))
+    elif k == "script":
+        e1 = Event(ChipOn("B1", "1"), (EditAction((Op.take("B1", Region.of(Interval(ZERO_, INF, False, False))),
+                                                     Op.put("B1", Region.of(Interval(F(0), F(case["L"]), False, True)))), True),))
+        e2 = Event(ChipIn(F(0), INF, "2"), (EditAction((Op.put("A", Region.point(Pos(F(1)))),)),))
+        sc = Script.of([e1, e2], live=True)
+        out["text"] = sc.text()
+        out["push"] = str(push_of(e1))
+        out["push2"] = str(push_of(e2))
+        out["pushes"] = " | ".join(f"{a}: {b}" for a, b in sc.pushes().items())
+        tl = ModeTimeline(F(0), "1", [(F(t), m) for t, m in case["modes"]])
+        out["modes"] = ",".join(tl.mode_at(Pos(F(x))) for x in range(0, 20, 3))
+        kn = tl.known(F(case["chip"]) + 5)
+        out["known"] = " | ".join(f"{m}: {kn.region(m)} / {kn.possible(m)}" for m in ("1", "2", "3")) + f" {kn.current_mode()} {kn.current_start()}"
+    elif k == "mode_rules":
+        L, P = F(case["L"]), F(case["P"])
+        cons = []
+        if case["early"]:
+            cons = [AsEarlyAsPossible("B1", length=L), MinimumGap("B1", P, after="N", at_least=L)]
+            for x in cons:
+                if hasattr(x, "bind"):
+                    x.bind(rs)
+                if hasattr(x, "bind_all"):
+                    x.bind_all(cons)
+        pushes = ()
+        if case["push"]:
+            e1 = Event(ChipOn("B1", "1"), (EditAction((Op.take("B1", Region.of(Interval(ZERO_, INF, False, False))),
+                                                         Op.put("B1", Region.of(Interval(F(0), L, False, True)))), True),))
+            pushes = (push_of(e1),)
+        segs = [(Pos(F(a)), Pos(F(b)), m) for a, b, m in case["segments"]]
+
+        def runs():
+            stretches, refused = compile_runs(rs, st, segs, cons, pushes)
+            lines = [f"{s.mode} [{s.a}, {s.b}]\n{s.after.claims}\n--\n{s.after.line}" +
+                     ("".join(f"\n@{q}: {s.state_at(q).line}" for q in _mid(s.a, s.b)) if s.plan is not None else "")
+                     for s in stretches]
+            return "\n====\n".join(lines) + "\n####\n" + "\n".join(f"{x}: {w}" for x, w in refused)
+        put("runs", runs)
+    elif k == "script_text":
+        from script import Script as _S
+        from script_text import ScriptError, parse_script
+        try:
+            sc = parse_script(case["text"], _S(), rs)
+            out["parsed"] = sc.text() + "\n--\n" + " | ".join(f"{lo}:{hi}:{m}" for lo, hi, m in sc.covered) + f" live={sc.live}"
+        except ScriptError as e:
+            out["parsed"] = "ScriptError: " + str(e)
+        except Exception as e:  # noqa: BLE001 (a bug of the reference: `every 0 s:` then an event, KeyError)
+            out["parsed"] = "error " + type(e).__name__
+    return {"out": out, "seconds": _time.monotonic() - t0}
+
+
+def _script_texts():
+    """Script texts: written by the reference's Script.text, and corrupted copies of their lines."""
+    from constraints import AsEarlyAsPossible, Breaks, KeepOn, MaximumGap, MinimumGap, ScreenBreaks
+    from line import Op
+    from script import (ChangeAction, ChipIn, ChipOn, ConstraintEditAction, Edited, EditAction, Event, PresenceAbove,
+                        RerunAction, Script, ScoreBelow, ShowLine, Start, TransitionCount, Uncovered, Viewed)
+    from dataclasses import replace as _replace
+    regs = [Region.of(rset(R.randint(1, 2), -6, 30)) for _ in range(6)] + [rregion() for _ in range(3)]
+    def rop():
+        k = R.choice(["N", "B1", "B2"])
+        g = R.choice(regs)
+        return R.choice([Op.put(k, g, R.choice([100, 50])), Op.put_no(k, g), Op.take(k, g), Op.take_no(k, g)])
+    trigs = [Start(), ChipIn(F(R.randint(-3, 3)), F(R.randint(4, 20)), R.choice([None, "1", "2"])), ChipIn(F(2), INF),
+             ChipOn("B1", "1"), TransitionCount(R.randint(1, 3)), Edited(), Edited(True), Viewed(), Uncovered(),
+             PresenceAbove("B1", F(100), F(1, 3), F(10), F(0), F(40), "1"), ScoreBelow(F(2, 3))]
+    texts = []
+    for _ in range(40):
+        evs = []
+        for _ in range(R.randint(1, 4)):
+            t = R.choice(trigs)
+            acts = []
+            for _ in range(R.randint(1, 2)):
+                r = R.random()
+                if r < 0.5:
+                    acts.append(EditAction(tuple(rop() for _ in range(R.randint(1, 2))), R.random() < 0.3))
+                elif r < 0.6:
+                    acts.append(ConstraintEditAction())
+                elif r < 0.7:
+                    acts.append(RerunAction(R.random() < 0.3))
+                elif r < 0.8:
+                    acts.append(ShowLine())
+                else:
+                    acts.append(ChangeAction(R.random() < 0.5, R.choice(["every 5 s", "the view script"]),
+                                             Event(ChipIn(F(0), F(5)), (RerunAction(),))))
+            evs.append(Event(t, tuple(acts)))
+        cons = R.sample([MinimumGap("B1", F(7), after="N", at_least=F(2), pull="N"), MinimumGap("B1", F(5)),
+                         AsEarlyAsPossible("B1", F(2)), AsEarlyAsPossible("B2"), MaximumGap("B2", F(9), after="N", at_least=F(3)),
+                         MaximumGap("B1", F(4), length=F(2)), Breaks("B3", "N", F(2), F(9)),
+                         ScreenBreaks((("B1", F(1), F(4)), ("B2", F(3), F(12))), "N", ("B1", "B2")),
+                         KeepOn(Op.put("B1", Region.of(Interval(F(1), F(3), False, True))))], R.randint(0, 3))
+        sc = Script.of(evs)
+        sc = _replace(sc, constraints=tuple(cons), covered=[(Pos(F(R.randint(0, 5))), Pos(F(R.randint(6, 12))), R.choice([None, "1"]))],
+                      live=R.random() < 0.5)
+        if R.random() < 0.3:
+            sc = sc.changed(ChangeAction(True, "every 2 s", Event(ChipIn(F(1), F(2)), (RerunAction(),))))
+        text = sc.text()
+        texts.append(text)
+        lines = text.splitlines()
+        if lines:
+            i = R.randrange(len(lines))
+            bad = list(lines)
+            bad[i] = R.choice([bad[i].replace("if ", "iff ", 1), bad[i].replace("%", " percent", 1), bad[i].replace("[", "(", 1),
+                               bad[i] + " and then", "keep B9 as early as possible", "if the chip is in [5, 2), then run the generator again.",
+                               "every 0 s:", "if 0 mode transitions happened, then show the line."])
+            texts.append("\n".join(bad))
+    return texts
+
+
+def main_layer5():
+    import os
+    import subprocess
+    import tempfile
+    cases = []
+
+    def rclaims(kinds, n, lo=-10, hi=40):
+        out = []
+        for _ in range(n):
+            g = Region.of(rset(R.randint(1, 2), lo, hi))
+            if g.is_empty():
+                continue
+            out.append((R.choice(kinds), R.choice(["user", "user", "generated"]), region_json(g)))
+        return out
+    for _ in range(60):
+        cons = R.sample(["min", "early", "max", "breaks", "screen", "keep"], R.randint(1, 3))
+        cases.append({"k": "constraints", "texts": BREAK_RULES, "claims": rclaims(["N", "B1", "B2"], R.randint(0, 4)),
+                      "chip": str(R.randint(-2, 10)), "L": str(R.choice([1, 2, 3])), "P": str(R.choice([4, 6, 10])), "cons": cons,
+                      "pull": R.random() < 0.5})
+    for _ in range(40):
+        cases.append({"k": "problems", "texts": ["A → no B", "C → no A"], "claims": rclaims(["A", "B", "C"], R.randint(1, 5), -5, 30),
+                      "chip": str(R.randint(-2, 8)), "H": str(R.choice([6, 10, 16]))})
+    for _ in range(20):
+        ts = sorted(R.sample(range(1, 20), R.randint(0, 4)))
+        modes, prev = [], "1"
+        for t in ts:
+            m = R.choice([x for x in ("1", "2", "3") if x != prev])
+            modes.append((t, m))
+            prev = m
+        cases.append({"k": "script", "texts": ["A → B"], "claims": [], "chip": str(R.randint(0, 12)), "L": str(R.choice([2, 5])), "modes": modes})
+    mode_sets = [BREAK_RULES, BREAK_RULES, BREAK_RULES, ["mode 1 → A", "A → no B"], ["mode 2 → N or M", "N → no A"],
+                 ["mode 1 & A → no A"], ["mode 1 → B 50%", "B → C 1 unit on the right"],
+                 ["mode 1 → A 50% or B", "A is always 100%"], ["mode 2 → A 50%", "A is always 100%"]]
+    for _ in range(90):
+        texts = R.choice(mode_sets)
+        segs, x = [], R.randint(-2, 3)
+        for _ in range(R.randint(1, 3)):
+            y = x + R.choice([0, 1, 2, 5])
+            segs.append((str(x), str(y), R.choice(["1", "2"])))
+            x = y + R.choice([0, 1])
+        cases.append({"k": "mode_rules", "texts": texts, "claims": rclaims(["N", "B1", "A", "B"], R.randint(0, 3), -4, 14),
+                      "chip": "0", "segments": segs, "L": str(R.choice([1, 2])), "P": str(R.choice([3, 5])),
+                      "early": texts is BREAK_RULES and R.random() < 0.8, "push": texts is BREAK_RULES and R.random() < 0.6})
+    for text in _script_texts():
+        cases.append({"k": "script_text", "texts": BREAK_RULES + ["B3 → N"], "claims": [], "chip": "0", "text": text})
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "in.json").write_text(json.dumps(cases, ensure_ascii=False), encoding="utf-8")
+    runs = []
+    for seed in ("1", "2"):
+        env = dict(os.environ, PYTHONHASHSEED=seed)
+        subprocess.run([sys.executable, "-I", __file__, "--resolve-eval", str(REF), str(tmp / "in.json"), str(tmp / f"o{seed}.json"), "layer5"],
+                       env=env, check=True, timeout=3000)
+        runs.append(json.loads((tmp / f"o{seed}.json").read_text(encoding="utf-8")))
+    kept, unstable, slow = [], 0, 0
+    for case, a, b in zip(cases, *runs):
+        if max(a["seconds"], b["seconds"]) > 8:
+            slow += 1
+            continue
+        if a["out"] != b["out"]:
+            unstable += 1
+            continue
+        kept.append({**case, "expected": a["out"]})
+    LAYER5_OUT.write_text(json.dumps({"cases": kept}, ensure_ascii=False, indent=0), encoding="utf-8")
+    errs = sum(1 for c in kept for v in c["expected"].values() if isinstance(v, str) and v.startswith("error"))
+    by = {}
+    for c in kept:
+        by[c["k"]] = by.get(c["k"], 0) + 1
+    print(f"wrote {LAYER5_OUT} ({len(kept)} cases {by}; {unstable} unstable, {slow} slow; {errs} error answers)")
+
+
+
 if __name__ == "__main__" and "--resolve-eval" in sys.argv:
     i = sys.argv.index("--resolve-eval")
     cases_in = json.loads(Path(sys.argv[i + 2]).read_text(encoding="utf-8"))
-    Path(sys.argv[i + 3]).write_text(json.dumps([resolve_eval(c) for c in cases_in], ensure_ascii=False), encoding="utf-8")
+    ev = layer5_eval if sys.argv[i + 4:i + 5] == ["layer5"] else resolve_eval
+    Path(sys.argv[i + 3]).write_text(json.dumps([ev(c) for c in cases_in], ensure_ascii=False), encoding="utf-8")
 elif __name__ == "__main__":
     main_resolve()
+    main_layer5()

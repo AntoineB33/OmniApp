@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The rule engine: the generator's inputs — constraints, problems, mode rules, the generated script — 2026-11-28
+
+- User: *"Yes, next layer"*. `scheduler/ruleline/` gains the constraints the generator keeps (`Constraints.kt`:
+  minimum and maximum gaps with pulls, as-early-as-possible pieces, the chip's pushes, one-length and several-kind
+  screen breaks with chains, `expand`), its optimization problems (`Problems.kt`: presence ratios, minimum lengths),
+  the mode rules at the chip with runs compiled ahead and affine stretches (`ModeRules.kt`), the modes
+  (`Modes.kt`), the generated script and its triggers and actions (`Script.kt`), its text read back
+  (`ScriptText.kt`) and when a trigger needs looking at again (`Watch.kt`). Held to the reference by
+  `GeneratorInputsGoldenTest` (286 cases, under two hash seeds).
+- Found in the reference: its script text parser cannot read back what generated scripts write for the chip's
+  pushes (`the chip is on K …`, `from the chip, …`), and raises `KeyError` on an event after a refused `every 0 s:`.
+  Not fixed here: a behaviour change starts in the reference.
+- Still not wired to the app. Nothing persisted or synced. No deploy needed.
+
 ### The rule engine: edits resolved — the newer wins, the fewest older elements change — 2026-11-28
 
 - User: *"Yes, next layer"*. `scheduler/ruleline/` gains `Resolve.kt` (`resolve.py`: the user's edits kept in order and

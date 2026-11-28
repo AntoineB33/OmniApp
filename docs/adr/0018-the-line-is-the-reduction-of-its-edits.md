@@ -126,8 +126,18 @@ until `ruleline` covers what it does, then goes. Order, from the dependency grap
    to send a state between Python processes cheaply, and Kotlin runs edits on threads. The reference raises a
    `TypeError` (`-inf // period`) on a few rule sets where `not` or `<` puts a kind on a region with no left end — a
    bug of the reference, reported to the user; the golden test accepts any exception there.
-5. `constraints.py`, `problems.py`, `mode_rules.py`, `modes.py`, `script.py`, `script_text.py`, `script_python.py`,
-   `watch.py` (the generator's constraints and problems, the mode rules, the generated script).
+5. `constraints.py`, `problems.py`, `mode_rules.py`, `modes.py`, `script.py`, `script_text.py`, `watch.py` →
+   `Constraints.kt`, `Problems.kt`, `ModeRules.kt`, `Modes.kt`, `Script.kt`, `ScriptText.kt`, `Watch.kt` — **done**
+   (`GeneratorInputsGoldenTest`: 286 cases — the constraints' targets, edits and placements on break-like lines, the
+   problems' errors and proposals, the triggers' next positions, scripts and their text read back, the mode rules
+   compiled along segments with constraints and pushes, read inside the compiled stretches). Not ported, being
+   machinery of the Python program rather than rules: `Place.run` (draws on a Tk canvas), `prepare_ahead` and
+   `take_ahead` (runs checked in another process). `cycle` and its `Built` region come from `ratio_plan.py` early;
+   `script_python.py` needs `ratio_plan.py` and goes with layer 6. Where the reference doubles a window over unbounded
+   integers (`ScreenBreaks._around`), the port stops before a `Long` overflows and makes the still-cut end infinite: it
+   is only compared. Found in the reference: its script parser cannot read back a `ChipOn` trigger ("the chip is on K
+   …") nor an edit "from the chip, …" — what generated scripts write for pushes — and after a refused `every 0 s:`
+   line an event line raises `KeyError`. Reported to the user; the port reproduces the reference.
 6. `score.py`, `score_search.py`, `ratio_plan.py`, `instant.py`, `pace.py`, `probability.py`, `generator.py`,
    `simulation.py` (the generator, the two schedulers, the paces, the probability finder).
 7. Wiring: the calendar's elements and the default rules (`docs/scheduler/default_scheduler_rules.md`) written as rules,

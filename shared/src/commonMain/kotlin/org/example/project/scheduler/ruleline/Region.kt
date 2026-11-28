@@ -483,7 +483,7 @@ private fun farApart(a: Region, b: Region): Boolean {
 }
 
 /** Whether combining a and b would give a tail repeating only after [LAZY_PERIOD], or write many periods out. */
-private fun longTogether(a: Region, b: Region): Boolean {
+internal fun longTogether(a: Region, b: Region): Boolean {
     if ((a.left.isNotEmpty() || a.right.isNotEmpty() || b.left.isNotEmpty() || b.right.isNotEmpty()) && farApart(a, b)) return true
     for ((x, y) in listOf((a.right to a.pr) to (b.right to b.pr), (a.left to a.pl) to (b.left to b.pl))) {
         val (pa, ka) = x
