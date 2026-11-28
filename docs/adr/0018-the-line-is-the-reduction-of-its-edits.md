@@ -120,8 +120,14 @@ until `ruleline` covers what it does, then goes. Order, from the dependency grap
    repeats — and `satisfiable`; `LineStateGoldenTest`). The sweep's probe (`_probe`) is ported but no golden case
    reaches it yet. The solver's time limit and its "by point" flag are process-wide where the reference's are per
    thread (`SolverLimits`): to settle when the generator runs beside the display.
-4. `resolve.py`, `guards.py`, `constraints.py`, `problems.py`, `state_delta.py` (user edits win, the fewest changed).
-5. `mode_rules.py`, `modes.py`, `script.py`, `script_text.py`, `script_python.py`, `watch.py` (the generated script).
+4. `resolve.py`, `guards.py` → `Resolve.kt`, `Guards.kt` — **done** (`ResolveGoldenTest`: 200 random sequences of
+   the user's, the script's and the mode rules' edits, 674 steps, the search for the fewest elements reached by 49 of
+   them; only cases the reference answers the same under two hash seeds). `state_delta.py` is not ported: it exists
+   to send a state between Python processes cheaply, and Kotlin runs edits on threads. The reference raises a
+   `TypeError` (`-inf // period`) on a few rule sets where `not` or `<` puts a kind on a region with no left end — a
+   bug of the reference, reported to the user; the golden test accepts any exception there.
+5. `constraints.py`, `problems.py`, `mode_rules.py`, `modes.py`, `script.py`, `script_text.py`, `script_python.py`,
+   `watch.py` (the generator's constraints and problems, the mode rules, the generated script).
 6. `score.py`, `score_search.py`, `ratio_plan.py`, `instant.py`, `pace.py`, `probability.py`, `generator.py`,
    `simulation.py` (the generator, the two schedulers, the paces, the probability finder).
 7. Wiring: the calendar's elements and the default rules (`docs/scheduler/default_scheduler_rules.md`) written as rules,

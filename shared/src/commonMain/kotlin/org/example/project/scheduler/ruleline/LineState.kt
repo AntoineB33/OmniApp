@@ -265,7 +265,7 @@ class Claims {
 
 private fun Set<String>.toSortedList(): List<String> = sorted()
 
-class LineState(var claims: Claims, var line: Line, var history: List<Footprinted> = emptyList()) {
+class LineState(var claims: Claims, var line: Line, var history: List<Record> = emptyList()) {
 
     fun copy(): LineState = LineState(claims.copy(), line, history)
 

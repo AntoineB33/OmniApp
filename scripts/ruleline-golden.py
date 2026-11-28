@@ -17,8 +17,9 @@ import sys
 from fractions import Fraction as F
 from pathlib import Path
 
-REF = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(r"C:\code\line_manager\scripts")
-CASES = int(sys.argv[2]) if len(sys.argv) > 2 else 300
+_ARGS = sys.argv[2:3] if sys.argv[1:2] == ["--resolve-eval"] else sys.argv[1:]  # (an evaluator: --resolve-eval REF in out)
+REF = Path(_ARGS[0]) if len(_ARGS) > 0 else Path(r"C:\code\line_manager\scripts")
+CASES = int(_ARGS[1]) if len(_ARGS) > 1 else 300
 OUT = Path(__file__).resolve().parent.parent / "shared/src/jvmTest/resources/ruleline/positions-regions-golden.json"
 sys.path.insert(0, str(REF))
 
@@ -175,7 +176,7 @@ def main():
     print(f"wrote {OUT} ({len(data['intervals'])} interval cases, {len(data['regions'])} region cases)")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and "--resolve-eval" not in sys.argv:
     main()
 
 
@@ -342,7 +343,7 @@ def main_rules():
     print(f"wrote {RULES_OUT} ({len(singles)} texts, {len(sets)} sets, {len(data['lhs'])} left sides)")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and "--resolve-eval" not in sys.argv:
     main_rules()
 
 
@@ -443,7 +444,7 @@ def main_solve():
     print(f"wrote {SOLVE_OUT} ({len(cases)} cases, {dropped} dropped as too slow): {kinds_out}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and "--resolve-eval" not in sys.argv:
     main_solve()
 
 
@@ -492,5 +493,148 @@ def main_line_state():
     print(f"wrote {LINE_OUT} ({len(out)} cases)")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and "--resolve-eval" not in sys.argv:
     main_line_state()
+
+
+# ---------------------------------------------------------------- resolve.py, guards.py
+
+RESOLVE_OUT = OUT.parent / "resolve-golden.json"
+
+
+def _region_of(o):
+    def p(a):
+        return float(a[0]) if a[0] in ("inf", "-inf") else Pos(F(a[0]), a[1])
+    st = lambda e: IntervalSet(Interval._mk(p(q[0]), p(q[1])) for q in e)
+    return Region(p(o["lo"]), p(o["hi"]), st(o["core"]), p(o["pl"]), st(o["left"]), p(o["pr"]), st(o["right"]))
+
+
+def resolve_eval(case):
+    """Every step of a case through the reference: the outcome and the state after it."""
+    import time as _time
+    from guards import check_mode_edit, check_script_edit
+    from line import LineState, Op
+    from rules import RuleSet, parse_percent_rule, parse_rule
+    from solver import Interrupted, limited
+    from resolve import Refused, apply_edit, flattened, mode_won
+    ts = case["texts"]
+    pct = [parse_percent_rule(t) for t in ts]
+    rs = RuleSet([parse_rule(t) for t, p in zip(ts, pct) if p is None], tuple(p for p in pct if p is not None))
+    state = LineState.empty()
+    out = []
+    t0 = _time.monotonic()
+    for st in case["steps"]:
+        ops = [Op(o["a"], o["k"], _region_of(o["g"]), F(o["v"])) for o in st["ops"]]
+        chip = Pos(F(st["chip"]))
+        try:
+            with limited(3.0):
+                after = apply_edit(rs, state, ops, st["owner"])
+                check = None
+                if st["owner"] == "generated":
+                    check = check_script_edit(state, after, chip, ops, rs)
+                elif st["owner"] == "mode":
+                    after = mode_won(state, after)
+                    check = check_mode_edit(state, after, Region.point(chip), chip)
+            state = after
+            out.append({"ok": True, "claims": str(state.claims), "line": str(state.line), "history": len(state.history),
+                        "clean": state.claims.clean, "check": check})
+        except Refused as e:
+            out.append({"ok": False, "refused": str(e)})
+        except Exception as e:  # noqa: BLE001
+            out.append({"ok": False, "error": type(e).__name__ + ": " + str(e)})
+    try:
+        with limited(3.0):
+            fl = flattened(rs, state, Pos(F(case["flat"])))
+            flat = str(fl.claims) + "\n--\n" + str(fl.line) + "\n--\n" + str(len(fl.history))
+    except Exception as e:  # noqa: BLE001
+        flat = "error " + type(e).__name__
+    return {"steps": out, "flat": flat, "seconds": _time.monotonic() - t0}
+
+
+def main_resolve():
+    import os
+    import subprocess
+    import tempfile
+    texts = reference_rule_texts()
+    rand = [f"{rand_lhs_text()} → {rand_rhs_text()}" for _ in range(CASES)] + [rand_percent_text() for _ in range(60)]
+    pool = [t for t in texts + rand if "error" not in rule_result(t)]
+    sets = []
+    while len(sets) < 40:
+        a, b, c, d = R.sample(KINDS, 4)
+        ts = [f"{a} → {b} or {c}", f"{b} → no {c} 1 unit on the right"] if R.random() < 0.5 else [f"{a} → {b}", f"{b} & {c} → no {d}"]
+        if R.random() < 0.4:
+            ts.append(f"{a} → {d} on [0, 2) of l")
+        if "error" not in set_result(ts):
+            sets.append(ts)
+    while len(sets) < 140:
+        ts = R.sample(pool, R.randint(1, 3))
+        if "error" not in set_result(ts):
+            sets.append(ts)
+    cases = []
+    for ts in sets:
+        pct = [__import__("rules").parse_percent_rule(t) for t in ts]
+        kinds = sorted({k for t in ts for k in KINDS if k in t.replace("→", " ").split()}) or ["A"]
+        steps = []
+        for n in range(R.randint(1, 5)):
+            owner = R.choice(["user", "user", "user", "generated", "mode"])
+            chip = R.randint(-3, 3)
+            ops = []
+            for _ in range(R.randint(1, 2)):
+                k = R.choice(kinds)
+                a = R.choice(["put", "put", "put_no", "take", "take_no"])
+                g = Region.point(Pos(chip)) if owner == "mode" else (Region.of(rset(1, chip, chip + 8)) if owner == "generated" else Region.of(rset(R.randint(1, 2), -6, 6)))
+                if g.is_empty():
+                    g = Region.point(Pos(chip))
+                ops.append({"a": a, "k": k, "g": region_json(g), "v": str(R.choice([100, 100, 50]) if a == "put" else 100)})
+            steps.append({"owner": owner, "ops": ops, "chip": str(chip)})
+        cases.append({"texts": ts, "steps": steps, "flat": str(R.randint(-4, 4))})
+    # conflicts on purpose: older elements whose consequences a newer edit forbids (the fewest to remove)
+    shapes = [["A → B"], ["A & C → B"], ["A → B on [0, 2) of l"], ["A → B 1 unit on the right", "C → B"],
+              ["A or C → B"], ["A → B", "B → D"], ["A → B 50%", "C → B 100%"]]
+    for _ in range(60):
+        ts = R.choice(shapes)
+        if "error" in set_result(ts):
+            continue
+        steps = []
+        for _ in range(R.randint(2, 4)):
+            k = R.choice(["A", "A", "C", "D"])
+            steps.append({"owner": "user", "ops": [{"a": "put", "k": k, "g": region_json(Region.of(rset(1, -6, 6))), "v": "100"}], "chip": "0"})
+        g = Region.of(rset(1, -6, 6))
+        steps.append({"owner": R.choice(["user", "user", "generated"]), "ops": [{"a": R.choice(["put_no", "take"]), "k": "B", "g": region_json(g), "v": "100"}], "chip": "-9"})
+        if R.random() < 0.5:
+            steps.append({"owner": "user", "ops": [{"a": "take_no", "k": "B", "g": region_json(g), "v": "100"}], "chip": "0"})
+        cases.append({"texts": ts, "steps": steps, "flat": str(R.randint(-4, 4))})
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "in.json").write_text(json.dumps(cases, ensure_ascii=False), encoding="utf-8")
+    runs = []
+    for seed in ("1", "2"):
+        env = dict(os.environ, PYTHONHASHSEED=seed)
+        subprocess.run([sys.executable, "-I", __file__, "--resolve-eval", str(REF), str(tmp / "in.json"), str(tmp / f"out{seed}.json")],
+                       env=env, check=True, timeout=3000)
+        runs.append(json.loads((tmp / f"out{seed}.json").read_text(encoding="utf-8")))
+    kept, unstable, slow = [], 0, 0
+    for case, a, b in zip(cases, *runs):
+        if max(a["seconds"], b["seconds"]) > 4:
+            slow += 1
+            continue
+        a2, b2 = dict(a), dict(b)
+        a2.pop("seconds"), b2.pop("seconds")
+        if a2 != b2 or any("error" in s and "Undetermined" in s["error"] for s in a2["steps"]):
+            unstable += 1
+            continue
+        kept.append({**case, "expected": a2})
+    RESOLVE_OUT.write_text(json.dumps({"cases": kept}, ensure_ascii=False, indent=0), encoding="utf-8")
+    outcomes = {}
+    for c in kept:
+        for s_ in c["expected"]["steps"]:
+            key = "ok" if s_["ok"] else ("refused" if "refused" in s_ else "error")
+            outcomes[key] = outcomes.get(key, 0) + 1
+    print(f"wrote {RESOLVE_OUT} ({len(kept)} cases; {unstable} unstable across hash seeds, {slow} slow left out): {outcomes}")
+
+
+if __name__ == "__main__" and "--resolve-eval" in sys.argv:
+    i = sys.argv.index("--resolve-eval")
+    cases_in = json.loads(Path(sys.argv[i + 2]).read_text(encoding="utf-8"))
+    Path(sys.argv[i + 3]).write_text(json.dumps([resolve_eval(c) for c in cases_in], ensure_ascii=False), encoding="utf-8")
+elif __name__ == "__main__":
+    main_resolve()

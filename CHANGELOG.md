@@ -11,6 +11,20 @@ Newest first within each section.
 
 Check here before assuming the code matches the docs.
 
+### The rule engine: edits resolved — the newer wins, the fewest older elements change — 2026-11-28
+
+- User: *"Yes, next layer"*. `scheduler/ruleline/` gains `Resolve.kt` (`resolve.py`: the user's edits kept in order and
+  the claims rebuilt from them, the newest first; the quick paths — kinds no rule reads, a pointwise or local rule
+  set, a window around the edit that grows until the old line shows on both sides; the search for the fewest older
+  elements to remove, the leftmost kept on a tie, and its fallback; the generated script's and the mode rules' edits;
+  `mode_won`; `flattened` for the memory limit) and `Guards.kt` (`guards.py`: N1, N2, M1). Held to the reference by
+  `ResolveGoldenTest` (200 edit sequences, 674 steps).
+- Found in the reference: on a few rule sets where `not` or `<` puts a kind on a region with no left end, an edit
+  raises `TypeError: unsupported operand type(s) for //: 'float' and 'Pos'` (e.g.
+  `A < 50% → B at 3/2 & (no D of l & no C) or no E of l or B at 2`). Not fixed here: a behaviour change starts in the
+  reference.
+- Still not wired to the app. Nothing persisted or synced. No deploy needed.
+
 ### The rule engine: the solver, the sweep and the line state ported — 2026-11-28
 
 - User: *"Yes, next layer"*. `scheduler/ruleline/` gains the line computed from claims (`Solver.kt`: the region stage
